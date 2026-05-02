@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.models.client import Client
+from app.models.fixation_run import FixationRun
+from app.schemas.fixation_contracts import FixationInput, FixationResult
+from app.services.fixation_service import (
+    calculate_fixation,
+    get_fixation_history,
+    get_fixation_run_detail,
+    get_latest_fixation_result,
+    run_fixation,
+)
+
+router = APIRouter(prefix="/api", tags=["fixation"])
+
+
+class FixationSaveRequest(BaseModel):
+    client_id: int
+    input_data: dict[str, Any]
+
+
+class FixationSaveResponse(BaseModel):
+    run_id: int
+    status: str
+
+
+class LatestResultResponse(BaseModel):
+    result: dict[str, Any] | None
+
+
+def _client_not_found(client_id: int) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail={"code": "CLIENT_NOT_FOUND", "message": f"Client {client_id} was not found"},
+    )
+
+
+def _run_not_found(run_id: int) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail={"code": "FIXATION_RUN_NOT_FOUND", "message": f"Fixation run {run_id} was not found"},
+    )
+
+
+def _require_client(db: Session, client_id: int) -> None:
+    if db.get(Client, client_id) is None:
+        raise _client_not_found(client_id)
+
+
+@router.post("/fixation/validate", response_model=FixationResult)
+def validate_fixation(payload: FixationInput) -> FixationResult:
+    return calculate_fixation(payload)
+
+
+@router.post("/fixation/calculate", response_model=FixationResult)
+def calculate_fixation_endpoint(payload: FixationInput) -> FixationResult:
+    return calculate_fixation(payload)
+
+
+@router.post("/fixation/save", response_model=FixationSaveResponse)
+def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -> FixationSaveResponse:
+    _require_client(db, payload.client_id)
+    run_id = run_fixation(client_id=payload.client_id, input_data=payload.input_data, db_session=db)
+    run = db.get(FixationRun, run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "UNEXPECTED_ERROR", "message": "Saved run could not be loaded"},
+        )
+
+    return FixationSaveResponse(run_id=run_id, status=run.status)
+
+
+@router.get("/clients/{client_id}/fixation/latest", response_model=LatestResultResponse)
+def latest_fixation_result(client_id: int, db: Session = Depends(get_db)) -> LatestResultResponse:
+    _require_client(db, client_id)
+    latest = get_latest_fixation_result(client_id=client_id, db_session=db)
+    if latest is None or latest.fixation_result is None:
+        return LatestResultResponse(result=None)
+    return LatestResultResponse(result=latest.fixation_result.result_payload)
+
+
+@router.get("/clients/{client_id}/fixation/history")
+def fixation_history(client_id: int, db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    _require_client(db, client_id)
+    runs = get_fixation_history(client_id=client_id, db_session=db)
+    return [
+        {
+            "run_id": run.id,
+            "status": run.status,
+            "calculation_version": run.calculation_version,
+            "created_at": run.created_at.isoformat() if run.created_at is not None else None,
+        }
+        for run in runs
+    ]
+
+
+@router.get("/fixation/runs/{run_id}")
+def fixation_run_detail(run_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    detail = get_fixation_run_detail(run_id=run_id, db_session=db)
+    if detail is None:
+        raise _run_not_found(run_id)
+
+    return {
+        "run": {
+            "run_id": detail.id,
+            "client_id": int(detail.client_id),
+            "status": detail.status,
+            "calculation_version": detail.calculation_version,
+            "created_at": detail.created_at.isoformat() if detail.created_at is not None else None,
+        },
+        "input_snapshot": (
+            detail.fixation_input_snapshot.input_payload
+            if detail.fixation_input_snapshot is not None
+            else None
+        ),
+        "result": detail.fixation_result.result_payload if detail.fixation_result is not None else None,
+        "audit_rows": [
+            {
+                "row_order": row.row_order,
+                "category": row.category,
+                "source_id": row.source_id,
+                "label": row.label,
+                "input_amount": float(row.input_amount) if row.input_amount is not None else None,
+                "output_amount": float(row.output_amount),
+                "impact_amount": float(row.impact_amount),
+                "details": row.details_payload,
+            }
+            for row in detail.fixation_audit_rows
+        ],
+        "validation_errors": [
+            {
+                "error_order": err.error_order,
+                "code": err.code,
+                "path": err.path,
+                "message": err.message,
+                "severity": err.severity,
+                "source_id": err.source_id,
+            }
+            for err in detail.fixation_validation_errors
+        ],
+    }

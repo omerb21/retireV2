@@ -1,0 +1,407 @@
+from copy import deepcopy
+
+import pytest
+from pydantic import ValidationError as PydanticValidationError
+
+from app.schemas.fixation_contracts import (
+    AuditRow,
+    FixationInput,
+    FixationResult,
+    IDFResult,
+    ValidationError,
+)
+
+
+def valid_fixation_input_payload() -> dict:
+    return {
+        "calculation_id": "calc-1",
+        "calculation_version": "v1",
+        "eligibility_date": "2025-01-01",
+        "eligibility_year": 2025,
+        "monthly_cap": 9430,
+        "exemption_percentage": 0.57,
+        "capital_multiplier": 180,
+        "grants": [
+            {
+                "grant_id": "G1",
+                "employer_name": "Employer",
+                "nominal_amount": 100000,
+                "indexed_amount": 100000,
+                "grant_date": "2024-01-01",
+                "work_start_date": "2020-01-01",
+                "work_end_date": "2021-01-01",
+            }
+        ],
+        "future_grant_reserved": 0,
+        "actual_capitalizations": [
+            {
+                "capitalization_id": "C1",
+                "amount": 1000,
+                "capitalization_date": "2023-01-01",
+                "source_label": "source",
+            }
+        ],
+        "idf": {
+            "idf_id": "I1",
+            "reduction_amount": 1000,
+            "original_commutation_percent": 25,
+            "current_commutation_percent": 20,
+            "commutation_date": "2025-01-01",
+            "promoter_age_date": "2026-01-01",
+            "source_label": "idf-source",
+        },
+        "metadata": {"trace": "x"},
+    }
+
+
+def valid_success_result_payload() -> dict:
+    return {
+        "calculation_id": "calc-1",
+        "calculation_version": "v1",
+        "status": "success",
+        "validation_errors": [],
+        "eligibility_date": "2025-01-01",
+        "eligibility_year": 2025,
+        "monthly_cap": 9430,
+        "exemption_percentage": 0.57,
+        "capital_multiplier": 180,
+        "initial_exempt_capital": 1000,
+        "grant_impact_total": 0,
+        "future_grant_reserved": 0,
+        "future_grant_impact": 0,
+        "actual_capitalization_impact": 0,
+        "idf_impact": 0,
+        "total_impact": 0,
+        "remaining_exempt_capital": 1000,
+        "monthly_exempt_pension": 5.56,
+        "capital_exemption_percentage": 1,
+        "pension_exemption_percentage": 0.57,
+        "grant_results": [],
+        "actual_capitalization_results": [],
+        "idf_result": None,
+        "audit_rows": [
+            {
+                "row_id": "R1",
+                "category": "total",
+                "source_id": None,
+                "label": "Total",
+                "input_amount": None,
+                "output_amount": 0,
+                "impact_amount": 0,
+                "details": {"x": 1},
+            }
+        ],
+    }
+
+
+def valid_validation_failed_result_payload() -> dict:
+    return {
+        "calculation_id": "calc-1",
+        "calculation_version": "v1",
+        "status": "validation_failed",
+        "validation_errors": [
+            {
+                "code": "ERR_REQUIRED_FIELD_MISSING",
+                "path": "monthly_cap",
+                "message": "monthly_cap is required",
+                "severity": "error",
+                "source_id": None,
+            }
+        ],
+        "eligibility_date": "2025-01-01",
+    }
+
+
+def test_missing_required_calculation_version_fails() -> None:
+    payload = valid_fixation_input_payload()
+    del payload["calculation_version"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_missing_monthly_cap_fails() -> None:
+    payload = valid_fixation_input_payload()
+    del payload["monthly_cap"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_missing_indexed_amount_fails() -> None:
+    payload = valid_fixation_input_payload()
+    del payload["grants"][0]["indexed_amount"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_missing_idf_field_fails() -> None:
+    payload = valid_fixation_input_payload()
+    del payload["idf"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("eligibility_date",), "not-a-date"),
+        (("grants", 0, "grant_date"), "not-a-date"),
+        (("actual_capitalizations", 0, "capitalization_date"), "not-a-date"),
+        (("idf", "commutation_date"), "not-a-date"),
+    ],
+)
+def test_invalid_dates_fail(path: tuple, value: str) -> None:
+    payload = valid_fixation_input_payload()
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("monthly_cap",), 0),
+        (("monthly_cap",), -1),
+        (("exemption_percentage",), -0.1),
+        (("exemption_percentage",), 1.1),
+        (("capital_multiplier",), 0),
+        (("capital_multiplier",), -1),
+        (("indexed_amount",), -1),
+        (("future_grant_reserved",), -1),
+        (("amount",), -1),
+        (("reduction_amount",), 0),
+        (("reduction_amount",), -1),
+    ],
+)
+def test_invalid_numeric_values_fail(path: tuple, value: float) -> None:
+    payload = valid_fixation_input_payload()
+    if path[0] == "indexed_amount":
+        payload["grants"][0]["indexed_amount"] = value
+    elif path[0] == "amount":
+        payload["actual_capitalizations"][0]["amount"] = value
+    elif path[0] == "reduction_amount":
+        payload["idf"]["reduction_amount"] = value
+    else:
+        payload[path[0]] = value
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_empty_grant_id_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["grants"][0]["grant_id"] = "   "
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_empty_employer_name_when_present_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["grants"][0]["employer_name"] = "   "
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_work_start_date_not_before_work_end_date_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["grants"][0]["work_start_date"] = "2021-01-01"
+    payload["grants"][0]["work_end_date"] = "2021-01-01"
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_work_start_date_after_work_end_date_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["grants"][0]["work_start_date"] = "2021-01-02"
+    payload["grants"][0]["work_end_date"] = "2021-01-01"
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_nominal_present_indexed_missing_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["grants"][0]["nominal_amount"] = 100
+    del payload["grants"][0]["indexed_amount"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_empty_capitalization_id_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["actual_capitalizations"][0]["capitalization_id"] = ""
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_empty_source_label_when_present_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["actual_capitalizations"][0]["source_label"] = "   "
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_empty_idf_id_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf"]["idf_id"] = " "
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_idf_decimal_percent_format_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf"]["original_commutation_percent"] = 0.25
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_idf_promoter_age_date_not_after_later_date_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf"]["commutation_date"] = "2025-02-01"
+    payload["idf"]["promoter_age_date"] = "2025-02-01"
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_idf_promoter_age_date_before_later_date_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf"]["commutation_date"] = "2025-02-01"
+    payload["idf"]["promoter_age_date"] = "2025-01-15"
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_idf_null_passes() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf"] = None
+
+    parsed = FixationInput(**payload)
+
+    assert parsed.idf is None
+
+
+def test_audit_row_invalid_category_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        AuditRow(
+            row_id="R1",
+            category="bad-category",
+            source_id=None,
+            label="Bad",
+            input_amount=None,
+            output_amount=0,
+            impact_amount=0,
+            details={},
+        )
+
+
+def test_audit_row_missing_source_id_for_grant_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        AuditRow(
+            row_id="R1",
+            category="grant",
+            source_id=None,
+            label="Grant",
+            input_amount=100,
+            output_amount=100,
+            impact_amount=10,
+            details={},
+        )
+
+
+def test_audit_row_negative_impact_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        AuditRow(
+            row_id="R1",
+            category="total",
+            source_id=None,
+            label="Total",
+            input_amount=None,
+            output_amount=0,
+            impact_amount=-1,
+            details={},
+        )
+
+
+def test_validation_error_empty_code_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        ValidationError(code=" ", path="x", message="m", severity="error", source_id=None)
+
+
+def test_validation_error_invalid_severity_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        ValidationError(code="C", path="x", message="m", severity="warning", source_id=None)
+
+
+def test_validation_error_null_source_id_allowed() -> None:
+    parsed = ValidationError(code="C", path="x", message="m", severity="error", source_id=None)
+
+    assert parsed.source_id is None
+
+
+def test_idf_result_overlap_months_zero_is_valid() -> None:
+    parsed = IDFResult(
+        idf_id="I1",
+        base_reduction=100.0,
+        monthly_reduction_for_calc=35.0,
+        overlap_months=0,
+        impact_amount=0,
+    )
+
+    assert parsed.overlap_months == 0
+
+
+def test_fixation_result_success_with_validation_errors_fails() -> None:
+    payload = valid_success_result_payload()
+    payload["validation_errors"] = [
+        {
+            "code": "ERR",
+            "path": "x",
+            "message": "bad",
+            "severity": "error",
+            "source_id": None,
+        }
+    ]
+
+    with pytest.raises(PydanticValidationError):
+        FixationResult(**payload)
+
+
+def test_fixation_result_success_missing_numeric_fields_fails() -> None:
+    payload = valid_success_result_payload()
+    del payload["initial_exempt_capital"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationResult(**payload)
+
+
+def test_fixation_result_validation_failed_with_empty_errors_fails() -> None:
+    payload = valid_validation_failed_result_payload()
+    payload["validation_errors"] = []
+
+    with pytest.raises(PydanticValidationError):
+        FixationResult(**payload)
+
+
+def test_fixation_result_validation_failed_with_numeric_fields_present_fails() -> None:
+    payload = valid_validation_failed_result_payload()
+    payload["monthly_cap"] = 9430
+
+    with pytest.raises(PydanticValidationError):
+        FixationResult(**payload)

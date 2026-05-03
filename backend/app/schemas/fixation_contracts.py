@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ValidationError as PydanticValidationError, field_validator, model_validator
 
 
 def _require_non_empty(value: str, field_name: str) -> str:
@@ -11,6 +11,80 @@ def _require_non_empty(value: str, field_name: str) -> str:
     if not stripped:
         raise ValueError(f"{field_name} must be non-empty")
     return stripped
+
+
+ValidationCode = Literal[
+    "MISSING_REQUIRED_VALUE",
+    "INVALID_DATE",
+    "INVALID_NUMBER",
+    "INVALID_NESTED_ITEM",
+    "INVALID_GLOBAL_INPUT",
+    "UNSUPPORTED_OR_UNAPPROVED_VALUE",
+]
+
+GLOBAL_INPUT_PATH = "fixation_input"
+LEGACY_VALIDATION_CODE_MAP: dict[str, ValidationCode] = {
+    "ERR_REQUIRED_FIELD_MISSING": "MISSING_REQUIRED_VALUE",
+    "ERR_INVALID_DATE": "INVALID_DATE",
+    "ERR_INVALID_NUMERIC_VALUE": "INVALID_NUMBER",
+    "ERR_INVALID_INPUT": "INVALID_GLOBAL_INPUT",
+}
+
+
+def validation_path_from_loc(loc: tuple[Any, ...]) -> str:
+    if not loc:
+        return GLOBAL_INPUT_PATH
+
+    path = ""
+    for item in loc:
+        if item in {"__root__", "root"}:
+            return GLOBAL_INPUT_PATH
+        if isinstance(item, int):
+            path += f"[{item}]"
+            continue
+        if not isinstance(item, str):
+            continue
+        if item in {"body", "query", "path"}:
+            continue
+        if path:
+            path += "."
+        path += item
+
+    return path or GLOBAL_INPUT_PATH
+
+
+def validation_code_from_error(error_type: str, path: str) -> ValidationCode:
+    normalized_type = error_type.lower()
+    if "missing" in normalized_type:
+        return "MISSING_REQUIRED_VALUE"
+    if "date" in normalized_type:
+        return "INVALID_DATE"
+    if any(token in normalized_type for token in ("float", "int", "number", "greater", "less", "finite")):
+        return "INVALID_NUMBER"
+    if path == GLOBAL_INPUT_PATH:
+        return "INVALID_GLOBAL_INPUT"
+    if path.startswith("grants[") or path.startswith("actual_capitalizations[") or path.startswith("idf"):
+        return "INVALID_NESTED_ITEM"
+    if any(token in normalized_type for token in ("literal", "enum", "union", "value_error")):
+        return "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+    return "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+
+
+def map_contract_validation_errors(exc: PydanticValidationError) -> list["ValidationError"]:
+    mapped_errors: list[ValidationError] = []
+    for error in exc.errors():
+        path = validation_path_from_loc(tuple(error.get("loc", ())))
+        mapped_errors.append(
+            ValidationError(
+                code=validation_code_from_error(str(error.get("type", "validation_error")), path),
+                path=path,
+                message=str(error.get("msg", "Invalid input")),
+                severity="error",
+                source_id=None,
+            )
+        )
+
+    return mapped_errors
 
 
 class GrantInput(BaseModel):
@@ -251,8 +325,8 @@ class IDFResult(BaseModel):
     @field_validator("overlap_months")
     @classmethod
     def validate_overlap_months(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("idf result overlap_months must be >= 0")
+        if value <= 0:
+            raise ValueError("idf result overlap_months must be > 0")
         return value
 
     @field_validator("impact_amount")
@@ -310,13 +384,19 @@ class AuditRow(BaseModel):
 
 
 class ValidationError(BaseModel):
-    code: str
+    code: ValidationCode
     path: str
     message: str
     severity: Literal["error"]
     source_id: str | None
 
-    @field_validator("code", "path", "message")
+    @field_validator("code", mode="before")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        normalized_value = _require_non_empty(value, "code")
+        return LEGACY_VALIDATION_CODE_MAP.get(normalized_value, normalized_value)
+
+    @field_validator("path", "message")
     @classmethod
     def validate_non_empty_strings(cls, value: str, info: Any) -> str:
         return _require_non_empty(value, str(info.field_name))

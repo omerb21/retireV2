@@ -7,8 +7,12 @@ from app.schemas.fixation_contracts import (
     AuditRow,
     FixationInput,
     FixationResult,
+    GLOBAL_INPUT_PATH,
     IDFResult,
     ValidationError,
+    map_contract_validation_errors,
+    validation_code_from_error,
+    validation_path_from_loc,
 )
 
 
@@ -101,7 +105,7 @@ def valid_validation_failed_result_payload() -> dict:
         "status": "validation_failed",
         "validation_errors": [
             {
-                "code": "ERR_REQUIRED_FIELD_MISSING",
+                "code": "MISSING_REQUIRED_VALUE",
                 "path": "monthly_cap",
                 "message": "monthly_cap is required",
                 "severity": "error",
@@ -339,39 +343,89 @@ def test_audit_row_negative_impact_fails() -> None:
         )
 
 
-def test_validation_error_empty_code_fails() -> None:
-    with pytest.raises(PydanticValidationError):
-        ValidationError(code=" ", path="x", message="m", severity="error", source_id=None)
-
-
 def test_validation_error_invalid_severity_fails() -> None:
     with pytest.raises(PydanticValidationError):
-        ValidationError(code="C", path="x", message="m", severity="warning", source_id=None)
+        ValidationError(code="INVALID_GLOBAL_INPUT", path="x", message="m", severity="warning", source_id=None)
 
 
 def test_validation_error_null_source_id_allowed() -> None:
-    parsed = ValidationError(code="C", path="x", message="m", severity="error", source_id=None)
+    parsed = ValidationError(code="INVALID_GLOBAL_INPUT", path="x", message="m", severity="error", source_id=None)
 
     assert parsed.source_id is None
 
 
-def test_idf_result_overlap_months_zero_is_valid() -> None:
-    parsed = IDFResult(
-        idf_id="I1",
-        base_reduction=100.0,
-        monthly_reduction_for_calc=35.0,
-        overlap_months=0,
-        impact_amount=0,
+def test_idf_result_overlap_months_zero_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        IDFResult(
+            idf_id="I1",
+            base_reduction=100.0,
+            monthly_reduction_for_calc=35.0,
+            overlap_months=0,
+            impact_amount=0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("loc", "expected_path"),
+    [
+        ((), GLOBAL_INPUT_PATH),
+        (("calculation_version",), "calculation_version"),
+        (("idf", "commutation_date"), "idf.commutation_date"),
+        (("grants", 0, "indexed_amount"), "grants[0].indexed_amount"),
+        (("actual_capitalizations", 2, "amount"), "actual_capitalizations[2].amount"),
+        (("__root__",), GLOBAL_INPUT_PATH),
+    ],
+)
+def test_validation_path_from_loc_uses_approved_convention(loc: tuple[object, ...], expected_path: str) -> None:
+    assert validation_path_from_loc(loc) == expected_path
+
+
+@pytest.mark.parametrize(
+    ("error_type", "path", "expected_code"),
+    [
+        ("missing", "monthly_cap", "MISSING_REQUIRED_VALUE"),
+        ("date_from_datetime_parsing", "eligibility_date", "INVALID_DATE"),
+        ("greater_than", "monthly_cap", "INVALID_NUMBER"),
+        ("value_error", "grants[0].indexed_amount", "INVALID_NESTED_ITEM"),
+        ("value_error", GLOBAL_INPUT_PATH, "INVALID_GLOBAL_INPUT"),
+        ("literal_error", "status", "UNSUPPORTED_OR_UNAPPROVED_VALUE"),
+    ],
+)
+def test_validation_code_from_error_maps_to_approved_categories(error_type: str, path: str, expected_code: str) -> None:
+    assert validation_code_from_error(error_type, path) == expected_code
+
+
+def test_map_contract_validation_errors_returns_stable_paths_and_codes() -> None:
+    payload = valid_fixation_input_payload()
+    del payload["grants"][0]["indexed_amount"]
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        FixationInput(**payload)
+
+    mapped_errors = map_contract_validation_errors(exc_info.value)
+
+    assert mapped_errors[0].code == "MISSING_REQUIRED_VALUE"
+    assert mapped_errors[0].path == "grants[0].indexed_amount"
+    assert mapped_errors[0].severity == "error"
+
+
+def test_validation_error_legacy_code_is_normalized() -> None:
+    parsed = ValidationError(
+        code="ERR_REQUIRED_FIELD_MISSING",
+        path="monthly_cap",
+        message="monthly_cap is required",
+        severity="error",
+        source_id=None,
     )
 
-    assert parsed.overlap_months == 0
+    assert parsed.code == "MISSING_REQUIRED_VALUE"
 
 
 def test_fixation_result_success_with_validation_errors_fails() -> None:
     payload = valid_success_result_payload()
     payload["validation_errors"] = [
         {
-            "code": "ERR",
+            "code": "INVALID_GLOBAL_INPUT",
             "path": "x",
             "message": "bad",
             "severity": "error",

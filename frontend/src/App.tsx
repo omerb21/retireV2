@@ -3,15 +3,10 @@ import { Link } from "react-router-dom";
 import { AppRoutes } from "./routes/AppRoutes";
 
 const navLinks = [
-  "/clients",
-  "/client/create",
-  "/client/profile",
-  "/employment",
-  "/grants",
-  "/capitalizations",
-  "/fixation/params",
-  "/fixation/result",
-  "/fixation/history"
+  { path: "/fixation/input", label: "Input Screen" },
+  { path: "/fixation/result", label: "Result Screen" },
+  { path: "/fixation/history", label: "History Screen" },
+  { path: "/fixation/runs/placeholder", label: "Run Detail Screen" }
 ];
 
 function App() {
@@ -20,9 +15,9 @@ function App() {
       <h1>Retirement Planning V2 - Frontend Shell</h1>
       <nav>
         <ul>
-          {navLinks.map((path) => (
+          {navLinks.map(({ path, label }) => (
             <li key={path}>
-              <Link to={path}>{path}</Link>
+              <Link to={path}>{label}</Link>
             </li>
           ))}
         </ul>

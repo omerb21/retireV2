@@ -45,6 +45,7 @@ def valid_fixation_input_payload() -> dict:
                 "source_label": "source",
             }
         ],
+        "idf_relevant": True,
         "idf": {
             "idf_id": "I1",
             "reduction_amount": 1000,
@@ -86,6 +87,7 @@ def valid_success_result_payload() -> dict:
         "audit_rows": [
             {
                 "row_id": "R1",
+                "stage_order": 1,
                 "category": "total",
                 "source_id": None,
                 "label": "Total",
@@ -143,6 +145,25 @@ def test_missing_indexed_amount_fails() -> None:
 def test_missing_idf_field_fails() -> None:
     payload = valid_fixation_input_payload()
     del payload["idf"]
+
+    with pytest.raises(PydanticValidationError):
+        FixationInput(**payload)
+
+
+def test_idf_relevant_false_allows_omitted_idf() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf_relevant"] = False
+    payload["idf"] = None
+
+    parsed = FixationInput(**payload)
+
+    assert parsed.idf_relevant is False
+    assert parsed.idf is None
+
+
+def test_invalid_idf_relevant_marker_fails() -> None:
+    payload = valid_fixation_input_payload()
+    payload["idf_relevant"] = "yes"
 
     with pytest.raises(PydanticValidationError):
         FixationInput(**payload)
@@ -292,8 +313,9 @@ def test_idf_promoter_age_date_before_later_date_fails() -> None:
         FixationInput(**payload)
 
 
-def test_idf_null_passes() -> None:
+def test_idf_null_passes_when_not_relevant() -> None:
     payload = valid_fixation_input_payload()
+    payload["idf_relevant"] = False
     payload["idf"] = None
 
     parsed = FixationInput(**payload)
@@ -305,6 +327,7 @@ def test_audit_row_invalid_category_fails() -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
+            stage_order=1,
             category="bad-category",
             source_id=None,
             label="Bad",
@@ -319,6 +342,7 @@ def test_audit_row_missing_source_id_for_grant_fails() -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
+            stage_order=1,
             category="grant",
             source_id=None,
             label="Grant",
@@ -333,12 +357,43 @@ def test_audit_row_negative_impact_fails() -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
+            stage_order=1,
             category="total",
             source_id=None,
             label="Total",
             input_amount=None,
             output_amount=0,
             impact_amount=-1,
+            details={},
+        )
+
+
+def test_audit_row_missing_stage_order_fails() -> None:
+    with pytest.raises(PydanticValidationError):
+        AuditRow(
+            row_id="R1",
+            category="total",
+            source_id=None,
+            label="Total",
+            input_amount=None,
+            output_amount=0,
+            impact_amount=0,
+            details={},
+        )
+
+
+@pytest.mark.parametrize("stage_order", [0, -1])
+def test_audit_row_stage_order_must_be_positive(stage_order: int) -> None:
+    with pytest.raises(PydanticValidationError):
+        AuditRow(
+            row_id="R1",
+            stage_order=stage_order,
+            category="total",
+            source_id=None,
+            label="Total",
+            input_amount=None,
+            output_amount=0,
+            impact_amount=0,
             details={},
         )
 
@@ -362,6 +417,30 @@ def test_idf_result_overlap_months_zero_fails() -> None:
             monthly_reduction_for_calc=35.0,
             overlap_months=0,
             impact_amount=0,
+            informational_only=True,
+        )
+
+
+def test_idf_result_informational_only_marker_required() -> None:
+    with pytest.raises(PydanticValidationError):
+        IDFResult(
+            idf_id="I1",
+            base_reduction=100.0,
+            monthly_reduction_for_calc=35.0,
+            overlap_months=1,
+            impact_amount=0,
+        )
+
+
+def test_idf_result_informational_only_marker_rejects_unsupported_value() -> None:
+    with pytest.raises(PydanticValidationError):
+        IDFResult(
+            idf_id="I1",
+            base_reduction=100.0,
+            monthly_reduction_for_calc=35.0,
+            overlap_months=1,
+            impact_amount=0,
+            informational_only=False,
         )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError as PydanticValidationError, field_validator, model_validator
+from pydantic import BaseModel, StrictBool, ValidationError as PydanticValidationError, field_validator, model_validator
 
 
 def _require_non_empty(value: str, field_name: str) -> str:
@@ -207,6 +207,7 @@ class FixationInput(BaseModel):
     grants: list[GrantInput]
     future_grant_reserved: float
     actual_capitalizations: list[ActualCapitalizationInput]
+    idf_relevant: StrictBool
     idf: IDFInput | None
     metadata: dict[str, Any] | None = None
 
@@ -254,6 +255,9 @@ class FixationInput(BaseModel):
     def validate_cross_field_rules(self) -> "FixationInput":
         if self.eligibility_year != self.eligibility_date.year:
             raise ValueError("eligibility_year must match eligibility_date year")
+
+        if self.idf_relevant and self.idf is None:
+            raise ValueError("idf is required when idf_relevant is true")
 
         if self.idf is not None:
             later_date = max(self.idf.commutation_date, self.eligibility_date)
@@ -309,6 +313,7 @@ class IDFResult(BaseModel):
     monthly_reduction_for_calc: float
     overlap_months: float
     impact_amount: float
+    informational_only: Literal[True]
 
     @field_validator("idf_id")
     @classmethod
@@ -350,6 +355,7 @@ AuditCategory = Literal[
 
 class AuditRow(BaseModel):
     row_id: str
+    stage_order: int
     category: AuditCategory
     source_id: str | None
     label: str
@@ -368,6 +374,13 @@ class AuditRow(BaseModel):
     def validate_impact_amount(cls, value: float) -> float:
         if value < 0:
             raise ValueError("impact_amount must be >= 0")
+        return value
+
+    @field_validator("stage_order")
+    @classmethod
+    def validate_stage_order(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("stage_order must be > 0")
         return value
 
     @model_validator(mode="after")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, StrictBool, ValidationError as PydanticValidationError, field_validator, model_validator
+from pydantic import BaseModel, RootModel, StrictBool, ValidationError as PydanticValidationError, field_validator, model_validator
 
 
 def _require_non_empty(value: str, field_name: str) -> str:
@@ -343,13 +343,17 @@ class IDFResult(BaseModel):
 
 
 AuditCategory = Literal[
+    "input_validation",
     "initial_entitlement",
-    "grant",
+    "grant_impact",
+    "15_year_exclusion",
+    "32_year_ratio",
     "future_grant_reserve",
     "actual_capitalization",
-    "idf",
-    "total",
+    "idf_treatment",
+    "total_impact",
     "remaining_exemption",
+    "exempt_pension",
 ]
 
 
@@ -385,11 +389,11 @@ class AuditRow(BaseModel):
 
     @model_validator(mode="after")
     def validate_audit_dependencies(self) -> "AuditRow":
-        requires_source_id = {"grant", "actual_capitalization", "idf"}
+        requires_source_id = {"actual_capitalization", "idf_treatment"}
         if self.category in requires_source_id and not self.source_id:
-            raise ValueError("source_id is required for grant, actual_capitalization, and idf categories")
+            raise ValueError("source_id is required for actual_capitalization and idf_treatment categories")
 
-        input_required_categories = {"grant", "future_grant_reserve", "actual_capitalization", "idf"}
+        input_required_categories = {"future_grant_reserve", "actual_capitalization", "idf_treatment"}
         if self.category in input_required_categories and self.input_amount is None:
             raise ValueError("input_amount may be null only when not applicable")
 
@@ -415,10 +419,20 @@ class ValidationError(BaseModel):
         return _require_non_empty(value, str(info.field_name))
 
 
+class FixationValidationErrors(RootModel[list[ValidationError]]):
+    root: list[ValidationError]
+
+    @model_validator(mode="after")
+    def validate_non_empty(self) -> "FixationValidationErrors":
+        if not self.root:
+            raise ValueError("validation failure output must contain at least one ValidationError")
+        return self
+
+
 class FixationResult(BaseModel):
     calculation_id: str | None = None
     calculation_version: str | None = None
-    status: Literal["success", "validation_failed"]
+    status: Literal["success"]
     validation_errors: list[ValidationError]
     eligibility_date: date | None = None
     eligibility_year: int | None = None
@@ -443,24 +457,6 @@ class FixationResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_status_behavior(self) -> "FixationResult":
-        numeric_fields = (
-            "eligibility_year",
-            "monthly_cap",
-            "exemption_percentage",
-            "capital_multiplier",
-            "initial_exempt_capital",
-            "grant_impact_total",
-            "future_grant_reserved",
-            "future_grant_impact",
-            "actual_capitalization_impact",
-            "idf_impact",
-            "total_impact",
-            "remaining_exempt_capital",
-            "monthly_exempt_pension",
-            "capital_exemption_percentage",
-            "pension_exemption_percentage",
-        )
-
         if self.status == "success":
             if self.validation_errors:
                 raise ValueError("validation_errors must be empty when status is success")
@@ -490,13 +486,5 @@ class FixationResult(BaseModel):
             for field_name in required_success_fields:
                 if getattr(self, field_name) is None:
                     raise ValueError(f"{field_name} must be present when status is success")
-
-        if self.status == "validation_failed":
-            if not self.validation_errors:
-                raise ValueError("validation_errors must be non-empty when status is validation_failed")
-
-            for field_name in numeric_fields:
-                if getattr(self, field_name) is not None:
-                    raise ValueError(f"{field_name} must be omitted when status is validation_failed")
 
         return self

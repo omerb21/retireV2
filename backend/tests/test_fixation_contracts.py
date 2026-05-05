@@ -7,6 +7,7 @@ from app.schemas.fixation_contracts import (
     AuditRow,
     FixationInput,
     FixationResult,
+    FixationValidationErrors,
     GLOBAL_INPUT_PATH,
     IDFResult,
     ValidationError,
@@ -88,7 +89,7 @@ def valid_success_result_payload() -> dict:
             {
                 "row_id": "R1",
                 "stage_order": 1,
-                "category": "total",
+                "category": "total_impact",
                 "source_id": None,
                 "label": "Total",
                 "input_amount": None,
@@ -97,24 +98,6 @@ def valid_success_result_payload() -> dict:
                 "details": {"x": 1},
             }
         ],
-    }
-
-
-def valid_validation_failed_result_payload() -> dict:
-    return {
-        "calculation_id": "calc-1",
-        "calculation_version": "v1",
-        "status": "validation_failed",
-        "validation_errors": [
-            {
-                "code": "MISSING_REQUIRED_VALUE",
-                "path": "monthly_cap",
-                "message": "monthly_cap is required",
-                "severity": "error",
-                "source_id": None,
-            }
-        ],
-        "eligibility_date": "2025-01-01",
     }
 
 
@@ -338,15 +321,70 @@ def test_audit_row_invalid_category_fails() -> None:
         )
 
 
-def test_audit_row_missing_source_id_for_grant_fails() -> None:
+@pytest.mark.parametrize(
+    ("category", "source_id", "input_amount"),
+    [
+        ("input_validation", None, None),
+        ("initial_entitlement", None, None),
+        ("grant_impact", None, None),
+        ("15_year_exclusion", None, None),
+        ("32_year_ratio", None, None),
+        ("future_grant_reserve", None, 100.0),
+        ("actual_capitalization", "C1", 100.0),
+        ("idf_treatment", "I1", 100.0),
+        ("total_impact", None, None),
+        ("remaining_exemption", None, None),
+        ("exempt_pension", None, None),
+    ],
+)
+def test_audit_row_approved_categories_are_supported(
+    category: str,
+    source_id: str | None,
+    input_amount: float | None,
+) -> None:
+    parsed = AuditRow(
+        row_id="R1",
+        stage_order=1,
+        category=category,
+        source_id=source_id,
+        label="Label",
+        input_amount=input_amount,
+        output_amount=0,
+        impact_amount=0,
+        details={},
+    )
+
+    assert parsed.category == category
+
+
+@pytest.mark.parametrize("category", ["actual_capitalization", "idf_treatment"])
+def test_audit_row_missing_source_id_for_required_categories_fails(category: str) -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
             stage_order=1,
-            category="grant",
+            category=category,
             source_id=None,
-            label="Grant",
+            label="Label",
             input_amount=100,
+            output_amount=100,
+            impact_amount=10,
+            details={},
+        )
+
+
+@pytest.mark.parametrize("category", ["future_grant_reserve", "actual_capitalization", "idf_treatment"])
+def test_audit_row_missing_input_amount_for_required_categories_fails(category: str) -> None:
+    source_id = "SRC1" if category in {"actual_capitalization", "idf_treatment"} else None
+
+    with pytest.raises(PydanticValidationError):
+        AuditRow(
+            row_id="R1",
+            stage_order=1,
+            category=category,
+            source_id=source_id,
+            label="Label",
+            input_amount=None,
             output_amount=100,
             impact_amount=10,
             details={},
@@ -358,7 +396,7 @@ def test_audit_row_negative_impact_fails() -> None:
         AuditRow(
             row_id="R1",
             stage_order=1,
-            category="total",
+            category="total_impact",
             source_id=None,
             label="Total",
             input_amount=None,
@@ -372,7 +410,7 @@ def test_audit_row_missing_stage_order_fails() -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
-            category="total",
+            category="total_impact",
             source_id=None,
             label="Total",
             input_amount=None,
@@ -388,7 +426,7 @@ def test_audit_row_stage_order_must_be_positive(stage_order: int) -> None:
         AuditRow(
             row_id="R1",
             stage_order=stage_order,
-            category="total",
+            category="total_impact",
             source_id=None,
             label="Total",
             input_amount=None,
@@ -407,6 +445,27 @@ def test_validation_error_null_source_id_allowed() -> None:
     parsed = ValidationError(code="INVALID_GLOBAL_INPUT", path="x", message="m", severity="error", source_id=None)
 
     assert parsed.source_id is None
+
+
+def test_fixation_validation_errors_output_accepts_non_empty_validation_error_list() -> None:
+    parsed = FixationValidationErrors(
+        root=[
+            ValidationError(
+                code="MISSING_REQUIRED_VALUE",
+                path="monthly_cap",
+                message="monthly_cap is required",
+                severity="error",
+                source_id=None,
+            )
+        ]
+    )
+
+    assert len(parsed.root) == 1
+
+
+def test_fixation_validation_errors_output_rejects_empty_list() -> None:
+    with pytest.raises(PydanticValidationError):
+        FixationValidationErrors(root=[])
 
 
 def test_idf_result_overlap_months_zero_fails() -> None:
@@ -524,17 +583,18 @@ def test_fixation_result_success_missing_numeric_fields_fails() -> None:
         FixationResult(**payload)
 
 
-def test_fixation_result_validation_failed_with_empty_errors_fails() -> None:
-    payload = valid_validation_failed_result_payload()
-    payload["validation_errors"] = []
-
-    with pytest.raises(PydanticValidationError):
-        FixationResult(**payload)
-
-
-def test_fixation_result_validation_failed_with_numeric_fields_present_fails() -> None:
-    payload = valid_validation_failed_result_payload()
-    payload["monthly_cap"] = 9430
+def test_fixation_result_validation_failed_status_is_disallowed() -> None:
+    payload = deepcopy(valid_success_result_payload())
+    payload["status"] = "validation_failed"
+    payload["validation_errors"] = [
+        {
+            "code": "MISSING_REQUIRED_VALUE",
+            "path": "monthly_cap",
+            "message": "monthly_cap is required",
+            "severity": "error",
+            "source_id": None,
+        }
+    ]
 
     with pytest.raises(PydanticValidationError):
         FixationResult(**payload)

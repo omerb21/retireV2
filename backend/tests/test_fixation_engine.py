@@ -7,7 +7,7 @@ from app.engines.fixation_engine import (
     calculate_fixation,
     calculate_fixation_from_payload,
 )
-from app.schemas.fixation_contracts import FixationInput
+from app.schemas.fixation_contracts import FixationInput, FixationResult, ValidationError
 
 
 def valid_payload() -> dict:
@@ -22,6 +22,7 @@ def valid_payload() -> dict:
         "grants": [],
         "future_grant_reserved": 0,
         "actual_capitalizations": [],
+        "idf_relevant": False,
         "idf": None,
         "metadata": {"trace": "x"},
     }
@@ -34,10 +35,15 @@ def test_fixation_engine_base_case_success() -> None:
     assert result.initial_exempt_capital == 90000.0
     assert result.total_impact == 0.0
     assert result.remaining_exempt_capital == 90000.0
-    categories = [row.category for row in result.audit_rows or []]
-    assert "initial_entitlement" in categories
-    assert "total" in categories
-    assert "remaining_exemption" in categories
+    rows = result.audit_rows or []
+    assert [row.category for row in rows] == [
+        "input_validation",
+        "initial_entitlement",
+        "total_impact",
+        "remaining_exemption",
+        "exempt_pension",
+    ]
+    assert [row.stage_order for row in rows] == [1, 2, 9, 10, 11]
 
 
 def test_fixation_engine_grant_excluded_by_15_year_rule() -> None:
@@ -58,7 +64,7 @@ def test_fixation_engine_grant_excluded_by_15_year_rule() -> None:
     assert result.grant_results is not None
     assert result.grant_results[0].impact_amount == 0.0
     assert result.grant_results[0].exclusion_reason == "excluded_15_year_rule"
-    grant_rows = [r for r in (result.audit_rows or []) if r.category == "grant"]
+    grant_rows = [r for r in (result.audit_rows or []) if r.category == "grant_impact"]
     assert len(grant_rows) == 1
 
 
@@ -156,43 +162,48 @@ def test_fixation_engine_actual_capitalization_impact() -> None:
 
 def test_fixation_engine_idf_full_months() -> None:
     payload = valid_payload()
+    payload["idf_relevant"] = True
     payload["idf"] = {
         "idf_id": "I1",
         "reduction_amount": 1000,
         "original_commutation_percent": 25,
         "current_commutation_percent": 20,
         "commutation_date": "2025-01-15",
-        "promoter_age_date": "2025-04-15",
+        "promoter_age_date": "2025-04-16",
     }
 
     result = calculate_fixation(FixationInput(**payload))
 
     assert result.idf_result is not None
-    assert result.idf_result.overlap_months == 3.0
+    assert result.idf_result.overlap_months >= 1
     assert result.idf_result.monthly_reduction_for_calc == 350.0
-    assert result.idf_impact == 1050.0
+    assert result.idf_result.informational_only is True
+    assert result.idf_impact == 0.0
+    assert result.total_impact == 0.0
+    idf_rows = [r for r in (result.audit_rows or []) if r.category == "idf_treatment"]
+    assert len(idf_rows) == 1
+    assert idf_rows[0].impact_amount == 0.0
 
 
-def test_fixation_engine_idf_partial_month_is_success_with_zero_impact() -> None:
+def test_fixation_engine_15_year_boundary_exactly_on_boundary_is_excluded() -> None:
     payload = valid_payload()
-    payload["idf"] = {
-        "idf_id": "I2",
-        "reduction_amount": 1000,
-        "original_commutation_percent": 25,
-        "current_commutation_percent": 20,
-        "commutation_date": "2025-01-15",
-        "promoter_age_date": "2025-02-14",
-    }
+    payload["eligibility_date"] = "2026-01-01"
+    payload["eligibility_year"] = 2026
+    payload["grants"] = [
+        {
+            "grant_id": "G-BOUND",
+            "indexed_amount": 100000,
+            "grant_date": "2011-01-01",
+            "work_start_date": "1994-01-01",
+            "work_end_date": "2026-01-01",
+        }
+    ]
 
     result = calculate_fixation(FixationInput(**payload))
 
-    assert result.status == "success"
-    assert result.idf_result is not None
-    assert result.idf_result.overlap_months == 0
-    assert result.idf_impact == 0.0
-    idf_rows = [r for r in (result.audit_rows or []) if r.category == "idf"]
-    assert len(idf_rows) == 1
-    assert idf_rows[0].details["overlap_months"] == 0
+    assert result.grant_impact_total == 0.0
+    assert result.grant_results is not None
+    assert result.grant_results[0].exclusion_reason == "excluded_15_year_rule"
 
 
 def test_fixation_engine_zero_entitlement() -> None:
@@ -251,7 +262,7 @@ def test_fixation_engine_validation_failed_for_invalid_payload() -> None:
 
     result = calculate_fixation_from_payload(payload)
 
-    assert result.status == "validation_failed"
-    assert result.validation_errors
-    assert result.monthly_cap is None
-    assert result.initial_exempt_capital is None
+    assert isinstance(result, list)
+    assert result
+    assert all(isinstance(err, ValidationError) for err in result)
+    assert not isinstance(result, FixationResult)

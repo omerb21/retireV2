@@ -23,7 +23,7 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
-from app.schemas.fixation_contracts import FixationInput, FixationResult
+from app.schemas.fixation_contracts import FixationInput, FixationResult, ValidationError
 
 
 def _new_id(prefix: str) -> str:
@@ -38,6 +38,10 @@ def _as_float(value: Decimal | None) -> float | None:
 
 def calculate_fixation(input_data: FixationInput) -> FixationResult:
     return calculate_fixation_engine(input_data)
+
+
+def _is_success_result(result: FixationResult | list[ValidationError]) -> bool:
+    return isinstance(result, FixationResult)
 
 
 def create_client_source_data(
@@ -199,7 +203,7 @@ def run_fixation(
             if "calculation_version" in raw_payload:
                 input_contract_version = str(raw_payload["calculation_version"])
             result = calculate_fixation_from_payload_engine(raw_payload)
-            if result.status == "success":
+            if _is_success_result(result):
                 input_model = FixationInput(**raw_payload)
                 snapshot_payload = input_model.model_dump(mode="json")
                 input_contract_version = input_model.calculation_version
@@ -208,7 +212,7 @@ def run_fixation(
 
         run_calculation_version = (
             result.calculation_version
-            if result.calculation_version is not None
+            if _is_success_result(result) and result.calculation_version is not None
             else input_contract_version
         )
 
@@ -221,7 +225,7 @@ def run_fixation(
             fixation_run_id=run_trace_id,
             client_id=client_key,
             calculation_version=run_calculation_version,
-            status=result.status,
+            status="success" if _is_success_result(result) else "validation_failed",
             source_data_version_label=((snapshot_payload.get("metadata", {}) or {})).get(
                 "source_data_version_label"
             ),
@@ -240,7 +244,7 @@ def run_fixation(
             )
         )
 
-        if result.status == "success":
+        if _is_success_result(result):
             db_session.add(
                 FixationResultModel(
                     fixation_result_id=_new_id("result"),
@@ -281,8 +285,8 @@ def run_fixation(
                     )
                 )
 
-        if result.status == "validation_failed":
-            for idx, err in enumerate(result.validation_errors, start=1):
+        if not _is_success_result(result):
+            for idx, err in enumerate(result, start=1):
                 db_session.add(
                     FixationValidationError(
                         fixation_validation_error_id=_new_id("valerr"),

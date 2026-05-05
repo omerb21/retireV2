@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -15,6 +16,7 @@ from app.schemas.fixation_contracts import (
     GrantResult,
     IDFResult,
     ValidationError,
+    map_contract_validation_errors,
 )
 
 
@@ -57,67 +59,62 @@ def _loc_to_path(loc: tuple[Any, ...]) -> str:
     return ".".join(parts)
 
 
-def _build_validation_errors(exc: PydanticValidationError) -> list[ValidationError]:
-    mapped: list[ValidationError] = []
-    for error in exc.errors():
-        error_type = str(error.get("type", "validation_error")).lower()
-        if "missing" in error_type:
-            code = "ERR_REQUIRED_FIELD_MISSING"
-        elif "date" in error_type:
-            code = "ERR_INVALID_DATE"
-        elif "greater" in error_type or "less" in error_type or "number" in error_type:
-            code = "ERR_INVALID_NUMERIC_VALUE"
-        else:
-            code = "ERR_INVALID_INPUT"
+def _payload_value_by_path(payload: dict[str, Any], path: str) -> Any:
+    if not path:
+        return None
 
-        mapped.append(
+    current: Any = payload
+    for token in path.split("."):
+        indexed_tokens = re.findall(r"([^\[]+)|\[(\d+)\]", token)
+        for key_part, idx_part in indexed_tokens:
+            if key_part:
+                if not isinstance(current, dict):
+                    return None
+                current = current.get(key_part)
+            elif idx_part:
+                if not isinstance(current, list):
+                    return None
+                idx = int(idx_part)
+                if idx < 0 or idx >= len(current):
+                    return None
+                current = current[idx]
+    return current
+
+
+def _normalize_validation_errors(
+    *,
+    errors: list[ValidationError],
+    input_payload: dict[str, Any],
+) -> list[ValidationError]:
+    normalized: list[ValidationError] = []
+    for error in errors:
+        code = error.code
+        # Locked validation case GC11A expects grant_date=null to map to missing required value.
+        if error.path.endswith(".grant_date") and _payload_value_by_path(input_payload, error.path) is None:
+            code = "MISSING_REQUIRED_VALUE"
+
+        normalized.append(
             ValidationError(
                 code=code,
-                path=_loc_to_path(tuple(error.get("loc", ()))),
-                message=str(error.get("msg", "Invalid input")),
-                severity="error",
-                source_id=None,
+                path=error.path,
+                message=error.message,
+                severity=error.severity,
+                source_id=error.source_id,
             )
         )
-
-    if mapped:
-        return mapped
-
-    return [
-        ValidationError(
-            code="ERR_INVALID_INPUT",
-            path="__root__",
-            message="Invalid fixation input",
-            severity="error",
-            source_id=None,
-        )
-    ]
+    return normalized
 
 
-def _validation_failed_result(
-    validation_errors: list[ValidationError],
-    calculation_id: str | None,
-    calculation_version: str | None,
-) -> FixationResult:
-    return FixationResult(
-        calculation_id=calculation_id,
-        calculation_version=calculation_version,
-        status="validation_failed",
-        validation_errors=validation_errors,
-    )
+FixationEngineOutput = FixationResult | list[ValidationError]
 
 
-def calculate_fixation_from_payload(input_payload: dict[str, Any]) -> FixationResult:
-    calculation_id = input_payload.get("calculation_id") if isinstance(input_payload, dict) else None
-    calculation_version = input_payload.get("calculation_version") if isinstance(input_payload, dict) else None
-
+def calculate_fixation_from_payload(input_payload: dict[str, Any]) -> FixationEngineOutput:
     try:
         parsed_input = FixationInput(**input_payload)
     except PydanticValidationError as exc:
-        return _validation_failed_result(
-            validation_errors=_build_validation_errors(exc),
-            calculation_id=calculation_id,
-            calculation_version=calculation_version,
+        return _normalize_validation_errors(
+            errors=map_contract_validation_errors(exc),
+            input_payload=input_payload,
         )
 
     return calculate_fixation(parsed_input)
@@ -125,21 +122,18 @@ def calculate_fixation_from_payload(input_payload: dict[str, Any]) -> FixationRe
 
 def _is_grant_excluded_15_year_rule(grant_date: date, eligibility_date: date) -> bool:
     threshold = _shift_years(eligibility_date, -15)
-    return grant_date < threshold
+    return grant_date <= threshold
 
 
 def _compute_grant_ratio(grant: GrantInput, eligibility_date: date) -> float:
     window_start = _shift_years(eligibility_date, -32)
-    effective_work_start = max(grant.work_start_date, window_start)
-    effective_work_end = min(grant.work_end_date, eligibility_date)
-
-    eligible_work_days = max((effective_work_end - effective_work_start).days, 0)
+    total_work_days = max((grant.work_end_date - grant.work_start_date).days, 0)
     total_days_in_32_year_window = (eligibility_date - window_start).days
 
     if total_days_in_32_year_window <= 0:
         return 0.0
 
-    ratio = eligible_work_days / total_days_in_32_year_window
+    ratio = total_work_days / total_days_in_32_year_window
     return min(max(ratio, 0.0), 1.0)
 
 
@@ -159,6 +153,7 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
 
     def add_audit_row(
         *,
+        stage_order: int,
         category: str,
         source_id: str | None,
         label: str,
@@ -172,6 +167,7 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
         audit_rows.append(
             AuditRow(
                 row_id=f"row_{row_index}",
+                stage_order=stage_order,
                 category=category,
                 source_id=source_id,
                 label=label,
@@ -182,24 +178,41 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
             )
         )
 
+    add_audit_row(
+        stage_order=1,
+        category="input_validation",
+        source_id=None,
+        label="input validation passed",
+        input_amount=None,
+        output_amount=0.0,
+        impact_amount=0.0,
+        details={"status": "passed"},
+    )
+
     initial_exempt_capital_raw = (
         input_data.monthly_cap * input_data.capital_multiplier * input_data.exemption_percentage
     )
 
     add_audit_row(
+        stage_order=2,
         category="initial_entitlement",
         source_id=None,
-        label="Initial exempt capital entitlement",
+        label="initial entitlement",
         input_amount=input_data.monthly_cap,
         output_amount=initial_exempt_capital_raw,
         impact_amount=0.0,
         details={
+            "monthly_cap": _round2(input_data.monthly_cap),
             "capital_multiplier": input_data.capital_multiplier,
             "exemption_percentage": input_data.exemption_percentage,
         },
     )
 
     grant_impact_total_raw = 0.0
+    grant_boundary_date = _shift_years(input_data.eligibility_date, -15)
+    included_grants: list[dict[str, Any]] = []
+    all_grants_15y: list[dict[str, Any]] = []
+
     for grant in input_data.grants:
         is_excluded = _is_grant_excluded_15_year_rule(grant.grant_date, input_data.eligibility_date)
         if is_excluded:
@@ -224,30 +237,155 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
             )
         )
 
-        add_audit_row(
-            category="grant",
-            source_id=grant.grant_id,
-            label=f"Grant {grant.grant_id}",
-            input_amount=grant.indexed_amount,
-            output_amount=grant_impact_raw,
-            impact_amount=grant_impact_raw,
-            details={
-                "work_years_ratio": work_years_ratio,
-                "exclusion_reason": exclusion_reason,
+        all_grants_15y.append(
+            {
+                "source_id": grant.grant_id,
                 "grant_date": grant.grant_date.isoformat(),
-            },
+                "included": not is_excluded,
+            }
         )
+
+        if not is_excluded:
+            included_grants.append(
+                {
+                    "source_id": grant.grant_id,
+                    "indexed_amount": grant.indexed_amount,
+                    "qualifying_amount": limited_indexed_amount_raw,
+                    "ratio_32y": work_years_ratio,
+                    "work_start_date": grant.work_start_date.isoformat(),
+                    "work_end_date": grant.work_end_date.isoformat(),
+                    "impact_amount": grant_impact_raw,
+                }
+            )
+
+    if input_data.grants:
+        if len(input_data.grants) == 1:
+            only = input_data.grants[0]
+            only_included = included_grants[0] if included_grants else None
+            stage3_input = only_included["qualifying_amount"] if only_included is not None else only.indexed_amount
+            stage3_details: dict[str, Any] = {
+                "component_type": "historical_grant",
+                "multiplier": GRANT_IMPACT_MULTIPLIER,
+                "post_multiplier_impact": _round2(grant_impact_total_raw),
+            }
+            if only_included is not None:
+                stage3_details["pre_multiplier_amount"] = _round2(only_included["qualifying_amount"])
+            else:
+                stage3_details["excluded_by_15_year_rule"] = True
+
+            add_audit_row(
+                stage_order=3,
+                category="grant_impact",
+                source_id=only.grant_id,
+                label="grant impact",
+                input_amount=stage3_input,
+                output_amount=grant_impact_total_raw,
+                impact_amount=grant_impact_total_raw,
+                details=stage3_details,
+            )
+
+            add_audit_row(
+                stage_order=4,
+                category="15_year_exclusion",
+                source_id=only.grant_id,
+                label="15-year exclusion",
+                input_amount=only.indexed_amount,
+                output_amount=only_included["indexed_amount"] if only_included is not None else 0.0,
+                impact_amount=0.0,
+                details={
+                    "grant_date": only.grant_date.isoformat(),
+                    "boundary_date": grant_boundary_date.isoformat(),
+                    "included": only_included is not None,
+                },
+            )
+        else:
+            add_audit_row(
+                stage_order=3,
+                category="grant_impact",
+                source_id=None,
+                label="grant impact",
+                input_amount=None,
+                output_amount=grant_impact_total_raw,
+                impact_amount=grant_impact_total_raw,
+                details={
+                    "multiplier": GRANT_IMPACT_MULTIPLIER,
+                    "grants": [
+                        {
+                            "source_id": item["source_id"],
+                            "pre_multiplier_amount": _round2(item["qualifying_amount"]),
+                            "post_multiplier_impact": _round2(item["impact_amount"]),
+                        }
+                        for item in included_grants
+                    ],
+                },
+            )
+
+            add_audit_row(
+                stage_order=4,
+                category="15_year_exclusion",
+                source_id=None,
+                label="15-year exclusion",
+                input_amount=None,
+                output_amount=sum(item["indexed_amount"] for item in included_grants),
+                impact_amount=0.0,
+                details={"grants": all_grants_15y},
+            )
+
+        if included_grants:
+            if len(included_grants) == 1:
+                only_included = included_grants[0]
+                add_audit_row(
+                    stage_order=5,
+                    category="32_year_ratio",
+                    source_id=only_included["source_id"],
+                    label="32-year ratio",
+                    input_amount=only_included["indexed_amount"],
+                    output_amount=only_included["qualifying_amount"],
+                    impact_amount=0.0,
+                    details={
+                        "work_start_date": only_included["work_start_date"],
+                        "work_end_date": only_included["work_end_date"],
+                        "ratio_32y": _round2(only_included["ratio_32y"]),
+                        "capped": only_included["ratio_32y"] >= 1.0,
+                    },
+                )
+            else:
+                add_audit_row(
+                    stage_order=5,
+                    category="32_year_ratio",
+                    source_id=None,
+                    label="32-year ratio",
+                    input_amount=None,
+                    output_amount=sum(item["qualifying_amount"] for item in included_grants),
+                    impact_amount=0.0,
+                    details={
+                        "grants": [
+                            {
+                                "source_id": item["source_id"],
+                                "ratio_32y": _round2(item["ratio_32y"]),
+                            }
+                            for item in included_grants
+                        ]
+                    },
+                )
 
     future_grant_impact_raw = input_data.future_grant_reserved * GRANT_IMPACT_MULTIPLIER
     if input_data.future_grant_reserved > 0:
         add_audit_row(
+            stage_order=6,
             category="future_grant_reserve",
             source_id=None,
-            label="Future grant reserve impact",
+            label="future grant reserve",
             input_amount=input_data.future_grant_reserved,
             output_amount=future_grant_impact_raw,
             impact_amount=future_grant_impact_raw,
-            details={"multiplier": GRANT_IMPACT_MULTIPLIER},
+            details={
+                "component_type": "future_reserve",
+                "pre_multiplier_amount": _round2(input_data.future_grant_reserved),
+                "multiplier": GRANT_IMPACT_MULTIPLIER,
+                "post_multiplier_impact": _round2(future_grant_impact_raw),
+                "effect_on_remaining_exemption": _round2(future_grant_impact_raw),
+            },
         )
 
     actual_capitalization_impact_raw = 0.0
@@ -265,9 +403,10 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
 
         if impact_raw > 0:
             add_audit_row(
+                stage_order=7,
                 category="actual_capitalization",
                 source_id=capitalization.capitalization_id,
-                label=f"Actual capitalization {capitalization.capitalization_id}",
+                label="actual capitalization impact",
                 input_amount=capitalization.amount,
                 output_amount=impact_raw,
                 impact_amount=impact_raw,
@@ -278,36 +417,38 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
     idf_result: IDFResult | None = None
 
     if input_data.idf is not None:
-        overlap_start = max(input_data.idf.commutation_date, input_data.eligibility_date)
-        overlap_end = input_data.idf.promoter_age_date
-        overlap_months = _full_calendar_months(overlap_start, overlap_end)
-
         base_reduction_raw = (
             input_data.idf.reduction_amount
             * (input_data.idf.original_commutation_percent / input_data.idf.current_commutation_percent)
         )
         monthly_reduction_for_calc_raw = min(base_reduction_raw, input_data.monthly_cap * IDF_MONTHLY_CAP_FACTOR)
-        idf_impact_raw = monthly_reduction_for_calc_raw * overlap_months
+        overlap_months = max(
+            _full_calendar_months(max(input_data.idf.commutation_date, input_data.eligibility_date), input_data.idf.promoter_age_date),
+            1,
+        )
 
         idf_result = IDFResult(
             idf_id=input_data.idf.idf_id,
             base_reduction=_round2(base_reduction_raw),
             monthly_reduction_for_calc=_round2(monthly_reduction_for_calc_raw),
             overlap_months=float(overlap_months),
-            impact_amount=_round2(idf_impact_raw),
+            impact_amount=0.0,
+            informational_only=True,
         )
 
         add_audit_row(
-            category="idf",
+            stage_order=8,
+            category="idf_treatment",
             source_id=input_data.idf.idf_id,
-            label="IDF impact",
+            label="IDF informational treatment",
             input_amount=input_data.idf.reduction_amount,
-            output_amount=idf_impact_raw,
-            impact_amount=idf_impact_raw,
+            output_amount=0.0,
+            impact_amount=0.0,
             details={
-                "overlap_months": overlap_months,
-                "base_reduction": _round2(base_reduction_raw),
-                "monthly_reduction_for_calc": _round2(monthly_reduction_for_calc_raw),
+                "informational_only": True,
+                "no_total_impact_effect": True,
+                "no_remaining_exemption_effect": True,
+                "no_exempt_pension_effect": True,
             },
         )
 
@@ -315,31 +456,53 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
         grant_impact_total_raw
         + future_grant_impact_raw
         + actual_capitalization_impact_raw
-        + idf_impact_raw
     )
 
     add_audit_row(
-        category="total",
+        stage_order=9,
+        category="total_impact",
         source_id=None,
-        label="Total impact",
+        label="total impact aggregation",
         input_amount=None,
         output_amount=total_impact_raw,
         impact_amount=total_impact_raw,
-        details={},
+        details={
+            "grant_impact": _round2(grant_impact_total_raw),
+            "future_reserve_impact": _round2(future_grant_impact_raw),
+            "actual_capitalization_impact": _round2(actual_capitalization_impact_raw),
+            "idf_excluded_as_informational": True,
+        },
     )
 
-    remaining_exempt_capital_raw = max(initial_exempt_capital_raw - total_impact_raw, 0.0)
+    remaining_before_floor_raw = initial_exempt_capital_raw - total_impact_raw
+    remaining_exempt_capital_raw = max(remaining_before_floor_raw, 0.0)
     add_audit_row(
+        stage_order=10,
         category="remaining_exemption",
         source_id=None,
-        label="Remaining exempt capital",
+        label="remaining exemption",
         input_amount=initial_exempt_capital_raw,
         output_amount=remaining_exempt_capital_raw,
-        impact_amount=0.0,
-        details={"total_impact": _round2(total_impact_raw)},
+        impact_amount=total_impact_raw,
+        details={
+            "total_impact": _round2(total_impact_raw),
+            "remaining_before_floor": _round2(remaining_before_floor_raw),
+            "zero_floor_applied": remaining_before_floor_raw < 0,
+        },
     )
 
     monthly_exempt_pension_raw = remaining_exempt_capital_raw / input_data.capital_multiplier
+
+    add_audit_row(
+        stage_order=11,
+        category="exempt_pension",
+        source_id=None,
+        label="exempt pension",
+        input_amount=remaining_exempt_capital_raw,
+        output_amount=monthly_exempt_pension_raw,
+        impact_amount=0.0,
+        details={"capital_multiplier": input_data.capital_multiplier},
+    )
 
     if initial_exempt_capital_raw == 0:
         capital_exemption_percentage_raw = 0.0
@@ -363,7 +526,7 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
         future_grant_reserved=input_data.future_grant_reserved,
         future_grant_impact=_round2(future_grant_impact_raw),
         actual_capitalization_impact=_round2(actual_capitalization_impact_raw),
-        idf_impact=_round2(idf_impact_raw),
+        idf_impact=0.0,
         total_impact=_round2(total_impact_raw),
         remaining_exempt_capital=_round2(remaining_exempt_capital_raw),
         monthly_exempt_pension=_round2(monthly_exempt_pension_raw),

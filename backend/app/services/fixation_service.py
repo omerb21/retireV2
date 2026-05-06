@@ -177,6 +177,11 @@ def assemble_fixation_input(
         "metadata": explicit_parameters.get("metadata"),
     }
 
+    # Phase 5A service assembly only: for ordinary non-IDF service flow, use
+    # this explicit Supervisor-approved assembly policy until an explicit IDF
+    # relevance source exists; a future explicit source must override it.
+    payload["idf_relevant"] = False
+
     return FixationInput(**payload)
 
 

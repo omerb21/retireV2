@@ -112,6 +112,7 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
             "promoter_age_date": "2028-01-01",
             "source_label": "idf_source",
         },
+        "idf_relevant": True,
     }
 
 

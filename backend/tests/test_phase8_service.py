@@ -210,6 +210,7 @@ def test_run_fixation_validation_failed_persists_errors_without_result(tmp_path:
         assert run.status == "validation_failed"
         assert run.fixation_input_snapshot is not None
         assert run.fixation_result is None
+        assert len(run.fixation_audit_rows) == 0
         assert len(run.fixation_validation_errors) > 0
 
 

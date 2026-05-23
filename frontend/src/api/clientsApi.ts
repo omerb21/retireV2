@@ -25,6 +25,8 @@ export interface ClientListItem {
   birth_date: string | null;
 }
 
+export type ClientDetailItem = ClientListItem;
+
 const API_PREFIX = "/api";
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -61,6 +63,12 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
 
 export function getClients(): Promise<ClientListItem[]> {
   return requestJson<ClientListItem[]>("/clients", {
+    method: "GET"
+  });
+}
+
+export function getClient(clientId: number): Promise<ClientDetailItem> {
+  return requestJson<ClientDetailItem>(`/clients/${clientId}`, {
     method: "GET"
   });
 }

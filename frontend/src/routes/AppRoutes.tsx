@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { CalculationResultScreen } from "../pages/CalculationResultScreen";
+import { ClientDetailScreen } from "../pages/ClientDetailScreen";
 import { ClientListScreen } from "../pages/ClientListScreen";
 import { FixationInputScreen } from "../pages/FixationInputScreen";
 import { RunDetailScreen } from "../pages/RunDetailScreen";
@@ -10,6 +11,7 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<Navigate to="/clients" replace />} />
       <Route path="/clients" element={<ClientListScreen />} />
+      <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/fixation/input" element={<FixationInputScreen />} />
       <Route path="/fixation/result" element={<CalculationResultScreen />} />
       <Route path="/fixation/history" element={<RunHistoryScreen />} />

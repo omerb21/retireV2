@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { ApiTransportError, type ClientListItem, getClients } from "../api/clientsApi";
 
@@ -68,9 +69,14 @@ export function ClientListScreen() {
         {clients.map((client) => (
           <li key={client.client_id}>
             <article>
-              <h3>{client.full_name}</h3>
+              <h3>
+                <Link to={`/clients/${client.client_id}`}>{client.full_name}</Link>
+              </h3>
               <p>ID Number: {client.id_number}</p>
               {client.birth_date ? <p>Birth Date: {client.birth_date}</p> : null}
+              <p>
+                <Link to={`/clients/${client.client_id}`}>Open client details</Link>
+              </p>
             </article>
           </li>
         ))}

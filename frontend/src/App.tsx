@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { AppRoutes } from "./routes/AppRoutes";
 
 const navLinks = [
+  { path: "/clients", label: "Client List" },
   { path: "/fixation/input", label: "Input Screen" },
   { path: "/fixation/result", label: "Result Screen" },
   { path: "/fixation/history", label: "History Screen" },

@@ -1,12 +1,40 @@
 import { render, screen } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
 
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+  fetchMock.mockResolvedValue({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: {
+      get: () => "application/json"
+    },
+    json: async () => [
+      {
+        client_id: 1,
+        full_name: "Jane Doe",
+        id_number: "001234567",
+        birth_date: "1970-01-01"
+      }
+    ]
+  });
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+
 describe("App", () => {
-  it("renders frontend shell heading", () => {
+  it("renders frontend shell heading and client list screen", async () => {
     render(
       <BrowserRouter>
         <App />
@@ -14,5 +42,7 @@ describe("App", () => {
     );
 
     expect(screen.getByText("Retirement Planning V2 - Frontend Shell")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Client List" })).toBeInTheDocument();
+    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
   });
 });

@@ -123,6 +123,20 @@ def _require_client(db: Session, client_id: int) -> Client:
     return client
 
 
+@router.get("", response_model=list[ClientResponse])
+def list_clients(db: Session = Depends(get_db)) -> list[ClientResponse]:
+    clients = db.scalars(select(Client).order_by(Client.client_id.asc())).all()
+    return [
+        ClientResponse(
+            client_id=client.client_id,
+            full_name=client.display_name,
+            id_number=client.id_number,
+            birth_date=client.birth_date,
+        )
+        for client in clients
+    ]
+
+
 @router.post("", response_model=ClientResponse)
 def create_client(payload: ClientCreateRequest, db: Session = Depends(get_db)) -> ClientResponse:
     client = Client(

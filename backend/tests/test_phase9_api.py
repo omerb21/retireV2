@@ -119,12 +119,21 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
 def test_phase9_api_end_to_end(tmp_path: Path) -> None:
     client, session_local, db_path = _build_client(tmp_path)
     try:
+        empty_list_resp = client.get("/api/clients")
+        assert empty_list_resp.status_code == 200
+        assert empty_list_resp.json() == []
+
         # 1. Client id_number roundtrip and no status overload
         created = _create_client(client, id_number="001234567")
         created_client_id = created["client_id"]
         assert isinstance(created_client_id, int)
         assert created["full_name"] == "Jane Doe"
         assert created["id_number"] == "001234567"
+
+        second_created = _create_client(client, id_number="001234568")
+        list_clients_resp = client.get("/api/clients")
+        assert list_clients_resp.status_code == 200
+        assert list_clients_resp.json() == [created, second_created]
 
         get_client_resp = client.get(f"/api/clients/{created_client_id}")
         assert get_client_resp.status_code == 200

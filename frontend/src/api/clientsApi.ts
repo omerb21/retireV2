@@ -27,6 +27,16 @@ export interface ClientListItem {
 
 export type ClientDetailItem = ClientListItem;
 
+export interface EmploymentRecordItem {
+  employment_record_id: string;
+  client_id: number;
+  employer_name: string;
+  work_start_date: string;
+  work_end_date: string | null;
+  is_current: boolean;
+  notes: string | null;
+}
+
 const API_PREFIX = "/api";
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -69,6 +79,12 @@ export function getClients(): Promise<ClientListItem[]> {
 
 export function getClient(clientId: number): Promise<ClientDetailItem> {
   return requestJson<ClientDetailItem>(`/clients/${clientId}`, {
+    method: "GET"
+  });
+}
+
+export function getEmploymentRecords(clientId: number): Promise<EmploymentRecordItem[]> {
+  return requestJson<EmploymentRecordItem[]>(`/clients/${clientId}/employment-records`, {
     method: "GET"
   });
 }

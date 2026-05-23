@@ -128,6 +128,14 @@ export function ClientDetailScreen() {
       <p>ID Number: {client.id_number}</p>
       {client.birth_date ? <p>Birth Date: {client.birth_date}</p> : null}
       <p>
+        <Link
+          to={`/clients/${client.client_id}/employment-history`}
+          state={{ clientName: client.full_name }}
+        >
+          Employment History
+        </Link>
+      </p>
+      <p>
         <Link to="/clients">Back to client list</Link>
       </p>
     </section>

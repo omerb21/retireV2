@@ -50,6 +50,22 @@ export interface GrantItem {
   notes: string | null;
 }
 
+export interface ActualCapitalizationItem {
+  capitalization_id: string;
+  client_id: number;
+  amount: number | string;
+  capitalization_date: string;
+  source_label: string | null;
+  notes: string | null;
+}
+
+export interface ActualCapitalizationCreatePayload {
+  amount: number;
+  capitalization_date: string;
+  source_label: string | null;
+  notes: string | null;
+}
+
 const API_PREFIX = "/api";
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -105,5 +121,21 @@ export function getEmploymentRecords(clientId: number): Promise<EmploymentRecord
 export function getGrants(clientId: number): Promise<GrantItem[]> {
   return requestJson<GrantItem[]>(`/clients/${clientId}/grants`, {
     method: "GET"
+  });
+}
+
+export function getActualCapitalizations(clientId: number): Promise<ActualCapitalizationItem[]> {
+  return requestJson<ActualCapitalizationItem[]>(`/clients/${clientId}/actual-capitalizations`, {
+    method: "GET"
+  });
+}
+
+export function createActualCapitalization(
+  clientId: number,
+  payload: ActualCapitalizationCreatePayload
+): Promise<ActualCapitalizationItem> {
+  return requestJson<ActualCapitalizationItem>(`/clients/${clientId}/actual-capitalizations`, {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }

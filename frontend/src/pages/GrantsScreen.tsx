@@ -82,6 +82,8 @@ export function GrantsScreen() {
   const detailPath = Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}` : "/clients";
   const employmentHistoryPath =
     Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}/employment-history` : "/clients";
+  const actualCapitalizationsPath =
+    Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}/actual-capitalizations` : "/clients";
   const backState = clientName ? { clientName } : undefined;
 
   if (isLoading) {
@@ -93,6 +95,9 @@ export function GrantsScreen() {
         <p>Loading grants...</p>
         <p>
           <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+        </p>
+        <p>
+          <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
         </p>
         <p>
           <Link to={detailPath}>Back to client detail</Link>
@@ -110,6 +115,9 @@ export function GrantsScreen() {
         <p>Grants are not available yet for this client.</p>
         <p>
           <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+        </p>
+        <p>
+          <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
         </p>
         <p>
           <Link to={detailPath}>Back to client detail</Link>
@@ -130,6 +138,9 @@ export function GrantsScreen() {
           <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
         </p>
         <p>
+          <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
+        </p>
+        <p>
           <Link to={detailPath}>Back to client detail</Link>
         </p>
       </section>
@@ -145,6 +156,9 @@ export function GrantsScreen() {
         <p>No grants found.</p>
         <p>
           <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+        </p>
+        <p>
+          <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
         </p>
         <p>
           <Link to={detailPath}>Back to client detail</Link>
@@ -178,6 +192,9 @@ export function GrantsScreen() {
       </ul>
       <p>
         <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+      </p>
+      <p>
+        <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
       </p>
       <p>
         <Link to={detailPath}>Back to client detail</Link>

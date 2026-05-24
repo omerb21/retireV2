@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 
-import { ApiTransportError, type EmploymentRecordItem, getEmploymentRecords } from "../api/clientsApi";
+import { ApiTransportError, type GrantItem, getGrants } from "../api/clientsApi";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
@@ -12,10 +12,10 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unable to load employment history.";
+  return "Unable to load grants.";
 }
 
-export function EmploymentHistoryScreen() {
+export function GrantsScreen() {
   const { clientId } = useParams<{ clientId: string }>();
   const location = useLocation();
   const parsedClientId = Number(clientId);
@@ -26,7 +26,7 @@ export function EmploymentHistoryScreen() {
     typeof location.state.clientName === "string"
       ? location.state.clientName
       : null;
-  const [records, setRecords] = useState<EmploymentRecordItem[]>([]);
+  const [grants, setGrants] = useState<GrantItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isNotFound, setIsNotFound] = useState(false);
@@ -34,7 +34,7 @@ export function EmploymentHistoryScreen() {
   useEffect(() => {
     let isActive = true;
 
-    async function loadEmploymentHistory() {
+    async function loadGrants() {
       if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
         if (isActive) {
           setIsNotFound(true);
@@ -45,11 +45,11 @@ export function EmploymentHistoryScreen() {
       }
 
       try {
-        const nextRecords = await getEmploymentRecords(parsedClientId);
+        const nextGrants = await getGrants(parsedClientId);
         if (!isActive) {
           return;
         }
-        setRecords(nextRecords);
+        setGrants(nextGrants);
         setIsNotFound(false);
         setErrorMessage(null);
       } catch (error) {
@@ -57,11 +57,11 @@ export function EmploymentHistoryScreen() {
           return;
         }
         if (error instanceof ApiTransportError && error.status === 404) {
-          setRecords([]);
+          setGrants([]);
           setIsNotFound(true);
           setErrorMessage(null);
         } else {
-          setRecords([]);
+          setGrants([]);
           setIsNotFound(false);
           setErrorMessage(getErrorMessage(error));
         }
@@ -72,24 +72,30 @@ export function EmploymentHistoryScreen() {
       }
     }
 
-    void loadEmploymentHistory();
+    void loadGrants();
 
     return () => {
       isActive = false;
     };
   }, [parsedClientId]);
 
+  const detailPath = Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}` : "/clients";
+  const employmentHistoryPath =
+    Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}/employment-history` : "/clients";
+  const backState = clientName ? { clientName } : undefined;
+
   if (isLoading) {
     return (
       <section>
-        <h2>Employment History</h2>
+        <h2>Grants</h2>
         <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
         {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Loading employment history...</p>
+        <p>Loading grants...</p>
         <p>
-          <Link to={Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}` : "/clients"}>
-            Back to client detail
-          </Link>
+          <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+        </p>
+        <p>
+          <Link to={detailPath}>Back to client detail</Link>
         </p>
       </section>
     );
@@ -98,22 +104,15 @@ export function EmploymentHistoryScreen() {
   if (isNotFound) {
     return (
       <section>
-        <h2>Employment History</h2>
+        <h2>Grants</h2>
         <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
         {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Employment history is not available for this client.</p>
+        <p>Grants are not available yet for this client.</p>
         <p>
-          <Link
-            to={Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}/grants` : "/clients"}
-            state={clientName ? { clientName } : undefined}
-          >
-            Grants
-          </Link>
+          <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
         </p>
         <p>
-          <Link to={Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}` : "/clients"}>
-            Back to client detail
-          </Link>
+          <Link to={detailPath}>Back to client detail</Link>
         </p>
       </section>
     );
@@ -122,37 +121,33 @@ export function EmploymentHistoryScreen() {
   if (errorMessage !== null) {
     return (
       <section>
-        <h2>Employment History</h2>
+        <h2>Grants</h2>
         <p>Client ID: {parsedClientId}</p>
         {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Unable to load employment history.</p>
+        <p>Unable to load grants.</p>
         <p>{errorMessage}</p>
         <p>
-          <Link to={`/clients/${parsedClientId}/grants`} state={clientName ? { clientName } : undefined}>
-            Grants
-          </Link>
+          <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
         </p>
         <p>
-          <Link to={`/clients/${parsedClientId}`}>Back to client detail</Link>
+          <Link to={detailPath}>Back to client detail</Link>
         </p>
       </section>
     );
   }
 
-  if (records.length === 0) {
+  if (grants.length === 0) {
     return (
       <section>
-        <h2>Employment History</h2>
+        <h2>Grants</h2>
         <p>Client ID: {parsedClientId}</p>
         {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>No employment records found.</p>
+        <p>No grants found.</p>
         <p>
-          <Link to={`/clients/${parsedClientId}/grants`} state={clientName ? { clientName } : undefined}>
-            Grants
-          </Link>
+          <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
         </p>
         <p>
-          <Link to={`/clients/${parsedClientId}`}>Back to client detail</Link>
+          <Link to={detailPath}>Back to client detail</Link>
         </p>
       </section>
     );
@@ -160,30 +155,32 @@ export function EmploymentHistoryScreen() {
 
   return (
     <section>
-      <h2>Employment History</h2>
+      <h2>Grants</h2>
       <p>Client ID: {parsedClientId}</p>
       {clientName ? <p>Client Name: {clientName}</p> : null}
       <ul>
-        {records.map((record) => (
-          <li key={record.employment_record_id}>
+        {grants.map((grant) => (
+          <li key={grant.grant_id}>
             <article>
-              <h3>{record.employer_name}</h3>
-              <p>Employment Record ID: {record.employment_record_id}</p>
-              <p>Work Start Date: {record.work_start_date}</p>
-              <p>Work End Date: {record.work_end_date ?? "Ongoing"}</p>
-              <p>Current Employment: {record.is_current ? "Yes" : "No"}</p>
-              {record.notes ? <p>Notes: {record.notes}</p> : null}
+              <h3>{grant.employer_name ?? "Grant"}</h3>
+              <p>Grant ID: {grant.grant_id}</p>
+              {grant.employment_record_id ? <p>Employment Record ID: {grant.employment_record_id}</p> : null}
+              {grant.employer_name ? <p>Employer Name: {grant.employer_name}</p> : null}
+              {grant.nominal_amount !== null ? <p>Nominal Amount: {grant.nominal_amount}</p> : null}
+              <p>Indexed Amount: {grant.indexed_amount}</p>
+              <p>Grant Date: {grant.grant_date}</p>
+              <p>Work Start Date: {grant.work_start_date}</p>
+              <p>Work End Date: {grant.work_end_date}</p>
+              {grant.notes ? <p>Notes: {grant.notes}</p> : null}
             </article>
           </li>
         ))}
       </ul>
       <p>
-        <Link to={`/clients/${parsedClientId}/grants`} state={clientName ? { clientName } : undefined}>
-          Grants
-        </Link>
+        <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
       </p>
       <p>
-        <Link to={`/clients/${parsedClientId}`}>Back to client detail</Link>
+        <Link to={detailPath}>Back to client detail</Link>
       </p>
     </section>
   );

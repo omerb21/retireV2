@@ -37,6 +37,19 @@ export interface EmploymentRecordItem {
   notes: string | null;
 }
 
+export interface GrantItem {
+  grant_id: string;
+  client_id: number;
+  employment_record_id: string | null;
+  employer_name: string | null;
+  nominal_amount: number | string | null;
+  indexed_amount: number | string;
+  grant_date: string;
+  work_start_date: string;
+  work_end_date: string;
+  notes: string | null;
+}
+
 const API_PREFIX = "/api";
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -85,6 +98,12 @@ export function getClient(clientId: number): Promise<ClientDetailItem> {
 
 export function getEmploymentRecords(clientId: number): Promise<EmploymentRecordItem[]> {
   return requestJson<EmploymentRecordItem[]>(`/clients/${clientId}/employment-records`, {
+    method: "GET"
+  });
+}
+
+export function getGrants(clientId: number): Promise<GrantItem[]> {
+  return requestJson<GrantItem[]>(`/clients/${clientId}/grants`, {
     method: "GET"
   });
 }

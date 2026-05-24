@@ -4,6 +4,7 @@ import { ClientDetailScreen } from "../pages/ClientDetailScreen";
 import { ClientListScreen } from "../pages/ClientListScreen";
 import { EmploymentHistoryScreen } from "../pages/EmploymentHistoryScreen";
 import { FixationInputScreen } from "../pages/FixationInputScreen";
+import { GrantsScreen } from "../pages/GrantsScreen";
 import { RunDetailScreen } from "../pages/RunDetailScreen";
 import { RunHistoryScreen } from "../pages/RunHistoryScreen";
 
@@ -14,6 +15,7 @@ export function AppRoutes() {
       <Route path="/clients" element={<ClientListScreen />} />
       <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
+      <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
       <Route path="/fixation/input" element={<FixationInputScreen />} />
       <Route path="/fixation/result" element={<CalculationResultScreen />} />
       <Route path="/fixation/history" element={<RunHistoryScreen />} />

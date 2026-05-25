@@ -125,6 +125,9 @@ describe("ActualCapitalizationsScreen", () => {
     expect(await screen.findByText("Source Label: Imported")).toBeInTheDocument();
     expect(await screen.findByText("Notes: Created capitalization")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to grants" })).toHaveAttribute("href", "/clients/7/grants");
-    expect(screen.getByRole("link", { name: "Continue to Fixation Parameters" })).toHaveAttribute("href", "/fixation/input");
+    expect(screen.getByRole("link", { name: "Continue to Fixation Parameters" })).toHaveAttribute(
+      "href",
+      "/clients/7/fixation/input"
+    );
   });
 });

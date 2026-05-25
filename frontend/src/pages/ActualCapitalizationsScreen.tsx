@@ -106,7 +106,10 @@ export function ActualCapitalizationsScreen() {
 
   const detailPath = Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}` : "/clients";
   const grantsPath = Number.isInteger(parsedClientId) && parsedClientId > 0 ? `/clients/${parsedClientId}/grants` : "/clients";
-  const fixationParametersPath = "/fixation/input";
+  const fixationParametersPath =
+    Number.isInteger(parsedClientId) && parsedClientId > 0
+      ? `/clients/${parsedClientId}/fixation/input`
+      : "/fixation/input";
   const backState = clientName ? { clientName } : undefined;
 
   async function refreshCapitalizations() {
@@ -156,7 +159,7 @@ export function ActualCapitalizationsScreen() {
           <Link to={grantsPath} state={backState}>Back to grants</Link>
         </p>
         <p>
-          <Link to={fixationParametersPath}>Continue to Fixation Parameters</Link>
+          <Link to={fixationParametersPath} state={backState}>Continue to Fixation Parameters</Link>
         </p>
         <p>
           <Link to={detailPath}>Back to client detail</Link>
@@ -176,7 +179,7 @@ export function ActualCapitalizationsScreen() {
           <Link to={grantsPath} state={backState}>Back to grants</Link>
         </p>
         <p>
-          <Link to={fixationParametersPath}>Continue to Fixation Parameters</Link>
+          <Link to={fixationParametersPath} state={backState}>Continue to Fixation Parameters</Link>
         </p>
         <p>
           <Link to={detailPath}>Back to client detail</Link>
@@ -274,7 +277,7 @@ export function ActualCapitalizationsScreen() {
         <Link to={grantsPath} state={backState}>Back to grants</Link>
       </p>
       <p>
-        <Link to={fixationParametersPath}>Continue to Fixation Parameters</Link>
+        <Link to={fixationParametersPath} state={backState}>Continue to Fixation Parameters</Link>
       </p>
       <p>
         <Link to={detailPath}>Back to client detail</Link>

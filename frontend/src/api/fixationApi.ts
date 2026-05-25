@@ -18,6 +18,34 @@ export class ApiTransportError extends Error {
   }
 }
 
+export interface FixationGrantInputPayload {
+  grant_id: string;
+  employer_name: string | null;
+  nominal_amount: number | null;
+  indexed_amount: number;
+  grant_date: string;
+  work_start_date: string;
+  work_end_date: string;
+}
+
+export interface FixationActualCapitalizationInputPayload {
+  capitalization_id: string;
+  amount: number;
+  capitalization_date: string;
+  source_label: string | null;
+  notes: string | null;
+}
+
+export interface FixationIdfInputPayload {
+  idf_id: string;
+  reduction_amount: number;
+  original_commutation_percent: number;
+  current_commutation_percent: number;
+  commutation_date: string;
+  promoter_age_date: string;
+  source_label: string | null;
+}
+
 export interface FixationInputPayload {
   calculation_id?: string | null;
   calculation_version: string;
@@ -26,10 +54,11 @@ export interface FixationInputPayload {
   monthly_cap: number;
   exemption_percentage: number;
   capital_multiplier: number;
-  grants: Array<Record<string, unknown>>;
+  grants: FixationGrantInputPayload[];
   future_grant_reserved: number;
-  actual_capitalizations: Array<Record<string, unknown>>;
-  idf: Record<string, unknown> | null;
+  actual_capitalizations: FixationActualCapitalizationInputPayload[];
+  idf_relevant: boolean;
+  idf: FixationIdfInputPayload | null;
   metadata?: Record<string, unknown> | null;
 }
 

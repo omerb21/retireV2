@@ -13,6 +13,11 @@ type ResultRouteState = {
   clientId?: number;
   inputData?: FixationInputPayload;
   result?: FixationResultResponse;
+  fixationInputPath?: string;
+  fixationInputState?: {
+    clientId?: number;
+    clientName?: string;
+  };
 };
 
 function stringifyValue(value: unknown): string {
@@ -29,6 +34,8 @@ export function CalculationResultScreen() {
   const clientId = routeState?.clientId;
   const inputData = routeState?.inputData;
   const result = routeState?.result;
+  const fixationInputPath = routeState?.fixationInputPath ?? "/fixation/input";
+  const fixationInputState = routeState?.fixationInputState ?? (typeof clientId === "number" ? { clientId } : undefined);
   const [isSaving, setIsSaving] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [saveResponse, setSaveResponse] = useState<SaveFixationResponse | null>(null);
@@ -68,7 +75,7 @@ export function CalculationResultScreen() {
       <h2>Calculation Result Screen</h2>
       <p>Display-only backend calculation response.</p>
       <p>
-        <Link to="/fixation/input" state={typeof clientId === "number" ? { clientId } : undefined}>
+        <Link to={fixationInputPath} state={fixationInputState}>
           Back to Fixation Input
         </Link>
       </p>

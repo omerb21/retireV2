@@ -299,6 +299,7 @@ export function FixationInputScreen() {
   const clientName = routeState?.clientName ?? null;
   const actualCapitalizationsPath = clientId !== null ? `/clients/${clientId}/actual-capitalizations` : "/clients";
   const fixationInputPath = clientId !== null ? `/clients/${clientId}/fixation/input` : "/fixation/input";
+  const calculationResultPath = clientId !== null ? `/clients/${clientId}/fixation/result` : "/fixation/result";
   const backState = clientName ? { clientName } : undefined;
   const fixationInputState = clientName ? { clientId: clientId ?? undefined, clientName } : { clientId: clientId ?? undefined };
   const [formState, setFormState] = useState<FormState>(initialFormState);
@@ -455,7 +456,7 @@ export function FixationInputScreen() {
       fixationInputState,
     };
 
-    navigate("/fixation/result", { state: resultRouteState });
+    navigate(calculationResultPath, { state: resultRouteState });
   }
 
   if (clientId === null) {

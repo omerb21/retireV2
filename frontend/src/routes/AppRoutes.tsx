@@ -20,6 +20,8 @@ export function AppRoutes() {
       <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
       <Route path="/clients/:clientId/fixation/input" element={<FixationInputScreen />} />
       <Route path="/clients/:clientId/fixation/result" element={<CalculationResultScreen />} />
+      <Route path="/clients/:clientId/fixation/history" element={<RunHistoryScreen />} />
+      <Route path="/clients/:clientId/fixation/runs/:runId" element={<RunDetailScreen />} />
       <Route path="/fixation/input" element={<FixationInputScreen />} />
       <Route path="/fixation/result" element={<CalculationResultScreen />} />
       <Route path="/fixation/history" element={<RunHistoryScreen />} />

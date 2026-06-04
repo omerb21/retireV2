@@ -397,6 +397,11 @@ export function CalculationResultScreen() {
           Rerun from Fixation Parameters
         </Link>
       </p>
+      <p>
+        <Link to={`/clients/${clientId}/fixation/history`} state={fixationInputState}>
+          View History
+        </Link>
+      </p>
       {isResultLoading ? <p>Loading latest successful calculation result...</p> : null}
       {resultErrorMessage ? (
         <>

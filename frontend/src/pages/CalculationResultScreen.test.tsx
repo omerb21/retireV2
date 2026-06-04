@@ -160,6 +160,10 @@ describe("CalculationResultScreen", () => {
       "href",
       "/clients/7/fixation/input"
     );
+    expect(screen.getByRole("link", { name: "View History" })).toHaveAttribute(
+      "href",
+      "/clients/7/fixation/history"
+    );
   });
 
   it("marks the displayed result as stale and enforces rerun when source data changed", async () => {

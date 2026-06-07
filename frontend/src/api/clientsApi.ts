@@ -27,6 +27,12 @@ export interface ClientListItem {
 
 export type ClientDetailItem = ClientListItem;
 
+export interface ClientCreatePayload {
+  full_name: string;
+  id_number: string;
+  birth_date: string | null;
+}
+
 export interface EmploymentRecordItem {
   employment_record_id: string;
   client_id: number;
@@ -109,6 +115,13 @@ export function getClients(): Promise<ClientListItem[]> {
 export function getClient(clientId: number): Promise<ClientDetailItem> {
   return requestJson<ClientDetailItem>(`/clients/${clientId}`, {
     method: "GET"
+  });
+}
+
+export function createClient(payload: ClientCreatePayload): Promise<ClientDetailItem> {
+  return requestJson<ClientDetailItem>("/clients", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

@@ -55,16 +55,36 @@ export function ClientListScreen() {
   }
 
   if (errorMessage !== null) {
-    return <section><h2>Client List</h2><p>Unable to load clients.</p><p>{errorMessage}</p></section>;
+    return (
+      <section>
+        <h2>Client List</h2>
+        <p>Unable to load clients.</p>
+        <p>{errorMessage}</p>
+        <p>
+          <Link to="/clients/new">Create Client</Link>
+        </p>
+      </section>
+    );
   }
 
   if (clients.length === 0) {
-    return <section><h2>Client List</h2><p>No clients found.</p></section>;
+    return (
+      <section>
+        <h2>Client List</h2>
+        <p>No clients yet</p>
+        <p>
+          <Link to="/clients/new">Create Client</Link>
+        </p>
+      </section>
+    );
   }
 
   return (
     <section>
       <h2>Client List</h2>
+      <p>
+        <Link to="/clients/new">Create Client</Link>
+      </p>
       <ul>
         {clients.map((client) => (
           <li key={client.client_id}>

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ActualCapitalizationsScreen } from "../pages/ActualCapitalizationsScreen";
 import { CalculationResultScreen } from "../pages/CalculationResultScreen";
+import { CreateClientScreen } from "../pages/CreateClientScreen";
 import { ClientDetailScreen } from "../pages/ClientDetailScreen";
 import { ClientListScreen } from "../pages/ClientListScreen";
 import { EmploymentHistoryScreen } from "../pages/EmploymentHistoryScreen";
@@ -14,6 +15,7 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<Navigate to="/clients" replace />} />
       <Route path="/clients" element={<ClientListScreen />} />
+      <Route path="/clients/new" element={<CreateClientScreen />} />
       <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />

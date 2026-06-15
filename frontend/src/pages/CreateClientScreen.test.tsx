@@ -61,7 +61,7 @@ describe("CreateClientScreen", () => {
 
     expect(await screen.findByRole("heading", { name: "Client Detail" })).toBeInTheDocument();
     expect(await screen.findByText("Full Name: Dana Levi")).toBeInTheDocument();
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/clients",
       expect.objectContaining({
         method: "POST",

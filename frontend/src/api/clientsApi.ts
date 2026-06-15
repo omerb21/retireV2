@@ -33,6 +33,24 @@ export interface ClientCreatePayload {
   birth_date: string | null;
 }
 
+export interface ClientProfileItem {
+  client_profile_id: string;
+  client_id: number;
+  birth_date: string | null;
+  gender: string | null;
+  notes: string | null;
+}
+
+export interface ClientProfileResponse {
+  profile: ClientProfileItem | null;
+}
+
+export interface ClientProfileUpdatePayload {
+  birth_date: string | null;
+  gender: string | null;
+  notes: string | null;
+}
+
 export interface EmploymentRecordItem {
   employment_record_id: string;
   client_id: number;
@@ -121,6 +139,22 @@ export function getClient(clientId: number): Promise<ClientDetailItem> {
 export function createClient(payload: ClientCreatePayload): Promise<ClientDetailItem> {
   return requestJson<ClientDetailItem>("/clients", {
     method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getClientProfile(clientId: number): Promise<ClientProfileResponse> {
+  return requestJson<ClientProfileResponse>(`/clients/${clientId}/profile`, {
+    method: "GET"
+  });
+}
+
+export function updateClientProfile(
+  clientId: number,
+  payload: ClientProfileUpdatePayload
+): Promise<ClientProfileResponse> {
+  return requestJson<ClientProfileResponse>(`/clients/${clientId}/profile`, {
+    method: "PUT",
     body: JSON.stringify(payload)
   });
 }

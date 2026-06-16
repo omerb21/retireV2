@@ -133,6 +133,7 @@ def _input_payload(calc_id: str, year: int) -> dict:
                 "notes": "actual capitalization",
             }
         ],
+        "idf_relevant": True,
         "idf": {
             "idf_id": "IDF-1",
             "reduction_amount": 1200.0,
@@ -175,6 +176,7 @@ def _result_payload(calc_id: str, year: int) -> dict:
             {
                 "row_id": "A1",
                 "category": "initial_entitlement",
+                "stage_order": 2,
                 "source_id": None,
                 "label": "Initial entitlement",
                 "input_amount": None,

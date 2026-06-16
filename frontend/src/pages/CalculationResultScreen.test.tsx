@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,18 @@ function mockJsonResponse(body: unknown) {
     ok: true,
     status: 200,
     statusText: "OK",
+    headers: {
+      get: () => "application/json"
+    },
+    json: async () => body
+  };
+}
+
+function mockErrorResponse(body: unknown) {
+  return {
+    ok: false,
+    status: 422,
+    statusText: "Unprocessable Entity",
     headers: {
       get: () => "application/json"
     },
@@ -164,6 +176,7 @@ describe("CalculationResultScreen", () => {
       "href",
       "/clients/7/fixation/history"
     );
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
   });
 
   it("marks the displayed result as stale and enforces rerun when source data changed", async () => {
@@ -242,6 +255,7 @@ describe("CalculationResultScreen", () => {
       "href",
       "/clients/7/fixation/input"
     );
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
   });
 
   it("renders a clear failure state when no successful calculation result exists", async () => {
@@ -274,6 +288,7 @@ describe("CalculationResultScreen", () => {
     expect(
       await screen.findByText(/No successful calculation result is available\. Latest saved calculation did not succeed\./)
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
   });
 
   it("renders the current backend calculation response without deriving financial values in the frontend", async () => {
@@ -347,5 +362,94 @@ describe("CalculationResultScreen", () => {
     expect(screen.getByText((content, node) => node?.textContent === "Initial Exempt Capital: 4321")).toBeInTheDocument();
     expect(screen.getByText((content, node) => node?.textContent === "Total Impact: 222")).toBeInTheDocument();
     expect(screen.getByText((content, node) => node?.textContent === "Monthly Exempt Pension: 777")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeEnabled();
+  });
+
+  it("saves only the current successful calculation input snapshot and links to history", async () => {
+    const inputData = buildInputSnapshot();
+    const result = buildResult();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(inputData.grants))
+      .mockResolvedValueOnce(mockJsonResponse(inputData.actual_capitalizations))
+      .mockResolvedValueOnce(mockJsonResponse({ run_id: 41, status: "success" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/clients/7/fixation/result",
+            state: {
+              clientId: 7,
+              clientName: "Dana Levi",
+              inputData,
+              result,
+              fixationInputPath: "/clients/7/fixation/input",
+              fixationInputState: { clientId: 7, clientName: "Dana Levi" }
+            }
+          }
+        ]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<CalculationResultScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const saveButton = await screen.findByRole("button", { name: "Save Result" });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText("Result saved successfully. Run ID: 41")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View Fixation Audit / History" })).toHaveAttribute(
+      "href",
+      "/clients/7/fixation/history"
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/fixation/save",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ client_id: 7, input_data: inputData })
+      })
+    );
+  });
+
+  it("displays backend errors when saving the current result fails", async () => {
+    const inputData = buildInputSnapshot();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(inputData.grants))
+      .mockResolvedValueOnce(mockJsonResponse(inputData.actual_capitalizations))
+      .mockResolvedValueOnce(mockErrorResponse({ detail: { code: "SAVE_FAILED", message: "Unable to save run" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/clients/7/fixation/result",
+            state: {
+              clientId: 7,
+              inputData,
+              result: buildResult(),
+              fixationInputPath: "/clients/7/fixation/input",
+              fixationInputState: { clientId: 7 }
+            }
+          }
+        ]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<CalculationResultScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const saveButton = await screen.findByRole("button", { name: "Save Result" });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText("Unable to save the current calculation result.")).toBeInTheDocument();
+    expect(await screen.findByText(/SAVE_FAILED/)).toBeInTheDocument();
   });
 });

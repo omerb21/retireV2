@@ -16,6 +16,7 @@ import {
   type FixationResultResponse,
   getFixationHistory,
   getFixationRunDetail,
+  saveFixation,
 } from "../api/fixationApi";
 
 type FixationInputRouteState = {
@@ -177,6 +178,9 @@ export function CalculationResultScreen() {
   const [resultSource, setResultSource] = useState<"current" | "latest" | null>(hasCurrentCalculation ? "current" : null);
   const [resolvedInputData, setResolvedInputData] = useState<FixationInputPayload | null>(routeState?.inputData ?? null);
   const [resolvedResult, setResolvedResult] = useState<FixationResultResponse | null>(routeState?.result ?? null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+  const [savedRunId, setSavedRunId] = useState<number | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -332,6 +336,13 @@ export function CalculationResultScreen() {
           : sourceDataChanged
             ? "Blocked until rerun."
             : "Current source data matches the calculation input snapshot.";
+  const canSaveCurrentResult =
+    resultSource === "current" &&
+    resolvedInputData !== null &&
+    resolvedResult?.status === "success" &&
+    !isSourceLoading &&
+    sourceErrorMessage === null &&
+    !sourceDataChanged;
   const summaryFields: DisplayField[] = [
     { label: "Calculation ID", value: resolvedResult?.calculation_id },
     { label: "Calculation Version", value: resolvedResult?.calculation_version },
@@ -372,6 +383,28 @@ export function CalculationResultScreen() {
       ? (resolvedResult.idf_result as Record<string, unknown>)
       : null;
 
+  async function handleSaveResult() {
+    if (clientId === null || resolvedInputData === null || !canSaveCurrentResult) {
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveErrorMessage(null);
+    setSavedRunId(null);
+
+    try {
+      const response = await saveFixation({
+        client_id: clientId,
+        input_data: resolvedInputData as unknown as Record<string, unknown>,
+      });
+      setSavedRunId(response.run_id);
+    } catch (error) {
+      setSaveErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   if (clientId === null) {
     return (
       <section>
@@ -402,6 +435,27 @@ export function CalculationResultScreen() {
           View History
         </Link>
       </p>
+      <p>
+        <button type="button" disabled={!canSaveCurrentResult || isSaving} onClick={() => void handleSaveResult()}>
+          {isSaving ? "Saving Result..." : "Save Result"}
+        </button>
+      </p>
+      {savedRunId !== null ? (
+        <>
+          <p>Result saved successfully. Run ID: {savedRunId}</p>
+          <p>
+            <Link to={`/clients/${clientId}/fixation/history`} state={fixationInputState}>
+              View Fixation Audit / History
+            </Link>
+          </p>
+        </>
+      ) : null}
+      {saveErrorMessage ? (
+        <>
+          <p>Unable to save the current calculation result.</p>
+          <p>{saveErrorMessage}</p>
+        </>
+      ) : null}
       {isResultLoading ? <p>Loading latest successful calculation result...</p> : null}
       {resultErrorMessage ? (
         <>

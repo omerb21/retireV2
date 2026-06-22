@@ -1,5 +1,3 @@
-from copy import deepcopy
-
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
@@ -46,7 +44,6 @@ def valid_fixation_input_payload() -> dict:
                 "source_label": "source",
             }
         ],
-        "idf_relevant": True,
         "idf": {
             "idf_id": "I1",
             "reduction_amount": 1000,
@@ -88,8 +85,7 @@ def valid_success_result_payload() -> dict:
         "audit_rows": [
             {
                 "row_id": "R1",
-                "stage_order": 1,
-                "category": "total_impact",
+                "category": "total",
                 "source_id": None,
                 "label": "Total",
                 "input_amount": None,
@@ -133,20 +129,18 @@ def test_missing_idf_field_fails() -> None:
         FixationInput(**payload)
 
 
-def test_idf_relevant_false_allows_omitted_idf() -> None:
+def test_idf_null_means_not_applicable() -> None:
     payload = valid_fixation_input_payload()
-    payload["idf_relevant"] = False
     payload["idf"] = None
 
     parsed = FixationInput(**payload)
 
-    assert parsed.idf_relevant is False
     assert parsed.idf is None
 
 
-def test_invalid_idf_relevant_marker_fails() -> None:
+def test_idf_relevant_marker_is_rejected() -> None:
     payload = valid_fixation_input_payload()
-    payload["idf_relevant"] = "yes"
+    payload["idf_relevant"] = False
 
     with pytest.raises(PydanticValidationError):
         FixationInput(**payload)
@@ -298,7 +292,6 @@ def test_idf_promoter_age_date_before_later_date_fails() -> None:
 
 def test_idf_null_passes_when_not_relevant() -> None:
     payload = valid_fixation_input_payload()
-    payload["idf_relevant"] = False
     payload["idf"] = None
 
     parsed = FixationInput(**payload)
@@ -310,7 +303,6 @@ def test_audit_row_invalid_category_fails() -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
-            stage_order=1,
             category="bad-category",
             source_id=None,
             label="Bad",
@@ -324,17 +316,13 @@ def test_audit_row_invalid_category_fails() -> None:
 @pytest.mark.parametrize(
     ("category", "source_id", "input_amount"),
     [
-        ("input_validation", None, None),
         ("initial_entitlement", None, None),
-        ("grant_impact", None, None),
-        ("15_year_exclusion", None, None),
-        ("32_year_ratio", None, None),
+        ("grant", "G1", 100.0),
         ("future_grant_reserve", None, 100.0),
         ("actual_capitalization", "C1", 100.0),
-        ("idf_treatment", "I1", 100.0),
-        ("total_impact", None, None),
+        ("idf", "I1", 100.0),
+        ("total", None, None),
         ("remaining_exemption", None, None),
-        ("exempt_pension", None, None),
     ],
 )
 def test_audit_row_approved_categories_are_supported(
@@ -344,7 +332,6 @@ def test_audit_row_approved_categories_are_supported(
 ) -> None:
     parsed = AuditRow(
         row_id="R1",
-        stage_order=1,
         category=category,
         source_id=source_id,
         label="Label",
@@ -357,12 +344,11 @@ def test_audit_row_approved_categories_are_supported(
     assert parsed.category == category
 
 
-@pytest.mark.parametrize("category", ["actual_capitalization", "idf_treatment"])
+@pytest.mark.parametrize("category", ["actual_capitalization", "idf"])
 def test_audit_row_missing_source_id_for_required_categories_fails(category: str) -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
-            stage_order=1,
             category=category,
             source_id=None,
             label="Label",
@@ -373,14 +359,13 @@ def test_audit_row_missing_source_id_for_required_categories_fails(category: str
         )
 
 
-@pytest.mark.parametrize("category", ["future_grant_reserve", "actual_capitalization", "idf_treatment"])
+@pytest.mark.parametrize("category", ["future_grant_reserve", "actual_capitalization", "idf"])
 def test_audit_row_missing_input_amount_for_required_categories_fails(category: str) -> None:
-    source_id = "SRC1" if category in {"actual_capitalization", "idf_treatment"} else None
+    source_id = "SRC1" if category in {"actual_capitalization", "idf"} else None
 
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
-            stage_order=1,
             category=category,
             source_id=source_id,
             label="Label",
@@ -395,8 +380,7 @@ def test_audit_row_negative_impact_fails() -> None:
     with pytest.raises(PydanticValidationError):
         AuditRow(
             row_id="R1",
-            stage_order=1,
-            category="total_impact",
+            category="total",
             source_id=None,
             label="Total",
             input_amount=None,
@@ -406,34 +390,19 @@ def test_audit_row_negative_impact_fails() -> None:
         )
 
 
-def test_audit_row_missing_stage_order_fails() -> None:
-    with pytest.raises(PydanticValidationError):
-        AuditRow(
-            row_id="R1",
-            category="total_impact",
-            source_id=None,
-            label="Total",
-            input_amount=None,
-            output_amount=0,
-            impact_amount=0,
-            details={},
-        )
+def test_audit_row_does_not_require_or_expose_stage_order() -> None:
+    parsed = AuditRow(
+        row_id="R1",
+        category="total",
+        source_id=None,
+        label="Total",
+        input_amount=None,
+        output_amount=0,
+        impact_amount=0,
+        details={},
+    )
 
-
-@pytest.mark.parametrize("stage_order", [0, -1])
-def test_audit_row_stage_order_must_be_positive(stage_order: int) -> None:
-    with pytest.raises(PydanticValidationError):
-        AuditRow(
-            row_id="R1",
-            stage_order=stage_order,
-            category="total_impact",
-            source_id=None,
-            label="Total",
-            input_amount=None,
-            output_amount=0,
-            impact_amount=0,
-            details={},
-        )
+    assert "stage_order" not in parsed.model_dump()
 
 
 def test_validation_error_invalid_severity_fails() -> None:
@@ -476,30 +445,6 @@ def test_idf_result_overlap_months_zero_fails() -> None:
             monthly_reduction_for_calc=35.0,
             overlap_months=0,
             impact_amount=0,
-            informational_only=True,
-        )
-
-
-def test_idf_result_informational_only_marker_required() -> None:
-    with pytest.raises(PydanticValidationError):
-        IDFResult(
-            idf_id="I1",
-            base_reduction=100.0,
-            monthly_reduction_for_calc=35.0,
-            overlap_months=1,
-            impact_amount=0,
-        )
-
-
-def test_idf_result_informational_only_marker_rejects_unsupported_value() -> None:
-    with pytest.raises(PydanticValidationError):
-        IDFResult(
-            idf_id="I1",
-            base_reduction=100.0,
-            monthly_reduction_for_calc=35.0,
-            overlap_months=1,
-            impact_amount=0,
-            informational_only=False,
         )
 
 
@@ -583,10 +528,12 @@ def test_fixation_result_success_missing_numeric_fields_fails() -> None:
         FixationResult(**payload)
 
 
-def test_fixation_result_validation_failed_status_is_disallowed() -> None:
-    payload = deepcopy(valid_success_result_payload())
-    payload["status"] = "validation_failed"
-    payload["validation_errors"] = [
+def test_fixation_result_validation_failed_status_uses_error_shape() -> None:
+    payload = {
+        "calculation_id": "calc-1",
+        "calculation_version": "v1",
+        "status": "validation_failed",
+        "validation_errors": [
         {
             "code": "MISSING_REQUIRED_VALUE",
             "path": "monthly_cap",
@@ -594,7 +541,11 @@ def test_fixation_result_validation_failed_status_is_disallowed() -> None:
             "severity": "error",
             "source_id": None,
         }
-    ]
+        ],
+    }
 
-    with pytest.raises(PydanticValidationError):
-        FixationResult(**payload)
+    parsed = FixationResult(**payload)
+
+    assert parsed.status == "validation_failed"
+    assert parsed.validation_errors[0].path == "monthly_cap"
+    assert parsed.initial_exempt_capital is None

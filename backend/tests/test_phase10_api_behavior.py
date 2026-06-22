@@ -112,7 +112,6 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025, monthly_cap: 
             "promoter_age_date": "2028-01-01",
             "source_label": "idf_source",
         },
-        "idf_relevant": True,
     }
 
 
@@ -392,12 +391,25 @@ def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
         assert missing_run_resp.status_code == 404
         assert missing_run_resp.json()["detail"]["code"] == "FIXATION_RUN_NOT_FOUND"
 
-        invalid_calc_payload_resp = client.post("/api/fixation/calculate", json={"calculation_id": "bad"})
+        invalid_payload = {"calculation_id": "bad"}
+        invalid_validate_payload_resp = client.post("/api/fixation/validate", json=invalid_payload)
+        invalid_calc_payload_resp = client.post("/api/fixation/calculate", json=invalid_payload)
         invalid_save_payload_resp = client.post(
             "/api/fixation/save",
             json={"client_id": "not-an-int", "input_data": _fixation_input(calc_id="calc-invalid")},
         )
-        assert invalid_calc_payload_resp.status_code == 422
+        assert invalid_validate_payload_resp.status_code == 200
+        assert invalid_calc_payload_resp.status_code == 200
+        assert invalid_validate_payload_resp.json() == invalid_calc_payload_resp.json()
+        assert invalid_calc_payload_resp.json()["status"] == "validation_failed"
+        assert invalid_calc_payload_resp.json()["validation_errors"]
+        assert set(invalid_calc_payload_resp.json()["validation_errors"][0]) == {
+            "code",
+            "path",
+            "message",
+            "severity",
+            "source_id",
+        }
         assert invalid_save_payload_resp.status_code == 422
     finally:
         app.dependency_overrides.clear()

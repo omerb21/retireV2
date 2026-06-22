@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, RootModel, StrictBool, ValidationError as PydanticValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    RootModel,
+    SerializerFunctionWrapHandler,
+    ValidationError as PydanticValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 def _require_non_empty(value: str, field_name: str) -> str:
@@ -197,6 +206,8 @@ class IDFInput(BaseModel):
 
 
 class FixationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     calculation_id: str | None = None
     calculation_version: str
     eligibility_date: date
@@ -207,7 +218,6 @@ class FixationInput(BaseModel):
     grants: list[GrantInput]
     future_grant_reserved: float
     actual_capitalizations: list[ActualCapitalizationInput]
-    idf_relevant: StrictBool
     idf: IDFInput | None
     metadata: dict[str, Any] | None = None
 
@@ -255,9 +265,6 @@ class FixationInput(BaseModel):
     def validate_cross_field_rules(self) -> "FixationInput":
         if self.eligibility_year != self.eligibility_date.year:
             raise ValueError("eligibility_year must match eligibility_date year")
-
-        if self.idf_relevant and self.idf is None:
-            raise ValueError("idf is required when idf_relevant is true")
 
         if self.idf is not None:
             later_date = max(self.idf.commutation_date, self.eligibility_date)
@@ -313,7 +320,6 @@ class IDFResult(BaseModel):
     monthly_reduction_for_calc: float
     overlap_months: float
     impact_amount: float
-    informational_only: Literal[True]
 
     @field_validator("idf_id")
     @classmethod
@@ -343,23 +349,28 @@ class IDFResult(BaseModel):
 
 
 AuditCategory = Literal[
-    "input_validation",
     "initial_entitlement",
-    "grant_impact",
-    "15_year_exclusion",
-    "32_year_ratio",
+    "grant",
     "future_grant_reserve",
     "actual_capitalization",
-    "idf_treatment",
-    "total_impact",
+    "idf",
+    "total",
     "remaining_exemption",
-    "exempt_pension",
 ]
+
+LEGACY_AUDIT_CATEGORY_MAP: dict[str, AuditCategory] = {
+    "input_validation": "initial_entitlement",
+    "grant_impact": "grant",
+    "15_year_exclusion": "grant",
+    "32_year_ratio": "grant",
+    "idf_treatment": "idf",
+    "total_impact": "total",
+    "exempt_pension": "remaining_exemption",
+}
 
 
 class AuditRow(BaseModel):
     row_id: str
-    stage_order: int
     category: AuditCategory
     source_id: str | None
     label: str
@@ -367,6 +378,11 @@ class AuditRow(BaseModel):
     output_amount: float
     impact_amount: float
     details: dict[str, Any]
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_internal_category(cls, value: str) -> str:
+        return LEGACY_AUDIT_CATEGORY_MAP.get(value, value)
 
     @field_validator("row_id", "label")
     @classmethod
@@ -380,20 +396,13 @@ class AuditRow(BaseModel):
             raise ValueError("impact_amount must be >= 0")
         return value
 
-    @field_validator("stage_order")
-    @classmethod
-    def validate_stage_order(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("stage_order must be > 0")
-        return value
-
     @model_validator(mode="after")
     def validate_audit_dependencies(self) -> "AuditRow":
-        requires_source_id = {"actual_capitalization", "idf_treatment"}
+        requires_source_id = {"actual_capitalization", "idf"}
         if self.category in requires_source_id and not self.source_id:
-            raise ValueError("source_id is required for actual_capitalization and idf_treatment categories")
+            raise ValueError("source_id is required for actual_capitalization and idf categories")
 
-        input_required_categories = {"future_grant_reserve", "actual_capitalization", "idf_treatment"}
+        input_required_categories = {"future_grant_reserve", "actual_capitalization", "idf"}
         if self.category in input_required_categories and self.input_amount is None:
             raise ValueError("input_amount may be null only when not applicable")
 
@@ -432,7 +441,7 @@ class FixationValidationErrors(RootModel[list[ValidationError]]):
 class FixationResult(BaseModel):
     calculation_id: str | None = None
     calculation_version: str | None = None
-    status: Literal["success"]
+    status: Literal["success", "validation_failed"]
     validation_errors: list[ValidationError]
     eligibility_date: date | None = None
     eligibility_year: int | None = None
@@ -455,13 +464,49 @@ class FixationResult(BaseModel):
     idf_result: IDFResult | None = None
     audit_rows: list[AuditRow] | None = None
 
+    @model_serializer(mode="wrap")
+    def serialize_result(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        serialized = handler(self)
+        if self.status == "validation_failed":
+            allowed_fields = {"calculation_id", "calculation_version", "status", "validation_errors"}
+            return {
+                key: value
+                for key, value in serialized.items()
+                if key in allowed_fields and (value is not None or key in {"status", "validation_errors"})
+            }
+        return serialized
+
     @model_validator(mode="after")
     def validate_status_behavior(self) -> "FixationResult":
-        if self.status == "success":
-            if self.validation_errors:
-                raise ValueError("validation_errors must be empty when status is success")
+        if self.status == "validation_failed":
+            if not self.validation_errors:
+                raise ValueError("validation_errors must be present when status is validation_failed")
 
-            required_success_fields = (
+            forbidden_failure_fields = (
+                "initial_exempt_capital",
+                "grant_impact_total",
+                "future_grant_impact",
+                "actual_capitalization_impact",
+                "idf_impact",
+                "total_impact",
+                "remaining_exempt_capital",
+                "monthly_exempt_pension",
+                "capital_exemption_percentage",
+                "pension_exemption_percentage",
+                "grant_results",
+                "actual_capitalization_results",
+                "idf_result",
+                "audit_rows",
+            )
+            for field_name in forbidden_failure_fields:
+                if getattr(self, field_name) is not None:
+                    raise ValueError(f"{field_name} must be omitted when status is validation_failed")
+            return self
+
+        if self.validation_errors:
+            raise ValueError("validation_errors must be empty when status is success")
+
+        required_success_fields = (
                 "calculation_version",
                 "eligibility_date",
                 "eligibility_year",
@@ -482,9 +527,9 @@ class FixationResult(BaseModel):
                 "grant_results",
                 "actual_capitalization_results",
                 "audit_rows",
-            )
-            for field_name in required_success_fields:
-                if getattr(self, field_name) is None:
-                    raise ValueError(f"{field_name} must be present when status is success")
+        )
+        for field_name in required_success_fields:
+            if getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} must be present when status is success")
 
         return self

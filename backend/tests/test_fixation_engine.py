@@ -22,7 +22,6 @@ def valid_payload() -> dict:
         "grants": [],
         "future_grant_reserved": 0,
         "actual_capitalizations": [],
-        "idf_relevant": False,
         "idf": None,
         "metadata": {"trace": "x"},
     }
@@ -37,13 +36,12 @@ def test_fixation_engine_base_case_success() -> None:
     assert result.remaining_exempt_capital == 90000.0
     rows = result.audit_rows or []
     assert [row.category for row in rows] == [
-        "input_validation",
         "initial_entitlement",
-        "total_impact",
+        "initial_entitlement",
+        "total",
         "remaining_exemption",
-        "exempt_pension",
+        "remaining_exemption",
     ]
-    assert [row.stage_order for row in rows] == [1, 2, 9, 10, 11]
 
 
 def test_fixation_engine_grant_excluded_by_15_year_rule() -> None:
@@ -64,7 +62,7 @@ def test_fixation_engine_grant_excluded_by_15_year_rule() -> None:
     assert result.grant_results is not None
     assert result.grant_results[0].impact_amount == 0.0
     assert result.grant_results[0].exclusion_reason == "excluded_15_year_rule"
-    grant_rows = [r for r in (result.audit_rows or []) if r.category == "grant_impact"]
+    grant_rows = [r for r in (result.audit_rows or []) if r.category == "grant" and r.label == "grant impact"]
     assert len(grant_rows) == 1
 
 
@@ -162,7 +160,6 @@ def test_fixation_engine_actual_capitalization_impact() -> None:
 
 def test_fixation_engine_idf_full_months() -> None:
     payload = valid_payload()
-    payload["idf_relevant"] = True
     payload["idf"] = {
         "idf_id": "I1",
         "reduction_amount": 1000,
@@ -177,10 +174,9 @@ def test_fixation_engine_idf_full_months() -> None:
     assert result.idf_result is not None
     assert result.idf_result.overlap_months >= 1
     assert result.idf_result.monthly_reduction_for_calc == 350.0
-    assert result.idf_result.informational_only is True
     assert result.idf_impact == 0.0
     assert result.total_impact == 0.0
-    idf_rows = [r for r in (result.audit_rows or []) if r.category == "idf_treatment"]
+    idf_rows = [r for r in (result.audit_rows or []) if r.category == "idf"]
     assert len(idf_rows) == 1
     assert idf_rows[0].impact_amount == 0.0
 

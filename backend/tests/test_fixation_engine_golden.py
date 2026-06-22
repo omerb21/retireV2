@@ -16,13 +16,25 @@ def _base_input() -> dict:
         "grants": [],
         "future_grant_reserved": 0.0,
         "actual_capitalizations": [],
-        "idf_relevant": False,
         "idf": None,
     }
 
 
-def _audit_pairs(result: FixationResult) -> list[tuple[int, str]]:
-    return [(row.stage_order, row.category) for row in (result.audit_rows or [])]
+def _audit_categories(result: FixationResult) -> list[str]:
+    return [row.category for row in (result.audit_rows or [])]
+
+
+def _approved_expected_categories(expected_audit: list[tuple[int, str]]) -> list[str]:
+    aliases = {
+        "input_validation": "initial_entitlement",
+        "grant_impact": "grant",
+        "15_year_exclusion": "grant",
+        "32_year_ratio": "grant",
+        "idf_treatment": "idf",
+        "total_impact": "total",
+        "exempt_pension": "remaining_exemption",
+    }
+    return [aliases.get(category, category) for _, category in expected_audit]
 
 
 SUCCESS_CASES = [
@@ -338,7 +350,6 @@ SUCCESS_CASES = [
         "case_id": "GC07_IDF_INFORMATIONAL_ONLY",
         "input": {
             **_base_input(),
-            "idf_relevant": True,
             "idf": {
                 "idf_id": "idf_001",
                 "reduction_amount": 25000.0,
@@ -386,7 +397,6 @@ SUCCESS_CASES = [
         "case_id": "GC09_COMBINED_FULL_SCENARIO",
         "input": {
             **_base_input(),
-            "idf_relevant": True,
             "grants": [
                 {
                     "grant_id": "combined_grant_included",
@@ -497,7 +507,7 @@ def test_fixation_engine_successful_golden_cases() -> None:
         for field_name, expected_value in case["expected_numeric"].items():
             assert getattr(result, field_name) == expected_value, f"{case['case_id']}::{field_name}"
 
-        assert _audit_pairs(result) == case["expected_audit"], case["case_id"]
+        assert _audit_categories(result) == _approved_expected_categories(case["expected_audit"]), case["case_id"]
 
 
 VALIDATION_CASES = [
@@ -519,8 +529,8 @@ VALIDATION_CASES = [
     },
     {
         "case_id": "GC11B_VALIDATION_MISSING_IDF_INPUT",
-        "payload": {**_base_input(), "idf_relevant": True, "idf": None},
-        "expected": [("fixation_input", "INVALID_GLOBAL_INPUT")],
+        "payload": {key: value for key, value in _base_input().items() if key != "idf"},
+        "expected": [("idf", "MISSING_REQUIRED_VALUE")],
     },
     {
         "case_id": "GC11C_VALIDATION_MISSING_FUTURE_RESERVE_AMOUNT",
@@ -534,7 +544,6 @@ VALIDATION_CASES = [
             "capital_multiplier": 180,
             "grants": [],
             "actual_capitalizations": [],
-            "idf_relevant": False,
             "idf": None,
         },
         "expected": [("future_grant_reserved", "MISSING_REQUIRED_VALUE")],

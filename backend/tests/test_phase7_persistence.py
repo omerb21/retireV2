@@ -133,7 +133,6 @@ def _input_payload(calc_id: str, year: int) -> dict:
                 "notes": "actual capitalization",
             }
         ],
-        "idf_relevant": True,
         "idf": {
             "idf_id": "IDF-1",
             "reduction_amount": 1200.0,

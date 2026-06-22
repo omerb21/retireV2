@@ -40,6 +40,21 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
     return calculate_fixation_engine(input_data)
 
 
+def calculate_fixation_payload(input_payload: dict) -> FixationResult:
+    result = calculate_fixation_from_payload_engine(input_payload)
+    if isinstance(result, FixationResult):
+        return result
+
+    calculation_id = input_payload.get("calculation_id")
+    calculation_version = input_payload.get("calculation_version")
+    return FixationResult(
+        calculation_id=calculation_id if isinstance(calculation_id, str) else None,
+        calculation_version=calculation_version if isinstance(calculation_version, str) else None,
+        status="validation_failed",
+        validation_errors=result,
+    )
+
+
 def _is_success_result(result: FixationResult | list[ValidationError]) -> bool:
     return isinstance(result, FixationResult)
 
@@ -176,11 +191,6 @@ def assemble_fixation_input(
         "idf": explicit_parameters["idf"],
         "metadata": explicit_parameters.get("metadata"),
     }
-
-    # Phase 5A service assembly only: for ordinary non-IDF service flow, use
-    # this explicit Supervisor-approved assembly policy until an explicit IDF
-    # relevance source exists; a future explicit source must override it.
-    payload["idf_relevant"] = False
 
     return FixationInput(**payload)
 

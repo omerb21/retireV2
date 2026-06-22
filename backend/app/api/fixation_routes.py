@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.client import Client
 from app.models.fixation_run import FixationRun
-from app.schemas.fixation_contracts import FixationInput, FixationResult
+from app.schemas.fixation_contracts import FixationResult
 from app.services.fixation_service import (
-    calculate_fixation,
+    calculate_fixation_payload,
     get_fixation_history,
     get_fixation_run_detail,
     get_latest_fixation_result,
@@ -55,13 +55,13 @@ def _require_client(db: Session, client_id: int) -> None:
 
 
 @router.post("/fixation/validate", response_model=FixationResult)
-def validate_fixation(payload: FixationInput) -> FixationResult:
-    return calculate_fixation(payload)
+def validate_fixation(payload: dict[str, Any]) -> FixationResult:
+    return calculate_fixation_payload(payload)
 
 
 @router.post("/fixation/calculate", response_model=FixationResult)
-def calculate_fixation_endpoint(payload: FixationInput) -> FixationResult:
-    return calculate_fixation(payload)
+def calculate_fixation_endpoint(payload: dict[str, Any]) -> FixationResult:
+    return calculate_fixation_payload(payload)
 
 
 @router.post("/fixation/save", response_model=FixationSaveResponse)

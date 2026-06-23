@@ -61,6 +61,14 @@ export interface EmploymentRecordItem {
   notes: string | null;
 }
 
+export interface EmploymentRecordPayload {
+  employer_name: string;
+  work_start_date: string;
+  work_end_date: string | null;
+  is_current: boolean;
+  notes: string | null;
+}
+
 export interface GrantItem {
   grant_id: string;
   client_id: number;
@@ -68,6 +76,17 @@ export interface GrantItem {
   employer_name: string | null;
   nominal_amount: number | string | null;
   indexed_amount: number | string;
+  grant_date: string;
+  work_start_date: string;
+  work_end_date: string;
+  notes: string | null;
+}
+
+export interface GrantPayload {
+  employment_record_id: string | null;
+  employer_name: string | null;
+  nominal_amount: number | null;
+  indexed_amount: number;
   grant_date: string;
   work_start_date: string;
   work_end_date: string;
@@ -83,7 +102,7 @@ export interface ActualCapitalizationItem {
   notes: string | null;
 }
 
-export interface ActualCapitalizationCreatePayload {
+export interface ActualCapitalizationPayload {
   amount: number;
   capitalization_date: string;
   source_label: string | null;
@@ -165,9 +184,56 @@ export function getEmploymentRecords(clientId: number): Promise<EmploymentRecord
   });
 }
 
+export function createEmploymentRecord(
+  clientId: number,
+  payload: EmploymentRecordPayload
+): Promise<EmploymentRecordItem> {
+  return requestJson<EmploymentRecordItem>(`/clients/${clientId}/employment-records`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateEmploymentRecord(
+  clientId: number,
+  employmentRecordId: string,
+  payload: EmploymentRecordPayload
+): Promise<EmploymentRecordItem> {
+  return requestJson<EmploymentRecordItem>(`/clients/${clientId}/employment-records/${employmentRecordId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteEmploymentRecord(clientId: number, employmentRecordId: string): Promise<unknown> {
+  return requestJson<unknown>(`/clients/${clientId}/employment-records/${employmentRecordId}`, {
+    method: "DELETE"
+  });
+}
+
 export function getGrants(clientId: number): Promise<GrantItem[]> {
   return requestJson<GrantItem[]>(`/clients/${clientId}/grants`, {
     method: "GET"
+  });
+}
+
+export function createGrant(clientId: number, payload: GrantPayload): Promise<GrantItem> {
+  return requestJson<GrantItem>(`/clients/${clientId}/grants`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateGrant(clientId: number, grantId: string, payload: GrantPayload): Promise<GrantItem> {
+  return requestJson<GrantItem>(`/clients/${clientId}/grants/${grantId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteGrant(clientId: number, grantId: string): Promise<unknown> {
+  return requestJson<unknown>(`/clients/${clientId}/grants/${grantId}`, {
+    method: "DELETE"
   });
 }
 
@@ -179,10 +245,27 @@ export function getActualCapitalizations(clientId: number): Promise<ActualCapita
 
 export function createActualCapitalization(
   clientId: number,
-  payload: ActualCapitalizationCreatePayload
+  payload: ActualCapitalizationPayload
 ): Promise<ActualCapitalizationItem> {
   return requestJson<ActualCapitalizationItem>(`/clients/${clientId}/actual-capitalizations`, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export function updateActualCapitalization(
+  clientId: number,
+  capitalizationId: string,
+  payload: ActualCapitalizationPayload
+): Promise<ActualCapitalizationItem> {
+  return requestJson<ActualCapitalizationItem>(`/clients/${clientId}/actual-capitalizations/${capitalizationId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteActualCapitalization(clientId: number, capitalizationId: string): Promise<unknown> {
+  return requestJson<unknown>(`/clients/${clientId}/actual-capitalizations/${capitalizationId}`, {
+    method: "DELETE"
   });
 }

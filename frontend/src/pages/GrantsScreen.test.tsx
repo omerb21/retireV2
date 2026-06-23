@@ -1,40 +1,65 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GrantsScreen } from "./GrantsScreen";
+
+function jsonResponse(body: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: {
+      get: () => "application/json"
+    },
+    json: async () => body
+  };
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("GrantsScreen", () => {
-  it("renders grant data from the backend endpoint", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        headers: {
-          get: () => "application/json"
-        },
-        json: async () => [
-          {
-            grant_id: "GR-1",
-            client_id: 7,
-            employment_record_id: "ER-1",
-            employer_name: "Employer Inc",
-            nominal_amount: 10000.0,
-            indexed_amount: 15000.0,
-            grant_date: "2020-01-01",
-            work_start_date: "2010-01-01",
-            work_end_date: "2020-01-01",
-            notes: "Grant note"
-          }
-        ]
-      })
-    );
+  it("adds, edits, deletes, and saves grants without calculation calls", async () => {
+    const firstGrant = {
+      grant_id: "GR-1",
+      client_id: 7,
+      employment_record_id: "ER-1",
+      employer_name: "Employer Inc",
+      nominal_amount: 10000,
+      indexed_amount: 15000,
+      grant_date: "2020-01-01",
+      work_start_date: "2010-01-01",
+      work_end_date: "2020-01-01",
+      notes: "Grant note"
+    };
+    const secondGrant = {
+      grant_id: "GR-2",
+      client_id: 7,
+      employment_record_id: null,
+      employer_name: "New Employer",
+      nominal_amount: null,
+      indexed_amount: 9000,
+      grant_date: "2022-01-01",
+      work_start_date: "2021-01-01",
+      work_end_date: "2022-01-01",
+      notes: "New grant"
+    };
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([firstGrant]))
+      .mockResolvedValueOnce(jsonResponse(secondGrant))
+      .mockResolvedValueOnce(jsonResponse([firstGrant, secondGrant]))
+      .mockResolvedValueOnce(jsonResponse({ ...firstGrant, employer_name: "Updated Employer", indexed_amount: 16000 }))
+      .mockResolvedValueOnce(
+        jsonResponse([{ ...firstGrant, employer_name: "Updated Employer", indexed_amount: 16000 }, secondGrant])
+      )
+      .mockResolvedValueOnce(jsonResponse({ deleted: true }))
+      .mockResolvedValueOnce(jsonResponse([secondGrant]));
+
+    vi.stubGlobal("fetch", fetchMock);
 
     render(
       <MemoryRouter initialEntries={[{ pathname: "/clients/7/grants", state: { clientName: "Dana Levi" } }]}>
@@ -44,20 +69,68 @@ describe("GrantsScreen", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "Grants" })).toBeInTheDocument();
-    expect(await screen.findByText("Client ID: 7")).toBeInTheDocument();
-    expect(await screen.findByText("Client Name: Dana Levi")).toBeInTheDocument();
     expect(await screen.findByText("Grant ID: GR-1")).toBeInTheDocument();
-    expect(await screen.findByText("Employment Record ID: ER-1")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Employer Inc" })).toBeInTheDocument();
-    expect(await screen.findByText("Employer Name: Employer Inc")).toBeInTheDocument();
-    expect(await screen.findByText("Nominal Amount: 10000")).toBeInTheDocument();
-    expect(await screen.findByText("Indexed Amount: 15000")).toBeInTheDocument();
-    expect(await screen.findByText("Grant Date: 2020-01-01")).toBeInTheDocument();
-    expect(await screen.findByText("Work Start Date: 2010-01-01")).toBeInTheDocument();
-    expect(await screen.findByText("Work End Date: 2020-01-01")).toBeInTheDocument();
-    expect(await screen.findByText("Notes: Grant note")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to employment history" })).toHaveAttribute("href", "/clients/7/employment-history");
+
+    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "New Employer" } });
+    fireEvent.change(screen.getByLabelText("Indexed Amount"), { target: { value: "9000" } });
+    fireEvent.change(screen.getByLabelText("Grant Date"), { target: { value: "2022-01-01" } });
+    fireEvent.change(screen.getByLabelText("Work Start Date"), { target: { value: "2021-01-01" } });
+    fireEvent.change(screen.getByLabelText("Work End Date"), { target: { value: "2022-01-01" } });
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "New grant" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Grant" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/api/clients/7/grants",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            employment_record_id: null,
+            employer_name: "New Employer",
+            nominal_amount: null,
+            indexed_amount: 9000,
+            grant_date: "2022-01-01",
+            work_start_date: "2021-01-01",
+            work_end_date: "2022-01-01",
+            notes: "New grant"
+          })
+        })
+      );
+    });
+    expect(await screen.findByText("Grant ID: GR-2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit Grant" })[0]);
+    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Updated Employer" } });
+    fireEvent.change(screen.getByLabelText("Indexed Amount"), { target: { value: "16000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Grant" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        4,
+        "/api/clients/7/grants/GR-1",
+        expect.objectContaining({ method: "PUT" })
+      );
+    });
+    expect(await screen.findByText("Indexed Amount: 16000")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete Grant" })[0]);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        6,
+        "/api/clients/7/grants/GR-1",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    const requestedUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(requestedUrls.every((url) => !url.includes("/fixation/validate") && !url.includes("/fixation/calculate"))).toBe(
+      true
+    );
+    expect(screen.getByRole("link", { name: "Back to employment history" })).toHaveAttribute(
+      "href",
+      "/clients/7/employment-history"
+    );
     expect(screen.getByRole("link", { name: "Back to client detail" })).toHaveAttribute("href", "/clients/7");
   });
 });

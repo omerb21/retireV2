@@ -178,6 +178,19 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         list_employment_resp = client.get(f"/api/clients/{created_client_id}/employment-records")
         assert list_employment_resp.status_code == 200
         assert len(list_employment_resp.json()) == 1
+        update_employment_resp = client.put(
+            f"/api/clients/{created_client_id}/employment-records/{create_employment_resp.json()['employment_record_id']}",
+            json={
+                "employer_name": "Updated Employer Inc",
+                "work_start_date": "2011-01-01",
+                "work_end_date": None,
+                "is_current": True,
+                "notes": "updated employment",
+            },
+        )
+        assert update_employment_resp.status_code == 200
+        assert update_employment_resp.json()["employer_name"] == "Updated Employer Inc"
+        assert update_employment_resp.json()["is_current"] is True
 
         # 7. Create/list grants
         employment_id = create_employment_resp.json()["employment_record_id"]
@@ -198,6 +211,21 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         list_grants_resp = client.get(f"/api/clients/{created_client_id}/grants")
         assert list_grants_resp.status_code == 200
         assert len(list_grants_resp.json()) == 1
+        update_grant_resp = client.put(
+            f"/api/clients/{created_client_id}/grants/{create_grant_resp.json()['grant_id']}",
+            json={
+                "employment_record_id": employment_id,
+                "employer_name": "Updated Employer Inc",
+                "nominal_amount": 11000.0,
+                "indexed_amount": 12000.0,
+                "grant_date": "2021-01-01",
+                "work_start_date": "2011-01-01",
+                "work_end_date": "2021-01-01",
+                "notes": "updated grant",
+            },
+        )
+        assert update_grant_resp.status_code == 200
+        assert update_grant_resp.json()["indexed_amount"] == "12000.00"
 
         # 8. Create/list actual capitalizations
         create_cap_resp = client.post(
@@ -213,6 +241,54 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         list_cap_resp = client.get(f"/api/clients/{created_client_id}/actual-capitalizations")
         assert list_cap_resp.status_code == 200
         assert len(list_cap_resp.json()) == 1
+        update_cap_resp = client.put(
+            f"/api/clients/{created_client_id}/actual-capitalizations/{create_cap_resp.json()['capitalization_id']}",
+            json={
+                "amount": 750.0,
+                "capitalization_date": "2024-01-01",
+                "source_label": "updated manual",
+                "notes": "updated cap",
+            },
+        )
+        assert update_cap_resp.status_code == 200
+        assert update_cap_resp.json()["amount"] == "750.00"
+
+        other_created = _create_client(client, id_number="3003")
+        other_client_id = other_created["client_id"]
+        wrong_client_employment_resp = client.put(
+            f"/api/clients/{other_client_id}/employment-records/{employment_id}",
+            json={
+                "employer_name": "Wrong Client",
+                "work_start_date": "2011-01-01",
+                "work_end_date": None,
+                "is_current": True,
+                "notes": None,
+            },
+        )
+        assert wrong_client_employment_resp.status_code == 404
+        assert wrong_client_employment_resp.json()["detail"]["code"] == "EMPLOYMENT_RECORD_NOT_FOUND"
+        wrong_client_grant_resp = client.delete(
+            f"/api/clients/{other_client_id}/grants/{create_grant_resp.json()['grant_id']}"
+        )
+        assert wrong_client_grant_resp.status_code == 404
+        assert wrong_client_grant_resp.json()["detail"]["code"] == "GRANT_NOT_FOUND"
+        wrong_client_cap_resp = client.delete(
+            f"/api/clients/{other_client_id}/actual-capitalizations/{create_cap_resp.json()['capitalization_id']}"
+        )
+        assert wrong_client_cap_resp.status_code == 404
+        assert wrong_client_cap_resp.json()["detail"]["code"] == "ACTUAL_CAPITALIZATION_NOT_FOUND"
+
+        delete_cap_resp = client.delete(
+            f"/api/clients/{created_client_id}/actual-capitalizations/{create_cap_resp.json()['capitalization_id']}"
+        )
+        assert delete_cap_resp.status_code == 200
+        assert client.get(f"/api/clients/{created_client_id}/actual-capitalizations").json() == []
+        delete_grant_resp = client.delete(f"/api/clients/{created_client_id}/grants/{create_grant_resp.json()['grant_id']}")
+        assert delete_grant_resp.status_code == 200
+        assert client.get(f"/api/clients/{created_client_id}/grants").json() == []
+        delete_employment_resp = client.delete(f"/api/clients/{created_client_id}/employment-records/{employment_id}")
+        assert delete_employment_resp.status_code == 200
+        assert client.get(f"/api/clients/{created_client_id}/employment-records").json() == []
 
         # 9. Validate fixation without persistence
         input_payload = _fixation_input(calc_id="calc-validate")

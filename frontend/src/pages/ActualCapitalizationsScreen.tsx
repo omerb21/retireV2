@@ -4,9 +4,11 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import {
   ApiTransportError,
   createActualCapitalization,
-  type ActualCapitalizationCreatePayload,
+  deleteActualCapitalization,
   type ActualCapitalizationItem,
-  getActualCapitalizations
+  type ActualCapitalizationPayload,
+  getActualCapitalizations,
+  updateActualCapitalization
 } from "../api/clientsApi";
 
 function getErrorMessage(error: unknown): string {
@@ -35,6 +37,24 @@ const emptyFormState: FormState = {
   notes: ""
 };
 
+function formStateFromCapitalization(capitalization: ActualCapitalizationItem): FormState {
+  return {
+    amount: String(capitalization.amount),
+    capitalizationDate: capitalization.capitalization_date,
+    sourceLabel: capitalization.source_label ?? "",
+    notes: capitalization.notes ?? ""
+  };
+}
+
+function payloadFromForm(formState: FormState): ActualCapitalizationPayload {
+  return {
+    amount: Number(formState.amount),
+    capitalization_date: formState.capitalizationDate,
+    source_label: formState.sourceLabel.trim() === "" ? null : formState.sourceLabel,
+    notes: formState.notes.trim() === "" ? null : formState.notes
+  };
+}
+
 export function ActualCapitalizationsScreen() {
   const { clientId } = useParams<{ clientId: string }>();
   const location = useLocation();
@@ -52,8 +72,16 @@ export function ActualCapitalizationsScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isNotFound, setIsNotFound] = useState(false);
   const [formState, setFormState] = useState<FormState>(emptyFormState);
-  const [submitErrorMessage, setSubmitErrorMessage] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [mutationErrorMessage, setMutationErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function refreshCapitalizations() {
+    const nextCapitalizations = await getActualCapitalizations(parsedClientId);
+    setCapitalizations(nextCapitalizations);
+    setIsNotFound(false);
+    setErrorMessage(null);
+  }
 
   useEffect(() => {
     let isActive = true;
@@ -112,37 +140,57 @@ export function ActualCapitalizationsScreen() {
       : "/fixation/input";
   const backState = clientName ? { clientName } : undefined;
 
-  async function refreshCapitalizations() {
-    const nextCapitalizations = await getActualCapitalizations(parsedClientId);
-    setCapitalizations(nextCapitalizations);
-    setIsNotFound(false);
-    setErrorMessage(null);
+  function startEditing(capitalization: ActualCapitalizationItem) {
+    setEditingId(capitalization.capitalization_id);
+    setFormState(formStateFromCapitalization(capitalization));
+    setMutationErrorMessage(null);
+  }
+
+  function resetForm() {
+    setEditingId(null);
+    setFormState(emptyFormState);
+    setMutationErrorMessage(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
-      setSubmitErrorMessage("Unable to add actual capitalization for this client.");
+      setMutationErrorMessage("Unable to save actual capitalization for this client.");
       return;
     }
 
-    const payload: ActualCapitalizationCreatePayload = {
-      amount: Number(formState.amount),
-      capitalization_date: formState.capitalizationDate,
-      source_label: formState.sourceLabel.trim() === "" ? null : formState.sourceLabel,
-      notes: formState.notes.trim() === "" ? null : formState.notes
-    };
-
     setIsSubmitting(true);
-    setSubmitErrorMessage(null);
+    setMutationErrorMessage(null);
 
     try {
-      await createActualCapitalization(parsedClientId, payload);
+      const payload = payloadFromForm(formState);
+      if (editingId === null) {
+        await createActualCapitalization(parsedClientId, payload);
+      } else {
+        await updateActualCapitalization(parsedClientId, editingId, payload);
+      }
       await refreshCapitalizations();
-      setFormState(emptyFormState);
+      resetForm();
     } catch (error) {
-      setSubmitErrorMessage(getErrorMessage(error));
+      setMutationErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleDelete(capitalization: ActualCapitalizationItem) {
+    setIsSubmitting(true);
+    setMutationErrorMessage(null);
+
+    try {
+      await deleteActualCapitalization(parsedClientId, capitalization.capitalization_id);
+      await refreshCapitalizations();
+      if (editingId === capitalization.capitalization_id) {
+        resetForm();
+      }
+    } catch (error) {
+      setMutationErrorMessage(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -193,7 +241,6 @@ export function ActualCapitalizationsScreen() {
       <h2>Actual Capitalizations</h2>
       <p>Client ID: {parsedClientId}</p>
       {clientName ? <p>Client Name: {clientName}</p> : null}
-      <p>Edit and delete are unavailable in this workflow.</p>
       {errorMessage !== null ? (
         <>
           <p>Unable to load actual capitalizations.</p>
@@ -212,6 +259,14 @@ export function ActualCapitalizationsScreen() {
                 <p>Capitalization Date: {capitalization.capitalization_date}</p>
                 {capitalization.source_label ? <p>Source Label: {capitalization.source_label}</p> : null}
                 {capitalization.notes ? <p>Notes: {capitalization.notes}</p> : null}
+                <p>
+                  <button type="button" onClick={() => startEditing(capitalization)} disabled={isSubmitting}>
+                    Edit Actual Capitalization
+                  </button>
+                  <button type="button" onClick={() => void handleDelete(capitalization)} disabled={isSubmitting}>
+                    Delete Actual Capitalization
+                  </button>
+                </p>
               </article>
             </li>
           ))}
@@ -219,7 +274,7 @@ export function ActualCapitalizationsScreen() {
       )}
 
       <form onSubmit={handleSubmit}>
-        <h3>Add Actual Capitalization</h3>
+        <h3>{editingId === null ? "Add Actual Capitalization" : "Edit Actual Capitalization"}</h3>
         <p>
           <label>
             Amount
@@ -265,11 +320,20 @@ export function ActualCapitalizationsScreen() {
             />
           </label>
         </p>
-        {submitErrorMessage ? <p>{submitErrorMessage}</p> : null}
+        {mutationErrorMessage ? <p>{mutationErrorMessage}</p> : null}
         <p>
           <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : "Add Actual Capitalization"}
+            {isSubmitting
+              ? "Saving..."
+              : editingId === null
+                ? "Add Actual Capitalization"
+                : "Save Actual Capitalization"}
           </button>
+          {editingId !== null ? (
+            <button type="button" onClick={resetForm} disabled={isSubmitting}>
+              Cancel Edit
+            </button>
+          ) : null}
         </p>
       </form>
 

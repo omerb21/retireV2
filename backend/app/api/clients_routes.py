@@ -123,6 +123,88 @@ def _require_client(db: Session, client_id: int) -> Client:
     return client
 
 
+def _source_item_not_found(code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=404, detail={"code": code, "message": message})
+
+
+def _employment_record_to_response(row: EmploymentRecord) -> EmploymentRecordResponse:
+    return EmploymentRecordResponse(
+        employment_record_id=row.employment_record_id,
+        client_id=row.client_id,
+        employer_name=row.employer_name,
+        work_start_date=row.work_start_date,
+        work_end_date=row.work_end_date,
+        is_current=row.is_current,
+        notes=row.notes,
+    )
+
+
+def _grant_to_response(row: Grant) -> GrantResponse:
+    return GrantResponse(
+        grant_id=row.grant_id,
+        client_id=row.client_id,
+        employment_record_id=row.employment_record_id,
+        employer_name=row.employer_name,
+        nominal_amount=row.nominal_amount,
+        indexed_amount=row.indexed_amount,
+        grant_date=row.grant_date,
+        work_start_date=row.work_start_date,
+        work_end_date=row.work_end_date,
+        notes=row.notes,
+    )
+
+
+def _actual_capitalization_to_response(row: ActualCapitalization) -> ActualCapitalizationResponse:
+    return ActualCapitalizationResponse(
+        capitalization_id=row.capitalization_id,
+        client_id=row.client_id,
+        amount=row.amount,
+        capitalization_date=row.capitalization_date,
+        source_label=row.source_label,
+        notes=row.notes,
+    )
+
+
+def _require_employment_record(db: Session, client_id: int, employment_record_id: str) -> EmploymentRecord:
+    row = db.scalar(
+        select(EmploymentRecord).where(
+            EmploymentRecord.client_id == client_id,
+            EmploymentRecord.employment_record_id == employment_record_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "EMPLOYMENT_RECORD_NOT_FOUND",
+            f"Employment record {employment_record_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_grant(db: Session, client_id: int, grant_id: str) -> Grant:
+    row = db.scalar(select(Grant).where(Grant.client_id == client_id, Grant.grant_id == grant_id))
+    if row is None:
+        raise _source_item_not_found(
+            "GRANT_NOT_FOUND",
+            f"Grant {grant_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_actual_capitalization(db: Session, client_id: int, capitalization_id: str) -> ActualCapitalization:
+    row = db.scalar(
+        select(ActualCapitalization).where(
+            ActualCapitalization.client_id == client_id,
+            ActualCapitalization.capitalization_id == capitalization_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "ACTUAL_CAPITALIZATION_NOT_FOUND",
+            f"Actual capitalization {capitalization_id} was not found for client {client_id}",
+        )
+    return row
+
+
 @router.get("", response_model=list[ClientResponse])
 def list_clients(db: Session = Depends(get_db)) -> list[ClientResponse]:
     clients = db.scalars(select(Client).order_by(Client.client_id.asc())).all()
@@ -247,15 +329,7 @@ def create_employment_record(
     db.add(record)
     db.commit()
 
-    return EmploymentRecordResponse(
-        employment_record_id=record.employment_record_id,
-        client_id=client_id,
-        employer_name=record.employer_name,
-        work_start_date=record.work_start_date,
-        work_end_date=record.work_end_date,
-        is_current=record.is_current,
-        notes=record.notes,
-    )
+    return _employment_record_to_response(record)
 
 
 @router.get("/{client_id}/employment-records", response_model=list[EmploymentRecordResponse])
@@ -267,22 +341,54 @@ def list_employment_records(client_id: int, db: Session = Depends(get_db)) -> li
         .order_by(EmploymentRecord.employment_record_id)
     ).all()
     return [
-        EmploymentRecordResponse(
-            employment_record_id=row.employment_record_id,
-            client_id=client_id,
-            employer_name=row.employer_name,
-            work_start_date=row.work_start_date,
-            work_end_date=row.work_end_date,
-            is_current=row.is_current,
-            notes=row.notes,
-        )
+        _employment_record_to_response(row)
         for row in records
     ]
+
+
+@router.put(
+    "/{client_id}/employment-records/{employment_record_id}",
+    response_model=EmploymentRecordResponse,
+)
+def update_employment_record(
+    client_id: int,
+    employment_record_id: str,
+    payload: EmploymentRecordRequest,
+    db: Session = Depends(get_db),
+) -> EmploymentRecordResponse:
+    _require_client(db, client_id)
+    record = _require_employment_record(db, client_id, employment_record_id)
+
+    record.employer_name = payload.employer_name
+    record.work_start_date = payload.work_start_date
+    record.work_end_date = payload.work_end_date
+    record.is_current = payload.is_current
+    record.notes = payload.notes
+    db.commit()
+    db.refresh(record)
+
+    return _employment_record_to_response(record)
+
+
+@router.delete("/{client_id}/employment-records/{employment_record_id}")
+def delete_employment_record(
+    client_id: int,
+    employment_record_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_client(db, client_id)
+    record = _require_employment_record(db, client_id, employment_record_id)
+
+    db.delete(record)
+    db.commit()
+    return {"deleted": True, "employment_record_id": employment_record_id}
 
 
 @router.post("/{client_id}/grants", response_model=GrantResponse)
 def create_grant(client_id: int, payload: GrantRequest, db: Session = Depends(get_db)) -> GrantResponse:
     _require_client(db, client_id)
+    if payload.employment_record_id is not None:
+        _require_employment_record(db, client_id, payload.employment_record_id)
 
     grant = Grant(
         grant_id=f"GR-{uuid4().hex}",
@@ -299,18 +405,7 @@ def create_grant(client_id: int, payload: GrantRequest, db: Session = Depends(ge
     db.add(grant)
     db.commit()
 
-    return GrantResponse(
-        grant_id=grant.grant_id,
-        client_id=client_id,
-        employment_record_id=grant.employment_record_id,
-        employer_name=grant.employer_name,
-        nominal_amount=grant.nominal_amount,
-        indexed_amount=grant.indexed_amount,
-        grant_date=grant.grant_date,
-        work_start_date=grant.work_start_date,
-        work_end_date=grant.work_end_date,
-        notes=grant.notes,
-    )
+    return _grant_to_response(grant)
 
 
 @router.get("/{client_id}/grants", response_model=list[GrantResponse])
@@ -321,20 +416,45 @@ def list_grants(client_id: int, db: Session = Depends(get_db)) -> list[GrantResp
     ).all()
 
     return [
-        GrantResponse(
-            grant_id=row.grant_id,
-            client_id=client_id,
-            employment_record_id=row.employment_record_id,
-            employer_name=row.employer_name,
-            nominal_amount=row.nominal_amount,
-            indexed_amount=row.indexed_amount,
-            grant_date=row.grant_date,
-            work_start_date=row.work_start_date,
-            work_end_date=row.work_end_date,
-            notes=row.notes,
-        )
+        _grant_to_response(row)
         for row in grants
     ]
+
+
+@router.put("/{client_id}/grants/{grant_id}", response_model=GrantResponse)
+def update_grant(
+    client_id: int,
+    grant_id: str,
+    payload: GrantRequest,
+    db: Session = Depends(get_db),
+) -> GrantResponse:
+    _require_client(db, client_id)
+    grant = _require_grant(db, client_id, grant_id)
+    if payload.employment_record_id is not None:
+        _require_employment_record(db, client_id, payload.employment_record_id)
+
+    grant.employment_record_id = payload.employment_record_id
+    grant.employer_name = payload.employer_name
+    grant.nominal_amount = payload.nominal_amount
+    grant.indexed_amount = payload.indexed_amount
+    grant.grant_date = payload.grant_date
+    grant.work_start_date = payload.work_start_date
+    grant.work_end_date = payload.work_end_date
+    grant.notes = payload.notes
+    db.commit()
+    db.refresh(grant)
+
+    return _grant_to_response(grant)
+
+
+@router.delete("/{client_id}/grants/{grant_id}")
+def delete_grant(client_id: int, grant_id: str, db: Session = Depends(get_db)) -> dict:
+    _require_client(db, client_id)
+    grant = _require_grant(db, client_id, grant_id)
+
+    db.delete(grant)
+    db.commit()
+    return {"deleted": True, "grant_id": grant_id}
 
 
 @router.post("/{client_id}/actual-capitalizations", response_model=ActualCapitalizationResponse)
@@ -356,14 +476,7 @@ def create_actual_capitalization(
     db.add(cap)
     db.commit()
 
-    return ActualCapitalizationResponse(
-        capitalization_id=cap.capitalization_id,
-        client_id=client_id,
-        amount=cap.amount,
-        capitalization_date=cap.capitalization_date,
-        source_label=cap.source_label,
-        notes=cap.notes,
-    )
+    return _actual_capitalization_to_response(cap)
 
 
 @router.get("/{client_id}/actual-capitalizations", response_model=list[ActualCapitalizationResponse])
@@ -379,13 +492,43 @@ def list_actual_capitalizations(
     ).all()
 
     return [
-        ActualCapitalizationResponse(
-            capitalization_id=row.capitalization_id,
-            client_id=client_id,
-            amount=row.amount,
-            capitalization_date=row.capitalization_date,
-            source_label=row.source_label,
-            notes=row.notes,
-        )
+        _actual_capitalization_to_response(row)
         for row in capitalizations
     ]
+
+
+@router.put(
+    "/{client_id}/actual-capitalizations/{capitalization_id}",
+    response_model=ActualCapitalizationResponse,
+)
+def update_actual_capitalization(
+    client_id: int,
+    capitalization_id: str,
+    payload: ActualCapitalizationRequest,
+    db: Session = Depends(get_db),
+) -> ActualCapitalizationResponse:
+    _require_client(db, client_id)
+    cap = _require_actual_capitalization(db, client_id, capitalization_id)
+
+    cap.amount = payload.amount
+    cap.capitalization_date = payload.capitalization_date
+    cap.source_label = payload.source_label
+    cap.notes = payload.notes
+    db.commit()
+    db.refresh(cap)
+
+    return _actual_capitalization_to_response(cap)
+
+
+@router.delete("/{client_id}/actual-capitalizations/{capitalization_id}")
+def delete_actual_capitalization(
+    client_id: int,
+    capitalization_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_client(db, client_id)
+    cap = _require_actual_capitalization(db, client_id, capitalization_id)
+
+    db.delete(cap)
+    db.commit()
+    return {"deleted": True, "capitalization_id": capitalization_id}

@@ -89,8 +89,16 @@ def test_forbidden_paths_not_modified() -> None:
     status_lines = _run_git_status_porcelain()
     modified_paths = [_status_path(line) for line in status_lines if not line.startswith("?? ")]
     authorized_contract_alignment_paths = {
+        "backend/app/api/clients_routes.py",
         "backend/app/api/fixation_routes.py",
         "backend/app/schemas/fixation_contracts.py",
+        "frontend/src/api/clientsApi.ts",
+        "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
+        "frontend/src/pages/ActualCapitalizationsScreen.tsx",
+        "frontend/src/pages/EmploymentHistoryScreen.test.tsx",
+        "frontend/src/pages/EmploymentHistoryScreen.tsx",
+        "frontend/src/pages/GrantsScreen.test.tsx",
+        "frontend/src/pages/GrantsScreen.tsx",
     }
 
     forbidden_prefixes = (

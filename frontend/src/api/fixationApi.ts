@@ -57,7 +57,6 @@ export interface FixationInputPayload {
   grants: FixationGrantInputPayload[];
   future_grant_reserved: number;
   actual_capitalizations: FixationActualCapitalizationInputPayload[];
-  idf_relevant: boolean;
   idf: FixationIdfInputPayload | null;
   metadata?: Record<string, unknown> | null;
 }

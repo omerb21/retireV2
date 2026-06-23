@@ -168,7 +168,6 @@ function buildPayload(
     grants: grants.map(mapGrantToPayload),
     future_grant_reserved: Number(formState.futureGrantReserved),
     actual_capitalizations: actualCapitalizations.map(mapActualCapitalizationToPayload),
-    idf_relevant: formState.idfRelevant,
     idf: buildIdfPayload(formState),
   };
 }

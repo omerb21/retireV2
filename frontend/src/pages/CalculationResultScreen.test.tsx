@@ -58,7 +58,6 @@ function buildInputSnapshot(overrides: Partial<Record<string, unknown>> = {}) {
         notes: null
       }
     ],
-    idf_relevant: false,
     idf: null,
     ...overrides
   };

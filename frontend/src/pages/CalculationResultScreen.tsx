@@ -117,7 +117,6 @@ function normalizeFixationInput(payload: FixationInputPayload): Record<string, u
       source_label: capitalization.source_label,
       notes: capitalization.notes,
     })),
-    idf_relevant: payload.idf_relevant,
     idf:
       payload.idf === null
         ? null

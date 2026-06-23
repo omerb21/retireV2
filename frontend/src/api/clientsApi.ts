@@ -1,3 +1,5 @@
+import { buildApiUrl } from "./apiBase";
+
 export interface ApiTransportErrorShape {
   status: number;
   statusText: string;
@@ -109,8 +111,6 @@ export interface ActualCapitalizationPayload {
   notes: string | null;
 }
 
-const API_PREFIX = "/api";
-
 async function parseResponseBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -122,7 +122,7 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 }
 
 async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -144,8 +144,14 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
 }
 
 export function getClients(): Promise<ClientListItem[]> {
-  return requestJson<ClientListItem[]>("/clients", {
+  return requestJson<unknown>("/clients", {
     method: "GET"
+  }).then((body) => {
+    if (!Array.isArray(body)) {
+      throw new Error("Unexpected clients response shape.");
+    }
+
+    return body as ClientListItem[];
   });
 }
 

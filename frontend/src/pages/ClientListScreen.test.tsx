@@ -58,4 +58,18 @@ describe("ClientListScreen", () => {
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Create Client" })).toHaveAttribute("href", "/clients/new");
   });
+
+  it("shows an error instead of crashing when the client list response is not an array", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(mockJsonResponse({ clients: [] })));
+
+    render(
+      <MemoryRouter>
+        <ClientListScreen />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Unable to load clients.")).toBeInTheDocument();
+    expect(await screen.findByText("Unexpected clients response shape.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create Client" })).toHaveAttribute("href", "/clients/new");
+  });
 });

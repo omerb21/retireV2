@@ -1,3 +1,5 @@
+import { buildApiUrl } from "./apiBase";
+
 export interface ApiTransportErrorShape {
   status: number;
   statusText: string;
@@ -90,8 +92,6 @@ export interface FixationRunDetailResponse {
   validation_errors: Array<Record<string, unknown>>;
 }
 
-const API_PREFIX = "/api";
-
 async function parseResponseBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -103,7 +103,7 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 }
 
 async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",

@@ -19,6 +19,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    is_postgresql = bind.dialect.name == "postgresql"
+    numeric_client_id_predicate = (
+        "client_id ~ '^[0-9]+$'"
+        if is_postgresql
+        else "client_id NOT GLOB '*[^0-9]*'"
+    )
+    non_numeric_client_id_predicate = (
+        "client_id !~ '^[0-9]+$'"
+        if is_postgresql
+        else "client_id GLOB '*[^0-9]*'"
+    )
 
     def _count(sql: str) -> int:
         return int(bind.exec_driver_sql(sql).scalar_one())
@@ -35,13 +46,13 @@ def upgrade() -> None:
         risks.append(f"clients.client_id has {empty_client_ids} empty/null values")
 
     non_numeric_client_ids = _count(
-        """
+        f"""
         SELECT COUNT(*)
         FROM clients
         WHERE client_id IS NOT NULL
           AND client_id <> ''
           AND TRIM(client_id) <> ''
-          AND client_id GLOB '*[^0-9]*'
+          AND {non_numeric_client_id_predicate}
         """
     )
     if non_numeric_client_ids > 0:
@@ -50,13 +61,13 @@ def upgrade() -> None:
         )
 
     cast_changed_client_ids = _count(
-        """
+        f"""
         SELECT COUNT(*)
         FROM clients
         WHERE client_id IS NOT NULL
           AND client_id <> ''
           AND TRIM(client_id) <> ''
-          AND client_id NOT GLOB '*[^0-9]*'
+          AND {numeric_client_id_predicate}
           AND client_id != CAST(CAST(client_id AS INTEGER) AS TEXT)
         """
     )
@@ -66,7 +77,7 @@ def upgrade() -> None:
         )
 
     normalized_client_collisions = _count(
-        """
+        f"""
         SELECT COUNT(*)
         FROM (
             SELECT CAST(client_id AS INTEGER) AS normalized_client_id, COUNT(*) AS row_count
@@ -74,7 +85,7 @@ def upgrade() -> None:
             WHERE client_id IS NOT NULL
               AND client_id <> ''
               AND TRIM(client_id) <> ''
-              AND client_id NOT GLOB '*[^0-9]*'
+              AND {numeric_client_id_predicate}
             GROUP BY CAST(client_id AS INTEGER)
             HAVING COUNT(*) > 1
         ) collision_groups

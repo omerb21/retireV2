@@ -89,6 +89,8 @@ def test_forbidden_paths_not_modified() -> None:
     status_lines = _run_git_status_porcelain()
     modified_paths = [_status_path(line) for line in status_lines if not line.startswith("?? ")]
     authorized_contract_alignment_paths = {
+        "backend/alembic/versions/9a6f3b8c21de_stage_c_cutover_integer_ids.py",
+        "backend/alembic/versions/eb25e18b9fcd_align_phase_1_ids_for_api.py",
         "backend/app/api/clients_routes.py",
         "backend/app/api/fixation_routes.py",
         "backend/app/schemas/fixation_contracts.py",

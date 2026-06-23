@@ -22,6 +22,180 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        _upgrade_postgresql()
+        return
+
+    _upgrade_sqlite()
+
+
+def _upgrade_postgresql() -> None:
+    bind = op.get_bind()
+
+    invalid_client_ids = int(
+        bind.exec_driver_sql(
+            """
+            SELECT COUNT(*)
+            FROM clients
+            WHERE client_id IS NULL
+               OR client_id = ''
+               OR TRIM(client_id) = ''
+               OR client_id !~ '^[0-9]+$'
+               OR client_id != CAST(CAST(client_id AS INTEGER) AS TEXT)
+            """
+        ).scalar_one()
+    )
+    if invalid_client_ids > 0:
+        raise RuntimeError(
+            "Stage C cutover blocked: clients.client_id contains non-canonical numeric values; "
+            "resolve Stage A/B audit violations before CAST-based PK/FK cutover."
+        )
+
+    for table_name, constraint_name in (
+        ("client_profiles", "client_profiles_client_id_fkey"),
+        ("employment_records", "employment_records_client_id_fkey"),
+        ("actual_capitalizations", "actual_capitalizations_client_id_fkey"),
+        ("grants", "grants_client_id_fkey"),
+        ("grants", "grants_employment_record_id_fkey"),
+        ("fixation_runs", "fixation_runs_client_id_fkey"),
+        ("fixation_input_snapshots", "fixation_input_snapshots_fixation_run_id_fkey"),
+        ("fixation_results", "fixation_results_fixation_run_id_fkey"),
+        ("fixation_audit_rows", "fixation_audit_rows_fixation_run_id_fkey"),
+        ("fixation_validation_errors", "fixation_validation_errors_fixation_run_id_fkey"),
+        ("client_profiles", "client_profiles_client_id_key"),
+        ("fixation_input_snapshots", "fixation_input_snapshots_fixation_run_id_key"),
+        ("fixation_results", "fixation_results_fixation_run_id_key"),
+        ("fixation_audit_rows", "uq_fixation_audit_rows_run_order"),
+        ("fixation_validation_errors", "uq_fixation_validation_errors_run_order"),
+        ("clients", "clients_pkey"),
+        ("fixation_runs", "fixation_runs_pkey"),
+    ):
+        op.execute(f"ALTER TABLE {table_name} DROP CONSTRAINT IF EXISTS {constraint_name}")
+
+    op.drop_index("ix_fixation_runs_id", table_name="fixation_runs")
+    op.drop_index("ix_clients_id_number", table_name="clients")
+
+    op.execute("ALTER TABLE clients ALTER COLUMN client_id TYPE INTEGER USING client_id::integer")
+    op.execute("ALTER TABLE clients ALTER COLUMN id_number SET NOT NULL")
+    op.execute("ALTER TABLE clients ALTER COLUMN status DROP NOT NULL")
+    op.execute("CREATE SEQUENCE IF NOT EXISTS clients_client_id_seq OWNED BY clients.client_id")
+    op.execute("ALTER TABLE clients ALTER COLUMN client_id SET DEFAULT nextval('clients_client_id_seq')")
+    op.execute("SELECT setval('clients_client_id_seq', COALESCE((SELECT MAX(client_id) FROM clients), 0) + 1, false)")
+    op.execute("ALTER TABLE clients ADD CONSTRAINT clients_pkey PRIMARY KEY (client_id)")
+    op.create_unique_constraint("clients_id_number_key", "clients", ["id_number"])
+
+    for table_name in (
+        "client_profiles",
+        "employment_records",
+        "grants",
+        "actual_capitalizations",
+        "fixation_runs",
+    ):
+        op.execute(f"ALTER TABLE {table_name} ALTER COLUMN client_id TYPE INTEGER USING client_id::integer")
+
+    op.execute("ALTER TABLE fixation_runs ALTER COLUMN id SET NOT NULL")
+    op.execute("ALTER TABLE fixation_runs ALTER COLUMN fixation_run_id DROP NOT NULL")
+    op.execute("CREATE SEQUENCE IF NOT EXISTS fixation_runs_id_seq OWNED BY fixation_runs.id")
+    op.execute("ALTER TABLE fixation_runs ALTER COLUMN id SET DEFAULT nextval('fixation_runs_id_seq')")
+    op.execute("SELECT setval('fixation_runs_id_seq', COALESCE((SELECT MAX(id) FROM fixation_runs), 0) + 1, false)")
+    op.execute("ALTER TABLE fixation_runs ADD CONSTRAINT fixation_runs_pkey PRIMARY KEY (id)")
+    op.create_unique_constraint("fixation_runs_fixation_run_id_key", "fixation_runs", ["fixation_run_id"])
+
+    for table_name in (
+        "fixation_input_snapshots",
+        "fixation_results",
+        "fixation_audit_rows",
+        "fixation_validation_errors",
+    ):
+        op.drop_column(table_name, "fixation_run_id")
+        op.alter_column(table_name, "fixation_run_id_int", new_column_name="fixation_run_id")
+        op.execute(f"ALTER TABLE {table_name} ALTER COLUMN fixation_run_id SET NOT NULL")
+
+    op.create_unique_constraint("client_profiles_client_id_key", "client_profiles", ["client_id"])
+    op.create_foreign_key(
+        "client_profiles_client_id_fkey",
+        "client_profiles",
+        "clients",
+        ["client_id"],
+        ["client_id"],
+    )
+    op.create_foreign_key(
+        "employment_records_client_id_fkey",
+        "employment_records",
+        "clients",
+        ["client_id"],
+        ["client_id"],
+    )
+    op.create_foreign_key(
+        "actual_capitalizations_client_id_fkey",
+        "actual_capitalizations",
+        "clients",
+        ["client_id"],
+        ["client_id"],
+    )
+    op.create_foreign_key("grants_client_id_fkey", "grants", "clients", ["client_id"], ["client_id"])
+    op.create_foreign_key(
+        "grants_employment_record_id_fkey",
+        "grants",
+        "employment_records",
+        ["employment_record_id"],
+        ["employment_record_id"],
+    )
+    op.create_foreign_key(
+        "fixation_runs_client_id_fkey",
+        "fixation_runs",
+        "clients",
+        ["client_id"],
+        ["client_id"],
+    )
+    op.create_unique_constraint(
+        "fixation_input_snapshots_fixation_run_id_key",
+        "fixation_input_snapshots",
+        ["fixation_run_id"],
+    )
+    op.create_foreign_key(
+        "fixation_input_snapshots_fixation_run_id_fkey",
+        "fixation_input_snapshots",
+        "fixation_runs",
+        ["fixation_run_id"],
+        ["id"],
+    )
+    op.create_unique_constraint("fixation_results_fixation_run_id_key", "fixation_results", ["fixation_run_id"])
+    op.create_foreign_key(
+        "fixation_results_fixation_run_id_fkey",
+        "fixation_results",
+        "fixation_runs",
+        ["fixation_run_id"],
+        ["id"],
+    )
+    op.create_unique_constraint(
+        "uq_fixation_audit_rows_run_order",
+        "fixation_audit_rows",
+        ["fixation_run_id", "row_order"],
+    )
+    op.create_foreign_key(
+        "fixation_audit_rows_fixation_run_id_fkey",
+        "fixation_audit_rows",
+        "fixation_runs",
+        ["fixation_run_id"],
+        ["id"],
+    )
+    op.create_unique_constraint(
+        "uq_fixation_validation_errors_run_order",
+        "fixation_validation_errors",
+        ["fixation_run_id", "error_order"],
+    )
+    op.create_foreign_key(
+        "fixation_validation_errors_fixation_run_id_fkey",
+        "fixation_validation_errors",
+        "fixation_runs",
+        ["fixation_run_id"],
+        ["id"],
+    )
+
+
+def _upgrade_sqlite() -> None:
     op.execute("PRAGMA foreign_keys=OFF")
 
     bind = op.get_bind()

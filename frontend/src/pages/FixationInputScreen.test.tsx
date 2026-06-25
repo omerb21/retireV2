@@ -56,6 +56,7 @@ describe("FixationInputScreen contract payload", () => {
 
     renderScreen();
     await waitFor(() => expect(screen.getByText(/Current Input Readiness Status:/)).toBeInTheDocument());
+    expect(screen.getByLabelText("Eligibility Date")).toHaveAttribute("type", "text");
     fillRequiredFields();
     fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
 
@@ -78,6 +79,8 @@ describe("FixationInputScreen contract payload", () => {
     await waitFor(() => expect(screen.getByText(/Current Input Readiness Status:/)).toBeInTheDocument());
     fillRequiredFields();
     fireEvent.click(screen.getByLabelText("IDF applicable"));
+    expect(screen.getByLabelText("IDF Commutation Date")).toHaveAttribute("type", "text");
+    expect(screen.getByLabelText("IDF Promoter Age Date")).toHaveAttribute("type", "text");
     fireEvent.change(screen.getByLabelText("IDF ID"), { target: { value: "IDF-1" } });
     fireEvent.change(screen.getByLabelText("IDF Reduction Amount"), { target: { value: "100" } });
     fireEvent.change(screen.getByLabelText("IDF Original Commutation Percent"), { target: { value: "25" } });

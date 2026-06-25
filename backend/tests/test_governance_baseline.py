@@ -84,6 +84,8 @@ def test_repository_has_no_untracked_files_for_governance_gate() -> None:
         "backend/app/models/missing_data_item.py",
         "backend/app/models/retirement_planning_document.py",
         "backend/tests/test_governance_baseline.py",
+        "frontend/src/pages/FixationWorkspaceScreen.test.tsx",
+        "frontend/src/pages/FixationWorkspaceScreen.tsx",
     }
     untracked = [
         line
@@ -126,8 +128,11 @@ def test_forbidden_paths_not_modified() -> None:
         "frontend/src/pages/CreateClientScreen.tsx",
         "frontend/src/pages/EmploymentHistoryScreen.test.tsx",
         "frontend/src/pages/EmploymentHistoryScreen.tsx",
+        "frontend/src/pages/FixationWorkspaceScreen.test.tsx",
+        "frontend/src/pages/FixationWorkspaceScreen.tsx",
         "frontend/src/pages/GrantsScreen.test.tsx",
         "frontend/src/pages/GrantsScreen.tsx",
+        "frontend/src/routes/AppRoutes.tsx",
     }
 
     forbidden_prefixes = (

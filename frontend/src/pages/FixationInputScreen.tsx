@@ -522,7 +522,9 @@ export function FixationInputScreen() {
             Eligibility Date
             <input
               id="eligibility-date"
-              type="date"
+              type="text"
+              inputMode="numeric"
+              placeholder="YYYY-MM-DD"
               value={formState.eligibilityDate}
               onChange={(event) => updateFormState("eligibilityDate", event.target.value)}
             />
@@ -653,7 +655,9 @@ export function FixationInputScreen() {
                 IDF Commutation Date
                 <input
                   id="idf-commutation-date"
-                  type="date"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="YYYY-MM-DD"
                   value={formState.idfCommutationDate}
                   onChange={(event) => updateFormState("idfCommutationDate", event.target.value)}
                 />
@@ -664,7 +668,9 @@ export function FixationInputScreen() {
                 IDF Promoter Age Date
                 <input
                   id="idf-promoter-age-date"
-                  type="date"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="YYYY-MM-DD"
                   value={formState.idfPromoterAgeDate}
                   onChange={(event) => updateFormState("idfPromoterAgeDate", event.target.value)}
                 />

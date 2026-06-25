@@ -899,6 +899,14 @@ export function ClientDetailScreen() {
       </section>
       <p>
         <Link
+          to={`/clients/${client.client_id}/fixation/workspace`}
+          state={{ clientName: client.full_name }}
+        >
+          Fixation Activity Workspace
+        </Link>
+      </p>
+      <p>
+        <Link
           to={`/clients/${client.client_id}/employment-history`}
           state={{ clientName: client.full_name }}
         >

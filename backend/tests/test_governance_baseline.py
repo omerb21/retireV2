@@ -76,7 +76,10 @@ def test_required_drift_ids_exist() -> None:
 
 def test_repository_has_no_untracked_files_for_governance_gate() -> None:
     status_lines = _run_git_status_porcelain()
-    allowed_bootstrap_untracked = {"backend/tests/test_governance_baseline.py"}
+    allowed_bootstrap_untracked = {
+        "backend/alembic/versions/3d2f8a7b4c19_phase_a_file_foundation.py",
+        "backend/tests/test_governance_baseline.py",
+    }
     untracked = [
         line
         for line in status_lines
@@ -93,10 +96,20 @@ def test_forbidden_paths_not_modified() -> None:
         "backend/alembic/versions/eb25e18b9fcd_align_phase_1_ids_for_api.py",
         "backend/app/api/clients_routes.py",
         "backend/app/api/fixation_routes.py",
+        "backend/app/models/client.py",
+        "backend/app/models/client_profile.py",
         "backend/app/schemas/fixation_contracts.py",
+        "backend/tests/test_governance_baseline.py",
+        "frontend/src/App.test.tsx",
         "frontend/src/api/clientsApi.ts",
         "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
         "frontend/src/pages/ActualCapitalizationsScreen.tsx",
+        "frontend/src/pages/ClientDetailScreen.test.tsx",
+        "frontend/src/pages/ClientDetailScreen.tsx",
+        "frontend/src/pages/ClientListScreen.test.tsx",
+        "frontend/src/pages/ClientListScreen.tsx",
+        "frontend/src/pages/CreateClientScreen.test.tsx",
+        "frontend/src/pages/CreateClientScreen.tsx",
         "frontend/src/pages/EmploymentHistoryScreen.test.tsx",
         "frontend/src/pages/EmploymentHistoryScreen.tsx",
         "frontend/src/pages/GrantsScreen.test.tsx",

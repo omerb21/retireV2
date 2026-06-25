@@ -32,7 +32,9 @@ describe("CreateClientScreen", () => {
             client_id: 42,
             full_name: "Dana Levi",
             id_number: "001234567",
-            birth_date: "1970-01-01",
+            birth_date: null,
+            file_status: "file_created",
+            professional_identification_status: "identification_incomplete",
           }),
         )
         .mockResolvedValueOnce(
@@ -40,7 +42,9 @@ describe("CreateClientScreen", () => {
             client_id: 42,
             full_name: "Dana Levi",
             id_number: "001234567",
-            birth_date: "1970-01-01",
+            birth_date: null,
+            file_status: "file_created",
+            professional_identification_status: "identification_incomplete",
           }),
         ),
     );
@@ -56,11 +60,12 @@ describe("CreateClientScreen", () => {
 
     fireEvent.change(screen.getByLabelText("Client Name"), { target: { value: "Dana Levi" } });
     fireEvent.change(screen.getByLabelText("ID Number"), { target: { value: "001234567" } });
-    fireEvent.change(screen.getByLabelText("Birth Date"), { target: { value: "1970-01-01" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Client" }));
 
     expect(await screen.findByRole("heading", { name: "Client Detail" })).toBeInTheDocument();
     expect(await screen.findByText("Full Name: Dana Levi")).toBeInTheDocument();
+    expect(await screen.findByText("ID Number: 001234567")).toBeInTheDocument();
+    expect(await screen.findByText("Professional Identification: identification_incomplete")).toBeInTheDocument();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/clients",
       expect.objectContaining({
@@ -68,7 +73,7 @@ describe("CreateClientScreen", () => {
         body: JSON.stringify({
           full_name: "Dana Levi",
           id_number: "001234567",
-          birth_date: "1970-01-01",
+          birth_date: null,
         }),
       }),
     );
@@ -92,6 +97,25 @@ describe("CreateClientScreen", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("shows client-side validation when ID number is missing", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={["/clients/new"]}>
+        <Routes>
+          <Route path="/clients/new" element={<CreateClientScreen />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Client Name"), { target: { value: "Dana Levi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Client" }));
+
+    expect(await screen.findByText("ID number is required.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("displays backend validation errors from the create endpoint", async () => {
     vi.stubGlobal(
       "fetch",
@@ -101,7 +125,7 @@ describe("CreateClientScreen", () => {
             detail: [
               {
                 type: "missing",
-                loc: ["body", "id_number"],
+                loc: ["body", "full_name"],
                 msg: "Field required",
               },
             ],

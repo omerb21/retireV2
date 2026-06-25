@@ -32,9 +32,13 @@ export function ClientDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isNotFound, setIsNotFound] = useState(false);
+  const [idNumber, setIdNumber] = useState("");
   const [birthDate, setBirthDate] = useState("");
   const [gender, setGender] = useState("");
+  const [contactMethod, setContactMethod] = useState("");
+  const [contactDetails, setContactDetails] = useState("");
   const [notes, setNotes] = useState("");
+  const [professionalIdentificationStatus, setProfessionalIdentificationStatus] = useState("identification_incomplete");
   const [profileExists, setProfileExists] = useState(false);
   const [profileLoadErrorMessage, setProfileLoadErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -60,6 +64,9 @@ export function ClientDetailScreen() {
           return;
         }
         setClient(nextClient);
+        setIdNumber(nextClient.id_number ?? "");
+        setBirthDate(nextClient.birth_date ?? "");
+        setProfessionalIdentificationStatus(nextClient.professional_identification_status);
         setIsNotFound(false);
         setErrorMessage(null);
 
@@ -68,9 +75,16 @@ export function ClientDetailScreen() {
           if (!isActive) {
             return;
           }
+          setIdNumber(profileResponse.profile?.id_number ?? nextClient.id_number ?? "");
           setBirthDate(profileResponse.profile?.birth_date ?? "");
           setGender(profileResponse.profile?.gender ?? "");
+          setContactMethod(profileResponse.profile?.contact_method ?? "");
+          setContactDetails(profileResponse.profile?.contact_details ?? "");
           setNotes(profileResponse.profile?.notes ?? "");
+          setProfessionalIdentificationStatus(
+            profileResponse.profile?.professional_identification_status
+              ?? nextClient.professional_identification_status
+          );
           setProfileExists(profileResponse.profile !== null);
           setProfileLoadErrorMessage(null);
         } catch (profileError) {
@@ -119,13 +133,22 @@ export function ClientDetailScreen() {
 
     try {
       const response = await updateClientProfile(client.client_id, {
+        id_number: idNumber || null,
         birth_date: birthDate || null,
         gender: gender || null,
+        contact_method: contactMethod || null,
+        contact_details: contactDetails || null,
         notes: notes || null
       });
+      setIdNumber(response.profile?.id_number ?? "");
       setBirthDate(response.profile?.birth_date ?? "");
       setGender(response.profile?.gender ?? "");
+      setContactMethod(response.profile?.contact_method ?? "");
+      setContactDetails(response.profile?.contact_details ?? "");
       setNotes(response.profile?.notes ?? "");
+      setProfessionalIdentificationStatus(
+        response.profile?.professional_identification_status ?? "identification_incomplete"
+      );
       setProfileExists(response.profile !== null);
       setSaveSuccessMessage("Profile saved successfully.");
     } catch (error) {
@@ -189,7 +212,12 @@ export function ClientDetailScreen() {
       <h2>Client Detail</h2>
       <p>Client ID: {client.client_id}</p>
       <p>Full Name: {client.full_name}</p>
-      <p>ID Number: {client.id_number}</p>
+      <p>ID Number: {client.id_number ?? "Not provided"}</p>
+      <section aria-labelledby="retirement-planning-file-heading">
+        <h3 id="retirement-planning-file-heading">Retirement Planning File</h3>
+        <p>File Status: {client.file_status}</p>
+        <p>Professional Identification: {professionalIdentificationStatus}</p>
+      </section>
       {!profileExists && profileLoadErrorMessage === null ? <p>No client profile has been saved yet.</p> : null}
       {profileLoadErrorMessage ? (
         <>
@@ -198,6 +226,17 @@ export function ClientDetailScreen() {
         </>
       ) : null}
       <form onSubmit={handleSaveProfile}>
+        <p>
+          <label htmlFor="profile-id-number">ID Number</label>
+          <input
+            id="profile-id-number"
+            value={idNumber}
+            onChange={(event) => {
+              setIdNumber(event.target.value);
+              setSaveSuccessMessage(null);
+            }}
+          />
+        </p>
         <p>
           <label htmlFor="profile-birth-date">Birth Date</label>
           <input
@@ -217,6 +256,28 @@ export function ClientDetailScreen() {
             value={gender}
             onChange={(event) => {
               setGender(event.target.value);
+              setSaveSuccessMessage(null);
+            }}
+          />
+        </p>
+        <p>
+          <label htmlFor="profile-contact-method">Contact Method</label>
+          <input
+            id="profile-contact-method"
+            value={contactMethod}
+            onChange={(event) => {
+              setContactMethod(event.target.value);
+              setSaveSuccessMessage(null);
+            }}
+          />
+        </p>
+        <p>
+          <label htmlFor="profile-contact-details">Contact Details</label>
+          <input
+            id="profile-contact-details"
+            value={contactDetails}
+            onChange={(event) => {
+              setContactDetails(event.target.value);
               setSaveSuccessMessage(null);
             }}
           />
@@ -243,6 +304,15 @@ export function ClientDetailScreen() {
           <pre>{saveErrorMessage}</pre>
         </>
       ) : null}
+      <section aria-labelledby="retirement-planning-data-matrix-heading">
+        <h3 id="retirement-planning-data-matrix-heading">Retirement Planning Data Matrix</h3>
+        <ul>
+          <li>Retirement Planning Facts</li>
+          <li>Documents</li>
+          <li>Calculated Artifacts</li>
+          <li>Workflow Status</li>
+        </ul>
+      </section>
       <p>
         <Link
           to={`/clients/${client.client_id}/employment-history`}

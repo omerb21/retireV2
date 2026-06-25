@@ -25,7 +25,9 @@ describe("ClientDetailScreen", () => {
             client_id: 7,
             full_name: "Dana Levi",
             id_number: "123456789",
-            birth_date: "1985-02-03"
+            birth_date: "1985-02-03",
+            file_status: "file_created",
+            professional_identification_status: "professionally_identified"
           })
         })
         .mockResolvedValueOnce({
@@ -39,8 +41,13 @@ describe("ClientDetailScreen", () => {
             profile: {
               client_profile_id: "CP-7",
               client_id: 7,
+              id_number: "123456789",
               birth_date: "1985-02-03",
               gender: "female",
+              contact_method: "email",
+              contact_details: "dana@example.com",
+              file_status: "file_created",
+              professional_identification_status: "professionally_identified",
               notes: "Existing note"
             }
           })
@@ -59,8 +66,19 @@ describe("ClientDetailScreen", () => {
     expect(await screen.findByText("Client ID: 7")).toBeInTheDocument();
     expect(await screen.findByText("Full Name: Dana Levi")).toBeInTheDocument();
     expect(await screen.findByText("ID Number: 123456789")).toBeInTheDocument();
+    expect(await screen.findByText("File Status: file_created")).toBeInTheDocument();
+    expect(await screen.findByText("Professional Identification: professionally_identified")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Retirement Planning File" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Retirement Planning Data Matrix" })).toBeInTheDocument();
+    expect(screen.getByText("Retirement Planning Facts")).toBeInTheDocument();
+    expect(screen.getByText("Documents")).toBeInTheDocument();
+    expect(screen.getByText("Calculated Artifacts")).toBeInTheDocument();
+    expect(screen.getByText("Workflow Status")).toBeInTheDocument();
+    expect(screen.getByLabelText("ID Number")).toHaveValue("123456789");
     expect(screen.getByLabelText("Birth Date")).toHaveValue("1985-02-03");
     expect(screen.getByLabelText("Gender")).toHaveValue("female");
+    expect(screen.getByLabelText("Contact Method")).toHaveValue("email");
+    expect(screen.getByLabelText("Contact Details")).toHaveValue("dana@example.com");
     expect(screen.getByLabelText("Notes")).toHaveValue("Existing note");
     expect(screen.getByRole("button", { name: "Save Profile" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Employment History" })).toHaveAttribute(
@@ -113,7 +131,9 @@ describe("ClientDetailScreen", () => {
           client_id: 7,
           full_name: "Dana Levi",
           id_number: "123456789",
-          birth_date: null
+          birth_date: null,
+          file_status: "file_created",
+          professional_identification_status: "identification_incomplete"
         })
       })
       .mockResolvedValueOnce({
@@ -132,8 +152,13 @@ describe("ClientDetailScreen", () => {
           profile: {
             client_profile_id: "CP-7",
             client_id: 7,
+            id_number: "123456789",
             birth_date: "1985-02-03",
             gender: "female",
+            contact_method: "email",
+            contact_details: "dana@example.com",
+            file_status: "file_created",
+            professional_identification_status: "professionally_identified",
             notes: "Saved note"
           }
         })
@@ -149,8 +174,12 @@ describe("ClientDetailScreen", () => {
     );
 
     expect(await screen.findByText("No client profile has been saved yet.")).toBeInTheDocument();
+    expect(screen.getByText("Professional Identification: identification_incomplete")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("ID Number"), { target: { value: "123456789" } });
     fireEvent.change(screen.getByLabelText("Birth Date"), { target: { value: "1985-02-03" } });
     fireEvent.change(screen.getByLabelText("Gender"), { target: { value: "female" } });
+    fireEvent.change(screen.getByLabelText("Contact Method"), { target: { value: "email" } });
+    fireEvent.change(screen.getByLabelText("Contact Details"), { target: { value: "dana@example.com" } });
     fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Saved note" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
 
@@ -160,12 +189,16 @@ describe("ClientDetailScreen", () => {
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({
+          id_number: "123456789",
           birth_date: "1985-02-03",
           gender: "female",
+          contact_method: "email",
+          contact_details: "dana@example.com",
           notes: "Saved note"
         })
       })
     );
+    expect(screen.getByText("Professional Identification: professionally_identified")).toBeInTheDocument();
   });
 
   it("displays backend profile save errors", async () => {
@@ -182,7 +215,9 @@ describe("ClientDetailScreen", () => {
             client_id: 7,
             full_name: "Dana Levi",
             id_number: "123456789",
-            birth_date: null
+            birth_date: null,
+            file_status: "file_created",
+            professional_identification_status: "identification_incomplete"
           })
         })
         .mockResolvedValueOnce({

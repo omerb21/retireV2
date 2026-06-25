@@ -44,6 +44,8 @@ describe("ClientListScreen", () => {
             full_name: "Jane Doe",
             id_number: "001234567",
             birth_date: "1970-01-01",
+            file_status: "file_created",
+            professional_identification_status: "professionally_identified",
           },
         ]),
       ),
@@ -56,6 +58,8 @@ describe("ClientListScreen", () => {
     );
 
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+    expect(await screen.findByText("File Status: file_created")).toBeInTheDocument();
+    expect(await screen.findByText("Professional Identification: professionally_identified")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Create Client" })).toHaveAttribute("href", "/clients/new");
   });
 

@@ -25,6 +25,8 @@ export interface ClientListItem {
   full_name: string;
   id_number: string;
   birth_date: string | null;
+  file_status: string;
+  professional_identification_status: string;
 }
 
 export type ClientDetailItem = ClientListItem;
@@ -38,9 +40,14 @@ export interface ClientCreatePayload {
 export interface ClientProfileItem {
   client_profile_id: string;
   client_id: number;
+  id_number: string | null;
   birth_date: string | null;
   gender: string | null;
+  contact_method: string | null;
+  contact_details: string | null;
   notes: string | null;
+  file_status: string;
+  professional_identification_status: string;
 }
 
 export interface ClientProfileResponse {
@@ -48,8 +55,11 @@ export interface ClientProfileResponse {
 }
 
 export interface ClientProfileUpdatePayload {
+  id_number: string | null;
   birth_date: string | null;
   gender: string | null;
+  contact_method: string | null;
+  contact_details: string | null;
   notes: string | null;
 }
 

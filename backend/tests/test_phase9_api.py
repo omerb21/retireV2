@@ -122,6 +122,12 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert empty_list_resp.status_code == 200
         assert empty_list_resp.json() == []
 
+        missing_id_number_resp = client.post(
+            "/api/clients",
+            json={"full_name": "Missing ID"},
+        )
+        assert missing_id_number_resp.status_code == 422
+
         # 1. Client id_number roundtrip and no status overload
         created = _create_client(client, id_number="001234567")
         created_client_id = created["client_id"]

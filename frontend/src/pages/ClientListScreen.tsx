@@ -92,8 +92,10 @@ export function ClientListScreen() {
               <h3>
                 <Link to={`/clients/${client.client_id}`}>{client.full_name}</Link>
               </h3>
-              <p>ID Number: {client.id_number}</p>
+              <p>ID Number: {client.id_number ?? "Not provided"}</p>
               {client.birth_date ? <p>Birth Date: {client.birth_date}</p> : null}
+              <p>File Status: {client.file_status}</p>
+              <p>Professional Identification: {client.professional_identification_status}</p>
               <p>
                 <Link to={`/clients/${client.client_id}`}>Open client details</Link>
               </p>

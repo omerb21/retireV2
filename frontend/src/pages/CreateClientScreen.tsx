@@ -6,13 +6,11 @@ import { ApiTransportError, createClient } from "../api/clientsApi";
 interface FormState {
   fullName: string;
   idNumber: string;
-  birthDate: string;
 }
 
 const emptyFormState: FormState = {
   fullName: "",
-  idNumber: "",
-  birthDate: ""
+  idNumber: ""
 };
 
 function getSubmitErrorMessage(error: unknown): string {
@@ -41,7 +39,6 @@ export function CreateClientScreen() {
 
     const fullName = formState.fullName.trim();
     const idNumber = formState.idNumber.trim();
-    const birthDate = formState.birthDate.trim();
 
     if (fullName.length === 0) {
       setValidationMessage("Client name is required.");
@@ -59,7 +56,7 @@ export function CreateClientScreen() {
       const createdClient = await createClient({
         full_name: fullName,
         id_number: idNumber,
-        birth_date: birthDate.length > 0 ? birthDate : null
+        birth_date: null
       });
 
       navigate(`/clients/${createdClient.client_id}`, {
@@ -100,18 +97,6 @@ export function CreateClientScreen() {
               type="text"
               value={formState.idNumber}
               onChange={(event) => setFormState((current) => ({ ...current, idNumber: event.target.value }))}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="birthDate">
-            Birth Date
-            <input
-              id="birthDate"
-              name="birthDate"
-              type="date"
-              value={formState.birthDate}
-              onChange={(event) => setFormState((current) => ({ ...current, birthDate: event.target.value }))}
             />
           </label>
         </p>

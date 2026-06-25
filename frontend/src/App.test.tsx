@@ -20,7 +20,9 @@ beforeEach(() => {
         client_id: 1,
         full_name: "Jane Doe",
         id_number: "001234567",
-        birth_date: "1970-01-01"
+        birth_date: "1970-01-01",
+        file_status: "file_created",
+        professional_identification_status: "professionally_identified"
       }
     ]
   });

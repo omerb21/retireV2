@@ -35,20 +35,30 @@ class ClientResponse(BaseModel):
     full_name: str
     id_number: str
     birth_date: date | None = None
+    file_status: str
+    professional_identification_status: str
 
 
 class ProfileUpsertRequest(BaseModel):
+    id_number: str | None = None
     birth_date: date | None = None
     gender: str | None = None
+    contact_method: str | None = None
+    contact_details: str | None = None
     notes: str | None = None
 
 
 class ProfileResponse(BaseModel):
     client_profile_id: str
     client_id: int
+    id_number: str | None
     birth_date: date | None
     gender: str | None
+    contact_method: str | None
+    contact_details: str | None
     notes: str | None
+    file_status: str
+    professional_identification_status: str
 
 
 class EmploymentRecordRequest(BaseModel):
@@ -121,6 +131,49 @@ def _require_client(db: Session, client_id: int) -> Client:
     if client is None:
         raise _client_not_found(client_id)
     return client
+
+
+def _has_text(value: str | None) -> bool:
+    return value is not None and value.strip() != ""
+
+
+def _professional_identification_status(client: Client, profile: ClientProfile | None) -> str:
+    has_required_fields = (
+        _has_text(client.display_name)
+        and _has_text(client.id_number)
+        and client.birth_date is not None
+        and profile is not None
+        and _has_text(profile.contact_method)
+        and _has_text(profile.contact_details)
+    )
+    return "professionally_identified" if has_required_fields else "identification_incomplete"
+
+
+def _client_to_response(client: Client, profile: ClientProfile | None = None) -> ClientResponse:
+    resolved_profile = profile if profile is not None else client.client_profile
+    return ClientResponse(
+        client_id=client.client_id,
+        full_name=client.display_name,
+        id_number=client.id_number,
+        birth_date=client.birth_date,
+        file_status="file_created",
+        professional_identification_status=_professional_identification_status(client, resolved_profile),
+    )
+
+
+def _profile_to_response(client: Client, profile: ClientProfile) -> ProfileResponse:
+    return ProfileResponse(
+        client_profile_id=profile.client_profile_id,
+        client_id=client.client_id,
+        id_number=client.id_number,
+        birth_date=profile.birth_date,
+        gender=profile.gender,
+        contact_method=profile.contact_method,
+        contact_details=profile.contact_details,
+        notes=profile.notes,
+        file_status="file_created",
+        professional_identification_status=_professional_identification_status(client, profile),
+    )
 
 
 def _source_item_not_found(code: str, message: str) -> HTTPException:
@@ -209,21 +262,22 @@ def _require_actual_capitalization(db: Session, client_id: int, capitalization_i
 def list_clients(db: Session = Depends(get_db)) -> list[ClientResponse]:
     clients = db.scalars(select(Client).order_by(Client.client_id.asc())).all()
     return [
-        ClientResponse(
-            client_id=client.client_id,
-            full_name=client.display_name,
-            id_number=client.id_number,
-            birth_date=client.birth_date,
-        )
+        _client_to_response(client)
         for client in clients
     ]
 
 
 @router.post("", response_model=ClientResponse)
 def create_client(payload: ClientCreateRequest, db: Session = Depends(get_db)) -> ClientResponse:
+    if not _has_text(payload.id_number):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "ID_NUMBER_REQUIRED", "message": "ID Number is required for file creation"},
+        )
+
     client = Client(
         display_name=payload.full_name,
-        id_number=payload.id_number,
+        id_number=payload.id_number.strip(),
         birth_date=payload.birth_date,
         status=None,
     )
@@ -231,23 +285,13 @@ def create_client(payload: ClientCreateRequest, db: Session = Depends(get_db)) -
     db.commit()
     db.refresh(client)
 
-    return ClientResponse(
-        client_id=client.client_id,
-        full_name=client.display_name,
-        id_number=client.id_number,
-        birth_date=client.birth_date,
-    )
+    return _client_to_response(client)
 
 
 @router.get("/{client_id}", response_model=ClientResponse)
 def get_client(client_id: int, db: Session = Depends(get_db)) -> ClientResponse:
     client = _require_client(db, client_id)
-    return ClientResponse(
-        client_id=client_id,
-        full_name=client.display_name,
-        id_number=client.id_number,
-        birth_date=client.birth_date,
-    )
+    return _client_to_response(client)
 
 
 @router.put("/{client_id}/profile")
@@ -256,7 +300,7 @@ def put_client_profile(
     payload: ProfileUpsertRequest,
     db: Session = Depends(get_db),
 ) -> dict:
-    _require_client(db, client_id)
+    client = _require_client(db, client_id)
     client_key = client_id
 
     profile = db.scalar(select(ClientProfile).where(ClientProfile.client_id == client_key))
@@ -266,46 +310,45 @@ def put_client_profile(
             client_id=client_key,
             birth_date=payload.birth_date,
             gender=payload.gender,
+            contact_method=payload.contact_method,
+            contact_details=payload.contact_details,
             notes=payload.notes,
         )
         db.add(profile)
     else:
         profile.birth_date = payload.birth_date
         profile.gender = payload.gender
+        profile.contact_method = payload.contact_method
+        profile.contact_details = payload.contact_details
         profile.notes = payload.notes
 
+    if payload.id_number is not None:
+        if not _has_text(payload.id_number):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "ID_NUMBER_REQUIRED", "message": "ID Number is required for file creation"},
+            )
+        client.id_number = payload.id_number.strip()
     if payload.birth_date is not None:
-        client = db.get(Client, client_id)
-        if client is not None:
-            client.birth_date = payload.birth_date
+        client.birth_date = payload.birth_date
 
     db.commit()
+    db.refresh(client)
+    db.refresh(profile)
     return {
-        "profile": ProfileResponse(
-            client_profile_id=profile.client_profile_id,
-            client_id=client_id,
-            birth_date=profile.birth_date,
-            gender=profile.gender,
-            notes=profile.notes,
-        ).model_dump(mode="json")
+        "profile": _profile_to_response(client, profile).model_dump(mode="json")
     }
 
 
 @router.get("/{client_id}/profile")
 def get_client_profile(client_id: int, db: Session = Depends(get_db)) -> dict:
-    _require_client(db, client_id)
+    client = _require_client(db, client_id)
     profile = db.scalar(select(ClientProfile).where(ClientProfile.client_id == client_id))
     if profile is None:
         return {"profile": None}
 
     return {
-        "profile": ProfileResponse(
-            client_profile_id=profile.client_profile_id,
-            client_id=client_id,
-            birth_date=profile.birth_date,
-            gender=profile.gender,
-            notes=profile.notes,
-        ).model_dump(mode="json")
+        "profile": _profile_to_response(client, profile).model_dump(mode="json")
     }
 
 

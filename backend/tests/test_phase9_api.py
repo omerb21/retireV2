@@ -19,6 +19,8 @@ APPROVED_TABLES = {
     "employment_records",
     "grants",
     "actual_capitalizations",
+    "clearinghouse_snapshots",
+    "retirement_planning_documents",
     "fixation_runs",
     "fixation_input_snapshots",
     "fixation_results",
@@ -258,6 +260,73 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         )
         assert update_cap_resp.status_code == 200
         assert update_cap_resp.json()["amount"] == "750.00"
+
+        # 8a. Create/retrieve clearinghouse snapshots and preserve snapshot history
+        first_snapshot_resp = client.post(
+            f"/api/clients/{created_client_id}/clearinghouse-snapshots",
+            json={
+                "import_date": "2026-06-01",
+                "source_type": "clearinghouse",
+                "source_file": "first-clearinghouse.csv",
+                "collection_status": "collected",
+                "collection_notes": "first import",
+            },
+        )
+        assert first_snapshot_resp.status_code == 200
+        second_snapshot_resp = client.post(
+            f"/api/clients/{created_client_id}/clearinghouse-snapshots",
+            json={
+                "import_date": "2026-06-15",
+                "source_type": "clearinghouse",
+                "source_file": "second-clearinghouse.csv",
+                "collection_status": "collected",
+                "collection_notes": "second import",
+            },
+        )
+        assert second_snapshot_resp.status_code == 200
+        list_snapshots_resp = client.get(f"/api/clients/{created_client_id}/clearinghouse-snapshots")
+        assert list_snapshots_resp.status_code == 200
+        assert len(list_snapshots_resp.json()) == 2
+        get_snapshot_resp = client.get(
+            f"/api/clients/{created_client_id}/clearinghouse-snapshots/"
+            f"{first_snapshot_resp.json()['clearinghouse_snapshot_id']}"
+        )
+        assert get_snapshot_resp.status_code == 200
+        assert get_snapshot_resp.json()["source_file"] == "first-clearinghouse.csv"
+
+        # 8b. Register/retrieve retirement planning documents and preserve document history
+        first_document_resp = client.post(
+            f"/api/clients/{created_client_id}/documents",
+            json={
+                "document_type": "161",
+                "source_type": "document",
+                "source_file": "first-161.pdf",
+                "collection_date": "2026-06-02",
+                "collection_status": "collected",
+                "collection_notes": "first document",
+            },
+        )
+        assert first_document_resp.status_code == 200
+        second_document_resp = client.post(
+            f"/api/clients/{created_client_id}/documents",
+            json={
+                "document_type": "employment summary",
+                "source_type": "document",
+                "source_file": "employment-summary.pdf",
+                "collection_date": "2026-06-16",
+                "collection_status": "collected",
+                "collection_notes": "second document",
+            },
+        )
+        assert second_document_resp.status_code == 200
+        list_documents_resp = client.get(f"/api/clients/{created_client_id}/documents")
+        assert list_documents_resp.status_code == 200
+        assert len(list_documents_resp.json()) == 2
+        get_document_resp = client.get(
+            f"/api/clients/{created_client_id}/documents/{first_document_resp.json()['document_id']}"
+        )
+        assert get_document_resp.status_code == 200
+        assert get_document_resp.json()["source_file"] == "first-161.pdf"
 
         other_created = _create_client(client, id_number="3003")
         other_client_id = other_created["client_id"]

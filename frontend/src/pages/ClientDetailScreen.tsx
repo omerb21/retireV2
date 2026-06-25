@@ -3,9 +3,15 @@ import { Link, useParams } from "react-router-dom";
 
 import {
   ApiTransportError,
+  type ClearinghouseSnapshotItem,
   type ClientDetailItem,
+  createClearinghouseSnapshot,
+  createRetirementPlanningDocument,
   getClient,
   getClientProfile,
+  getClearinghouseSnapshots,
+  getRetirementPlanningDocuments,
+  type RetirementPlanningDocumentItem,
   updateClientProfile
 } from "../api/clientsApi";
 
@@ -44,6 +50,26 @@ export function ClientDetailScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [clearinghouseSnapshots, setClearinghouseSnapshots] = useState<ClearinghouseSnapshotItem[]>([]);
+  const [retirementPlanningDocuments, setRetirementPlanningDocuments] = useState<RetirementPlanningDocumentItem[]>([]);
+  const [collectionLoadErrorMessage, setCollectionLoadErrorMessage] = useState<string | null>(null);
+  const [snapshotImportDate, setSnapshotImportDate] = useState("");
+  const [snapshotSourceType, setSnapshotSourceType] = useState("");
+  const [snapshotSourceFile, setSnapshotSourceFile] = useState("");
+  const [snapshotCollectionStatus, setSnapshotCollectionStatus] = useState("");
+  const [snapshotCollectionNotes, setSnapshotCollectionNotes] = useState("");
+  const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
+  const [snapshotSaveErrorMessage, setSnapshotSaveErrorMessage] = useState<string | null>(null);
+  const [snapshotSaveSuccessMessage, setSnapshotSaveSuccessMessage] = useState<string | null>(null);
+  const [documentType, setDocumentType] = useState("");
+  const [documentSourceType, setDocumentSourceType] = useState("");
+  const [documentSourceFile, setDocumentSourceFile] = useState("");
+  const [documentCollectionDate, setDocumentCollectionDate] = useState("");
+  const [documentCollectionStatus, setDocumentCollectionStatus] = useState("");
+  const [documentCollectionNotes, setDocumentCollectionNotes] = useState("");
+  const [isSavingDocument, setIsSavingDocument] = useState(false);
+  const [documentSaveErrorMessage, setDocumentSaveErrorMessage] = useState<string | null>(null);
+  const [documentSaveSuccessMessage, setDocumentSaveSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -92,6 +118,24 @@ export function ClientDetailScreen() {
             return;
           }
           setProfileLoadErrorMessage(getErrorMessage(profileError));
+        }
+
+        try {
+          const [nextSnapshots, nextDocuments] = await Promise.all([
+            getClearinghouseSnapshots(parsedClientId),
+            getRetirementPlanningDocuments(parsedClientId)
+          ]);
+          if (!isActive) {
+            return;
+          }
+          setClearinghouseSnapshots(nextSnapshots);
+          setRetirementPlanningDocuments(nextDocuments);
+          setCollectionLoadErrorMessage(null);
+        } catch (collectionError) {
+          if (!isActive) {
+            return;
+          }
+          setCollectionLoadErrorMessage(getErrorMessage(collectionError));
         }
       } catch (error) {
         if (!isActive) {
@@ -155,6 +199,74 @@ export function ClientDetailScreen() {
       setSaveErrorMessage(getErrorMessage(error));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleCreateSnapshot(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (client === null) {
+      return;
+    }
+
+    setIsSavingSnapshot(true);
+    setSnapshotSaveErrorMessage(null);
+    setSnapshotSaveSuccessMessage(null);
+
+    try {
+      const snapshot = await createClearinghouseSnapshot(client.client_id, {
+        import_date: snapshotImportDate,
+        source_type: snapshotSourceType,
+        source_file: snapshotSourceFile,
+        collection_status: snapshotCollectionStatus,
+        collection_notes: snapshotCollectionNotes || null
+      });
+      setClearinghouseSnapshots((current) => [snapshot, ...current]);
+      setSnapshotImportDate("");
+      setSnapshotSourceType("");
+      setSnapshotSourceFile("");
+      setSnapshotCollectionStatus("");
+      setSnapshotCollectionNotes("");
+      setSnapshotSaveSuccessMessage("Clearinghouse snapshot registered.");
+    } catch (error) {
+      setSnapshotSaveErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  }
+
+  async function handleCreateDocument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (client === null) {
+      return;
+    }
+
+    setIsSavingDocument(true);
+    setDocumentSaveErrorMessage(null);
+    setDocumentSaveSuccessMessage(null);
+
+    try {
+      const document = await createRetirementPlanningDocument(client.client_id, {
+        document_type: documentType,
+        source_type: documentSourceType || null,
+        source_file: documentSourceFile,
+        collection_date: documentCollectionDate,
+        collection_status: documentCollectionStatus,
+        collection_notes: documentCollectionNotes || null
+      });
+      setRetirementPlanningDocuments((current) => [document, ...current]);
+      setDocumentType("");
+      setDocumentSourceType("");
+      setDocumentSourceFile("");
+      setDocumentCollectionDate("");
+      setDocumentCollectionStatus("");
+      setDocumentCollectionNotes("");
+      setDocumentSaveSuccessMessage("Retirement planning document registered.");
+    } catch (error) {
+      setDocumentSaveErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSavingDocument(false);
     }
   }
 
@@ -312,6 +424,191 @@ export function ClientDetailScreen() {
           <li>Calculated Artifacts</li>
           <li>Workflow Status</li>
         </ul>
+      </section>
+      <section aria-labelledby="clearinghouse-snapshots-heading">
+        <h3 id="clearinghouse-snapshots-heading">Clearinghouse Snapshots</h3>
+        {collectionLoadErrorMessage ? (
+          <>
+            <p>Unable to load collection metadata.</p>
+            <pre>{collectionLoadErrorMessage}</pre>
+          </>
+        ) : null}
+        <form onSubmit={handleCreateSnapshot}>
+          <p>
+            <label htmlFor="snapshot-import-date">Snapshot Import Date</label>
+            <input
+              id="snapshot-import-date"
+              type="date"
+              value={snapshotImportDate}
+              onChange={(event) => {
+                setSnapshotImportDate(event.target.value);
+                setSnapshotSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="snapshot-source-type">Snapshot Source Type</label>
+            <input
+              id="snapshot-source-type"
+              value={snapshotSourceType}
+              onChange={(event) => {
+                setSnapshotSourceType(event.target.value);
+                setSnapshotSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="snapshot-source-file">Snapshot Source File</label>
+            <input
+              id="snapshot-source-file"
+              value={snapshotSourceFile}
+              onChange={(event) => {
+                setSnapshotSourceFile(event.target.value);
+                setSnapshotSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="snapshot-collection-status">Snapshot Collection Status</label>
+            <input
+              id="snapshot-collection-status"
+              value={snapshotCollectionStatus}
+              onChange={(event) => {
+                setSnapshotCollectionStatus(event.target.value);
+                setSnapshotSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="snapshot-collection-notes">Snapshot Collection Notes</label>
+            <textarea
+              id="snapshot-collection-notes"
+              value={snapshotCollectionNotes}
+              onChange={(event) => {
+                setSnapshotCollectionNotes(event.target.value);
+                setSnapshotSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <button type="submit" disabled={isSavingSnapshot || collectionLoadErrorMessage !== null}>
+            {isSavingSnapshot ? "Registering Snapshot..." : "Register Snapshot"}
+          </button>
+        </form>
+        {snapshotSaveSuccessMessage ? <p>{snapshotSaveSuccessMessage}</p> : null}
+        {snapshotSaveErrorMessage ? (
+          <>
+            <p>Unable to register clearinghouse snapshot.</p>
+            <pre>{snapshotSaveErrorMessage}</pre>
+          </>
+        ) : null}
+        {clearinghouseSnapshots.length === 0 ? (
+          <p>No clearinghouse snapshots registered.</p>
+        ) : (
+          <ul>
+            {clearinghouseSnapshots.map((snapshot) => (
+              <li key={snapshot.clearinghouse_snapshot_id}>
+                {snapshot.import_date} - {snapshot.source_type} - {snapshot.source_file} -{" "}
+                {snapshot.collection_status}
+                {snapshot.collection_notes ? ` - ${snapshot.collection_notes}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-labelledby="retirement-documents-heading">
+        <h3 id="retirement-documents-heading">Retirement Planning Documents</h3>
+        <form onSubmit={handleCreateDocument}>
+          <p>
+            <label htmlFor="document-type">Document Type</label>
+            <input
+              id="document-type"
+              value={documentType}
+              onChange={(event) => {
+                setDocumentType(event.target.value);
+                setDocumentSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="document-source-type">Document Source Type</label>
+            <input
+              id="document-source-type"
+              value={documentSourceType}
+              onChange={(event) => {
+                setDocumentSourceType(event.target.value);
+                setDocumentSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="document-source-file">Document Source File</label>
+            <input
+              id="document-source-file"
+              value={documentSourceFile}
+              onChange={(event) => {
+                setDocumentSourceFile(event.target.value);
+                setDocumentSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="document-collection-date">Document Collection Date</label>
+            <input
+              id="document-collection-date"
+              type="date"
+              value={documentCollectionDate}
+              onChange={(event) => {
+                setDocumentCollectionDate(event.target.value);
+                setDocumentSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="document-collection-status">Document Collection Status</label>
+            <input
+              id="document-collection-status"
+              value={documentCollectionStatus}
+              onChange={(event) => {
+                setDocumentCollectionStatus(event.target.value);
+                setDocumentSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="document-collection-notes">Document Collection Notes</label>
+            <textarea
+              id="document-collection-notes"
+              value={documentCollectionNotes}
+              onChange={(event) => {
+                setDocumentCollectionNotes(event.target.value);
+                setDocumentSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <button type="submit" disabled={isSavingDocument || collectionLoadErrorMessage !== null}>
+            {isSavingDocument ? "Registering Document..." : "Register Document"}
+          </button>
+        </form>
+        {documentSaveSuccessMessage ? <p>{documentSaveSuccessMessage}</p> : null}
+        {documentSaveErrorMessage ? (
+          <>
+            <p>Unable to register retirement planning document.</p>
+            <pre>{documentSaveErrorMessage}</pre>
+          </>
+        ) : null}
+        {retirementPlanningDocuments.length === 0 ? (
+          <p>No retirement planning documents registered.</p>
+        ) : (
+          <ul>
+            {retirementPlanningDocuments.map((document) => (
+              <li key={document.document_id}>
+                {document.collection_date} - {document.document_type} - {document.source_file} -{" "}
+                {document.collection_status}
+                {document.collection_notes ? ` - ${document.collection_notes}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
       <p>
         <Link

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -11,10 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.actual_capitalization import ActualCapitalization
+from app.models.clearinghouse_snapshot import ClearinghouseSnapshot
 from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
+from app.models.retirement_planning_document import RetirementPlanningDocument
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
 
@@ -119,6 +121,46 @@ class ActualCapitalizationResponse(BaseModel):
     notes: str | None
 
 
+class ClearinghouseSnapshotRequest(BaseModel):
+    import_date: date
+    source_type: str
+    source_file: str
+    collection_status: str
+    collection_notes: str | None = None
+
+
+class ClearinghouseSnapshotResponse(BaseModel):
+    clearinghouse_snapshot_id: str
+    client_id: int
+    import_date: date
+    source_type: str
+    source_file: str
+    collection_status: str
+    collection_notes: str | None
+    created_at: datetime
+
+
+class RetirementPlanningDocumentRequest(BaseModel):
+    document_type: str
+    source_type: str | None = None
+    source_file: str
+    collection_date: date
+    collection_status: str
+    collection_notes: str | None = None
+
+
+class RetirementPlanningDocumentResponse(BaseModel):
+    document_id: str
+    client_id: int
+    document_type: str
+    source_type: str | None
+    source_file: str
+    collection_date: date
+    collection_status: str
+    collection_notes: str | None
+    created_at: datetime
+
+
 def _client_not_found(client_id: int) -> HTTPException:
     return HTTPException(
         status_code=404,
@@ -218,6 +260,45 @@ def _actual_capitalization_to_response(row: ActualCapitalization) -> ActualCapit
     )
 
 
+def _required_collection_text(value: str, field_name: str) -> str:
+    if not _has_text(value):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "COLLECTION_METADATA_REQUIRED",
+                "message": f"{field_name} is required for collection metadata",
+            },
+        )
+    return value.strip()
+
+
+def _clearinghouse_snapshot_to_response(row: ClearinghouseSnapshot) -> ClearinghouseSnapshotResponse:
+    return ClearinghouseSnapshotResponse(
+        clearinghouse_snapshot_id=row.clearinghouse_snapshot_id,
+        client_id=row.client_id,
+        import_date=row.import_date,
+        source_type=row.source_type,
+        source_file=row.source_file,
+        collection_status=row.collection_status,
+        collection_notes=row.collection_notes,
+        created_at=row.created_at,
+    )
+
+
+def _document_to_response(row: RetirementPlanningDocument) -> RetirementPlanningDocumentResponse:
+    return RetirementPlanningDocumentResponse(
+        document_id=row.document_id,
+        client_id=row.client_id,
+        document_type=row.document_type,
+        source_type=row.source_type,
+        source_file=row.source_file,
+        collection_date=row.collection_date,
+        collection_status=row.collection_status,
+        collection_notes=row.collection_notes,
+        created_at=row.created_at,
+    )
+
+
 def _require_employment_record(db: Session, client_id: int, employment_record_id: str) -> EmploymentRecord:
     row = db.scalar(
         select(EmploymentRecord).where(
@@ -254,6 +335,38 @@ def _require_actual_capitalization(db: Session, client_id: int, capitalization_i
         raise _source_item_not_found(
             "ACTUAL_CAPITALIZATION_NOT_FOUND",
             f"Actual capitalization {capitalization_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_clearinghouse_snapshot(
+    db: Session, client_id: int, clearinghouse_snapshot_id: str
+) -> ClearinghouseSnapshot:
+    row = db.scalar(
+        select(ClearinghouseSnapshot).where(
+            ClearinghouseSnapshot.client_id == client_id,
+            ClearinghouseSnapshot.clearinghouse_snapshot_id == clearinghouse_snapshot_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "CLEARINGHOUSE_SNAPSHOT_NOT_FOUND",
+            f"Clearinghouse snapshot {clearinghouse_snapshot_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_retirement_planning_document(db: Session, client_id: int, document_id: str) -> RetirementPlanningDocument:
+    row = db.scalar(
+        select(RetirementPlanningDocument).where(
+            RetirementPlanningDocument.client_id == client_id,
+            RetirementPlanningDocument.document_id == document_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "RETIREMENT_PLANNING_DOCUMENT_NOT_FOUND",
+            f"Retirement planning document {document_id} was not found for client {client_id}",
         )
     return row
 
@@ -350,6 +463,110 @@ def get_client_profile(client_id: int, db: Session = Depends(get_db)) -> dict:
     return {
         "profile": _profile_to_response(client, profile).model_dump(mode="json")
     }
+
+
+@router.post("/{client_id}/clearinghouse-snapshots", response_model=ClearinghouseSnapshotResponse)
+def create_clearinghouse_snapshot(
+    client_id: int,
+    payload: ClearinghouseSnapshotRequest,
+    db: Session = Depends(get_db),
+) -> ClearinghouseSnapshotResponse:
+    _require_client(db, client_id)
+
+    snapshot = ClearinghouseSnapshot(
+        clearinghouse_snapshot_id=f"CHS-{uuid4().hex}",
+        client_id=client_id,
+        import_date=payload.import_date,
+        source_type=_required_collection_text(payload.source_type, "Source Type"),
+        source_file=_required_collection_text(payload.source_file, "Source File"),
+        collection_status=_required_collection_text(payload.collection_status, "Collection Status"),
+        collection_notes=payload.collection_notes,
+    )
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    return _clearinghouse_snapshot_to_response(snapshot)
+
+
+@router.get("/{client_id}/clearinghouse-snapshots", response_model=list[ClearinghouseSnapshotResponse])
+def list_clearinghouse_snapshots(
+    client_id: int,
+    db: Session = Depends(get_db),
+) -> list[ClearinghouseSnapshotResponse]:
+    _require_client(db, client_id)
+    snapshots = db.scalars(
+        select(ClearinghouseSnapshot)
+        .where(ClearinghouseSnapshot.client_id == client_id)
+        .order_by(ClearinghouseSnapshot.created_at.desc(), ClearinghouseSnapshot.clearinghouse_snapshot_id.desc())
+    ).all()
+
+    return [_clearinghouse_snapshot_to_response(row) for row in snapshots]
+
+
+@router.get(
+    "/{client_id}/clearinghouse-snapshots/{clearinghouse_snapshot_id}",
+    response_model=ClearinghouseSnapshotResponse,
+)
+def get_clearinghouse_snapshot(
+    client_id: int,
+    clearinghouse_snapshot_id: str,
+    db: Session = Depends(get_db),
+) -> ClearinghouseSnapshotResponse:
+    _require_client(db, client_id)
+    snapshot = _require_clearinghouse_snapshot(db, client_id, clearinghouse_snapshot_id)
+    return _clearinghouse_snapshot_to_response(snapshot)
+
+
+@router.post("/{client_id}/documents", response_model=RetirementPlanningDocumentResponse)
+def create_retirement_planning_document(
+    client_id: int,
+    payload: RetirementPlanningDocumentRequest,
+    db: Session = Depends(get_db),
+) -> RetirementPlanningDocumentResponse:
+    _require_client(db, client_id)
+
+    document = RetirementPlanningDocument(
+        document_id=f"DOC-{uuid4().hex}",
+        client_id=client_id,
+        document_type=_required_collection_text(payload.document_type, "Document Type"),
+        source_type=payload.source_type.strip() if _has_text(payload.source_type) else None,
+        source_file=_required_collection_text(payload.source_file, "Source File"),
+        collection_date=payload.collection_date,
+        collection_status=_required_collection_text(payload.collection_status, "Collection Status"),
+        collection_notes=payload.collection_notes,
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+
+    return _document_to_response(document)
+
+
+@router.get("/{client_id}/documents", response_model=list[RetirementPlanningDocumentResponse])
+def list_retirement_planning_documents(
+    client_id: int,
+    db: Session = Depends(get_db),
+) -> list[RetirementPlanningDocumentResponse]:
+    _require_client(db, client_id)
+    documents = db.scalars(
+        select(RetirementPlanningDocument)
+        .where(RetirementPlanningDocument.client_id == client_id)
+        .order_by(RetirementPlanningDocument.created_at.desc(), RetirementPlanningDocument.document_id.desc())
+    ).all()
+
+    return [_document_to_response(row) for row in documents]
+
+
+@router.get("/{client_id}/documents/{document_id}", response_model=RetirementPlanningDocumentResponse)
+def get_retirement_planning_document(
+    client_id: int,
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> RetirementPlanningDocumentResponse:
+    _require_client(db, client_id)
+    document = _require_retirement_planning_document(db, client_id, document_id)
+    return _document_to_response(document)
 
 
 @router.post("/{client_id}/employment-records", response_model=EmploymentRecordResponse)

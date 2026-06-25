@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import load_all_models
 from app.models.actual_capitalization import ActualCapitalization
+from app.models.clearinghouse_snapshot import ClearinghouseSnapshot
 from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
@@ -22,6 +23,7 @@ from app.models.fixation_result import FixationResult
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
+from app.models.retirement_planning_document import RetirementPlanningDocument
 
 APPROVED_TABLES = {
     "clients",
@@ -29,6 +31,8 @@ APPROVED_TABLES = {
     "employment_records",
     "grants",
     "actual_capitalizations",
+    "clearinghouse_snapshots",
+    "retirement_planning_documents",
     "fixation_runs",
     "fixation_input_snapshots",
     "fixation_results",
@@ -161,6 +165,27 @@ def test_basic_insert_read_relationships_and_constraints(tmp_path: Path) -> None
             )
         )
         session.add(
+            ClearinghouseSnapshot(
+                clearinghouse_snapshot_id="CHS1",
+                client_id=1,
+                import_date=date(2026, 1, 1),
+                source_type="clearinghouse",
+                source_file="clearinghouse.csv",
+                collection_status="collected",
+            )
+        )
+        session.add(
+            RetirementPlanningDocument(
+                document_id="DOC1",
+                client_id=1,
+                document_type="161",
+                source_type="document",
+                source_file="161.pdf",
+                collection_date=date(2026, 1, 2),
+                collection_status="collected",
+            )
+        )
+        session.add(
             FixationRun(
                 id=1,
                 fixation_run_id="R1",
@@ -231,6 +256,8 @@ def test_basic_insert_read_relationships_and_constraints(tmp_path: Path) -> None
         assert len(persisted_client.employment_records) == 1
         assert len(persisted_client.grants) == 1
         assert len(persisted_client.actual_capitalizations) == 1
+        assert len(persisted_client.clearinghouse_snapshots) == 1
+        assert len(persisted_client.retirement_planning_documents) == 1
         assert len(persisted_client.fixation_runs) == 1
 
         persisted_run = session.get(FixationRun, 1)

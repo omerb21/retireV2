@@ -10,6 +10,7 @@ class Base(DeclarativeBase):
 def load_all_models() -> None:
     # Import models so they are registered on Base.metadata for Alembic.
     import app.models.actual_capitalization  # noqa: F401
+    import app.models.clearinghouse_snapshot  # noqa: F401
     import app.models.client  # noqa: F401
     import app.models.client_profile  # noqa: F401
     import app.models.employment_record  # noqa: F401
@@ -19,3 +20,4 @@ def load_all_models() -> None:
     import app.models.fixation_run  # noqa: F401
     import app.models.fixation_validation_error  # noqa: F401
     import app.models.grant  # noqa: F401
+    import app.models.retirement_planning_document  # noqa: F401

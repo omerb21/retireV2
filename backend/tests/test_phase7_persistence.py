@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session
 
 from app.models.actual_capitalization import ActualCapitalization
+from app.models.clearinghouse_snapshot import ClearinghouseSnapshot
 from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
@@ -19,6 +20,7 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
+from app.models.retirement_planning_document import RetirementPlanningDocument
 from app.schemas.fixation_contracts import AuditRow, FixationInput, FixationResult
 
 APPROVED_TABLES = {
@@ -27,6 +29,8 @@ APPROVED_TABLES = {
     "employment_records",
     "grants",
     "actual_capitalizations",
+    "clearinghouse_snapshots",
+    "retirement_planning_documents",
     "fixation_runs",
     "fixation_input_snapshots",
     "fixation_results",
@@ -99,6 +103,29 @@ def _create_source_data(session: Session, *, client_id: int = 1) -> None:
             amount=Decimal("500.00"),
             capitalization_date=date(2023, 1, 1),
             source_label="manual",
+        )
+    )
+    session.add(
+        ClearinghouseSnapshot(
+            clearinghouse_snapshot_id=f"CHS-{client_id}",
+            client_id=client_id,
+            import_date=date(2026, 1, 1),
+            source_type="clearinghouse",
+            source_file="clearinghouse.csv",
+            collection_status="collected",
+            collection_notes="source metadata only",
+        )
+    )
+    session.add(
+        RetirementPlanningDocument(
+            document_id=f"DOC-{client_id}",
+            client_id=client_id,
+            document_type="161",
+            source_type="document",
+            source_file="161.pdf",
+            collection_date=date(2026, 1, 2),
+            collection_status="collected",
+            collection_notes="document metadata only",
         )
     )
 
@@ -210,6 +237,8 @@ def test_source_data_save_and_read(tmp_path: Path) -> None:
         assert client is not None
         assert client.id_number == "1"
         assert len(client.grants) == 1
+        assert len(client.clearinghouse_snapshots) == 1
+        assert len(client.retirement_planning_documents) == 1
 
 
 def test_snapshot_and_result_payload_roundtrip(tmp_path: Path) -> None:

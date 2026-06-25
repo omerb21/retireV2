@@ -33,6 +33,12 @@ class Client(Base):
     actual_capitalizations: Mapped[list["ActualCapitalization"]] = relationship(
         "ActualCapitalization", back_populates="client"
     )
+    clearinghouse_snapshots: Mapped[list["ClearinghouseSnapshot"]] = relationship(
+        "ClearinghouseSnapshot", back_populates="client"
+    )
+    retirement_planning_documents: Mapped[list["RetirementPlanningDocument"]] = relationship(
+        "RetirementPlanningDocument", back_populates="client"
+    )
     fixation_runs: Mapped[list["FixationRun"]] = relationship(
         "FixationRun", back_populates="client"
     )

@@ -121,6 +121,46 @@ export interface ActualCapitalizationPayload {
   notes: string | null;
 }
 
+export interface ClearinghouseSnapshotItem {
+  clearinghouse_snapshot_id: string;
+  client_id: number;
+  import_date: string;
+  source_type: string;
+  source_file: string;
+  collection_status: string;
+  collection_notes: string | null;
+  created_at: string;
+}
+
+export interface ClearinghouseSnapshotPayload {
+  import_date: string;
+  source_type: string;
+  source_file: string;
+  collection_status: string;
+  collection_notes: string | null;
+}
+
+export interface RetirementPlanningDocumentItem {
+  document_id: string;
+  client_id: number;
+  document_type: string;
+  source_type: string | null;
+  source_file: string;
+  collection_date: string;
+  collection_status: string;
+  collection_notes: string | null;
+  created_at: string;
+}
+
+export interface RetirementPlanningDocumentPayload {
+  document_type: string;
+  source_type: string | null;
+  source_file: string;
+  collection_date: string;
+  collection_status: string;
+  collection_notes: string | null;
+}
+
 async function parseResponseBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -283,5 +323,37 @@ export function updateActualCapitalization(
 export function deleteActualCapitalization(clientId: number, capitalizationId: string): Promise<unknown> {
   return requestJson<unknown>(`/clients/${clientId}/actual-capitalizations/${capitalizationId}`, {
     method: "DELETE"
+  });
+}
+
+export function getClearinghouseSnapshots(clientId: number): Promise<ClearinghouseSnapshotItem[]> {
+  return requestJson<ClearinghouseSnapshotItem[]>(`/clients/${clientId}/clearinghouse-snapshots`, {
+    method: "GET"
+  });
+}
+
+export function createClearinghouseSnapshot(
+  clientId: number,
+  payload: ClearinghouseSnapshotPayload
+): Promise<ClearinghouseSnapshotItem> {
+  return requestJson<ClearinghouseSnapshotItem>(`/clients/${clientId}/clearinghouse-snapshots`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getRetirementPlanningDocuments(clientId: number): Promise<RetirementPlanningDocumentItem[]> {
+  return requestJson<RetirementPlanningDocumentItem[]>(`/clients/${clientId}/documents`, {
+    method: "GET"
+  });
+}
+
+export function createRetirementPlanningDocument(
+  clientId: number,
+  payload: RetirementPlanningDocumentPayload
+): Promise<RetirementPlanningDocumentItem> {
+  return requestJson<RetirementPlanningDocumentItem>(`/clients/${clientId}/documents`, {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }

@@ -21,6 +21,7 @@ APPROVED_TABLES = {
     "actual_capitalizations",
     "clearinghouse_snapshots",
     "retirement_planning_documents",
+    "missing_data_items",
     "fixation_runs",
     "fixation_input_snapshots",
     "fixation_results",
@@ -293,6 +294,17 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         )
         assert get_snapshot_resp.status_code == 200
         assert get_snapshot_resp.json()["source_file"] == "first-clearinghouse.csv"
+        assert get_snapshot_resp.json()["verification_status"] == "unverified"
+        snapshot_verification_resp = client.put(
+            f"/api/clients/{created_client_id}/clearinghouse-snapshots/"
+            f"{first_snapshot_resp.json()['clearinghouse_snapshot_id']}/verification",
+            json={"verification_status": "verified", "verification_notes": "advisor checked source"},
+        )
+        assert snapshot_verification_resp.status_code == 200
+        assert snapshot_verification_resp.json()["verification_status"] == "verified"
+        assert snapshot_verification_resp.json()["verification_notes"] == "advisor checked source"
+        assert snapshot_verification_resp.json()["source_file"] == "first-clearinghouse.csv"
+        assert snapshot_verification_resp.json()["collection_status"] == "collected"
 
         # 8b. Register/retrieve retirement planning documents and preserve document history
         first_document_resp = client.post(
@@ -327,6 +339,42 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         )
         assert get_document_resp.status_code == 200
         assert get_document_resp.json()["source_file"] == "first-161.pdf"
+        assert get_document_resp.json()["verification_status"] == "unverified"
+        document_verification_resp = client.put(
+            f"/api/clients/{created_client_id}/documents/{first_document_resp.json()['document_id']}/verification",
+            json={"verification_status": "requires_review", "verification_notes": "missing advisor review"},
+        )
+        assert document_verification_resp.status_code == 200
+        assert document_verification_resp.json()["verification_status"] == "requires_review"
+        assert document_verification_resp.json()["verification_notes"] == "missing advisor review"
+        assert document_verification_resp.json()["source_file"] == "first-161.pdf"
+        assert document_verification_resp.json()["collection_status"] == "collected"
+
+        # 8c. Register/retrieve missing required data and missing document requirements
+        missing_data_resp = client.post(
+            f"/api/clients/{created_client_id}/missing-items",
+            json={
+                "missing_item_type": "data",
+                "missing_item_label": "Tax credits",
+                "missing_status": "missing",
+                "notes": "advisor needs interview completion",
+            },
+        )
+        assert missing_data_resp.status_code == 200
+        missing_document_resp = client.post(
+            f"/api/clients/{created_client_id}/missing-items",
+            json={
+                "missing_item_type": "document",
+                "missing_item_label": "Form 161",
+                "missing_status": "requested",
+                "notes": "client to provide document",
+            },
+        )
+        assert missing_document_resp.status_code == 200
+        list_missing_resp = client.get(f"/api/clients/{created_client_id}/missing-items")
+        assert list_missing_resp.status_code == 200
+        assert len(list_missing_resp.json()) == 2
+        assert {item["missing_item_type"] for item in list_missing_resp.json()} == {"data", "document"}
 
         other_created = _create_client(client, id_number="3003")
         other_client_id = other_created["client_id"]
@@ -478,6 +526,8 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert "eb25e18b9fcd_align_phase_1_ids_for_api.py" in migration_names
         assert "6f2e9b2b4a11_stage_b_additive_id_columns.py" in migration_names
         assert "9a6f3b8c21de_stage_c_cutover_integer_ids.py" in migration_names
+        assert "4e7a1c2d9b30_package_2_collection_foundation.py" in migration_names
+        assert "5b8d2e1f4c61_package_3_verification_missing_data.py" in migration_names
         tables = set(inspect(create_engine(f"sqlite:///{db_path.as_posix()}")) .get_table_names())
         assert tables == APPROVED_TABLES | {"alembic_version"}
 

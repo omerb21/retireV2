@@ -23,6 +23,7 @@ from app.models.fixation_result import FixationResult
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
+from app.models.missing_data_item import MissingDataItem
 from app.models.retirement_planning_document import RetirementPlanningDocument
 
 APPROVED_TABLES = {
@@ -33,6 +34,7 @@ APPROVED_TABLES = {
     "actual_capitalizations",
     "clearinghouse_snapshots",
     "retirement_planning_documents",
+    "missing_data_items",
     "fixation_runs",
     "fixation_input_snapshots",
     "fixation_results",
@@ -186,6 +188,15 @@ def test_basic_insert_read_relationships_and_constraints(tmp_path: Path) -> None
             )
         )
         session.add(
+            MissingDataItem(
+                missing_data_item_id="MD1",
+                client_id=1,
+                missing_item_type="data",
+                missing_item_label="Tax credit fact",
+                missing_status="missing",
+            )
+        )
+        session.add(
             FixationRun(
                 id=1,
                 fixation_run_id="R1",
@@ -258,6 +269,7 @@ def test_basic_insert_read_relationships_and_constraints(tmp_path: Path) -> None
         assert len(persisted_client.actual_capitalizations) == 1
         assert len(persisted_client.clearinghouse_snapshots) == 1
         assert len(persisted_client.retirement_planning_documents) == 1
+        assert len(persisted_client.missing_data_items) == 1
         assert len(persisted_client.fixation_runs) == 1
 
         persisted_run = session.get(FixationRun, 1)

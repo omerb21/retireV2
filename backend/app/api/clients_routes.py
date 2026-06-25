@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -16,6 +16,7 @@ from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
+from app.models.missing_data_item import MissingDataItem
 from app.models.retirement_planning_document import RetirementPlanningDocument
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
@@ -137,6 +138,9 @@ class ClearinghouseSnapshotResponse(BaseModel):
     source_file: str
     collection_status: str
     collection_notes: str | None
+    verification_status: str
+    verification_notes: str | None
+    verified_at: datetime | None
     created_at: datetime
 
 
@@ -158,6 +162,31 @@ class RetirementPlanningDocumentResponse(BaseModel):
     collection_date: date
     collection_status: str
     collection_notes: str | None
+    verification_status: str
+    verification_notes: str | None
+    verified_at: datetime | None
+    created_at: datetime
+
+
+class VerificationUpdateRequest(BaseModel):
+    verification_status: str
+    verification_notes: str | None = None
+
+
+class MissingDataItemRequest(BaseModel):
+    missing_item_type: str
+    missing_item_label: str
+    missing_status: str
+    notes: str | None = None
+
+
+class MissingDataItemResponse(BaseModel):
+    missing_data_item_id: str
+    client_id: int
+    missing_item_type: str
+    missing_item_label: str
+    missing_status: str
+    notes: str | None
     created_at: datetime
 
 
@@ -272,6 +301,18 @@ def _required_collection_text(value: str, field_name: str) -> str:
     return value.strip()
 
 
+def _required_file_metadata_text(value: str, field_name: str) -> str:
+    if not _has_text(value):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "FILE_METADATA_REQUIRED",
+                "message": f"{field_name} is required",
+            },
+        )
+    return value.strip()
+
+
 def _clearinghouse_snapshot_to_response(row: ClearinghouseSnapshot) -> ClearinghouseSnapshotResponse:
     return ClearinghouseSnapshotResponse(
         clearinghouse_snapshot_id=row.clearinghouse_snapshot_id,
@@ -281,6 +322,9 @@ def _clearinghouse_snapshot_to_response(row: ClearinghouseSnapshot) -> Clearingh
         source_file=row.source_file,
         collection_status=row.collection_status,
         collection_notes=row.collection_notes,
+        verification_status=row.verification_status,
+        verification_notes=row.verification_notes,
+        verified_at=row.verified_at,
         created_at=row.created_at,
     )
 
@@ -295,6 +339,21 @@ def _document_to_response(row: RetirementPlanningDocument) -> RetirementPlanning
         collection_date=row.collection_date,
         collection_status=row.collection_status,
         collection_notes=row.collection_notes,
+        verification_status=row.verification_status,
+        verification_notes=row.verification_notes,
+        verified_at=row.verified_at,
+        created_at=row.created_at,
+    )
+
+
+def _missing_data_item_to_response(row: MissingDataItem) -> MissingDataItemResponse:
+    return MissingDataItemResponse(
+        missing_data_item_id=row.missing_data_item_id,
+        client_id=row.client_id,
+        missing_item_type=row.missing_item_type,
+        missing_item_label=row.missing_item_label,
+        missing_status=row.missing_status,
+        notes=row.notes,
         created_at=row.created_at,
     )
 
@@ -369,6 +428,15 @@ def _require_retirement_planning_document(db: Session, client_id: int, document_
             f"Retirement planning document {document_id} was not found for client {client_id}",
         )
     return row
+
+
+def _apply_verification_update(
+    row: ClearinghouseSnapshot | RetirementPlanningDocument,
+    payload: VerificationUpdateRequest,
+) -> None:
+    row.verification_status = _required_file_metadata_text(payload.verification_status, "Verification Status")
+    row.verification_notes = payload.verification_notes
+    row.verified_at = datetime.now(timezone.utc)
 
 
 @router.get("", response_model=list[ClientResponse])
@@ -518,6 +586,24 @@ def get_clearinghouse_snapshot(
     return _clearinghouse_snapshot_to_response(snapshot)
 
 
+@router.put(
+    "/{client_id}/clearinghouse-snapshots/{clearinghouse_snapshot_id}/verification",
+    response_model=ClearinghouseSnapshotResponse,
+)
+def update_clearinghouse_snapshot_verification(
+    client_id: int,
+    clearinghouse_snapshot_id: str,
+    payload: VerificationUpdateRequest,
+    db: Session = Depends(get_db),
+) -> ClearinghouseSnapshotResponse:
+    _require_client(db, client_id)
+    snapshot = _require_clearinghouse_snapshot(db, client_id, clearinghouse_snapshot_id)
+    _apply_verification_update(snapshot, payload)
+    db.commit()
+    db.refresh(snapshot)
+    return _clearinghouse_snapshot_to_response(snapshot)
+
+
 @router.post("/{client_id}/documents", response_model=RetirementPlanningDocumentResponse)
 def create_retirement_planning_document(
     client_id: int,
@@ -567,6 +653,68 @@ def get_retirement_planning_document(
     _require_client(db, client_id)
     document = _require_retirement_planning_document(db, client_id, document_id)
     return _document_to_response(document)
+
+
+@router.put("/{client_id}/documents/{document_id}/verification", response_model=RetirementPlanningDocumentResponse)
+def update_retirement_planning_document_verification(
+    client_id: int,
+    document_id: str,
+    payload: VerificationUpdateRequest,
+    db: Session = Depends(get_db),
+) -> RetirementPlanningDocumentResponse:
+    _require_client(db, client_id)
+    document = _require_retirement_planning_document(db, client_id, document_id)
+    _apply_verification_update(document, payload)
+    db.commit()
+    db.refresh(document)
+    return _document_to_response(document)
+
+
+@router.post("/{client_id}/missing-items", response_model=MissingDataItemResponse)
+def create_missing_data_item(
+    client_id: int,
+    payload: MissingDataItemRequest,
+    db: Session = Depends(get_db),
+) -> MissingDataItemResponse:
+    _require_client(db, client_id)
+    item_type = _required_file_metadata_text(payload.missing_item_type, "Missing Item Type")
+    if item_type not in {"data", "document"}:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MISSING_ITEM_TYPE_INVALID",
+                "message": "Missing Item Type must be data or document",
+            },
+        )
+
+    missing_item = MissingDataItem(
+        missing_data_item_id=f"MD-{uuid4().hex}",
+        client_id=client_id,
+        missing_item_type=item_type,
+        missing_item_label=_required_file_metadata_text(payload.missing_item_label, "Missing Item Label"),
+        missing_status=_required_file_metadata_text(payload.missing_status, "Missing Status"),
+        notes=payload.notes,
+    )
+    db.add(missing_item)
+    db.commit()
+    db.refresh(missing_item)
+
+    return _missing_data_item_to_response(missing_item)
+
+
+@router.get("/{client_id}/missing-items", response_model=list[MissingDataItemResponse])
+def list_missing_data_items(
+    client_id: int,
+    db: Session = Depends(get_db),
+) -> list[MissingDataItemResponse]:
+    _require_client(db, client_id)
+    items = db.scalars(
+        select(MissingDataItem)
+        .where(MissingDataItem.client_id == client_id)
+        .order_by(MissingDataItem.created_at.desc(), MissingDataItem.missing_data_item_id.desc())
+    ).all()
+
+    return [_missing_data_item_to_response(row) for row in items]
 
 
 @router.post("/{client_id}/employment-records", response_model=EmploymentRecordResponse)

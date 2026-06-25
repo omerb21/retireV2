@@ -20,4 +20,5 @@ def load_all_models() -> None:
     import app.models.fixation_run  # noqa: F401
     import app.models.fixation_validation_error  # noqa: F401
     import app.models.grant  # noqa: F401
+    import app.models.missing_data_item  # noqa: F401
     import app.models.retirement_planning_document  # noqa: F401

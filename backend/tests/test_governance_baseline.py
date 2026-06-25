@@ -79,7 +79,9 @@ def test_repository_has_no_untracked_files_for_governance_gate() -> None:
     allowed_bootstrap_untracked = {
         "backend/alembic/versions/3d2f8a7b4c19_phase_a_file_foundation.py",
         "backend/alembic/versions/4e7a1c2d9b30_package_2_collection_foundation.py",
+        "backend/alembic/versions/5b8d2e1f4c61_package_3_verification_missing_data.py",
         "backend/app/models/clearinghouse_snapshot.py",
+        "backend/app/models/missing_data_item.py",
         "backend/app/models/retirement_planning_document.py",
         "backend/tests/test_governance_baseline.py",
     }
@@ -97,6 +99,7 @@ def test_forbidden_paths_not_modified() -> None:
     authorized_contract_alignment_paths = {
         "backend/alembic/versions/9a6f3b8c21de_stage_c_cutover_integer_ids.py",
         "backend/alembic/versions/4e7a1c2d9b30_package_2_collection_foundation.py",
+        "backend/alembic/versions/5b8d2e1f4c61_package_3_verification_missing_data.py",
         "backend/alembic/versions/eb25e18b9fcd_align_phase_1_ids_for_api.py",
         "backend/app/api/clients_routes.py",
         "backend/app/api/fixation_routes.py",
@@ -104,6 +107,7 @@ def test_forbidden_paths_not_modified() -> None:
         "backend/app/models/clearinghouse_snapshot.py",
         "backend/app/models/client.py",
         "backend/app/models/client_profile.py",
+        "backend/app/models/missing_data_item.py",
         "backend/app/models/retirement_planning_document.py",
         "backend/app/schemas/fixation_contracts.py",
         "backend/tests/test_governance_baseline.py",

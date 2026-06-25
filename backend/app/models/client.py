@@ -39,6 +39,9 @@ class Client(Base):
     retirement_planning_documents: Mapped[list["RetirementPlanningDocument"]] = relationship(
         "RetirementPlanningDocument", back_populates="client"
     )
+    missing_data_items: Mapped[list["MissingDataItem"]] = relationship(
+        "MissingDataItem", back_populates="client"
+    )
     fixation_runs: Mapped[list["FixationRun"]] = relationship(
         "FixationRun", back_populates="client"
     )

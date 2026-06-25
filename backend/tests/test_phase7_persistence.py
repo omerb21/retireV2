@@ -20,6 +20,7 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
+from app.models.missing_data_item import MissingDataItem
 from app.models.retirement_planning_document import RetirementPlanningDocument
 from app.schemas.fixation_contracts import AuditRow, FixationInput, FixationResult
 
@@ -31,6 +32,7 @@ APPROVED_TABLES = {
     "actual_capitalizations",
     "clearinghouse_snapshots",
     "retirement_planning_documents",
+    "missing_data_items",
     "fixation_runs",
     "fixation_input_snapshots",
     "fixation_results",
@@ -126,6 +128,16 @@ def _create_source_data(session: Session, *, client_id: int = 1) -> None:
             collection_date=date(2026, 1, 2),
             collection_status="collected",
             collection_notes="document metadata only",
+        )
+    )
+    session.add(
+        MissingDataItem(
+            missing_data_item_id=f"MD-{client_id}",
+            client_id=client_id,
+            missing_item_type="document",
+            missing_item_label="Missing 161",
+            missing_status="missing",
+            notes="informational only",
         )
     )
 
@@ -239,6 +251,7 @@ def test_source_data_save_and_read(tmp_path: Path) -> None:
         assert len(client.grants) == 1
         assert len(client.clearinghouse_snapshots) == 1
         assert len(client.retirement_planning_documents) == 1
+        assert len(client.missing_data_items) == 1
 
 
 def test_snapshot_and_result_payload_roundtrip(tmp_path: Path) -> None:

@@ -129,6 +129,9 @@ export interface ClearinghouseSnapshotItem {
   source_file: string;
   collection_status: string;
   collection_notes: string | null;
+  verification_status: string;
+  verification_notes: string | null;
+  verified_at: string | null;
   created_at: string;
 }
 
@@ -149,6 +152,9 @@ export interface RetirementPlanningDocumentItem {
   collection_date: string;
   collection_status: string;
   collection_notes: string | null;
+  verification_status: string;
+  verification_notes: string | null;
+  verified_at: string | null;
   created_at: string;
 }
 
@@ -159,6 +165,28 @@ export interface RetirementPlanningDocumentPayload {
   collection_date: string;
   collection_status: string;
   collection_notes: string | null;
+}
+
+export interface VerificationUpdatePayload {
+  verification_status: string;
+  verification_notes: string | null;
+}
+
+export interface MissingDataItem {
+  missing_data_item_id: string;
+  client_id: number;
+  missing_item_type: string;
+  missing_item_label: string;
+  missing_status: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface MissingDataItemPayload {
+  missing_item_type: string;
+  missing_item_label: string;
+  missing_status: string;
+  notes: string | null;
 }
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -342,6 +370,20 @@ export function createClearinghouseSnapshot(
   });
 }
 
+export function updateClearinghouseSnapshotVerification(
+  clientId: number,
+  clearinghouseSnapshotId: string,
+  payload: VerificationUpdatePayload
+): Promise<ClearinghouseSnapshotItem> {
+  return requestJson<ClearinghouseSnapshotItem>(
+    `/clients/${clientId}/clearinghouse-snapshots/${clearinghouseSnapshotId}/verification`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
 export function getRetirementPlanningDocuments(clientId: number): Promise<RetirementPlanningDocumentItem[]> {
   return requestJson<RetirementPlanningDocumentItem[]>(`/clients/${clientId}/documents`, {
     method: "GET"
@@ -353,6 +395,33 @@ export function createRetirementPlanningDocument(
   payload: RetirementPlanningDocumentPayload
 ): Promise<RetirementPlanningDocumentItem> {
   return requestJson<RetirementPlanningDocumentItem>(`/clients/${clientId}/documents`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateRetirementPlanningDocumentVerification(
+  clientId: number,
+  documentId: string,
+  payload: VerificationUpdatePayload
+): Promise<RetirementPlanningDocumentItem> {
+  return requestJson<RetirementPlanningDocumentItem>(`/clients/${clientId}/documents/${documentId}/verification`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getMissingDataItems(clientId: number): Promise<MissingDataItem[]> {
+  return requestJson<MissingDataItem[]>(`/clients/${clientId}/missing-items`, {
+    method: "GET"
+  });
+}
+
+export function createMissingDataItem(
+  clientId: number,
+  payload: MissingDataItemPayload
+): Promise<MissingDataItem> {
+  return requestJson<MissingDataItem>(`/clients/${clientId}/missing-items`, {
     method: "POST",
     body: JSON.stringify(payload)
   });

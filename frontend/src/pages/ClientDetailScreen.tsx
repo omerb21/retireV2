@@ -5,14 +5,19 @@ import {
   ApiTransportError,
   type ClearinghouseSnapshotItem,
   type ClientDetailItem,
+  createMissingDataItem,
   createClearinghouseSnapshot,
   createRetirementPlanningDocument,
   getClient,
   getClientProfile,
   getClearinghouseSnapshots,
+  getMissingDataItems,
   getRetirementPlanningDocuments,
+  type MissingDataItem,
   type RetirementPlanningDocumentItem,
-  updateClientProfile
+  updateClearinghouseSnapshotVerification,
+  updateClientProfile,
+  updateRetirementPlanningDocumentVerification
 } from "../api/clientsApi";
 
 function getErrorMessage(error: unknown): string {
@@ -52,6 +57,7 @@ export function ClientDetailScreen() {
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [clearinghouseSnapshots, setClearinghouseSnapshots] = useState<ClearinghouseSnapshotItem[]>([]);
   const [retirementPlanningDocuments, setRetirementPlanningDocuments] = useState<RetirementPlanningDocumentItem[]>([]);
+  const [missingDataItems, setMissingDataItems] = useState<MissingDataItem[]>([]);
   const [collectionLoadErrorMessage, setCollectionLoadErrorMessage] = useState<string | null>(null);
   const [snapshotImportDate, setSnapshotImportDate] = useState("");
   const [snapshotSourceType, setSnapshotSourceType] = useState("");
@@ -70,6 +76,19 @@ export function ClientDetailScreen() {
   const [isSavingDocument, setIsSavingDocument] = useState(false);
   const [documentSaveErrorMessage, setDocumentSaveErrorMessage] = useState<string | null>(null);
   const [documentSaveSuccessMessage, setDocumentSaveSuccessMessage] = useState<string | null>(null);
+  const [snapshotVerificationStatusById, setSnapshotVerificationStatusById] = useState<Record<string, string>>({});
+  const [snapshotVerificationNotesById, setSnapshotVerificationNotesById] = useState<Record<string, string>>({});
+  const [documentVerificationStatusById, setDocumentVerificationStatusById] = useState<Record<string, string>>({});
+  const [documentVerificationNotesById, setDocumentVerificationNotesById] = useState<Record<string, string>>({});
+  const [verificationSaveMessage, setVerificationSaveMessage] = useState<string | null>(null);
+  const [verificationErrorMessage, setVerificationErrorMessage] = useState<string | null>(null);
+  const [missingItemType, setMissingItemType] = useState("data");
+  const [missingItemLabel, setMissingItemLabel] = useState("");
+  const [missingStatus, setMissingStatus] = useState("");
+  const [missingNotes, setMissingNotes] = useState("");
+  const [isSavingMissingItem, setIsSavingMissingItem] = useState(false);
+  const [missingSaveErrorMessage, setMissingSaveErrorMessage] = useState<string | null>(null);
+  const [missingSaveSuccessMessage, setMissingSaveSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -121,15 +140,17 @@ export function ClientDetailScreen() {
         }
 
         try {
-          const [nextSnapshots, nextDocuments] = await Promise.all([
+          const [nextSnapshots, nextDocuments, nextMissingItems] = await Promise.all([
             getClearinghouseSnapshots(parsedClientId),
-            getRetirementPlanningDocuments(parsedClientId)
+            getRetirementPlanningDocuments(parsedClientId),
+            getMissingDataItems(parsedClientId)
           ]);
           if (!isActive) {
             return;
           }
           setClearinghouseSnapshots(nextSnapshots);
           setRetirementPlanningDocuments(nextDocuments);
+          setMissingDataItems(nextMissingItems);
           setCollectionLoadErrorMessage(null);
         } catch (collectionError) {
           if (!isActive) {
@@ -222,6 +243,14 @@ export function ClientDetailScreen() {
         collection_notes: snapshotCollectionNotes || null
       });
       setClearinghouseSnapshots((current) => [snapshot, ...current]);
+      setSnapshotVerificationStatusById((current) => ({
+        ...current,
+        [snapshot.clearinghouse_snapshot_id]: snapshot.verification_status
+      }));
+      setSnapshotVerificationNotesById((current) => ({
+        ...current,
+        [snapshot.clearinghouse_snapshot_id]: snapshot.verification_notes ?? ""
+      }));
       setSnapshotImportDate("");
       setSnapshotSourceType("");
       setSnapshotSourceFile("");
@@ -256,6 +285,14 @@ export function ClientDetailScreen() {
         collection_notes: documentCollectionNotes || null
       });
       setRetirementPlanningDocuments((current) => [document, ...current]);
+      setDocumentVerificationStatusById((current) => ({
+        ...current,
+        [document.document_id]: document.verification_status
+      }));
+      setDocumentVerificationNotesById((current) => ({
+        ...current,
+        [document.document_id]: document.verification_notes ?? ""
+      }));
       setDocumentType("");
       setDocumentSourceType("");
       setDocumentSourceFile("");
@@ -267,6 +304,90 @@ export function ClientDetailScreen() {
       setDocumentSaveErrorMessage(getErrorMessage(error));
     } finally {
       setIsSavingDocument(false);
+    }
+  }
+
+  async function handleUpdateSnapshotVerification(snapshot: ClearinghouseSnapshotItem) {
+    if (client === null) {
+      return;
+    }
+
+    setVerificationSaveMessage(null);
+    setVerificationErrorMessage(null);
+
+    try {
+      const updated = await updateClearinghouseSnapshotVerification(
+        client.client_id,
+        snapshot.clearinghouse_snapshot_id,
+        {
+          verification_status: snapshotVerificationStatusById[snapshot.clearinghouse_snapshot_id]
+            ?? snapshot.verification_status,
+          verification_notes: snapshotVerificationNotesById[snapshot.clearinghouse_snapshot_id] || null
+        }
+      );
+      setClearinghouseSnapshots((current) => current.map((item) => (
+        item.clearinghouse_snapshot_id === updated.clearinghouse_snapshot_id ? updated : item
+      )));
+      setVerificationSaveMessage("Verification status saved.");
+    } catch (error) {
+      setVerificationErrorMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleUpdateDocumentVerification(document: RetirementPlanningDocumentItem) {
+    if (client === null) {
+      return;
+    }
+
+    setVerificationSaveMessage(null);
+    setVerificationErrorMessage(null);
+
+    try {
+      const updated = await updateRetirementPlanningDocumentVerification(
+        client.client_id,
+        document.document_id,
+        {
+          verification_status: documentVerificationStatusById[document.document_id] ?? document.verification_status,
+          verification_notes: documentVerificationNotesById[document.document_id] || null
+        }
+      );
+      setRetirementPlanningDocuments((current) => current.map((item) => (
+        item.document_id === updated.document_id ? updated : item
+      )));
+      setVerificationSaveMessage("Verification status saved.");
+    } catch (error) {
+      setVerificationErrorMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleCreateMissingItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (client === null) {
+      return;
+    }
+
+    setIsSavingMissingItem(true);
+    setMissingSaveErrorMessage(null);
+    setMissingSaveSuccessMessage(null);
+
+    try {
+      const item = await createMissingDataItem(client.client_id, {
+        missing_item_type: missingItemType,
+        missing_item_label: missingItemLabel,
+        missing_status: missingStatus,
+        notes: missingNotes || null
+      });
+      setMissingDataItems((current) => [item, ...current]);
+      setMissingItemType("data");
+      setMissingItemLabel("");
+      setMissingStatus("");
+      setMissingNotes("");
+      setMissingSaveSuccessMessage("Missing item registered.");
+    } catch (error) {
+      setMissingSaveErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSavingMissingItem(false);
     }
   }
 
@@ -510,6 +631,50 @@ export function ClientDetailScreen() {
                 {snapshot.import_date} - {snapshot.source_type} - {snapshot.source_file} -{" "}
                 {snapshot.collection_status}
                 {snapshot.collection_notes ? ` - ${snapshot.collection_notes}` : ""}
+                <p>Verification Status: {snapshot.verification_status}</p>
+                <p>
+                  <label htmlFor={`snapshot-verification-status-${snapshot.clearinghouse_snapshot_id}`}>
+                    Snapshot Verification Status
+                  </label>
+                  <input
+                    id={`snapshot-verification-status-${snapshot.clearinghouse_snapshot_id}`}
+                    value={snapshotVerificationStatusById[snapshot.clearinghouse_snapshot_id]
+                      ?? snapshot.verification_status}
+                    onChange={(event) => {
+                      setSnapshotVerificationStatusById((current) => ({
+                        ...current,
+                        [snapshot.clearinghouse_snapshot_id]: event.target.value
+                      }));
+                      setVerificationSaveMessage(null);
+                    }}
+                  />
+                </p>
+                <p>
+                  <label htmlFor={`snapshot-verification-notes-${snapshot.clearinghouse_snapshot_id}`}>
+                    Snapshot Verification Notes
+                  </label>
+                  <textarea
+                    id={`snapshot-verification-notes-${snapshot.clearinghouse_snapshot_id}`}
+                    value={snapshotVerificationNotesById[snapshot.clearinghouse_snapshot_id]
+                      ?? snapshot.verification_notes
+                      ?? ""}
+                    onChange={(event) => {
+                      setSnapshotVerificationNotesById((current) => ({
+                        ...current,
+                        [snapshot.clearinghouse_snapshot_id]: event.target.value
+                      }));
+                      setVerificationSaveMessage(null);
+                    }}
+                  />
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleUpdateSnapshotVerification(snapshot);
+                  }}
+                >
+                  Save Snapshot Verification
+                </button>
               </li>
             ))}
           </ul>
@@ -605,6 +770,128 @@ export function ClientDetailScreen() {
                 {document.collection_date} - {document.document_type} - {document.source_file} -{" "}
                 {document.collection_status}
                 {document.collection_notes ? ` - ${document.collection_notes}` : ""}
+                <p>Verification Status: {document.verification_status}</p>
+                <p>
+                  <label htmlFor={`document-verification-status-${document.document_id}`}>
+                    Document Verification Status
+                  </label>
+                  <input
+                    id={`document-verification-status-${document.document_id}`}
+                    value={documentVerificationStatusById[document.document_id] ?? document.verification_status}
+                    onChange={(event) => {
+                      setDocumentVerificationStatusById((current) => ({
+                        ...current,
+                        [document.document_id]: event.target.value
+                      }));
+                      setVerificationSaveMessage(null);
+                    }}
+                  />
+                </p>
+                <p>
+                  <label htmlFor={`document-verification-notes-${document.document_id}`}>
+                    Document Verification Notes
+                  </label>
+                  <textarea
+                    id={`document-verification-notes-${document.document_id}`}
+                    value={documentVerificationNotesById[document.document_id] ?? document.verification_notes ?? ""}
+                    onChange={(event) => {
+                      setDocumentVerificationNotesById((current) => ({
+                        ...current,
+                        [document.document_id]: event.target.value
+                      }));
+                      setVerificationSaveMessage(null);
+                    }}
+                  />
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleUpdateDocumentVerification(document);
+                  }}
+                >
+                  Save Document Verification
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {verificationSaveMessage ? <p>{verificationSaveMessage}</p> : null}
+      {verificationErrorMessage ? (
+        <>
+          <p>Unable to save verification status.</p>
+          <pre>{verificationErrorMessage}</pre>
+        </>
+      ) : null}
+      <section aria-labelledby="missing-data-heading">
+        <h3 id="missing-data-heading">Missing Data Tracking</h3>
+        <form onSubmit={handleCreateMissingItem}>
+          <p>
+            <label htmlFor="missing-item-type">Missing Item Type</label>
+            <select
+              id="missing-item-type"
+              value={missingItemType}
+              onChange={(event) => {
+                setMissingItemType(event.target.value);
+                setMissingSaveSuccessMessage(null);
+              }}
+            >
+              <option value="data">data</option>
+              <option value="document">document</option>
+            </select>
+          </p>
+          <p>
+            <label htmlFor="missing-item-label">Missing Item Label</label>
+            <input
+              id="missing-item-label"
+              value={missingItemLabel}
+              onChange={(event) => {
+                setMissingItemLabel(event.target.value);
+                setMissingSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="missing-status">Missing Status</label>
+            <input
+              id="missing-status"
+              value={missingStatus}
+              onChange={(event) => {
+                setMissingStatus(event.target.value);
+                setMissingSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="missing-notes">Missing Notes</label>
+            <textarea
+              id="missing-notes"
+              value={missingNotes}
+              onChange={(event) => {
+                setMissingNotes(event.target.value);
+                setMissingSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <button type="submit" disabled={isSavingMissingItem || collectionLoadErrorMessage !== null}>
+            {isSavingMissingItem ? "Registering Missing Item..." : "Register Missing Item"}
+          </button>
+        </form>
+        {missingSaveSuccessMessage ? <p>{missingSaveSuccessMessage}</p> : null}
+        {missingSaveErrorMessage ? (
+          <>
+            <p>Unable to register missing item.</p>
+            <pre>{missingSaveErrorMessage}</pre>
+          </>
+        ) : null}
+        {missingDataItems.length === 0 ? (
+          <p>No missing items registered.</p>
+        ) : (
+          <ul>
+            {missingDataItems.map((item) => (
+              <li key={item.missing_data_item_id}>
+                {item.missing_item_type} - {item.missing_item_label} - {item.missing_status}
+                {item.notes ? ` - ${item.notes}` : ""}
               </li>
             ))}
           </ul>

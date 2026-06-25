@@ -20,6 +20,9 @@ class ClearinghouseSnapshot(Base):
     source_file: Mapped[str] = mapped_column(String(255), nullable=False)
     collection_status: Mapped[str] = mapped_column(String(100), nullable=False)
     collection_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_status: Mapped[str] = mapped_column(String(100), nullable=False, server_default="unverified")
+    verification_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -23,6 +23,14 @@ import subprocess
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+APPROVED_SLICE_1_MIGRATION_PATH = (
+    "backend/alembic/versions/7c1d9e4a2b83_slice_1_actual_capitalization_metadata.py"
+)
+APPROVED_LOCAL_UNTRACKED_PATHS = {
+    "CURRENT_PROJECT_STATE.md",
+    "_evidence/",
+    "specs/bootstraps/",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -41,6 +49,46 @@ def _status_path(line: str) -> str:
     if " -> " in path_part:
         return path_part.split(" -> ", 1)[1]
     return path_part
+
+
+def _allowed_untracked_paths() -> set[str]:
+    return {
+        *APPROVED_LOCAL_UNTRACKED_PATHS,
+        APPROVED_SLICE_1_MIGRATION_PATH,
+    }
+
+
+def _unapproved_untracked(status_lines: list[str]) -> list[str]:
+    allowed_untracked = _allowed_untracked_paths()
+    return [
+        line
+        for line in status_lines
+        if line.startswith("?? ") and _status_path(line) not in allowed_untracked
+    ]
+
+
+def _approved_tracked_change_paths() -> set[str]:
+    return {
+        APPROVED_SLICE_1_MIGRATION_PATH,
+        "backend/app/api/clients_routes.py",
+        "backend/app/models/actual_capitalization.py",
+        "backend/app/models/client.py",
+        "backend/app/models/client_profile.py",
+        "backend/app/models/grant.py",
+        "backend/tests/test_governance_baseline.py",
+        "backend/tests/test_phase9_api.py",
+        "frontend/src/api/clientsApi.ts",
+        "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
+        "frontend/src/pages/ActualCapitalizationsScreen.tsx",
+        "frontend/src/pages/ClientDetailScreen.test.tsx",
+        "frontend/src/pages/ClientDetailScreen.tsx",
+        "frontend/src/pages/GrantsScreen.test.tsx",
+        "frontend/src/pages/GrantsScreen.tsx",
+    }
+
+
+def _tracked_status_lines(status_lines: list[str]) -> list[str]:
+    return [line for line in status_lines if not line.startswith("?? ")]
 
 
 def test_governance_artifacts_exist() -> None:
@@ -76,64 +124,62 @@ def test_required_drift_ids_exist() -> None:
 
 def test_repository_has_no_untracked_files_for_governance_gate() -> None:
     status_lines = _run_git_status_porcelain()
-    allowed_bootstrap_untracked = {
-        "backend/alembic/versions/3d2f8a7b4c19_phase_a_file_foundation.py",
-        "backend/alembic/versions/4e7a1c2d9b30_package_2_collection_foundation.py",
-        "backend/alembic/versions/5b8d2e1f4c61_package_3_verification_missing_data.py",
-        "backend/app/models/clearinghouse_snapshot.py",
-        "backend/app/models/missing_data_item.py",
-        "backend/app/models/retirement_planning_document.py",
-        "backend/tests/test_governance_baseline.py",
-        "frontend/src/pages/FixationWorkspaceScreen.test.tsx",
-        "frontend/src/pages/FixationWorkspaceScreen.tsx",
-    }
-    untracked = [
-        line
-        for line in status_lines
-        if line.startswith("?? ") and _status_path(line) not in allowed_bootstrap_untracked
-    ]
+    untracked = _unapproved_untracked(status_lines)
     assert not untracked, f"untracked files detected: {untracked}"
+
+
+def test_slice_1_governance_allows_only_approved_local_untracked_paths() -> None:
+    status_lines = [
+        "?? CURRENT_PROJECT_STATE.md",
+        "?? _evidence/",
+        "?? specs/bootstraps/",
+    ]
+    assert _unapproved_untracked(status_lines) == []
+    assert _unapproved_untracked([*status_lines, "?? scratch.txt"]) == ["?? scratch.txt"]
+
+
+def test_slice_1_governance_allows_only_exact_approved_migration_path() -> None:
+    approved = f"?? {APPROVED_SLICE_1_MIGRATION_PATH}"
+    rejected = "?? backend/alembic/versions/7c1d9e4a2b84_other_migration.py"
+    assert _unapproved_untracked([approved]) == []
+    assert _unapproved_untracked([rejected]) == [rejected]
+
+
+def test_repository_has_no_staged_files_for_governance_gate() -> None:
+    status_lines = _run_git_status_porcelain()
+    staged = [
+        line
+        for line in _tracked_status_lines(status_lines)
+        if line[0] != " "
+    ]
+    assert not staged, f"staged files detected: {staged}"
+
+
+def test_repository_has_no_tracked_deletions_for_governance_gate() -> None:
+    status_lines = _run_git_status_porcelain()
+    deleted = [
+        line
+        for line in _tracked_status_lines(status_lines)
+        if line[:2] in {" D", "D ", "DD"}
+    ]
+    assert not deleted, f"tracked deletions detected: {deleted}"
+
+
+def test_repository_has_only_approved_tracked_changes_for_governance_gate() -> None:
+    status_lines = _run_git_status_porcelain()
+    approved_paths = _approved_tracked_change_paths()
+    unapproved = [
+        line
+        for line in _tracked_status_lines(status_lines)
+        if _status_path(line) not in approved_paths
+    ]
+    assert not unapproved, f"unapproved tracked changes detected: {unapproved}"
 
 
 def test_forbidden_paths_not_modified() -> None:
     status_lines = _run_git_status_porcelain()
     modified_paths = [_status_path(line) for line in status_lines if not line.startswith("?? ")]
-    authorized_contract_alignment_paths = {
-        "backend/alembic/versions/9a6f3b8c21de_stage_c_cutover_integer_ids.py",
-        "backend/alembic/versions/4e7a1c2d9b30_package_2_collection_foundation.py",
-        "backend/alembic/versions/5b8d2e1f4c61_package_3_verification_missing_data.py",
-        "backend/alembic/versions/eb25e18b9fcd_align_phase_1_ids_for_api.py",
-        "backend/app/api/clients_routes.py",
-        "backend/app/api/fixation_routes.py",
-        "backend/app/db/base.py",
-        "backend/app/models/clearinghouse_snapshot.py",
-        "backend/app/models/client.py",
-        "backend/app/models/client_profile.py",
-        "backend/app/models/missing_data_item.py",
-        "backend/app/models/retirement_planning_document.py",
-        "backend/app/schemas/fixation_contracts.py",
-        "backend/tests/test_governance_baseline.py",
-        "backend/tests/test_phase6_schema.py",
-        "backend/tests/test_phase7_persistence.py",
-        "backend/tests/test_phase9_api.py",
-        "frontend/src/App.test.tsx",
-        "frontend/src/api/clientsApi.ts",
-        "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
-        "frontend/src/pages/ActualCapitalizationsScreen.tsx",
-        "frontend/src/pages/ClientDetailScreen.test.tsx",
-        "frontend/src/pages/ClientDetailScreen.tsx",
-        "frontend/src/pages/ClientListScreen.test.tsx",
-        "frontend/src/pages/ClientListScreen.tsx",
-        "frontend/src/pages/CreateClientScreen.test.tsx",
-        "frontend/src/pages/CreateClientScreen.tsx",
-        "frontend/src/pages/EmploymentHistoryScreen.test.tsx",
-        "frontend/src/pages/EmploymentHistoryScreen.tsx",
-        "frontend/src/pages/FixationWorkspaceScreen.test.tsx",
-        "frontend/src/pages/FixationWorkspaceScreen.tsx",
-        "frontend/src/pages/GrantsScreen.test.tsx",
-        "frontend/src/pages/GrantsScreen.tsx",
-        "frontend/src/routes/AppRoutes.tsx",
-    }
+    authorized_contract_alignment_paths = _approved_tracked_change_paths()
 
     forbidden_prefixes = (
         "backend/app/engines/",

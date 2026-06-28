@@ -62,8 +62,8 @@ function payloadFromForm(formState: FormState): GrantPayload {
   return {
     employment_record_id: formState.employmentRecordId.trim() === "" ? null : formState.employmentRecordId,
     employer_name: formState.employerName.trim() === "" ? null : formState.employerName,
-    nominal_amount: formState.nominalAmount.trim() === "" ? null : Number(formState.nominalAmount),
-    indexed_amount: Number(formState.indexedAmount),
+    nominal_amount: formState.nominalAmount.trim() === "" ? null : formState.nominalAmount,
+    indexed_amount: formState.indexedAmount,
     grant_date: formState.grantDate,
     work_start_date: formState.workStartDate,
     work_end_date: formState.workEndDate,

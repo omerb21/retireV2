@@ -27,6 +27,9 @@ interface FormState {
   amount: string;
   capitalizationDate: string;
   sourceLabel: string;
+  sourceBasis: string;
+  plannerAssertion: string;
+  plannerAssertionBasis: string;
   notes: string;
 }
 
@@ -34,6 +37,9 @@ const emptyFormState: FormState = {
   amount: "",
   capitalizationDate: "",
   sourceLabel: "",
+  sourceBasis: "",
+  plannerAssertion: "",
+  plannerAssertionBasis: "",
   notes: ""
 };
 
@@ -42,15 +48,21 @@ function formStateFromCapitalization(capitalization: ActualCapitalizationItem): 
     amount: String(capitalization.amount),
     capitalizationDate: capitalization.capitalization_date,
     sourceLabel: capitalization.source_label ?? "",
+    sourceBasis: capitalization.source_basis ?? "",
+    plannerAssertion: capitalization.planner_assertion ?? "",
+    plannerAssertionBasis: capitalization.planner_assertion_basis ?? "",
     notes: capitalization.notes ?? ""
   };
 }
 
 function payloadFromForm(formState: FormState): ActualCapitalizationPayload {
   return {
-    amount: Number(formState.amount),
+    amount: formState.amount,
     capitalization_date: formState.capitalizationDate,
     source_label: formState.sourceLabel.trim() === "" ? null : formState.sourceLabel,
+    source_basis: formState.sourceBasis.trim() === "" ? null : formState.sourceBasis,
+    planner_assertion: formState.plannerAssertion.trim() === "" ? null : formState.plannerAssertion,
+    planner_assertion_basis: formState.plannerAssertionBasis.trim() === "" ? null : formState.plannerAssertionBasis,
     notes: formState.notes.trim() === "" ? null : formState.notes
   };
 }
@@ -258,6 +270,11 @@ export function ActualCapitalizationsScreen() {
                 <p>Amount: {capitalization.amount}</p>
                 <p>Capitalization Date: {capitalization.capitalization_date}</p>
                 {capitalization.source_label ? <p>Source Label: {capitalization.source_label}</p> : null}
+                {capitalization.source_basis ? <p>Source Basis: {capitalization.source_basis}</p> : null}
+                {capitalization.planner_assertion ? <p>Planner Assertion: {capitalization.planner_assertion}</p> : null}
+                {capitalization.planner_assertion_basis ? (
+                  <p>Planner Assertion Basis: {capitalization.planner_assertion_basis}</p>
+                ) : null}
                 {capitalization.notes ? <p>Notes: {capitalization.notes}</p> : null}
                 <p>
                   <button type="button" onClick={() => startEditing(capitalization)} disabled={isSubmitting}>
@@ -308,6 +325,37 @@ export function ActualCapitalizationsScreen() {
               type="text"
               value={formState.sourceLabel}
               onChange={(event) => setFormState((current) => ({ ...current, sourceLabel: event.target.value }))}
+            />
+          </label>
+        </p>
+        <p>
+          <label>
+            Source Basis
+            <input
+              type="text"
+              value={formState.sourceBasis}
+              onChange={(event) => setFormState((current) => ({ ...current, sourceBasis: event.target.value }))}
+            />
+          </label>
+        </p>
+        <p>
+          <label>
+            Planner Assertion
+            <input
+              type="text"
+              value={formState.plannerAssertion}
+              onChange={(event) => setFormState((current) => ({ ...current, plannerAssertion: event.target.value }))}
+            />
+          </label>
+        </p>
+        <p>
+          <label>
+            Planner Assertion Basis
+            <textarea
+              value={formState.plannerAssertionBasis}
+              onChange={(event) => (
+                setFormState((current) => ({ ...current, plannerAssertionBasis: event.target.value }))
+              )}
             />
           </label>
         </p>

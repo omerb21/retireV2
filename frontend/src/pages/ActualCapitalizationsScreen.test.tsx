@@ -28,6 +28,9 @@ describe("ActualCapitalizationsScreen", () => {
       amount: 500,
       capitalization_date: "2023-01-01",
       source_label: "Manual",
+      source_basis: null,
+      planner_assertion: null,
+      planner_assertion_basis: null,
       notes: "Existing capitalization"
     };
     const secondCapitalization = {
@@ -36,6 +39,9 @@ describe("ActualCapitalizationsScreen", () => {
       amount: 750,
       capitalization_date: "2024-02-01",
       source_label: "Imported",
+      source_basis: "capitalization certificate",
+      planner_assertion: "advisor confirmed amount",
+      planner_assertion_basis: "reviewed certificate",
       notes: "Created capitalization"
     };
 
@@ -69,6 +75,9 @@ describe("ActualCapitalizationsScreen", () => {
     fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "750" } });
     fireEvent.change(screen.getByLabelText("Capitalization Date"), { target: { value: "2024-02-01" } });
     fireEvent.change(screen.getByLabelText("Source Label"), { target: { value: "Imported" } });
+    fireEvent.change(screen.getByLabelText("Source Basis"), { target: { value: "capitalization certificate" } });
+    fireEvent.change(screen.getByLabelText("Planner Assertion"), { target: { value: "advisor confirmed amount" } });
+    fireEvent.change(screen.getByLabelText("Planner Assertion Basis"), { target: { value: "reviewed certificate" } });
     fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Created capitalization" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Actual Capitalization" }));
 
@@ -79,15 +88,20 @@ describe("ActualCapitalizationsScreen", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            amount: 750,
+            amount: "750",
             capitalization_date: "2024-02-01",
             source_label: "Imported",
+            source_basis: "capitalization certificate",
+            planner_assertion: "advisor confirmed amount",
+            planner_assertion_basis: "reviewed certificate",
             notes: "Created capitalization"
           })
         })
       );
     });
     expect(await screen.findByText("Capitalization ID: AC-2")).toBeInTheDocument();
+    expect(await screen.findByText("Source Basis: capitalization certificate")).toBeInTheDocument();
+    expect(await screen.findByText("Planner Assertion: advisor confirmed amount")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Edit Actual Capitalization" })[0]);
     fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "650" } });
@@ -121,5 +135,45 @@ describe("ActualCapitalizationsScreen", () => {
       "href",
       "/clients/7/fixation/input"
     );
+  });
+
+  it("preserves blank numeric input for backend validation instead of coercing it", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ detail: [{ msg: "amount must be numeric" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={["/clients/7/actual-capitalizations"]}>
+        <Routes>
+          <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText("No actual capitalizations found.");
+    fireEvent.change(screen.getByLabelText("Capitalization Date"), { target: { value: "2024-02-01" } });
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Add Actual Capitalization" }).closest("form") as HTMLFormElement
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/api/clients/7/actual-capitalizations",
+        expect.objectContaining({
+          body: JSON.stringify({
+            amount: "",
+            capitalization_date: "2024-02-01",
+            source_label: null,
+            source_basis: null,
+            planner_assertion: null,
+            planner_assertion_basis: null,
+            notes: null
+          })
+        })
+      );
+    });
   });
 });

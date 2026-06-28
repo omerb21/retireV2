@@ -10,7 +10,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.session import get_db
 from app.main import app
+from app.models.actual_capitalization import ActualCapitalization
 from app.models.client import Client
+from app.models.client_profile import ClientProfile
 from app.models.fixation_run import FixationRun
 
 APPROVED_TABLES = {
@@ -39,6 +41,19 @@ def _upgrade_sqlite_database(db_path: Path) -> None:
     env["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
     subprocess.run(
         ["alembic", "upgrade", "head"],
+        cwd=_backend_root(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _run_alembic(db_path: Path, *args: str) -> None:
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
+    subprocess.run(
+        ["alembic", *args],
         cwd=_backend_root(),
         env=env,
         capture_output=True,
@@ -166,11 +181,47 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         )
         assert put_profile_resp.status_code == 200
         assert put_profile_resp.json()["profile"]["birth_date"] == "1971-02-02"
+        assert put_profile_resp.json()["profile"]["id_number"] == "001234567"
+
+        with session_local() as db:
+            persisted_client = db.get(Client, created_client_id)
+            persisted_profile = db.scalar(
+                select(ClientProfile).where(ClientProfile.client_id == created_client_id)
+            )
+            assert persisted_client is not None
+            assert persisted_client.birth_date.isoformat() == "1971-02-02"
+            assert persisted_profile is not None
+            assert persisted_profile.birth_date is None
+
+        unchanged_birth_date_resp = client.put(
+            f"/api/clients/{created_client_id}/profile",
+            json={"gender": "f", "notes": "kept birth date"},
+        )
+        assert unchanged_birth_date_resp.status_code == 200
+        assert unchanged_birth_date_resp.json()["profile"]["birth_date"] == "1971-02-02"
+
+        clear_birth_date_resp = client.put(
+            f"/api/clients/{created_client_id}/profile",
+            json={"birth_date": None, "gender": "f", "notes": "cleared birth date"},
+        )
+        assert clear_birth_date_resp.status_code == 200
+        assert clear_birth_date_resp.json()["profile"]["birth_date"] is None
+
+        with session_local() as db:
+            persisted_client = db.get(Client, created_client_id)
+            persisted_profile = db.scalar(
+                select(ClientProfile).where(ClientProfile.client_id == created_client_id)
+            )
+            assert persisted_client is not None
+            assert persisted_client.birth_date is None
+            assert persisted_profile is not None
+            assert persisted_profile.birth_date is None
 
         # 5. Get profile
         get_profile_resp = client.get(f"/api/clients/{created_client_id}/profile")
         assert get_profile_resp.status_code == 200
         assert get_profile_resp.json()["profile"]["gender"] == "f"
+        assert get_profile_resp.json()["profile"]["birth_date"] is None
 
         # 6. Create/list employment records
         create_employment_resp = client.post(
@@ -235,6 +286,28 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         )
         assert update_grant_resp.status_code == 200
         assert update_grant_resp.json()["indexed_amount"] == "12000.00"
+        blank_grant_numeric_resp = client.post(
+            f"/api/clients/{created_client_id}/grants",
+            json={
+                "employment_record_id": employment_id,
+                "indexed_amount": "",
+                "grant_date": "2021-01-01",
+                "work_start_date": "2011-01-01",
+                "work_end_date": "2021-01-01",
+            },
+        )
+        assert blank_grant_numeric_resp.status_code == 422
+        negative_grant_numeric_resp = client.post(
+            f"/api/clients/{created_client_id}/grants",
+            json={
+                "employment_record_id": employment_id,
+                "indexed_amount": -1,
+                "grant_date": "2021-01-01",
+                "work_start_date": "2011-01-01",
+                "work_end_date": "2021-01-01",
+            },
+        )
+        assert negative_grant_numeric_resp.status_code == 422
 
         # 8. Create/list actual capitalizations
         create_cap_resp = client.post(
@@ -247,20 +320,59 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
             },
         )
         assert create_cap_resp.status_code == 200
+        assert create_cap_resp.json()["source_basis"] is None
         list_cap_resp = client.get(f"/api/clients/{created_client_id}/actual-capitalizations")
         assert list_cap_resp.status_code == 200
         assert len(list_cap_resp.json()) == 1
+        assert list_cap_resp.json()[0]["source_basis"] is None
+        assertion_without_basis_resp = client.post(
+            f"/api/clients/{created_client_id}/actual-capitalizations",
+            json={
+                "amount": 100.0,
+                "capitalization_date": "2023-02-01",
+                "planner_assertion": "advisor confirmed taxable event",
+            },
+        )
+        assert assertion_without_basis_resp.status_code == 422
+        blank_cap_numeric_resp = client.post(
+            f"/api/clients/{created_client_id}/actual-capitalizations",
+            json={
+                "amount": "",
+                "capitalization_date": "2023-02-01",
+            },
+        )
+        assert blank_cap_numeric_resp.status_code == 422
+        negative_cap_numeric_resp = client.post(
+            f"/api/clients/{created_client_id}/actual-capitalizations",
+            json={
+                "amount": -1,
+                "capitalization_date": "2023-02-01",
+            },
+        )
+        assert negative_cap_numeric_resp.status_code == 422
         update_cap_resp = client.put(
             f"/api/clients/{created_client_id}/actual-capitalizations/{create_cap_resp.json()['capitalization_id']}",
             json={
                 "amount": 750.0,
                 "capitalization_date": "2024-01-01",
                 "source_label": "updated manual",
+                "source_basis": "advisor source document",
+                "planner_assertion": "advisor confirmed amount",
+                "planner_assertion_basis": "reviewed capitalization certificate",
                 "notes": "updated cap",
             },
         )
         assert update_cap_resp.status_code == 200
         assert update_cap_resp.json()["amount"] == "750.00"
+        assert update_cap_resp.json()["source_basis"] == "advisor source document"
+        assert update_cap_resp.json()["planner_assertion"] == "advisor confirmed amount"
+        assert update_cap_resp.json()["planner_assertion_basis"] == "reviewed capitalization certificate"
+
+        with session_local() as db:
+            persisted_cap = db.get(ActualCapitalization, create_cap_resp.json()["capitalization_id"])
+            assert persisted_cap is not None
+            assert str(persisted_cap.amount) == "750.00"
+            assert persisted_cap.source_basis == "advisor source document"
 
         # 8a. Create/retrieve clearinghouse snapshots and preserve snapshot history
         first_snapshot_resp = client.post(
@@ -519,7 +631,7 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
             assert marker not in clients_routes_src
             assert marker not in fixation_routes_src
 
-        # 20. Verify no DB schema/migration changes
+        # 20. Verify only approved DB schema/migration files are present.
         migration_files = sorted(((_backend_root() / "alembic" / "versions").glob("*.py")))
         migration_names = [path.name for path in migration_files]
         assert "a2f36c3147d2_phase_1_fixation_schema.py" in migration_names
@@ -528,8 +640,29 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert "9a6f3b8c21de_stage_c_cutover_integer_ids.py" in migration_names
         assert "4e7a1c2d9b30_package_2_collection_foundation.py" in migration_names
         assert "5b8d2e1f4c61_package_3_verification_missing_data.py" in migration_names
+        assert "7c1d9e4a2b83_slice_1_actual_capitalization_metadata.py" in migration_names
         tables = set(inspect(create_engine(f"sqlite:///{db_path.as_posix()}")) .get_table_names())
         assert tables == APPROVED_TABLES | {"alembic_version"}
 
     finally:
         app.dependency_overrides.clear()
+
+
+def test_slice_1_actual_capitalization_metadata_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
+    db_path = tmp_path / "slice1_actual_capitalization_metadata.db"
+    _run_alembic(db_path, "upgrade", "head")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    inspector = inspect(engine)
+    actual_cap_columns = {column["name"] for column in inspector.get_columns("actual_capitalizations")}
+    assert {"source_basis", "planner_assertion", "planner_assertion_basis"}.issubset(actual_cap_columns)
+    assert "source_basis" not in {column["name"] for column in inspector.get_columns("clients")}
+
+    _run_alembic(db_path, "downgrade", "5b8d2e1f4c61")
+    downgraded_engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    downgraded_inspector = inspect(downgraded_engine)
+    downgraded_actual_cap_columns = {
+        column["name"] for column in downgraded_inspector.get_columns("actual_capitalizations")
+    }
+    assert "source_basis" not in downgraded_actual_cap_columns
+    assert "planner_assertion" not in downgraded_actual_cap_columns
+    assert "planner_assertion_basis" not in downgraded_actual_cap_columns

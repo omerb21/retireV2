@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -92,6 +92,20 @@ class GrantRequest(BaseModel):
     work_end_date: date
     notes: str | None = None
 
+    @field_validator("nominal_amount", "indexed_amount", mode="before")
+    @classmethod
+    def reject_blank_numeric_values(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip() == "":
+            raise ValueError("numeric value must not be blank")
+        return value
+
+    @field_validator("nominal_amount", "indexed_amount")
+    @classmethod
+    def reject_negative_numeric_values(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value < 0:
+            raise ValueError("numeric value must be non-negative")
+        return value
+
 
 class GrantResponse(BaseModel):
     grant_id: str
@@ -110,7 +124,38 @@ class ActualCapitalizationRequest(BaseModel):
     amount: Decimal
     capitalization_date: date
     source_label: str | None = None
+    source_basis: str | None = None
+    planner_assertion: str | None = None
+    planner_assertion_basis: str | None = None
     notes: str | None = None
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def reject_blank_amount(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip() == "":
+            raise ValueError("amount must not be blank")
+        return value
+
+    @field_validator("amount")
+    @classmethod
+    def reject_negative_amount(cls, value: Decimal) -> Decimal:
+        if value < 0:
+            raise ValueError("amount must be non-negative")
+        return value
+
+    @field_validator("source_label", "source_basis", "planner_assertion", "planner_assertion_basis", "notes")
+    @classmethod
+    def trim_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed if trimmed else None
+
+    @model_validator(mode="after")
+    def require_planner_assertion_basis(self) -> "ActualCapitalizationRequest":
+        if self.planner_assertion is not None and self.planner_assertion_basis is None:
+            raise ValueError("planner_assertion_basis is required when planner_assertion is supplied")
+        return self
 
 
 class ActualCapitalizationResponse(BaseModel):
@@ -119,6 +164,9 @@ class ActualCapitalizationResponse(BaseModel):
     amount: Decimal
     capitalization_date: date
     source_label: str | None
+    source_basis: str | None
+    planner_assertion: str | None
+    planner_assertion_basis: str | None
     notes: str | None
 
 
@@ -237,7 +285,7 @@ def _profile_to_response(client: Client, profile: ClientProfile) -> ProfileRespo
         client_profile_id=profile.client_profile_id,
         client_id=client.client_id,
         id_number=client.id_number,
-        birth_date=profile.birth_date,
+        birth_date=client.birth_date,
         gender=profile.gender,
         contact_method=profile.contact_method,
         contact_details=profile.contact_details,
@@ -285,6 +333,9 @@ def _actual_capitalization_to_response(row: ActualCapitalization) -> ActualCapit
         amount=row.amount,
         capitalization_date=row.capitalization_date,
         source_label=row.source_label,
+        source_basis=row.source_basis,
+        planner_assertion=row.planner_assertion,
+        planner_assertion_basis=row.planner_assertion_basis,
         notes=row.notes,
     )
 
@@ -489,7 +540,7 @@ def put_client_profile(
         profile = ClientProfile(
             client_profile_id=f"CP-{client_id}",
             client_id=client_key,
-            birth_date=payload.birth_date,
+            birth_date=None,
             gender=payload.gender,
             contact_method=payload.contact_method,
             contact_details=payload.contact_details,
@@ -497,7 +548,6 @@ def put_client_profile(
         )
         db.add(profile)
     else:
-        profile.birth_date = payload.birth_date
         profile.gender = payload.gender
         profile.contact_method = payload.contact_method
         profile.contact_details = payload.contact_details
@@ -510,7 +560,7 @@ def put_client_profile(
                 detail={"code": "ID_NUMBER_REQUIRED", "message": "ID Number is required for file creation"},
             )
         client.id_number = payload.id_number.strip()
-    if payload.birth_date is not None:
+    if "birth_date" in payload.model_fields_set:
         client.birth_date = payload.birth_date
 
     db.commit()
@@ -879,6 +929,9 @@ def create_actual_capitalization(
         amount=payload.amount,
         capitalization_date=payload.capitalization_date,
         source_label=payload.source_label,
+        source_basis=payload.source_basis,
+        planner_assertion=payload.planner_assertion,
+        planner_assertion_basis=payload.planner_assertion_basis,
         notes=payload.notes,
     )
     db.add(cap)
@@ -921,6 +974,9 @@ def update_actual_capitalization(
     cap.amount = payload.amount
     cap.capitalization_date = payload.capitalization_date
     cap.source_label = payload.source_label
+    cap.source_basis = payload.source_basis
+    cap.planner_assertion = payload.planner_assertion
+    cap.planner_assertion_basis = payload.planner_assertion_basis
     cap.notes = payload.notes
     db.commit()
     db.refresh(cap)

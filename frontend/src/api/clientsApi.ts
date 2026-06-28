@@ -97,8 +97,8 @@ export interface GrantItem {
 export interface GrantPayload {
   employment_record_id: string | null;
   employer_name: string | null;
-  nominal_amount: number | null;
-  indexed_amount: number;
+  nominal_amount: string | null;
+  indexed_amount: string;
   grant_date: string;
   work_start_date: string;
   work_end_date: string;
@@ -111,13 +111,19 @@ export interface ActualCapitalizationItem {
   amount: number | string;
   capitalization_date: string;
   source_label: string | null;
+  source_basis: string | null;
+  planner_assertion: string | null;
+  planner_assertion_basis: string | null;
   notes: string | null;
 }
 
 export interface ActualCapitalizationPayload {
-  amount: number;
+  amount: string;
   capitalization_date: string;
   source_label: string | null;
+  source_basis: string | null;
+  planner_assertion: string | null;
+  planner_assertion_basis: string | null;
   notes: string | null;
 }
 

@@ -89,7 +89,7 @@ describe("GrantsScreen", () => {
             employment_record_id: null,
             employer_name: "New Employer",
             nominal_amount: null,
-            indexed_amount: 9000,
+            indexed_amount: "9000",
             grant_date: "2022-01-01",
             work_start_date: "2021-01-01",
             work_end_date: "2022-01-01",
@@ -132,5 +132,46 @@ describe("GrantsScreen", () => {
       "/clients/7/employment-history"
     );
     expect(screen.getByRole("link", { name: "Back to client detail" })).toHaveAttribute("href", "/clients/7");
+  });
+
+  it("preserves blank numeric input for backend validation instead of coercing it", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ detail: [{ msg: "indexed_amount must be numeric" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={["/clients/7/grants"]}>
+        <Routes>
+          <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText("No grants found.");
+    fireEvent.change(screen.getByLabelText("Grant Date"), { target: { value: "2022-01-01" } });
+    fireEvent.change(screen.getByLabelText("Work Start Date"), { target: { value: "2021-01-01" } });
+    fireEvent.change(screen.getByLabelText("Work End Date"), { target: { value: "2022-01-01" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Add Grant" }).closest("form") as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/api/clients/7/grants",
+        expect.objectContaining({
+          body: JSON.stringify({
+            employment_record_id: null,
+            employer_name: null,
+            nominal_amount: null,
+            indexed_amount: "",
+            grant_date: "2022-01-01",
+            work_start_date: "2021-01-01",
+            work_end_date: "2022-01-01",
+            notes: null
+          })
+        })
+      );
+    });
   });
 });

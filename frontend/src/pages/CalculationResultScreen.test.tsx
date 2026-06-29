@@ -204,9 +204,15 @@ describe("CalculationResultScreen", () => {
     expect(await screen.findByRole("heading", { name: "Calculation Result" })).toBeInTheDocument();
     expect(await screen.findByText("Client ID: 7")).toBeInTheDocument();
     expect(await screen.findByText("Client Name: Dana Levi")).toBeInTheDocument();
-    expect(await screen.findByText(/Result Source: Latest saved successful result/)).toBeInTheDocument();
+    expect(await screen.findByText(/Result Source: תוצאת החישוב השמורה/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "רשומת חישוב שמורה" })).toBeInTheDocument();
+    expect(await screen.findByText("מזהה רשומה: 11")).toBeInTheDocument();
+    expect(await screen.findByText("נוצרה בתאריך: 2026-05-26T00:00:00")).toBeInTheDocument();
     expect(await screen.findByText(/Trusted Result Status: Current source data matches the calculation input snapshot\./)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Current Workflow Review Context" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Latest saved successful result/)).not.toBeInTheDocument();
+    expect(screen.queryByText("View History")).not.toBeInTheDocument();
+    expect(screen.queryByText("View Fixation Audit / History")).not.toBeInTheDocument();
     expect((await screen.findAllByText(/Calculation Version:/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/Monthly Cap:/)).length).toBeGreaterThan(0);
     expect(await screen.findByText(/Total Impact:/)).toBeInTheDocument();
@@ -214,7 +220,7 @@ describe("CalculationResultScreen", () => {
       "href",
       "/clients/7/fixation/input"
     );
-    expect(screen.getByRole("link", { name: "View History" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "פתח רשומת חישוב שמורה" })).toHaveAttribute(
       "href",
       "/clients/7/fixation/history"
     );
@@ -466,10 +472,14 @@ describe("CalculationResultScreen", () => {
     fireEvent.click(saveButton);
 
     expect(await screen.findByText("Result saved successfully. Run ID: 41")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "View Fixation Audit / History" })).toHaveAttribute(
+    const savedRecordLinks = screen.getAllByRole("link", { name: "פתח רשומת חישוב שמורה" });
+    expect(savedRecordLinks).toHaveLength(2);
+    expect(savedRecordLinks[1]).toHaveAttribute(
       "href",
       "/clients/7/fixation/history"
     );
+    expect(screen.queryByText("View History")).not.toBeInTheDocument();
+    expect(screen.queryByText("View Fixation Audit / History")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/fixation/save",
       expect.objectContaining({

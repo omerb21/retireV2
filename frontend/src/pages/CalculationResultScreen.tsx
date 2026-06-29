@@ -39,6 +39,11 @@ type DisplayField = {
   value: unknown;
 };
 
+type SavedCalculationRecordIdentifiers = {
+  runId: number;
+  createdAt: string | null;
+};
+
 type ActiveSessionSourceReference = {
   domain: "grants" | "actual_capitalizations";
   source_item_id: string;
@@ -264,6 +269,22 @@ function renderActiveSessionReviewContext(context: ActiveSessionReviewContext | 
   );
 }
 
+function renderSavedCalculationRecordIdentifiers(identifiers: SavedCalculationRecordIdentifiers | null) {
+  if (identifiers === null) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3>רשומת חישוב שמורה</h3>
+      <ul>
+        <li>מזהה רשומה: {identifiers.runId}</li>
+        {identifiers.createdAt ? <li>נוצרה בתאריך: {identifiers.createdAt}</li> : null}
+      </ul>
+    </section>
+  );
+}
+
 export function CalculationResultScreen() {
   const { clientId: clientIdParam } = useParams<{ clientId: string }>();
   const location = useLocation();
@@ -289,6 +310,8 @@ export function CalculationResultScreen() {
   const [resultSource, setResultSource] = useState<"current" | "latest" | null>(hasCurrentCalculation ? "current" : null);
   const [resolvedInputData, setResolvedInputData] = useState<FixationInputPayload | null>(routeState?.inputData ?? null);
   const [resolvedResult, setResolvedResult] = useState<FixationResultResponse | null>(routeState?.result ?? null);
+  const [savedCalculationRecordIdentifiers, setSavedCalculationRecordIdentifiers] =
+    useState<SavedCalculationRecordIdentifiers | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [savedRunId, setSavedRunId] = useState<number | null>(null);
@@ -370,6 +393,7 @@ export function CalculationResultScreen() {
         if (latestSuccessfulRun === undefined) {
           setResolvedResult(null);
           setResolvedInputData(null);
+          setSavedCalculationRecordIdentifiers(null);
           setResultSource(null);
           setResultMessage(
             history.length === 0
@@ -388,6 +412,7 @@ export function CalculationResultScreen() {
         if (detail.result === null || detail.input_snapshot === null) {
           setResolvedResult(null);
           setResolvedInputData(null);
+          setSavedCalculationRecordIdentifiers(null);
           setResultSource(null);
           setResultMessage("Latest successful calculation result could not be loaded.");
           return;
@@ -395,6 +420,10 @@ export function CalculationResultScreen() {
 
         setResolvedResult(detail.result as FixationResultResponse);
         setResolvedInputData(detail.input_snapshot as unknown as FixationInputPayload);
+        setSavedCalculationRecordIdentifiers({
+          runId: Number(detail.run.run_id),
+          createdAt: typeof detail.run.created_at === "string" ? detail.run.created_at : null,
+        });
         setResultSource("latest");
         setResultMessage(null);
       } catch (error) {
@@ -404,6 +433,7 @@ export function CalculationResultScreen() {
 
         setResolvedResult(null);
         setResolvedInputData(null);
+        setSavedCalculationRecordIdentifiers(null);
         setResultSource(null);
         setResultErrorMessage(getErrorMessage(error));
       } finally {
@@ -543,7 +573,7 @@ export function CalculationResultScreen() {
       </p>
       <p>
         <Link to={`/clients/${clientId}/fixation/history`} state={fixationInputState}>
-          View History
+          פתח רשומת חישוב שמורה
         </Link>
       </p>
       <p>
@@ -556,7 +586,7 @@ export function CalculationResultScreen() {
           <p>Result saved successfully. Run ID: {savedRunId}</p>
           <p>
             <Link to={`/clients/${clientId}/fixation/history`} state={fixationInputState}>
-              View Fixation Audit / History
+              פתח רשומת חישוב שמורה
             </Link>
           </p>
         </>
@@ -579,8 +609,9 @@ export function CalculationResultScreen() {
         <>
           <h3>Calculation Outcome</h3>
           <p>
-            Result Source: {resultSource === "current" ? "Current backend calculation response" : "Latest saved successful result"}
+            Result Source: {resultSource === "current" ? "Current backend calculation response" : "תוצאת החישוב השמורה"}
           </p>
+          {renderSavedCalculationRecordIdentifiers(savedCalculationRecordIdentifiers)}
           {trustedResultStatus ? <p>Trusted Result Status: {trustedResultStatus}</p> : null}
           {sourceDataChanged ? <p>Current grants or actual capitalizations differ from the calculation input snapshot. Rerun is required.</p> : null}
           {sourceErrorMessage ? <p>{sourceErrorMessage}</p> : null}

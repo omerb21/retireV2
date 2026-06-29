@@ -115,6 +115,34 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025, monthly_cap: 
     }
 
 
+def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
+    payload = _fixation_input(calc_id=calc_id)
+    payload["grants"] = {
+        "collection_state": "items_recorded",
+        "items": [
+            {
+                **payload["grants"][0],
+                "source_item_id": "GR-1",
+                "disposition": "include",
+            }
+        ],
+    }
+    payload["actual_capitalizations"] = {
+        "collection_state": "items_recorded",
+        "items": [
+            {
+                **payload["actual_capitalizations"][0],
+                "source_item_id": "AC-1",
+                "source_basis": "capitalization certificate",
+                "planner_assertion": "advisor confirmed amount",
+                "planner_assertion_basis": "reviewed certificate",
+                "disposition": "include",
+            }
+        ],
+    }
+    return payload
+
+
 def _invalid_fixation_input(calc_id: str) -> dict:
     payload = _fixation_input(calc_id=calc_id, eligibility_year=2026)
     payload["eligibility_date"] = "2025-01-01"
@@ -129,7 +157,95 @@ def _counts(session_local: sessionmaker) -> dict[str, int]:
             "results": int(db.scalar(select(func.count()).select_from(FixationResultModel)) or 0),
             "audit_rows": int(db.scalar(select(func.count()).select_from(FixationAuditRow)) or 0),
             "validation_errors": int(db.scalar(select(func.count()).select_from(FixationValidationError)) or 0),
+    }
+
+
+def test_phase10_review_validate_endpoint_validates_without_calculation_or_persistence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, session_local = _build_client(tmp_path, db_name="phase10_review_validate.db")
+
+    def fail_if_calculation_called(*args, **kwargs):
+        raise AssertionError("review validation must not call calculation")
+
+    monkeypatch.setattr("app.api.fixation_routes.calculate_fixation_payload", fail_if_calculation_called)
+    monkeypatch.setattr("app.api.fixation_routes.run_fixation", fail_if_calculation_called)
+
+    try:
+        unknown_payload = _fixation_review_input(calc_id="review-unknown")
+        unknown_payload["grants"] = {"collection_state": "unknown", "items": []}
+        unknown_resp = client.post("/api/fixation/review/validate", json=unknown_payload)
+        assert unknown_resp.status_code == 200
+        assert unknown_resp.json()["valid"] is False
+        assert unknown_resp.json()["errors"][0]["path"] == "grants.collection_state"
+        assert unknown_resp.json()["errors"][0]["code"] == "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+
+        not_collected_payload = _fixation_review_input(calc_id="review-not-collected")
+        not_collected_payload["actual_capitalizations"] = {
+            "collection_state": "not_collected",
+            "items": [],
         }
+        not_collected_resp = client.post("/api/fixation/review/validate", json=not_collected_payload)
+        assert not_collected_resp.status_code == 200
+        assert not_collected_resp.json()["valid"] is False
+        assert not_collected_resp.json()["errors"][0]["path"] == "actual_capitalizations.collection_state"
+        assert not_collected_resp.json()["errors"][0]["code"] == "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+
+        confirmed_none_payload = _fixation_review_input(calc_id="review-confirmed-none")
+        confirmed_none_payload["grants"] = {"collection_state": "confirmed_none", "items": []}
+        confirmed_none_payload["actual_capitalizations"] = {
+            "collection_state": "confirmed_none",
+            "items": [],
+        }
+        confirmed_none_resp = client.post("/api/fixation/review/validate", json=confirmed_none_payload)
+        assert confirmed_none_resp.status_code == 200
+        assert confirmed_none_resp.json() == {"valid": True, "errors": []}
+
+        items_recorded_resp = client.post("/api/fixation/review/validate", json=_fixation_review_input())
+        assert items_recorded_resp.status_code == 200
+        assert items_recorded_resp.json() == {"valid": True, "errors": []}
+
+        missing_source_payload = _fixation_review_input(calc_id="review-missing-source")
+        del missing_source_payload["grants"]["items"][0]["source_item_id"]
+        missing_source_resp = client.post("/api/fixation/review/validate", json=missing_source_payload)
+        assert missing_source_resp.status_code == 200
+        assert missing_source_resp.json()["valid"] is False
+        assert missing_source_resp.json()["errors"][0]["path"] == "grants.items[0].source_item_id"
+        assert missing_source_resp.json()["errors"][0]["code"] == "MISSING_REQUIRED_VALUE"
+
+        blank_source_payload = _fixation_review_input(calc_id="review-blank-source")
+        blank_source_payload["grants"]["items"][0]["source_item_id"] = " "
+        blank_source_resp = client.post("/api/fixation/review/validate", json=blank_source_payload)
+        assert blank_source_resp.status_code == 200
+        assert blank_source_resp.json()["valid"] is False
+        assert blank_source_resp.json()["errors"][0]["path"] == "grants.items[0].source_item_id"
+        assert blank_source_resp.json()["errors"][0]["code"] == "INVALID_NESTED_ITEM"
+
+        invalid_source_payload = _fixation_review_input(calc_id="review-invalid-source")
+        invalid_source_payload["actual_capitalizations"]["items"][0]["source_item_id"] = "bad/source"
+        invalid_source_resp = client.post("/api/fixation/review/validate", json=invalid_source_payload)
+        assert invalid_source_resp.status_code == 200
+        assert invalid_source_resp.json()["valid"] is False
+        assert invalid_source_resp.json()["errors"][0]["path"] == "actual_capitalizations.items[0].source_item_id"
+        assert invalid_source_resp.json()["errors"][0]["code"] == "INVALID_NESTED_ITEM"
+
+        invalid_payload = _fixation_review_input(calc_id="review-invalid")
+        invalid_payload["eligibility_year"] = 2026
+        invalid_resp = client.post("/api/fixation/review/validate", json=invalid_payload)
+        assert invalid_resp.status_code == 200
+        assert invalid_resp.json()["valid"] is False
+        assert invalid_resp.json()["errors"][0]["path"] == "fixation_input"
+
+        assert _counts(session_local) == {
+            "runs": 0,
+            "snapshots": 0,
+            "results": 0,
+            "audit_rows": 0,
+            "validation_errors": 0,
+        }
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:

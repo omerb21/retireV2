@@ -4,6 +4,7 @@ from pydantic import ValidationError as PydanticValidationError
 from app.schemas.fixation_contracts import (
     AuditRow,
     FixationInput,
+    FixationInputReview,
     FixationResult,
     FixationValidationErrors,
     GLOBAL_INPUT_PATH,
@@ -12,6 +13,10 @@ from app.schemas.fixation_contracts import (
     map_contract_validation_errors,
     validation_code_from_error,
     validation_path_from_loc,
+)
+from app.schemas.fixation_review import (
+    FixationReviewConversionError,
+    convert_review_to_fixation_input,
 )
 
 
@@ -95,6 +100,214 @@ def valid_success_result_payload() -> dict:
             }
         ],
     }
+
+
+def valid_fixation_review_payload() -> dict:
+    payload = valid_fixation_input_payload()
+    payload["grants"] = {
+        "collection_state": "items_recorded",
+        "items": [
+            {
+                **payload["grants"][0],
+                "source_item_id": "GR-1",
+                "disposition": "include",
+            }
+        ],
+    }
+    payload["actual_capitalizations"] = {
+        "collection_state": "items_recorded",
+        "items": [
+            {
+                **payload["actual_capitalizations"][0],
+                "source_item_id": "AC-1",
+                "source_basis": "capitalization certificate",
+                "planner_assertion": "advisor confirmed amount",
+                "planner_assertion_basis": "reviewed certificate",
+                "disposition": "include",
+            }
+        ],
+    }
+    return payload
+
+
+@pytest.mark.parametrize("state", ["unknown", "not_collected", "confirmed_none"])
+def test_fixation_review_empty_non_item_states_are_structurally_accepted(state: str) -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"] = {"collection_state": state, "items": []}
+    payload["actual_capitalizations"] = {"collection_state": state, "items": []}
+
+    review = FixationInputReview(**payload)
+
+    assert review.grants.collection_state == state
+    assert review.grants.items == []
+    assert review.actual_capitalizations.collection_state == state
+    assert review.actual_capitalizations.items == []
+
+
+def test_fixation_review_items_recorded_with_explicit_dispositions_is_structurally_accepted() -> None:
+    review = FixationInputReview(**valid_fixation_review_payload())
+
+    assert review.grants.items[0].source_item_id == "GR-1"
+    assert review.grants.items[0].disposition == "include"
+    assert review.actual_capitalizations.items[0].source_item_id == "AC-1"
+    assert review.actual_capitalizations.items[0].disposition == "include"
+
+
+@pytest.mark.parametrize("state", ["unknown", "not_collected", "confirmed_none"])
+def test_fixation_review_non_item_states_reject_items_with_stable_error(state: str) -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"]["collection_state"] = state
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        FixationInputReview(**payload)
+
+    errors = map_contract_validation_errors(exc_info.value)
+    assert errors[0].path == "grants"
+    assert errors[0].code == "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+
+
+def test_fixation_review_items_recorded_rejects_empty_items_with_stable_error() -> None:
+    payload = valid_fixation_review_payload()
+    payload["actual_capitalizations"] = {"collection_state": "items_recorded", "items": []}
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        FixationInputReview(**payload)
+
+    errors = map_contract_validation_errors(exc_info.value)
+    assert errors[0].path == "actual_capitalizations"
+    assert errors[0].code == "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+
+
+def test_fixation_review_item_without_disposition_is_rejected() -> None:
+    payload = valid_fixation_review_payload()
+    del payload["grants"]["items"][0]["disposition"]
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        FixationInputReview(**payload)
+
+    errors = map_contract_validation_errors(exc_info.value)
+    assert errors[0].path == "grants.items[0].disposition"
+    assert errors[0].code == "MISSING_REQUIRED_VALUE"
+
+
+def test_fixation_review_item_unsupported_disposition_is_rejected() -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"]["items"][0]["disposition"] = "auto_include"
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        FixationInputReview(**payload)
+
+    errors = map_contract_validation_errors(exc_info.value)
+    assert errors[0].path == "grants.items[0].disposition"
+    assert errors[0].code == "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+
+
+@pytest.mark.parametrize(
+    ("source_item_id", "expected_code"),
+    [
+        (None, "MISSING_REQUIRED_VALUE"),
+        ("   ", "INVALID_NESTED_ITEM"),
+        ("bad/source", "INVALID_NESTED_ITEM"),
+    ],
+)
+def test_fixation_review_source_item_id_is_required_and_stable(
+    source_item_id: str | None,
+    expected_code: str,
+) -> None:
+    payload = valid_fixation_review_payload()
+    if source_item_id is None:
+        del payload["actual_capitalizations"]["items"][0]["source_item_id"]
+    else:
+        payload["actual_capitalizations"]["items"][0]["source_item_id"] = source_item_id
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        FixationInputReview(**payload)
+
+    errors = map_contract_validation_errors(exc_info.value)
+    assert errors[0].path == "actual_capitalizations.items[0].source_item_id"
+    assert errors[0].code == expected_code
+
+
+def test_fixation_review_structural_parsing_does_not_infer_readiness_or_zero() -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"] = {"collection_state": "unknown", "items": []}
+    payload["actual_capitalizations"] = {"collection_state": "not_collected", "items": []}
+
+    review = FixationInputReview(**payload)
+
+    assert review.grants.collection_state == "unknown"
+    assert review.grants.items == []
+    assert review.actual_capitalizations.collection_state == "not_collected"
+    assert review.actual_capitalizations.items == []
+    with pytest.raises(FixationReviewConversionError):
+        convert_review_to_fixation_input(review)
+
+
+def test_fixation_review_converter_includes_only_included_items_and_omits_review_fields() -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"]["items"].append(
+        {
+            **payload["grants"]["items"][0],
+            "source_item_id": "GR-2",
+            "grant_id": "G2",
+            "disposition": "exclude",
+        }
+    )
+    payload["actual_capitalizations"]["items"].append(
+        {
+            **payload["actual_capitalizations"]["items"][0],
+            "source_item_id": "AC-2",
+            "capitalization_id": "C2",
+            "amount": 250,
+            "disposition": "exclude",
+        }
+    )
+    review = FixationInputReview(**payload)
+
+    converted = convert_review_to_fixation_input(review)
+    dumped = converted.model_dump(mode="json")
+
+    assert isinstance(converted, FixationInput)
+    assert [grant["grant_id"] for grant in dumped["grants"]] == ["G1"]
+    assert [cap["capitalization_id"] for cap in dumped["actual_capitalizations"]] == ["C1"]
+    assert dumped["grants"][0]["indexed_amount"] == payload["grants"]["items"][0]["indexed_amount"]
+    assert dumped["actual_capitalizations"][0]["amount"] == payload["actual_capitalizations"]["items"][0]["amount"]
+    assert "source_item_id" not in dumped["grants"][0]
+    assert "disposition" not in dumped["grants"][0]
+    assert "collection_state" not in dumped["grants"][0]
+    assert "source_item_id" not in dumped["actual_capitalizations"][0]
+    assert "disposition" not in dumped["actual_capitalizations"][0]
+    assert "source_basis" not in dumped["actual_capitalizations"][0]
+    assert "planner_assertion" not in dumped["actual_capitalizations"][0]
+    assert "planner_assertion_basis" not in dumped["actual_capitalizations"][0]
+
+
+@pytest.mark.parametrize("state", ["unknown", "not_collected"])
+def test_fixation_review_converter_refuses_blocking_states(state: str) -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"] = {"collection_state": state, "items": []}
+
+    with pytest.raises(FixationReviewConversionError):
+        convert_review_to_fixation_input(FixationInputReview(**payload))
+
+
+def test_fixation_review_converter_permits_empty_collections_only_for_confirmed_none() -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"] = {"collection_state": "confirmed_none", "items": []}
+    payload["actual_capitalizations"] = {"collection_state": "confirmed_none", "items": []}
+
+    converted = convert_review_to_fixation_input(FixationInputReview(**payload))
+
+    assert converted.grants == []
+    assert converted.actual_capitalizations == []
+
+
+def test_fixation_review_converter_refuses_items_recorded_with_no_included_items() -> None:
+    payload = valid_fixation_review_payload()
+    payload["grants"]["items"][0]["disposition"] = "exclude"
+
+    with pytest.raises(FixationReviewConversionError):
+        convert_review_to_fixation_input(FixationInputReview(**payload))
 
 
 def test_missing_required_calculation_version_fails() -> None:

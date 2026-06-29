@@ -31,6 +31,14 @@ APPROVED_LOCAL_UNTRACKED_PATHS = {
     "_evidence/",
     "specs/bootstraps/",
 }
+APPROVED_PACKAGE_1_PATHS = {
+    "backend/app/api/fixation_routes.py",
+    "backend/app/schemas/fixation_contracts.py",
+    "backend/app/schemas/fixation_review.py",
+    "backend/tests/test_fixation_contracts.py",
+    "backend/tests/test_phase10_api_behavior.py",
+    "backend/tests/test_governance_baseline.py",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -55,6 +63,7 @@ def _allowed_untracked_paths() -> set[str]:
     return {
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
+        "backend/app/schemas/fixation_review.py",
     }
 
 
@@ -70,12 +79,12 @@ def _unapproved_untracked(status_lines: list[str]) -> list[str]:
 def _approved_tracked_change_paths() -> set[str]:
     return {
         APPROVED_SLICE_1_MIGRATION_PATH,
+        *APPROVED_PACKAGE_1_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",
         "backend/app/models/client_profile.py",
         "backend/app/models/grant.py",
-        "backend/tests/test_governance_baseline.py",
         "backend/tests/test_phase9_api.py",
         "frontend/src/api/clientsApi.ts",
         "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
@@ -128,7 +137,7 @@ def test_repository_has_no_untracked_files_for_governance_gate() -> None:
     assert not untracked, f"untracked files detected: {untracked}"
 
 
-def test_slice_1_governance_allows_only_approved_local_untracked_paths() -> None:
+def test_governance_allows_only_approved_local_untracked_paths() -> None:
     status_lines = [
         "?? CURRENT_PROJECT_STATE.md",
         "?? _evidence/",
@@ -143,6 +152,31 @@ def test_slice_1_governance_allows_only_exact_approved_migration_path() -> None:
     rejected = "?? backend/alembic/versions/7c1d9e4a2b84_other_migration.py"
     assert _unapproved_untracked([approved]) == []
     assert _unapproved_untracked([rejected]) == [rejected]
+
+
+def test_package_1_governance_allows_only_exact_review_schema_module() -> None:
+    approved = "?? backend/app/schemas/fixation_review.py"
+    rejected = "?? backend/app/schemas/other_review.py"
+    assert _unapproved_untracked([approved]) == []
+    assert _unapproved_untracked([rejected]) == [rejected]
+
+
+def test_package_1_governance_rejects_unapproved_api_and_test_changes() -> None:
+    approved_api = " M backend/app/api/fixation_routes.py"
+    rejected_api = " M backend/app/api/clients_routes_extra.py"
+    approved_test = " M backend/tests/test_fixation_contracts.py"
+    rejected_test = " M backend/tests/test_other_package.py"
+
+    assert [
+        line
+        for line in _tracked_status_lines([approved_api, approved_test])
+        if _status_path(line) not in _approved_tracked_change_paths()
+    ] == []
+    assert [
+        line
+        for line in _tracked_status_lines([rejected_api, rejected_test])
+        if _status_path(line) not in _approved_tracked_change_paths()
+    ] == [rejected_api, rejected_test]
 
 
 def test_repository_has_no_staged_files_for_governance_gate() -> None:

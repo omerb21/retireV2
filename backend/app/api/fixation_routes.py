@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.client import Client
 from app.models.fixation_run import FixationRun
-from app.schemas.fixation_contracts import FixationResult
+from app.schemas.fixation_contracts import (
+    FixationInputReview,
+    FixationResult,
+    ValidationError,
+    map_contract_validation_errors,
+)
+from app.schemas.fixation_review import review_readiness_errors
 from app.services.fixation_service import (
     calculate_fixation_payload,
     get_fixation_history,
@@ -35,6 +41,11 @@ class LatestResultResponse(BaseModel):
     result: dict[str, Any] | None
 
 
+class FixationReviewValidationResponse(BaseModel):
+    valid: bool
+    errors: list[ValidationError]
+
+
 def _client_not_found(client_id: int) -> HTTPException:
     return HTTPException(
         status_code=404,
@@ -52,6 +63,20 @@ def _run_not_found(run_id: int) -> HTTPException:
 def _require_client(db: Session, client_id: int) -> None:
     if db.get(Client, client_id) is None:
         raise _client_not_found(client_id)
+
+
+@router.post("/fixation/review/validate", response_model=FixationReviewValidationResponse)
+def validate_fixation_review(payload: dict[str, Any]) -> FixationReviewValidationResponse:
+    try:
+        review = FixationInputReview(**payload)
+    except PydanticValidationError as exc:
+        return FixationReviewValidationResponse(
+            valid=False,
+            errors=map_contract_validation_errors(exc),
+        )
+
+    errors = review_readiness_errors(review)
+    return FixationReviewValidationResponse(valid=not errors, errors=errors)
 
 
 @router.post("/fixation/validate", response_model=FixationResult)

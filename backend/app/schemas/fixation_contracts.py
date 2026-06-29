@@ -22,6 +22,17 @@ def _require_non_empty(value: str, field_name: str) -> str:
     return stripped
 
 
+def _require_valid_source_item_id(value: str) -> str:
+    source_item_id = _require_non_empty(value, "source_item_id")
+    if len(source_item_id) > 64:
+        raise ValueError("source_item_id must be 64 characters or fewer")
+    if not source_item_id[0].isalnum():
+        raise ValueError("source_item_id must start with a letter or number")
+    if not all(char.isalnum() or char in {"-", "_"} for char in source_item_id):
+        raise ValueError("source_item_id must contain only letters, numbers, hyphen, or underscore")
+    return source_item_id
+
+
 ValidationCode = Literal[
     "MISSING_REQUIRED_VALUE",
     "INVALID_DATE",
@@ -72,9 +83,17 @@ def validation_code_from_error(error_type: str, path: str) -> ValidationCode:
         return "INVALID_NUMBER"
     if path == GLOBAL_INPUT_PATH:
         return "INVALID_GLOBAL_INPUT"
-    if path.startswith("grants[") or path.startswith("actual_capitalizations[") or path.startswith("idf"):
+    if any(token in normalized_type for token in ("literal", "enum", "union")):
+        return "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+    if (
+        path.startswith("grants[")
+        or path.startswith("grants.")
+        or path.startswith("actual_capitalizations[")
+        or path.startswith("actual_capitalizations.")
+        or path.startswith("idf")
+    ):
         return "INVALID_NESTED_ITEM"
-    if any(token in normalized_type for token in ("literal", "enum", "union", "value_error")):
+    if "value_error" in normalized_type:
         return "UNSUPPORTED_OR_UNAPPROVED_VALUE"
     return "UNSUPPORTED_OR_UNAPPROVED_VALUE"
 
@@ -203,6 +222,201 @@ class IDFInput(BaseModel):
         if value is None:
             return value
         return _require_non_empty(value, "source_label")
+
+
+ReviewCollectionState = Literal["unknown", "not_collected", "confirmed_none", "items_recorded"]
+ReviewDisposition = Literal["include", "exclude"]
+
+
+class GrantReviewItem(BaseModel):
+    source_item_id: str
+    grant_id: str
+    employer_name: str | None = None
+    nominal_amount: float | None = None
+    indexed_amount: float
+    grant_date: date
+    work_start_date: date
+    work_end_date: date
+    disposition: ReviewDisposition
+
+    @field_validator("source_item_id")
+    @classmethod
+    def validate_source_item_id(cls, value: str) -> str:
+        return _require_valid_source_item_id(value)
+
+    @field_validator("grant_id")
+    @classmethod
+    def validate_grant_id(cls, value: str) -> str:
+        return _require_non_empty(value, "grant_id")
+
+    @field_validator("employer_name")
+    @classmethod
+    def validate_employer_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _require_non_empty(value, "employer_name")
+
+    @field_validator("nominal_amount")
+    @classmethod
+    def validate_nominal_amount(cls, value: float | None) -> float | None:
+        if value is None:
+            return value
+        if value < 0:
+            raise ValueError("nominal_amount must be >= 0")
+        return value
+
+    @field_validator("indexed_amount")
+    @classmethod
+    def validate_indexed_amount(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("indexed_amount must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def validate_work_date_range(self) -> "GrantReviewItem":
+        if self.work_start_date >= self.work_end_date:
+            raise ValueError("work_start_date must be before work_end_date")
+        return self
+
+
+class ActualCapitalizationReviewItem(BaseModel):
+    source_item_id: str
+    capitalization_id: str
+    amount: float
+    capitalization_date: date
+    source_label: str | None = None
+    source_basis: str | None = None
+    planner_assertion: str | None = None
+    planner_assertion_basis: str | None = None
+    notes: str | None = None
+    disposition: ReviewDisposition
+
+    @field_validator("source_item_id")
+    @classmethod
+    def validate_source_item_id(cls, value: str) -> str:
+        return _require_valid_source_item_id(value)
+
+    @field_validator("capitalization_id")
+    @classmethod
+    def validate_capitalization_id(cls, value: str) -> str:
+        return _require_non_empty(value, "capitalization_id")
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("amount must be >= 0")
+        return value
+
+    @field_validator("source_label", "source_basis", "planner_assertion", "planner_assertion_basis", "notes")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _require_non_empty(value, "review text field")
+
+    @model_validator(mode="after")
+    def validate_planner_assertion_basis(self) -> "ActualCapitalizationReviewItem":
+        if self.planner_assertion is not None and self.planner_assertion_basis is None:
+            raise ValueError("planner_assertion_basis is required when planner_assertion is supplied")
+        return self
+
+
+class GrantReviewDomain(BaseModel):
+    collection_state: ReviewCollectionState
+    items: list[GrantReviewItem]
+
+    @model_validator(mode="after")
+    def validate_collection_state_items(self) -> "GrantReviewDomain":
+        if self.collection_state in {"unknown", "not_collected", "confirmed_none"} and self.items:
+            raise ValueError(f"{self.collection_state} requires an empty grants items array")
+        if self.collection_state == "items_recorded" and not self.items:
+            raise ValueError("items_recorded requires one or more grants items")
+        return self
+
+
+class ActualCapitalizationReviewDomain(BaseModel):
+    collection_state: ReviewCollectionState
+    items: list[ActualCapitalizationReviewItem]
+
+    @model_validator(mode="after")
+    def validate_collection_state_items(self) -> "ActualCapitalizationReviewDomain":
+        if self.collection_state in {"unknown", "not_collected", "confirmed_none"} and self.items:
+            raise ValueError(f"{self.collection_state} requires an empty actual_capitalizations items array")
+        if self.collection_state == "items_recorded" and not self.items:
+            raise ValueError("items_recorded requires one or more actual_capitalizations items")
+        return self
+
+
+class FixationInputReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    calculation_id: str | None = None
+    calculation_version: str
+    eligibility_date: date
+    eligibility_year: int
+    monthly_cap: float
+    exemption_percentage: float
+    capital_multiplier: float
+    grants: GrantReviewDomain
+    future_grant_reserved: float
+    actual_capitalizations: ActualCapitalizationReviewDomain
+    idf: IDFInput | None
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("calculation_id")
+    @classmethod
+    def validate_calculation_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _require_non_empty(value, "calculation_id")
+
+    @field_validator("calculation_version")
+    @classmethod
+    def validate_calculation_version(cls, value: str) -> str:
+        return _require_non_empty(value, "calculation_version")
+
+    @field_validator("monthly_cap")
+    @classmethod
+    def validate_monthly_cap(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("monthly_cap must be > 0")
+        return value
+
+    @field_validator("exemption_percentage")
+    @classmethod
+    def validate_exemption_percentage(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("exemption_percentage must be between 0 and 1")
+        return value
+
+    @field_validator("capital_multiplier")
+    @classmethod
+    def validate_capital_multiplier(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("capital_multiplier must be > 0")
+        return value
+
+    @field_validator("future_grant_reserved")
+    @classmethod
+    def validate_future_grant_reserved(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("future_grant_reserved must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def validate_cross_field_rules(self) -> "FixationInputReview":
+        if self.eligibility_year != self.eligibility_date.year:
+            raise ValueError("eligibility_year must match eligibility_date year")
+
+        if self.idf is not None:
+            later_date = max(self.idf.commutation_date, self.eligibility_date)
+            if self.idf.promoter_age_date <= later_date:
+                raise ValueError(
+                    "idf.promoter_age_date must be after later of idf.commutation_date and eligibility_date"
+                )
+
+        return self
 
 
 class FixationInput(BaseModel):

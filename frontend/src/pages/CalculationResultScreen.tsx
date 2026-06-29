@@ -31,11 +31,37 @@ type ResultRouteState = {
   result?: FixationResultResponse;
   fixationInputPath?: string;
   fixationInputState?: FixationInputRouteState;
+  activeSessionReviewContext?: ActiveSessionReviewContext;
 };
 
 type DisplayField = {
   label: string;
   value: unknown;
+};
+
+type ActiveSessionSourceReference = {
+  domain: "grants" | "actual_capitalizations";
+  source_item_id: string;
+  record_id: string;
+  label: string | null;
+  disposition: "include" | "exclude";
+};
+
+type ActiveSessionSourceMetadata = {
+  domain: "actual_capitalizations";
+  source_item_id: string;
+  record_id: string;
+  source_basis: string | null;
+  planner_assertion: string | null;
+  planner_assertion_basis: string | null;
+};
+
+type ActiveSessionReviewContext = {
+  grants_collection_state: string;
+  actual_capitalizations_collection_state: string;
+  included_source_references: ActiveSessionSourceReference[];
+  excluded_source_references: ActiveSessionSourceReference[];
+  source_metadata_context: ActiveSessionSourceMetadata[];
 };
 
 function stringifyValue(value: unknown): string {
@@ -153,6 +179,91 @@ function renderFields(title: string, fields: DisplayField[]) {
   );
 }
 
+function renderConvertedInputSummary(inputData: FixationInputPayload | null) {
+  if (inputData === null) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3>Converted Input Used For Calculation</h3>
+      <p>This summary is based only on the converted calculation input used for this calculation.</p>
+      <ul>
+        <li>Calculation Version: {inputData.calculation_version}</li>
+        <li>Eligibility Date: {inputData.eligibility_date}</li>
+        <li>Eligibility Year: {inputData.eligibility_year}</li>
+        <li>Monthly Cap: {inputData.monthly_cap}</li>
+        <li>Future Grant Reserved: {inputData.future_grant_reserved}</li>
+        <li>Grant Inputs: {inputData.grants.length}</li>
+        <li>Actual Capitalization Inputs: {inputData.actual_capitalizations.length}</li>
+        <li>IDF Input: {inputData.idf === null ? "none" : "provided"}</li>
+      </ul>
+    </section>
+  );
+}
+
+function renderSourceReferences(title: string, references: ActiveSessionSourceReference[]) {
+  if (references.length === 0) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h4>{title}</h4>
+      <ul>
+        {references.map((reference) => (
+          <li key={`${reference.domain}-${reference.source_item_id}-${reference.disposition}`}>
+            <strong>{reference.source_item_id}</strong> ({reference.domain}, record {reference.record_id})
+            {reference.label ? ` - ${reference.label}` : ""}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function renderSourceMetadataContext(metadata: ActiveSessionSourceMetadata[]) {
+  if (metadata.length === 0) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h4>Source And Planner Context</h4>
+      <ul>
+        {metadata.map((entry) => (
+          <li key={`${entry.domain}-${entry.source_item_id}`}>
+            <p>Source Item ID: {entry.source_item_id}</p>
+            {entry.source_basis ? <p>Source Basis: {entry.source_basis}</p> : null}
+            {entry.planner_assertion ? <p>Planner Assertion: {entry.planner_assertion}</p> : null}
+            {entry.planner_assertion_basis ? <p>Planner Assertion Basis: {entry.planner_assertion_basis}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function renderActiveSessionReviewContext(context: ActiveSessionReviewContext | undefined) {
+  if (context === undefined) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3>Current Workflow Review Context</h3>
+      <p>This context is available only in the current active workflow.</p>
+      <ul>
+        <li>Grants Collection State: {context.grants_collection_state}</li>
+        <li>Actual Capitalizations Collection State: {context.actual_capitalizations_collection_state}</li>
+      </ul>
+      {renderSourceReferences("Included Records", context.included_source_references)}
+      {renderSourceReferences("Excluded Records", context.excluded_source_references)}
+      {renderSourceMetadataContext(context.source_metadata_context)}
+    </section>
+  );
+}
+
 export function CalculationResultScreen() {
   const { clientId: clientIdParam } = useParams<{ clientId: string }>();
   const location = useLocation();
@@ -166,6 +277,7 @@ export function CalculationResultScreen() {
   const fixationInputState =
     routeState?.fixationInputState ??
     (clientName ? { clientId: clientId ?? undefined, clientName } : { clientId: clientId ?? undefined });
+  const activeSessionReviewContext = routeState?.activeSessionReviewContext;
   const hasCurrentCalculation = routeState?.result !== undefined && routeState?.inputData !== undefined;
   const [grants, setGrants] = useState<GrantItem[]>([]);
   const [actualCapitalizations, setActualCapitalizations] = useState<ActualCapitalizationItem[]>([]);
@@ -465,6 +577,7 @@ export function CalculationResultScreen() {
       {resultMessage ? <p>{resultMessage}</p> : null}
       {resolvedResult ? (
         <>
+          <h3>Calculation Outcome</h3>
           <p>
             Result Source: {resultSource === "current" ? "Current backend calculation response" : "Latest saved successful result"}
           </p>
@@ -473,6 +586,8 @@ export function CalculationResultScreen() {
           {sourceErrorMessage ? <p>{sourceErrorMessage}</p> : null}
           {renderFields("Backend Calculation Summary", summaryFields)}
           {renderFields("Backend Impact Values", impactFields)}
+          {renderConvertedInputSummary(resolvedInputData)}
+          {renderActiveSessionReviewContext(activeSessionReviewContext)}
           {grantResults ? (
             <section>
               <h3>Grant Results</h3>

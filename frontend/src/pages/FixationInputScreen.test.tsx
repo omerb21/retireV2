@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FixationInputReviewPayload } from "../api/fixationApi";
@@ -22,6 +22,22 @@ function renderScreen() {
     <MemoryRouter initialEntries={["/clients/1/fixation/input"]}>
       <Routes>
         <Route path="/clients/:clientId/fixation/input" element={<FixationInputScreen />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+function ResultStateCapture() {
+  const location = useLocation();
+  return <pre data-testid="result-route-state">{JSON.stringify(location.state)}</pre>;
+}
+
+function renderScreenWithResultCapture() {
+  render(
+    <MemoryRouter initialEntries={["/clients/1/fixation/input"]}>
+      <Routes>
+        <Route path="/clients/:clientId/fixation/input" element={<FixationInputScreen />} />
+        <Route path="/clients/:clientId/fixation/result" element={<ResultStateCapture />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -334,6 +350,81 @@ describe("FixationInputScreen contract payload", () => {
     expect(calculatePayload.actual_capitalizations).toEqual([]);
     expect(JSON.stringify(calculatePayload)).not.toContain("source_basis");
     expect(JSON.stringify(calculatePayload)).not.toContain("planner_assertion");
+  });
+
+  it("passes active-session review context through result navigation without changing the calculation payload", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(grantItems))
+      .mockResolvedValueOnce(mockJsonResponse(capitalizationItems))
+      .mockResolvedValueOnce(mockJsonResponse({ valid: true, errors: [] }))
+      .mockResolvedValueOnce(mockJsonResponse(convertedInput))
+      .mockResolvedValueOnce(mockJsonResponse({ status: "success", validation_errors: [], calculation_id: "calc-ok" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderScreenWithResultCapture();
+    await waitFor(() => expect(screen.getByText(/Current Input Readiness Status:/)).toBeInTheDocument());
+    fillRequiredFields();
+
+    fireEvent.change(screen.getByLabelText("Grant Collection State"), { target: { value: "items_recorded" } });
+    fireEvent.change(screen.getByLabelText("Actual Capitalization Collection State"), {
+      target: { value: "items_recorded" },
+    });
+    const grantDispositions = screen.getAllByLabelText("Grant Disposition");
+    fireEvent.change(grantDispositions[0], { target: { value: "include" } });
+    fireEvent.change(grantDispositions[1], { target: { value: "exclude" } });
+    fireEvent.change(screen.getByLabelText("Actual Capitalization Disposition"), { target: { value: "exclude" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    const calculatePayload = requestPayload(fetchMock, 4);
+    expect(calculatePayload).toEqual(convertedInput);
+    expect(JSON.stringify(calculatePayload)).not.toContain("source_basis");
+    expect(JSON.stringify(calculatePayload)).not.toContain("planner_assertion");
+    expect(JSON.stringify(calculatePayload)).not.toContain("source_item_id");
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Result" }));
+
+    const routeState = JSON.parse(await screen.findByTestId("result-route-state").then((node) => node.textContent ?? "{}"));
+    expect(routeState.inputData).toEqual(convertedInput);
+    expect(routeState.activeSessionReviewContext.grants_collection_state).toBe("items_recorded");
+    expect(routeState.activeSessionReviewContext.actual_capitalizations_collection_state).toBe("items_recorded");
+    expect(routeState.activeSessionReviewContext.included_source_references).toEqual([
+      {
+        domain: "grants",
+        source_item_id: "GR-1",
+        record_id: "GR-1",
+        label: "Employer One",
+        disposition: "include",
+      },
+    ]);
+    expect(routeState.activeSessionReviewContext.excluded_source_references).toEqual([
+      {
+        domain: "grants",
+        source_item_id: "GR-2",
+        record_id: "GR-2",
+        label: "Employer Two",
+        disposition: "exclude",
+      },
+      {
+        domain: "actual_capitalizations",
+        source_item_id: "AC-1",
+        record_id: "AC-1",
+        label: "Manual",
+        disposition: "exclude",
+      },
+    ]);
+    expect(routeState.activeSessionReviewContext.source_metadata_context).toEqual([
+      {
+        domain: "actual_capitalizations",
+        source_item_id: "AC-1",
+        record_id: "AC-1",
+        source_basis: "capitalization certificate",
+        planner_assertion: "advisor confirmed amount",
+        planner_assertion_basis: "reviewed certificate",
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("converts confirmed none as explicit empty review collections", async () => {

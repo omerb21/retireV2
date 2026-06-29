@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -112,6 +112,48 @@ function buildResult(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function buildActiveSessionReviewContext() {
+  return {
+    grants_collection_state: "items_recorded",
+    actual_capitalizations_collection_state: "items_recorded",
+    included_source_references: [
+      {
+        domain: "grants",
+        source_item_id: "GR-1",
+        record_id: "GR-1",
+        label: "Employer Inc",
+        disposition: "include"
+      },
+      {
+        domain: "actual_capitalizations",
+        source_item_id: "AC-1",
+        record_id: "AC-1",
+        label: "Imported",
+        disposition: "include"
+      }
+    ],
+    excluded_source_references: [
+      {
+        domain: "grants",
+        source_item_id: "GR-2",
+        record_id: "GR-2",
+        label: "Prior Employer",
+        disposition: "exclude"
+      }
+    ],
+    source_metadata_context: [
+      {
+        domain: "actual_capitalizations",
+        source_item_id: "AC-1",
+        record_id: "AC-1",
+        source_basis: "capitalization certificate",
+        planner_assertion: "advisor confirmed amount",
+        planner_assertion_basis: "reviewed certificate"
+      }
+    ]
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -164,8 +206,9 @@ describe("CalculationResultScreen", () => {
     expect(await screen.findByText("Client Name: Dana Levi")).toBeInTheDocument();
     expect(await screen.findByText(/Result Source: Latest saved successful result/)).toBeInTheDocument();
     expect(await screen.findByText(/Trusted Result Status: Current source data matches the calculation input snapshot\./)).toBeInTheDocument();
-    expect(await screen.findByText(/Calculation Version:/)).toBeInTheDocument();
-    expect(await screen.findByText(/Monthly Cap:/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Current Workflow Review Context" })).not.toBeInTheDocument();
+    expect((await screen.findAllByText(/Calculation Version:/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Monthly Cap:/)).length).toBeGreaterThan(0);
     expect(await screen.findByText(/Total Impact:/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to Fixation Parameters" })).toHaveAttribute(
       "href",
@@ -343,7 +386,8 @@ describe("CalculationResultScreen", () => {
               inputData,
               result,
               fixationInputPath: "/clients/7/fixation/input",
-              fixationInputState: { clientId: 7, clientName: "Dana Levi" }
+              fixationInputState: { clientId: 7, clientName: "Dana Levi" },
+              activeSessionReviewContext: buildActiveSessionReviewContext()
             }
           }
         ]}
@@ -355,12 +399,33 @@ describe("CalculationResultScreen", () => {
     );
 
     expect(await screen.findByText(/Result Source: Current backend calculation response/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Calculation Outcome" })).toBeInTheDocument();
     expect(await screen.findByText(/Initial Exempt Capital:/)).toBeInTheDocument();
     expect(await screen.findByText(/Total Impact:/)).toBeInTheDocument();
     expect(await screen.findByText(/Monthly Exempt Pension:/)).toBeInTheDocument();
     expect(screen.getByText((content, node) => node?.textContent === "Initial Exempt Capital: 4321")).toBeInTheDocument();
     expect(screen.getByText((content, node) => node?.textContent === "Total Impact: 222")).toBeInTheDocument();
     expect(screen.getByText((content, node) => node?.textContent === "Monthly Exempt Pension: 777")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Converted Input Used For Calculation" })).toBeInTheDocument();
+    expect(screen.getByText("Grant Inputs: 1")).toBeInTheDocument();
+    expect(screen.getByText("Actual Capitalization Inputs: 1")).toBeInTheDocument();
+    const contextSection = screen.getByRole("heading", { name: "Current Workflow Review Context" }).closest("section");
+    expect(contextSection).not.toBeNull();
+    expect(within(contextSection as HTMLElement).getByText("Grants Collection State: items_recorded")).toBeInTheDocument();
+    expect(
+      within(contextSection as HTMLElement).getByText("Actual Capitalizations Collection State: items_recorded")
+    ).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByRole("heading", { name: "Included Records" })).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByRole("heading", { name: "Excluded Records" })).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getAllByText(/GR-1/).length).toBeGreaterThan(0);
+    expect(within(contextSection as HTMLElement).getAllByText(/AC-1/).length).toBeGreaterThan(0);
+    expect(within(contextSection as HTMLElement).getAllByText(/GR-2/).length).toBeGreaterThan(0);
+    expect(within(contextSection as HTMLElement).getByRole("heading", { name: "Source And Planner Context" })).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("Source Basis: capitalization certificate")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("Planner Assertion: advisor confirmed amount")).toBeInTheDocument();
+    expect(
+      within(contextSection as HTMLElement).queryByText(/history|audit|documentation|traceability|saved|readiness|eligibility|recommendation/i)
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Result" })).toBeEnabled();
   });
 

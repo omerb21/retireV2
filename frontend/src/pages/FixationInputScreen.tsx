@@ -58,9 +58,35 @@ type CalculationResultRouteState = {
   result: FixationResultResponse;
   fixationInputPath: string;
   fixationInputState?: FixationInputRouteState;
+  activeSessionReviewContext?: ActiveSessionReviewContext;
 };
 
 type ItemDispositionState = Record<string, FixationReviewDisposition | "">;
+
+type ActiveSessionSourceReference = {
+  domain: "grants" | "actual_capitalizations";
+  source_item_id: string;
+  record_id: string;
+  label: string | null;
+  disposition: FixationReviewDisposition;
+};
+
+type ActiveSessionSourceMetadata = {
+  domain: "actual_capitalizations";
+  source_item_id: string;
+  record_id: string;
+  source_basis: string | null;
+  planner_assertion: string | null;
+  planner_assertion_basis: string | null;
+};
+
+type ActiveSessionReviewContext = {
+  grants_collection_state: FixationReviewCollectionState;
+  actual_capitalizations_collection_state: FixationReviewCollectionState;
+  included_source_references: ActiveSessionSourceReference[];
+  excluded_source_references: ActiveSessionSourceReference[];
+  source_metadata_context: ActiveSessionSourceMetadata[];
+};
 
 const initialFormState: FormState = {
   calculationId: "",
@@ -306,6 +332,47 @@ function buildReviewPayload(
           : [],
     },
     idf: buildIdfPayload(formState),
+  };
+}
+
+function buildActiveSessionReviewContext(review: FixationInputReviewPayload): ActiveSessionReviewContext {
+  const sourceReferences: ActiveSessionSourceReference[] = [
+    ...review.grants.items.map((grant) => ({
+      domain: "grants" as const,
+      source_item_id: grant.source_item_id,
+      record_id: grant.grant_id,
+      label: grant.employer_name,
+      disposition: grant.disposition,
+    })),
+    ...review.actual_capitalizations.items.map((capitalization) => ({
+      domain: "actual_capitalizations" as const,
+      source_item_id: capitalization.source_item_id,
+      record_id: capitalization.capitalization_id,
+      label: capitalization.source_label,
+      disposition: capitalization.disposition,
+    })),
+  ];
+
+  return {
+    grants_collection_state: review.grants.collection_state,
+    actual_capitalizations_collection_state: review.actual_capitalizations.collection_state,
+    included_source_references: sourceReferences.filter((reference) => reference.disposition === "include"),
+    excluded_source_references: sourceReferences.filter((reference) => reference.disposition === "exclude"),
+    source_metadata_context: review.actual_capitalizations.items
+      .filter(
+        (capitalization) =>
+          capitalization.source_basis !== null ||
+          capitalization.planner_assertion !== null ||
+          capitalization.planner_assertion_basis !== null,
+      )
+      .map((capitalization) => ({
+        domain: "actual_capitalizations" as const,
+        source_item_id: capitalization.source_item_id,
+        record_id: capitalization.capitalization_id,
+        source_basis: capitalization.source_basis,
+        planner_assertion: capitalization.planner_assertion,
+        planner_assertion_basis: capitalization.planner_assertion_basis,
+      })),
   };
 }
 
@@ -715,6 +782,7 @@ export function FixationInputScreen() {
       result: calculatedResult,
       fixationInputPath,
       fixationInputState,
+      activeSessionReviewContext: buildActiveSessionReviewContext(currentReviewPayload),
     };
 
     navigate(calculationResultPath, { state: resultRouteState });

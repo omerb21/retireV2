@@ -19,6 +19,7 @@ import {
   type FixationInputReviewPayload,
   type FixationReviewCollectionState,
   type FixationReviewDisposition,
+  type FixationValidationErrorPayload,
   type FixationResultResponse,
   calculateFixation,
   convertFixationReview,
@@ -86,6 +87,87 @@ function stringifyValue(value: unknown): string {
   }
 
   return JSON.stringify(value, null, 2);
+}
+
+type ReviewErrorDomain = "grants" | "actual_capitalizations";
+
+function getReviewErrorDomain(error: FixationValidationErrorPayload): ReviewErrorDomain | null {
+  if (error.path === "grants" || error.path.startsWith("grants.")) {
+    return "grants";
+  }
+
+  if (error.path === "actual_capitalizations" || error.path.startsWith("actual_capitalizations.")) {
+    return "actual_capitalizations";
+  }
+
+  return null;
+}
+
+function getReviewErrorActionMessage(error: FixationValidationErrorPayload): string {
+  if (error.path === "grants.collection_state") {
+    return "נדרש לבחור מצב איסוף עבור מענקים.";
+  }
+
+  if (error.path === "actual_capitalizations.collection_state") {
+    return "נדרש לבחור מצב איסוף עבור היווני קצבה.";
+  }
+
+  return error.message || "יש להשלים בחירה או נתון נדרש לפני המשך.";
+}
+
+function getItemReviewErrors(
+  errors: FixationValidationErrorPayload[],
+  domain: ReviewErrorDomain,
+  sourceId: string,
+): FixationValidationErrorPayload[] {
+  return errors.filter((error) => getReviewErrorDomain(error) === domain && error.source_id === sourceId);
+}
+
+function getSectionReviewErrors(
+  errors: FixationValidationErrorPayload[],
+  domain: ReviewErrorDomain,
+  visibleSourceIds: string[],
+): FixationValidationErrorPayload[] {
+  return errors.filter((error) => {
+    if (getReviewErrorDomain(error) !== domain) {
+      return false;
+    }
+
+    return error.source_id === null || !visibleSourceIds.includes(error.source_id);
+  });
+}
+
+function getFallbackReviewErrors(
+  errors: FixationValidationErrorPayload[],
+): FixationValidationErrorPayload[] {
+  return errors.filter((error) => getReviewErrorDomain(error) === null);
+}
+
+function ReviewValidationMessages({
+  errors,
+  label,
+}: {
+  errors: FixationValidationErrorPayload[];
+  label: string;
+}) {
+  if (errors.length === 0) {
+    return null;
+  }
+
+  return (
+    <div>
+      <p>{label}</p>
+      <ul>
+        {errors.map((error) => (
+          <li key={`${error.path}-${error.code}-${error.source_id ?? "none"}`} data-error-code={error.code} data-error-path={error.path}>
+            <span>{getReviewErrorActionMessage(error)}</span>
+            <span> קוד: {error.code}</span>
+            <span> נתיב: {error.path}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function getErrorMessage(error: unknown): string {
@@ -400,6 +482,7 @@ export function FixationInputScreen() {
   const [sourceErrorMessage, setSourceErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reviewValidationErrors, setReviewValidationErrors] = useState<FixationValidationErrorPayload[]>([]);
   const [responseData, setResponseData] = useState<FixationResultResponse | null>(null);
   const [responseSource, setResponseSource] = useState<"calculate" | "validate" | null>(null);
   const [calculatedResult, setCalculatedResult] = useState<FixationResultResponse | null>(null);
@@ -490,6 +573,20 @@ export function FixationInputScreen() {
     ],
   );
   const currentReviewPayloadSignature = useMemo(() => JSON.stringify(currentReviewPayload), [currentReviewPayload]);
+  const grantSourceIds = useMemo(() => grants.map((grant) => grant.grant_id), [grants]);
+  const actualCapitalizationSourceIds = useMemo(
+    () => actualCapitalizations.map((capitalization) => capitalization.capitalization_id),
+    [actualCapitalizations],
+  );
+  const grantSectionReviewErrors = useMemo(
+    () => getSectionReviewErrors(reviewValidationErrors, "grants", grantSourceIds),
+    [grantSourceIds, reviewValidationErrors],
+  );
+  const actualCapitalizationSectionReviewErrors = useMemo(
+    () => getSectionReviewErrors(reviewValidationErrors, "actual_capitalizations", actualCapitalizationSourceIds),
+    [actualCapitalizationSourceIds, reviewValidationErrors],
+  );
+  const fallbackReviewErrors = useMemo(() => getFallbackReviewErrors(reviewValidationErrors), [reviewValidationErrors]);
   const frontendValidationMessage = useMemo(
     () =>
       validateForm(
@@ -538,6 +635,7 @@ export function FixationInputScreen() {
   async function submitForm(action: "calculate" | "validate") {
     if (clientId === null) {
       setErrorMessage("Fixation flow requires an existing client context.");
+      setReviewValidationErrors([]);
       setResponseData(null);
       setResponseSource(null);
       return;
@@ -545,6 +643,7 @@ export function FixationInputScreen() {
 
     if (isSourceLoading) {
       setErrorMessage("Source data is still loading.");
+      setReviewValidationErrors([]);
       setResponseData(null);
       setResponseSource(null);
       return;
@@ -552,6 +651,7 @@ export function FixationInputScreen() {
 
     if (sourceErrorMessage !== null) {
       setErrorMessage("Fixation source data must load successfully before validation or calculation.");
+      setReviewValidationErrors([]);
       setResponseData(null);
       setResponseSource(null);
       return;
@@ -559,6 +659,7 @@ export function FixationInputScreen() {
 
     if (frontendValidationMessage !== null) {
       setErrorMessage(frontendValidationMessage);
+      setReviewValidationErrors([]);
       setResponseData(null);
       setResponseSource(null);
       return;
@@ -570,12 +671,13 @@ export function FixationInputScreen() {
     try {
       const reviewValidation = await validateFixationReview(currentReviewPayload);
       if (!reviewValidation.valid) {
-        setErrorMessage(stringifyValue(reviewValidation.errors));
+        setReviewValidationErrors(reviewValidation.errors);
         setResponseData(null);
         setResponseSource(null);
         return;
       }
 
+      setReviewValidationErrors([]);
       const convertedPayload = await convertFixationReview(currentReviewPayload);
       const response = action === "calculate" ? await calculateFixation(convertedPayload) : await validateFixation(convertedPayload);
       setResponseData(response);
@@ -588,6 +690,7 @@ export function FixationInputScreen() {
       }
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
+      setReviewValidationErrors([]);
       setResponseData(null);
       setResponseSource(null);
     } finally {
@@ -669,33 +772,39 @@ export function FixationInputScreen() {
             </select>
           </label>
         </p>
+        <ReviewValidationMessages errors={grantSectionReviewErrors} label="פעולה נדרשת עבור מענקים" />
         {grantCollectionState === "items_recorded" ? (
           <section>
             <h3>Grant Review Items</h3>
             {grants.length === 0 ? <p>No grant source records loaded.</p> : null}
             <ul>
-              {grants.map((grant) => (
-                <li key={grant.grant_id}>
-                  <p>Source Item ID: {grant.grant_id}</p>
-                  <p>Employer: {grant.employer_name ?? "Not provided"}</p>
-                  <p>Indexed Amount: {grant.indexed_amount}</p>
-                  <p>Grant Date: {grant.grant_date}</p>
-                  <label htmlFor={`grant-disposition-${grant.grant_id}`}>
-                    Grant Disposition
-                    <select
-                      id={`grant-disposition-${grant.grant_id}`}
-                      value={grantDispositions[grant.grant_id] ?? ""}
-                      onChange={(event) =>
-                        updateGrantDisposition(grant.grant_id, event.target.value as FixationReviewDisposition | "")
-                      }
-                    >
-                      <option value="">Select disposition</option>
-                      <option value="include">include</option>
-                      <option value="exclude">exclude</option>
-                    </select>
-                  </label>
-                </li>
-              ))}
+              {grants.map((grant) => {
+                const itemErrors = getItemReviewErrors(reviewValidationErrors, "grants", grant.grant_id);
+
+                return (
+                  <li key={grant.grant_id}>
+                    <p>Source Item ID: {grant.grant_id}</p>
+                    <p>Employer: {grant.employer_name ?? "Not provided"}</p>
+                    <p>Indexed Amount: {grant.indexed_amount}</p>
+                    <p>Grant Date: {grant.grant_date}</p>
+                    <label htmlFor={`grant-disposition-${grant.grant_id}`}>
+                      Grant Disposition
+                      <select
+                        id={`grant-disposition-${grant.grant_id}`}
+                        value={grantDispositions[grant.grant_id] ?? ""}
+                        onChange={(event) =>
+                          updateGrantDisposition(grant.grant_id, event.target.value as FixationReviewDisposition | "")
+                        }
+                      >
+                        <option value="">Select disposition</option>
+                        <option value="include">include</option>
+                        <option value="exclude">exclude</option>
+                      </select>
+                    </label>
+                    <ReviewValidationMessages errors={itemErrors} label="פעולה נדרשת עבור מענק זה" />
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ) : null}
@@ -714,40 +823,53 @@ export function FixationInputScreen() {
             </select>
           </label>
         </p>
+        <ReviewValidationMessages
+          errors={actualCapitalizationSectionReviewErrors}
+          label="פעולה נדרשת עבור היווני קצבה"
+        />
         {actualCapitalizationCollectionState === "items_recorded" ? (
           <section>
             <h3>Actual Capitalization Review Items</h3>
             {actualCapitalizations.length === 0 ? <p>No actual capitalization source records loaded.</p> : null}
             <ul>
-              {actualCapitalizations.map((capitalization) => (
-                <li key={capitalization.capitalization_id}>
-                  <p>Source Item ID: {capitalization.capitalization_id}</p>
-                  <p>Amount: {capitalization.amount}</p>
-                  <p>Capitalization Date: {capitalization.capitalization_date}</p>
-                  {capitalization.source_basis ? <p>Source Basis: {capitalization.source_basis}</p> : null}
-                  {capitalization.planner_assertion ? <p>Planner Assertion: {capitalization.planner_assertion}</p> : null}
-                  {capitalization.planner_assertion_basis ? (
-                    <p>Planner Assertion Basis: {capitalization.planner_assertion_basis}</p>
-                  ) : null}
-                  <label htmlFor={`actual-capitalization-disposition-${capitalization.capitalization_id}`}>
-                    Actual Capitalization Disposition
-                    <select
-                      id={`actual-capitalization-disposition-${capitalization.capitalization_id}`}
-                      value={actualCapitalizationDispositions[capitalization.capitalization_id] ?? ""}
-                      onChange={(event) =>
-                        updateActualCapitalizationDisposition(
-                          capitalization.capitalization_id,
-                          event.target.value as FixationReviewDisposition | "",
-                        )
-                      }
-                    >
-                      <option value="">Select disposition</option>
-                      <option value="include">include</option>
-                      <option value="exclude">exclude</option>
-                    </select>
-                  </label>
-                </li>
-              ))}
+              {actualCapitalizations.map((capitalization) => {
+                const itemErrors = getItemReviewErrors(
+                  reviewValidationErrors,
+                  "actual_capitalizations",
+                  capitalization.capitalization_id,
+                );
+
+                return (
+                  <li key={capitalization.capitalization_id}>
+                    <p>Source Item ID: {capitalization.capitalization_id}</p>
+                    <p>Amount: {capitalization.amount}</p>
+                    <p>Capitalization Date: {capitalization.capitalization_date}</p>
+                    {capitalization.source_basis ? <p>Source Basis: {capitalization.source_basis}</p> : null}
+                    {capitalization.planner_assertion ? <p>Planner Assertion: {capitalization.planner_assertion}</p> : null}
+                    {capitalization.planner_assertion_basis ? (
+                      <p>Planner Assertion Basis: {capitalization.planner_assertion_basis}</p>
+                    ) : null}
+                    <label htmlFor={`actual-capitalization-disposition-${capitalization.capitalization_id}`}>
+                      Actual Capitalization Disposition
+                      <select
+                        id={`actual-capitalization-disposition-${capitalization.capitalization_id}`}
+                        value={actualCapitalizationDispositions[capitalization.capitalization_id] ?? ""}
+                        onChange={(event) =>
+                          updateActualCapitalizationDisposition(
+                            capitalization.capitalization_id,
+                            event.target.value as FixationReviewDisposition | "",
+                          )
+                        }
+                      >
+                        <option value="">Select disposition</option>
+                        <option value="include">include</option>
+                        <option value="exclude">exclude</option>
+                      </select>
+                    </label>
+                    <ReviewValidationMessages errors={itemErrors} label="פעולה נדרשת עבור היוון קצבה זה" />
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ) : null}
@@ -958,6 +1080,7 @@ export function FixationInputScreen() {
         </p>
       </form>
       {errorMessage ? <p>{errorMessage}</p> : null}
+      <ReviewValidationMessages errors={fallbackReviewErrors} label="יש להשלים בחירה או נתון נדרש לפני המשך" />
       {isCalculationStale ? <p>Calculation result is stale. Run calculation again to continue.</p> : null}
       {responseData ? (
         <section>

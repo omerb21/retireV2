@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -112,7 +112,7 @@ afterEach(() => {
 });
 
 describe("FixationInputScreen contract payload", () => {
-  it("validates review state before conversion and shows backend blocking errors", async () => {
+  it("renders grants domain-level review-validation errors and blocks conversion", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(mockJsonResponse(grantItems))
@@ -141,11 +141,137 @@ describe("FixationInputScreen contract payload", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[2][0]).toBe("/api/fixation/review/validate");
+    expect(fetchMock.mock.calls.map((call) => call[0])).not.toContain("/api/fixation/review/convert");
     const payload = requestPayload(fetchMock, 2);
     expect(payload.grants).toEqual({ collection_state: "unknown", items: [] });
     expect(payload.actual_capitalizations).toEqual({ collection_state: "unknown", items: [] });
-    expect(await screen.findByText(/grants.collection_state/)).toBeInTheDocument();
+    expect(await screen.findByText("פעולה נדרשת עבור מענקים")).toBeInTheDocument();
+    expect(screen.getByText("נדרש לבחור מצב איסוף עבור מענקים.")).toBeInTheDocument();
+    expect(screen.getByText(/קוד: UNSUPPORTED_OR_UNAPPROVED_VALUE/)).toBeInTheDocument();
+    expect(screen.getByText(/נתיב: grants.collection_state/)).toBeInTheDocument();
     expect(payload).not.toHaveProperty("idf_relevant");
+  });
+
+  it("renders actual capitalization domain-level review-validation errors", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(grantItems))
+      .mockResolvedValueOnce(mockJsonResponse(capitalizationItems))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          valid: false,
+          errors: [
+            {
+              code: "UNSUPPORTED_OR_UNAPPROVED_VALUE",
+              path: "actual_capitalizations.collection_state",
+              message:
+                "actual capitalizations collection_state 'not_collected' blocks calculation until source facts are explicitly reviewed",
+              severity: "error",
+              source_id: null,
+            },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(/Current Input Readiness Status:/)).toBeInTheDocument());
+    fillRequiredFields();
+    fireEvent.change(screen.getByLabelText("Grant Collection State"), { target: { value: "confirmed_none" } });
+    fireEvent.change(screen.getByLabelText("Actual Capitalization Collection State"), {
+      target: { value: "not_collected" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/fixation/review/validate");
+    expect(fetchMock.mock.calls.map((call) => call[0])).not.toContain("/api/fixation/review/convert");
+    expect(await screen.findByText("פעולה נדרשת עבור היווני קצבה")).toBeInTheDocument();
+    expect(screen.getByText("נדרש לבחור מצב איסוף עבור היווני קצבה.")).toBeInTheDocument();
+    expect(screen.getByText(/נתיב: actual_capitalizations.collection_state/)).toBeInTheDocument();
+  });
+
+  it("renders source-matched item-level errors beside the corresponding source item", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(grantItems))
+      .mockResolvedValueOnce(mockJsonResponse(capitalizationItems))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          valid: false,
+          errors: [
+            {
+              code: "UNSUPPORTED_OR_UNAPPROVED_VALUE",
+              path: "grants.items[1].disposition",
+              message: "בחר include או exclude עבור מענק זה.",
+              severity: "error",
+              source_id: "GR-2",
+            },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(/Current Input Readiness Status:/)).toBeInTheDocument());
+    fillRequiredFields();
+    fireEvent.change(screen.getByLabelText("Grant Collection State"), { target: { value: "items_recorded" } });
+    fireEvent.change(screen.getByLabelText("Actual Capitalization Collection State"), {
+      target: { value: "confirmed_none" },
+    });
+
+    const grantDispositions = screen.getAllByLabelText("Grant Disposition");
+    fireEvent.change(grantDispositions[0], { target: { value: "include" } });
+    fireEvent.change(grantDispositions[1], { target: { value: "exclude" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls.map((call) => call[0])).not.toContain("/api/fixation/review/convert");
+    const grantTwoItem = screen.getByText("Source Item ID: GR-2").closest("li");
+    expect(grantTwoItem).not.toBeNull();
+    expect(within(grantTwoItem as HTMLElement).getByText("פעולה נדרשת עבור מענק זה")).toBeInTheDocument();
+    expect(within(grantTwoItem as HTMLElement).getByText("בחר include או exclude עבור מענק זה.")).toBeInTheDocument();
+    expect(within(grantTwoItem as HTMLElement).getByText(/נתיב: grants.items\[1\].disposition/)).toBeInTheDocument();
+  });
+
+  it("keeps unmatched source-item review errors visible through section fallback", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(grantItems))
+      .mockResolvedValueOnce(mockJsonResponse(capitalizationItems))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          valid: false,
+          errors: [
+            {
+              code: "INVALID_NESTED_ITEM",
+              path: "grants.items[9].source_item_id",
+              message: "יש להשלים בחירה או נתון נדרש לפני המשך.",
+              severity: "error",
+              source_id: "GR-NOT-LOADED",
+            },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(/Current Input Readiness Status:/)).toBeInTheDocument());
+    fillRequiredFields();
+    fireEvent.change(screen.getByLabelText("Grant Collection State"), { target: { value: "items_recorded" } });
+    fireEvent.change(screen.getByLabelText("Actual Capitalization Collection State"), {
+      target: { value: "confirmed_none" },
+    });
+    const grantDispositions = screen.getAllByLabelText("Grant Disposition");
+    fireEvent.change(grantDispositions[0], { target: { value: "include" } });
+    fireEvent.change(grantDispositions[1], { target: { value: "exclude" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls.map((call) => call[0])).not.toContain("/api/fixation/review/convert");
+    expect(await screen.findByText("פעולה נדרשת עבור מענקים")).toBeInTheDocument();
+    expect(screen.getByText(/קוד: INVALID_NESTED_ITEM/)).toBeInTheDocument();
+    expect(screen.getByText(/נתיב: grants.items\[9\].source_item_id/)).toBeInTheDocument();
   });
 
   it("requires explicit dispositions and uses converted payload for calculation", async () => {

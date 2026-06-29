@@ -248,6 +248,123 @@ def test_phase10_review_validate_endpoint_validates_without_calculation_or_persi
         app.dependency_overrides.clear()
 
 
+def test_phase10_review_convert_endpoint_transient_conversion_without_calculation_or_persistence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, session_local = _build_client(tmp_path, db_name="phase10_review_convert.db")
+
+    def fail_if_calculation_called(*args, **kwargs):
+        raise AssertionError("review conversion must not call calculation or save")
+
+    monkeypatch.setattr("app.api.fixation_routes.calculate_fixation_payload", fail_if_calculation_called)
+    monkeypatch.setattr("app.api.fixation_routes.run_fixation", fail_if_calculation_called)
+
+    try:
+        payload = _fixation_review_input(calc_id="review-convert")
+        payload["metadata"] = {"source_data_version_label": "review-only"}
+        payload["grants"]["items"].append(
+            {
+                **payload["grants"]["items"][0],
+                "source_item_id": "GR-2",
+                "grant_id": "G2",
+                "disposition": "exclude",
+            }
+        )
+        payload["actual_capitalizations"]["items"].append(
+            {
+                **payload["actual_capitalizations"]["items"][0],
+                "source_item_id": "AC-2",
+                "capitalization_id": "AC2",
+                "amount": 250.0,
+                "disposition": "exclude",
+            }
+        )
+
+        response = client.post("/api/fixation/review/convert", json=payload)
+
+        assert response.status_code == 200
+        converted = response.json()
+        FixationInput(**converted)
+        assert converted["calculation_id"] == "review-convert"
+        assert [grant["grant_id"] for grant in converted["grants"]] == ["G1"]
+        assert [cap["capitalization_id"] for cap in converted["actual_capitalizations"]] == ["AC1"]
+        assert "metadata" not in converted
+        assert "collection_state" not in converted["grants"][0]
+        assert "source_item_id" not in converted["grants"][0]
+        assert "disposition" not in converted["grants"][0]
+        assert "source_item_id" not in converted["actual_capitalizations"][0]
+        assert "disposition" not in converted["actual_capitalizations"][0]
+        assert "source_basis" not in converted["actual_capitalizations"][0]
+        assert "planner_assertion" not in converted["actual_capitalizations"][0]
+        assert "planner_assertion_basis" not in converted["actual_capitalizations"][0]
+        assert _counts(session_local) == {
+            "runs": 0,
+            "snapshots": 0,
+            "results": 0,
+            "audit_rows": 0,
+            "validation_errors": 0,
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    ("domain", "state", "expected_path"),
+    [
+        ("grants", "unknown", "grants.collection_state"),
+        ("actual_capitalizations", "not_collected", "actual_capitalizations.collection_state"),
+    ],
+)
+def test_phase10_review_convert_endpoint_rejects_blocking_states(
+    tmp_path: Path,
+    domain: str,
+    state: str,
+    expected_path: str,
+) -> None:
+    client, session_local = _build_client(tmp_path, db_name=f"phase10_review_convert_{domain}.db")
+    try:
+        payload = _fixation_review_input(calc_id="review-blocked")
+        payload[domain] = {"collection_state": state, "items": []}
+
+        response = client.post("/api/fixation/review/convert", json=payload)
+
+        assert response.status_code == 422
+        assert response.json()[0]["path"] == expected_path
+        assert response.json()[0]["code"] == "UNSUPPORTED_OR_UNAPPROVED_VALUE"
+        assert _counts(session_local) == {
+            "runs": 0,
+            "snapshots": 0,
+            "results": 0,
+            "audit_rows": 0,
+            "validation_errors": 0,
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_phase10_review_convert_endpoint_rejects_invalid_payload_with_stable_errors(tmp_path: Path) -> None:
+    client, session_local = _build_client(tmp_path, db_name="phase10_review_convert_invalid.db")
+    try:
+        payload = _fixation_review_input(calc_id="review-invalid-convert")
+        del payload["grants"]["items"][0]["source_item_id"]
+
+        response = client.post("/api/fixation/review/convert", json=payload)
+
+        assert response.status_code == 422
+        assert response.json()[0]["path"] == "grants.items[0].source_item_id"
+        assert response.json()[0]["code"] == "MISSING_REQUIRED_VALUE"
+        assert _counts(session_local) == {
+            "runs": 0,
+            "snapshots": 0,
+            "results": 0,
+            "audit_rows": 0,
+            "validation_errors": 0,
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_e2e.db")
     try:

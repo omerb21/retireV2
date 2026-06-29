@@ -63,6 +63,55 @@ export interface FixationInputPayload {
   metadata?: Record<string, unknown> | null;
 }
 
+export type FixationReviewCollectionState = "unknown" | "not_collected" | "confirmed_none" | "items_recorded";
+export type FixationReviewDisposition = "include" | "exclude";
+
+export interface FixationGrantReviewItemPayload extends FixationGrantInputPayload {
+  source_item_id: string;
+  disposition: FixationReviewDisposition;
+}
+
+export interface FixationActualCapitalizationReviewItemPayload extends FixationActualCapitalizationInputPayload {
+  source_item_id: string;
+  source_basis: string | null;
+  planner_assertion: string | null;
+  planner_assertion_basis: string | null;
+  disposition: FixationReviewDisposition;
+}
+
+export interface FixationReviewDomainPayload<TItem> {
+  collection_state: FixationReviewCollectionState;
+  items: TItem[];
+}
+
+export interface FixationInputReviewPayload {
+  calculation_id?: string | null;
+  calculation_version: string;
+  eligibility_date: string;
+  eligibility_year: number;
+  monthly_cap: number;
+  exemption_percentage: number;
+  capital_multiplier: number;
+  grants: FixationReviewDomainPayload<FixationGrantReviewItemPayload>;
+  future_grant_reserved: number;
+  actual_capitalizations: FixationReviewDomainPayload<FixationActualCapitalizationReviewItemPayload>;
+  idf: FixationIdfInputPayload | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface FixationValidationErrorPayload {
+  code: string;
+  path: string;
+  message: string;
+  severity: "error";
+  source_id: string | null;
+}
+
+export interface FixationReviewValidationResponse {
+  valid: boolean;
+  errors: FixationValidationErrorPayload[];
+}
+
 export interface FixationResultResponse {
   [key: string]: unknown;
 }
@@ -133,6 +182,20 @@ export function calculateFixation(payload: FixationInputPayload): Promise<Fixati
 
 export function validateFixation(payload: FixationInputPayload): Promise<FixationResultResponse> {
   return requestJson<FixationResultResponse>("/fixation/validate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function validateFixationReview(payload: FixationInputReviewPayload): Promise<FixationReviewValidationResponse> {
+  return requestJson<FixationReviewValidationResponse>("/fixation/review/validate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function convertFixationReview(payload: FixationInputReviewPayload): Promise<FixationInputPayload> {
+  return requestJson<FixationInputPayload>("/fixation/review/convert", {
     method: "POST",
     body: JSON.stringify(payload),
   });

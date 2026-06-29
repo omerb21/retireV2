@@ -39,6 +39,15 @@ APPROVED_PACKAGE_1_PATHS = {
     "backend/tests/test_phase10_api_behavior.py",
     "backend/tests/test_governance_baseline.py",
 }
+APPROVED_PACKAGE_2_PATHS = {
+    "backend/app/api/fixation_routes.py",
+    "backend/app/schemas/fixation_review.py",
+    "backend/tests/test_phase10_api_behavior.py",
+    "backend/tests/test_governance_baseline.py",
+    "frontend/src/api/fixationApi.ts",
+    "frontend/src/pages/FixationInputScreen.tsx",
+    "frontend/src/pages/FixationInputScreen.test.tsx",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -80,6 +89,7 @@ def _approved_tracked_change_paths() -> set[str]:
     return {
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,
+        *APPROVED_PACKAGE_2_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",
@@ -177,6 +187,26 @@ def test_package_1_governance_rejects_unapproved_api_and_test_changes() -> None:
         for line in _tracked_status_lines([rejected_api, rejected_test])
         if _status_path(line) not in _approved_tracked_change_paths()
     ] == [rejected_api, rejected_test]
+
+
+def test_package_2_governance_rejects_unapproved_frontend_changes() -> None:
+    approved_api = " M frontend/src/api/fixationApi.ts"
+    approved_screen = " M frontend/src/pages/FixationInputScreen.tsx"
+    approved_test = " M frontend/src/pages/FixationInputScreen.test.tsx"
+    rejected_api = " M frontend/src/api/otherApi.ts"
+    rejected_screen = " M frontend/src/pages/CalculationResultScreen.tsx"
+    rejected_test = " M frontend/src/pages/CalculationResultScreen.test.tsx"
+
+    assert [
+        line
+        for line in _tracked_status_lines([approved_api, approved_screen, approved_test])
+        if _status_path(line) not in _approved_tracked_change_paths()
+    ] == []
+    assert [
+        line
+        for line in _tracked_status_lines([rejected_api, rejected_screen, rejected_test])
+        if _status_path(line) not in _approved_tracked_change_paths()
+    ] == [rejected_api, rejected_screen, rejected_test]
 
 
 def test_repository_has_no_staged_files_for_governance_gate() -> None:

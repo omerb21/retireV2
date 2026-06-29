@@ -11,11 +11,18 @@ import {
 import {
   ApiTransportError,
   type FixationActualCapitalizationInputPayload,
+  type FixationActualCapitalizationReviewItemPayload,
   type FixationGrantInputPayload,
+  type FixationGrantReviewItemPayload,
   type FixationIdfInputPayload,
   type FixationInputPayload,
+  type FixationInputReviewPayload,
+  type FixationReviewCollectionState,
+  type FixationReviewDisposition,
   type FixationResultResponse,
   calculateFixation,
+  convertFixationReview,
+  validateFixationReview,
   validateFixation,
 } from "../api/fixationApi";
 
@@ -51,6 +58,8 @@ type CalculationResultRouteState = {
   fixationInputPath: string;
   fixationInputState?: FixationInputRouteState;
 };
+
+type ItemDispositionState = Record<string, FixationReviewDisposition | "">;
 
 const initialFormState: FormState = {
   calculationId: "",
@@ -124,6 +133,17 @@ function mapGrantToPayload(grant: GrantItem): FixationGrantInputPayload {
   };
 }
 
+function mapGrantToReviewItem(
+  grant: GrantItem,
+  disposition: FixationReviewDisposition,
+): FixationGrantReviewItemPayload {
+  return {
+    ...mapGrantToPayload(grant),
+    source_item_id: grant.grant_id,
+    disposition,
+  };
+}
+
 function mapActualCapitalizationToPayload(
   capitalization: ActualCapitalizationItem,
 ): FixationActualCapitalizationInputPayload {
@@ -133,6 +153,20 @@ function mapActualCapitalizationToPayload(
     capitalization_date: capitalization.capitalization_date,
     source_label: capitalization.source_label,
     notes: capitalization.notes,
+  };
+}
+
+function mapActualCapitalizationToReviewItem(
+  capitalization: ActualCapitalizationItem,
+  disposition: FixationReviewDisposition,
+): FixationActualCapitalizationReviewItemPayload {
+  return {
+    ...mapActualCapitalizationToPayload(capitalization),
+    source_item_id: capitalization.capitalization_id,
+    source_basis: capitalization.source_basis,
+    planner_assertion: capitalization.planner_assertion,
+    planner_assertion_basis: capitalization.planner_assertion_basis,
+    disposition,
   };
 }
 
@@ -152,11 +186,15 @@ function buildIdfPayload(formState: FormState): FixationIdfInputPayload | null {
   };
 }
 
-function buildPayload(
+function buildReviewPayload(
   formState: FormState,
   grants: GrantItem[],
   actualCapitalizations: ActualCapitalizationItem[],
-): FixationInputPayload {
+  grantCollectionState: FixationReviewCollectionState,
+  actualCapitalizationCollectionState: FixationReviewCollectionState,
+  grantDispositions: ItemDispositionState,
+  actualCapitalizationDispositions: ItemDispositionState,
+): FixationInputReviewPayload {
   return {
     calculation_id: formState.calculationId.trim() === "" ? null : formState.calculationId,
     calculation_version: formState.calculationVersion,
@@ -165,14 +203,39 @@ function buildPayload(
     monthly_cap: Number(formState.monthlyCap),
     exemption_percentage: Number(formState.exemptionPercentage),
     capital_multiplier: Number(formState.capitalMultiplier),
-    grants: grants.map(mapGrantToPayload),
+    grants: {
+      collection_state: grantCollectionState,
+      items:
+        grantCollectionState === "items_recorded"
+          ? grants.map((grant) => mapGrantToReviewItem(grant, grantDispositions[grant.grant_id] as FixationReviewDisposition))
+          : [],
+    },
     future_grant_reserved: Number(formState.futureGrantReserved),
-    actual_capitalizations: actualCapitalizations.map(mapActualCapitalizationToPayload),
+    actual_capitalizations: {
+      collection_state: actualCapitalizationCollectionState,
+      items:
+        actualCapitalizationCollectionState === "items_recorded"
+          ? actualCapitalizations.map((capitalization) =>
+              mapActualCapitalizationToReviewItem(
+                capitalization,
+                actualCapitalizationDispositions[capitalization.capitalization_id] as FixationReviewDisposition,
+              ),
+            )
+          : [],
+    },
     idf: buildIdfPayload(formState),
   };
 }
 
-function validateForm(formState: FormState): string | null {
+function validateForm(
+  formState: FormState,
+  grants: GrantItem[],
+  actualCapitalizations: ActualCapitalizationItem[],
+  grantCollectionState: FixationReviewCollectionState,
+  actualCapitalizationCollectionState: FixationReviewCollectionState,
+  grantDispositions: ItemDispositionState,
+  actualCapitalizationDispositions: ItemDispositionState,
+): string | null {
   const requiredFields: Array<[string, string]> = [
     [formState.calculationVersion, "Calculation version is required."],
     [formState.eligibilityDate, "Eligibility date is required."],
@@ -225,6 +288,30 @@ function validateForm(formState: FormState): string | null {
 
   if (futureGrantReserved < 0) {
     return "Future grant reserved must be non-negative.";
+  }
+
+  if (grantCollectionState === "items_recorded") {
+    if (grants.length === 0) {
+      return "Grant review marked items recorded but no grant records were loaded.";
+    }
+    if (grants.some((grant) => grantDispositions[grant.grant_id] !== "include" && grantDispositions[grant.grant_id] !== "exclude")) {
+      return "Every loaded grant requires an explicit include or exclude disposition.";
+    }
+  }
+
+  if (actualCapitalizationCollectionState === "items_recorded") {
+    if (actualCapitalizations.length === 0) {
+      return "Actual capitalization review marked items recorded but no actual capitalization records were loaded.";
+    }
+    if (
+      actualCapitalizations.some(
+        (capitalization) =>
+          actualCapitalizationDispositions[capitalization.capitalization_id] !== "include" &&
+          actualCapitalizationDispositions[capitalization.capitalization_id] !== "exclude",
+      )
+    ) {
+      return "Every loaded actual capitalization requires an explicit include or exclude disposition.";
+    }
   }
 
   if (!formState.idfRelevant) {
@@ -304,6 +391,11 @@ export function FixationInputScreen() {
   const [formState, setFormState] = useState<FormState>(initialFormState);
   const [grants, setGrants] = useState<GrantItem[]>([]);
   const [actualCapitalizations, setActualCapitalizations] = useState<ActualCapitalizationItem[]>([]);
+  const [grantCollectionState, setGrantCollectionState] = useState<FixationReviewCollectionState>("unknown");
+  const [actualCapitalizationCollectionState, setActualCapitalizationCollectionState] =
+    useState<FixationReviewCollectionState>("unknown");
+  const [grantDispositions, setGrantDispositions] = useState<ItemDispositionState>({});
+  const [actualCapitalizationDispositions, setActualCapitalizationDispositions] = useState<ItemDispositionState>({});
   const [isSourceLoading, setIsSourceLoading] = useState(true);
   const [sourceErrorMessage, setSourceErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -311,6 +403,7 @@ export function FixationInputScreen() {
   const [responseData, setResponseData] = useState<FixationResultResponse | null>(null);
   const [responseSource, setResponseSource] = useState<"calculate" | "validate" | null>(null);
   const [calculatedResult, setCalculatedResult] = useState<FixationResultResponse | null>(null);
+  const [calculatedPayload, setCalculatedPayload] = useState<FixationInputPayload | null>(null);
   const [calculatedPayloadSignature, setCalculatedPayloadSignature] = useState<string | null>(null);
 
   useEffect(() => {
@@ -341,6 +434,17 @@ export function FixationInputScreen() {
 
         setGrants(nextGrants);
         setActualCapitalizations(nextActualCapitalizations);
+        setGrantDispositions((current) =>
+          Object.fromEntries(nextGrants.map((grant) => [grant.grant_id, current[grant.grant_id] ?? ""])),
+        );
+        setActualCapitalizationDispositions((current) =>
+          Object.fromEntries(
+            nextActualCapitalizations.map((capitalization) => [
+              capitalization.capitalization_id,
+              current[capitalization.capitalization_id] ?? "",
+            ]),
+          ),
+        );
         setSourceErrorMessage(null);
       } catch (error) {
         if (!isActive) {
@@ -364,13 +468,50 @@ export function FixationInputScreen() {
     };
   }, [clientId]);
 
-  const currentPayload = useMemo(
-    () => buildPayload(formState, grants, actualCapitalizations),
-    [actualCapitalizations, formState, grants],
+  const currentReviewPayload = useMemo(
+    () =>
+      buildReviewPayload(
+        formState,
+        grants,
+        actualCapitalizations,
+        grantCollectionState,
+        actualCapitalizationCollectionState,
+        grantDispositions,
+        actualCapitalizationDispositions,
+      ),
+    [
+      actualCapitalizationCollectionState,
+      actualCapitalizationDispositions,
+      actualCapitalizations,
+      formState,
+      grantCollectionState,
+      grantDispositions,
+      grants,
+    ],
   );
-  const currentPayloadSignature = useMemo(() => JSON.stringify(currentPayload), [currentPayload]);
-  const frontendValidationMessage = useMemo(() => validateForm(formState), [formState]);
-  const isCalculationStale = calculatedResult !== null && calculatedPayloadSignature !== currentPayloadSignature;
+  const currentReviewPayloadSignature = useMemo(() => JSON.stringify(currentReviewPayload), [currentReviewPayload]);
+  const frontendValidationMessage = useMemo(
+    () =>
+      validateForm(
+        formState,
+        grants,
+        actualCapitalizations,
+        grantCollectionState,
+        actualCapitalizationCollectionState,
+        grantDispositions,
+        actualCapitalizationDispositions,
+      ),
+    [
+      actualCapitalizationCollectionState,
+      actualCapitalizationDispositions,
+      actualCapitalizations,
+      formState,
+      grantCollectionState,
+      grantDispositions,
+      grants,
+    ],
+  );
+  const isCalculationStale = calculatedResult !== null && calculatedPayloadSignature !== currentReviewPayloadSignature;
   const readinessStatus =
     clientId === null
       ? "Blocked: client context is required."
@@ -384,6 +525,14 @@ export function FixationInputScreen() {
 
   function updateFormState<K extends keyof FormState>(field: K, value: FormState[K]) {
     setFormState((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateGrantDisposition(grantId: string, disposition: FixationReviewDisposition | "") {
+    setGrantDispositions((current) => ({ ...current, [grantId]: disposition }));
+  }
+
+  function updateActualCapitalizationDisposition(capitalizationId: string, disposition: FixationReviewDisposition | "") {
+    setActualCapitalizationDispositions((current) => ({ ...current, [capitalizationId]: disposition }));
   }
 
   async function submitForm(action: "calculate" | "validate") {
@@ -419,13 +568,23 @@ export function FixationInputScreen() {
     setErrorMessage(null);
 
     try {
-      const response = action === "calculate" ? await calculateFixation(currentPayload) : await validateFixation(currentPayload);
+      const reviewValidation = await validateFixationReview(currentReviewPayload);
+      if (!reviewValidation.valid) {
+        setErrorMessage(stringifyValue(reviewValidation.errors));
+        setResponseData(null);
+        setResponseSource(null);
+        return;
+      }
+
+      const convertedPayload = await convertFixationReview(currentReviewPayload);
+      const response = action === "calculate" ? await calculateFixation(convertedPayload) : await validateFixation(convertedPayload);
       setResponseData(response);
       setResponseSource(action);
 
       if (action === "calculate") {
         setCalculatedResult(response);
-        setCalculatedPayloadSignature(currentPayloadSignature);
+        setCalculatedPayload(convertedPayload);
+        setCalculatedPayloadSignature(currentReviewPayloadSignature);
       }
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -442,14 +601,14 @@ export function FixationInputScreen() {
   }
 
   function handleContinueToResult() {
-    if (clientId === null || calculatedResult === null || isCalculationStale) {
+    if (clientId === null || calculatedResult === null || calculatedPayload === null || isCalculationStale) {
       return;
     }
 
     const resultRouteState: CalculationResultRouteState = {
       clientId,
       clientName: clientName ?? undefined,
-      inputData: currentPayload,
+      inputData: calculatedPayload,
       result: calculatedResult,
       fixationInputPath,
       fixationInputState,
@@ -495,6 +654,103 @@ export function FixationInputScreen() {
         <Link to={actualCapitalizationsPath} state={backState}>Back to Actual Capitalizations</Link>
       </p>
       <form onSubmit={handleSubmit}>
+        <p>
+          <label htmlFor="grant-collection-state">
+            Grant Collection State
+            <select
+              id="grant-collection-state"
+              value={grantCollectionState}
+              onChange={(event) => setGrantCollectionState(event.target.value as FixationReviewCollectionState)}
+            >
+              <option value="unknown">unknown</option>
+              <option value="not_collected">not_collected</option>
+              <option value="confirmed_none">confirmed_none</option>
+              <option value="items_recorded">items_recorded</option>
+            </select>
+          </label>
+        </p>
+        {grantCollectionState === "items_recorded" ? (
+          <section>
+            <h3>Grant Review Items</h3>
+            {grants.length === 0 ? <p>No grant source records loaded.</p> : null}
+            <ul>
+              {grants.map((grant) => (
+                <li key={grant.grant_id}>
+                  <p>Source Item ID: {grant.grant_id}</p>
+                  <p>Employer: {grant.employer_name ?? "Not provided"}</p>
+                  <p>Indexed Amount: {grant.indexed_amount}</p>
+                  <p>Grant Date: {grant.grant_date}</p>
+                  <label htmlFor={`grant-disposition-${grant.grant_id}`}>
+                    Grant Disposition
+                    <select
+                      id={`grant-disposition-${grant.grant_id}`}
+                      value={grantDispositions[grant.grant_id] ?? ""}
+                      onChange={(event) =>
+                        updateGrantDisposition(grant.grant_id, event.target.value as FixationReviewDisposition | "")
+                      }
+                    >
+                      <option value="">Select disposition</option>
+                      <option value="include">include</option>
+                      <option value="exclude">exclude</option>
+                    </select>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        <p>
+          <label htmlFor="actual-capitalization-collection-state">
+            Actual Capitalization Collection State
+            <select
+              id="actual-capitalization-collection-state"
+              value={actualCapitalizationCollectionState}
+              onChange={(event) => setActualCapitalizationCollectionState(event.target.value as FixationReviewCollectionState)}
+            >
+              <option value="unknown">unknown</option>
+              <option value="not_collected">not_collected</option>
+              <option value="confirmed_none">confirmed_none</option>
+              <option value="items_recorded">items_recorded</option>
+            </select>
+          </label>
+        </p>
+        {actualCapitalizationCollectionState === "items_recorded" ? (
+          <section>
+            <h3>Actual Capitalization Review Items</h3>
+            {actualCapitalizations.length === 0 ? <p>No actual capitalization source records loaded.</p> : null}
+            <ul>
+              {actualCapitalizations.map((capitalization) => (
+                <li key={capitalization.capitalization_id}>
+                  <p>Source Item ID: {capitalization.capitalization_id}</p>
+                  <p>Amount: {capitalization.amount}</p>
+                  <p>Capitalization Date: {capitalization.capitalization_date}</p>
+                  {capitalization.source_basis ? <p>Source Basis: {capitalization.source_basis}</p> : null}
+                  {capitalization.planner_assertion ? <p>Planner Assertion: {capitalization.planner_assertion}</p> : null}
+                  {capitalization.planner_assertion_basis ? (
+                    <p>Planner Assertion Basis: {capitalization.planner_assertion_basis}</p>
+                  ) : null}
+                  <label htmlFor={`actual-capitalization-disposition-${capitalization.capitalization_id}`}>
+                    Actual Capitalization Disposition
+                    <select
+                      id={`actual-capitalization-disposition-${capitalization.capitalization_id}`}
+                      value={actualCapitalizationDispositions[capitalization.capitalization_id] ?? ""}
+                      onChange={(event) =>
+                        updateActualCapitalizationDisposition(
+                          capitalization.capitalization_id,
+                          event.target.value as FixationReviewDisposition | "",
+                        )
+                      }
+                    >
+                      <option value="">Select disposition</option>
+                      <option value="include">include</option>
+                      <option value="exclude">exclude</option>
+                    </select>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         <p>
           <label htmlFor="calculation-id">
             Calculation ID

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,10 @@ from app.schemas.fixation_contracts import (
     map_contract_validation_errors,
 )
 from app.schemas.fixation_review import review_readiness_errors
+from app.schemas.fixation_review import (
+    FixationReviewConversionError,
+    convert_review_to_fixation_input,
+)
 from app.services.fixation_service import (
     calculate_fixation_payload,
     get_fixation_history,
@@ -77,6 +82,44 @@ def validate_fixation_review(payload: dict[str, Any]) -> FixationReviewValidatio
 
     errors = review_readiness_errors(review)
     return FixationReviewValidationResponse(valid=not errors, errors=errors)
+
+
+@router.post("/fixation/review/convert", response_model=None)
+def convert_fixation_review(payload: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    try:
+        review = FixationInputReview(**payload)
+    except PydanticValidationError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=[error.model_dump(mode="json") for error in map_contract_validation_errors(exc)],
+        )
+
+    readiness_errors = review_readiness_errors(review)
+    if readiness_errors:
+        return JSONResponse(
+            status_code=422,
+            content=[error.model_dump(mode="json") for error in readiness_errors],
+        )
+
+    try:
+        converted = convert_review_to_fixation_input(review)
+    except FixationReviewConversionError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=[
+                ValidationError(
+                    code="UNSUPPORTED_OR_UNAPPROVED_VALUE",
+                    path="fixation_input",
+                    message=str(exc),
+                    severity="error",
+                    source_id=None,
+                ).model_dump(mode="json")
+            ],
+        )
+
+    converted_payload = converted.model_dump(mode="json")
+    converted_payload.pop("metadata", None)
+    return converted_payload
 
 
 @router.post("/fixation/validate", response_model=FixationResult)

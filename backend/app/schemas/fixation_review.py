@@ -97,6 +97,6 @@ def convert_review_to_fixation_input(review: FixationInputReview) -> FixationInp
         "future_grant_reserved": review.future_grant_reserved,
         "actual_capitalizations": _convert_actual_capitalizations(review.actual_capitalizations),
         "idf": review.idf,
-        "metadata": review.metadata,
+        "metadata": None,
     }
     return FixationInput(**payload)

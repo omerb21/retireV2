@@ -154,6 +154,21 @@ function buildActiveSessionReviewContext() {
   };
 }
 
+function buildSavedPlannerReviewContext() {
+  return {
+    grants: {
+      collection_state: "items_recorded",
+      included_source_reference_ids: ["GR-1"],
+      excluded_source_reference_ids: ["GR-2"]
+    },
+    actual_capitalizations: {
+      collection_state: "items_recorded",
+      included_source_reference_ids: ["AC-1"],
+      excluded_source_reference_ids: ["AC-2"]
+    }
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -208,6 +223,7 @@ describe("CalculationResultScreen", () => {
     expect(await screen.findByRole("heading", { name: "רשומת חישוב שמורה" })).toBeInTheDocument();
     expect(await screen.findByText("מזהה רשומה: 11")).toBeInTheDocument();
     expect(await screen.findByText("נוצרה בתאריך: 2026-05-26T00:00:00")).toBeInTheDocument();
+    expect(await screen.findByText("לא נשמר הקשר בדיקה עבור רשומת חישוב זו.")).toBeInTheDocument();
     expect(await screen.findByText(/Trusted Result Status: Current source data matches the calculation input snapshot\./)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Current Workflow Review Context" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Latest saved successful result/)).not.toBeInTheDocument();
@@ -225,6 +241,66 @@ describe("CalculationResultScreen", () => {
       "/clients/7/fixation/history"
     );
     expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
+  });
+
+  it("renders saved planner review context separately when present on run detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(mockJsonResponse([]))
+        .mockResolvedValueOnce(mockJsonResponse([]))
+        .mockResolvedValueOnce(
+          mockJsonResponse([
+            {
+              run_id: 14,
+              status: "success",
+              calculation_version: "v1",
+              created_at: "2026-05-26T00:00:00"
+            }
+          ])
+        )
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            run: {
+              run_id: 14,
+              client_id: 7,
+              status: "success",
+              calculation_version: "v1",
+              created_at: "2026-05-26T00:00:00"
+            },
+            input_snapshot: buildInputSnapshot({ grants: [], actual_capitalizations: [] }),
+            planner_review_context: buildSavedPlannerReviewContext(),
+            result: buildResult(),
+            audit_rows: [],
+            validation_errors: []
+          })
+        )
+    );
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: "/clients/7/fixation/result", state: { clientName: "Dana Levi" } }]}>
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<CalculationResultScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const contextSection = (await screen.findByRole("heading", { name: "הקשר בדיקה שנשמר עם רשומת החישוב" })).closest("section");
+    expect(contextSection).not.toBeNull();
+    expect(within(contextSection as HTMLElement).getByText("מידע זה מוצג כהקשר בדיקה בלבד")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByRole("heading", { name: "מצב איסוף נתונים בעת השמירה" })).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByRole("heading", { name: "רשומות שסומנו לכלילה" })).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByRole("heading", { name: "רשומות שסומנו להחרגה" })).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("grants: items_recorded")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("actual_capitalizations: items_recorded")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("grants: GR-1")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("actual_capitalizations: AC-1")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("grants: GR-2")).toBeInTheDocument();
+    expect(within(contextSection as HTMLElement).getByText("actual_capitalizations: AC-2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Converted Input Used For Calculation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Calculation Outcome" })).toBeInTheDocument();
+    expect(screen.queryByText("לא נשמר הקשר בדיקה עבור רשומת חישוב זו.")).not.toBeInTheDocument();
   });
 
   it("marks the displayed result as stale and enforces rerun when source data changed", async () => {
@@ -487,6 +563,77 @@ describe("CalculationResultScreen", () => {
         body: JSON.stringify({ client_id: 7, input_data: inputData })
       })
     );
+  });
+
+  it("saves the approved planner review context projection without source metadata", async () => {
+    const inputData = buildInputSnapshot();
+    const result = buildResult();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(inputData.grants))
+      .mockResolvedValueOnce(mockJsonResponse(inputData.actual_capitalizations))
+      .mockResolvedValueOnce(mockJsonResponse({ run_id: 42, status: "success" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/clients/7/fixation/result",
+            state: {
+              clientId: 7,
+              clientName: "Dana Levi",
+              inputData,
+              result,
+              fixationInputPath: "/clients/7/fixation/input",
+              fixationInputState: { clientId: 7, clientName: "Dana Levi" },
+              activeSessionReviewContext: buildActiveSessionReviewContext()
+            }
+          }
+        ]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<CalculationResultScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const saveButton = await screen.findByRole("button", { name: "Save Result" });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    fireEvent.click(saveButton);
+
+    await screen.findByText("Result saved successfully. Run ID: 42");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/fixation/save",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          client_id: 7,
+          input_data: inputData,
+          planner_review_context: {
+            grants: {
+              collection_state: "items_recorded",
+              included_source_reference_ids: ["GR-1"],
+              excluded_source_reference_ids: ["GR-2"]
+            },
+            actual_capitalizations: {
+              collection_state: "items_recorded",
+              included_source_reference_ids: ["AC-1"],
+              excluded_source_reference_ids: []
+            }
+          }
+        })
+      })
+    );
+    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
+    const reviewContextJson = JSON.stringify(requestBody.planner_review_context);
+    expect(reviewContextJson).not.toContain("source_metadata_context");
+    expect(reviewContextJson).not.toContain("source_basis");
+    expect(reviewContextJson).not.toContain("planner_assertion");
+    expect(reviewContextJson).not.toContain("planner_assertion_basis");
+    expect(reviewContextJson).not.toContain("record_id");
+    expect(reviewContextJson).not.toContain("label");
+    expect(reviewContextJson).not.toContain("disposition");
   });
 
   it("displays backend errors when saving the current result fails", async () => {

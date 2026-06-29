@@ -143,6 +143,21 @@ def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
     return payload
 
 
+def _planner_review_context() -> dict:
+    return {
+        "grants": {
+            "collection_state": "items_recorded",
+            "included_source_reference_ids": ["GR-1"],
+            "excluded_source_reference_ids": ["GR-2"],
+        },
+        "actual_capitalizations": {
+            "collection_state": "items_recorded",
+            "included_source_reference_ids": ["AC-1"],
+            "excluded_source_reference_ids": ["AC-2"],
+        },
+    }
+
+
 def _invalid_fixation_input(calc_id: str) -> dict:
     payload = _fixation_input(calc_id=calc_id, eligibility_year=2026)
     payload["eligibility_date"] = "2025-01-01"
@@ -525,6 +540,77 @@ def test_phase10_save_behavior_persistence_boundaries(tmp_path: Path) -> None:
         assert success_detail["result"] is not None
         assert len(success_detail["audit_rows"]) > 0
         assert len(success_detail["validation_errors"]) == 0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_phase10_save_persists_optional_planner_review_context_without_changing_snapshot_or_result(
+    tmp_path: Path,
+) -> None:
+    client, session_local = _build_client(tmp_path, db_name="phase10_review_context.db")
+    try:
+        client_id = _create_client(client, id_number="3101")
+        input_payload = _fixation_input(calc_id="calc-review-context")
+        review_context = _planner_review_context()
+
+        response = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": client_id,
+                "input_data": input_payload,
+                "planner_review_context": {
+                    **review_context,
+                    "source_metadata_context": [{"source_basis": "must not persist"}],
+                },
+            },
+        )
+        assert response.status_code == 422
+
+        save_resp = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": client_id,
+                "input_data": input_payload,
+                "planner_review_context": review_context,
+            },
+        )
+        assert save_resp.status_code == 200
+        run_id = save_resp.json()["run_id"]
+
+        detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        assert detail["planner_review_context"] == review_context
+        assert detail["input_snapshot"] == FixationInput(**input_payload).model_dump(mode="json")
+        assert FixationResult(**detail["result"]).status == "success"
+
+        with session_local() as db:
+            snapshot = db.scalar(
+                select(FixationInputSnapshot).where(FixationInputSnapshot.fixation_run_id == run_id)
+            )
+            assert snapshot is not None
+            assert snapshot.planner_review_context == review_context
+            assert snapshot.input_payload == FixationInput(**input_payload).model_dump(mode="json")
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_phase10_save_without_planner_review_context_remains_valid(tmp_path: Path) -> None:
+    client, _ = _build_client(tmp_path, db_name="phase10_no_review_context.db")
+    try:
+        client_id = _create_client(client, id_number="3102")
+
+        save_resp = client.post(
+            "/api/fixation/save",
+            json={"client_id": client_id, "input_data": _fixation_input(calc_id="calc-no-review-context")},
+        )
+        assert save_resp.status_code == 200
+
+        detail_resp = client.get(f"/api/fixation/runs/{save_resp.json()['run_id']}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["planner_review_context"] is None
+        assert detail_resp.json()["input_snapshot"] is not None
+        assert detail_resp.json()["result"] is not None
     finally:
         app.dependency_overrides.clear()
 

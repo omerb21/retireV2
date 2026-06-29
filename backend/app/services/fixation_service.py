@@ -23,7 +23,7 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
-from app.schemas.fixation_contracts import FixationInput, FixationResult, ValidationError
+from app.schemas.fixation_contracts import FixationInput, FixationResult, PlannerReviewContextEnvelope, ValidationError
 
 
 def _new_id(prefix: str) -> str:
@@ -199,6 +199,7 @@ def run_fixation(
     client_id: int | str,
     input_data: dict | FixationInput,
     db_session: Session,
+    planner_review_context: PlannerReviewContextEnvelope | None = None,
 ) -> int:
     client_key = int(client_id)
 
@@ -256,6 +257,11 @@ def run_fixation(
                 fixation_run_id=run_id,
                 input_contract_version=run_calculation_version,
                 input_payload=snapshot_payload,
+                planner_review_context=(
+                    planner_review_context.model_dump(mode="json")
+                    if planner_review_context is not None
+                    else None
+                ),
             )
         )
 

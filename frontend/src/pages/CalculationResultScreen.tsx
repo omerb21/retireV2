@@ -14,6 +14,8 @@ import {
   type FixationGrantInputPayload,
   type FixationInputPayload,
   type FixationResultResponse,
+  type FixationReviewCollectionState,
+  type PlannerReviewContextPayload,
   getFixationHistory,
   getFixationRunDetail,
   saveFixation,
@@ -62,8 +64,8 @@ type ActiveSessionSourceMetadata = {
 };
 
 type ActiveSessionReviewContext = {
-  grants_collection_state: string;
-  actual_capitalizations_collection_state: string;
+  grants_collection_state: FixationReviewCollectionState;
+  actual_capitalizations_collection_state: FixationReviewCollectionState;
   included_source_references: ActiveSessionSourceReference[];
   excluded_source_references: ActiveSessionSourceReference[];
   source_metadata_context: ActiveSessionSourceMetadata[];
@@ -269,6 +271,71 @@ function renderActiveSessionReviewContext(context: ActiveSessionReviewContext | 
   );
 }
 
+function buildSavedPlannerReviewContext(
+  context: ActiveSessionReviewContext | undefined,
+): PlannerReviewContextPayload | undefined {
+  if (context === undefined) {
+    return undefined;
+  }
+
+  return {
+    grants: {
+      collection_state: context.grants_collection_state,
+      included_source_reference_ids: context.included_source_references
+        .filter((reference) => reference.domain === "grants")
+        .map((reference) => reference.source_item_id),
+      excluded_source_reference_ids: context.excluded_source_references
+        .filter((reference) => reference.domain === "grants")
+        .map((reference) => reference.source_item_id),
+    },
+    actual_capitalizations: {
+      collection_state: context.actual_capitalizations_collection_state,
+      included_source_reference_ids: context.included_source_references
+        .filter((reference) => reference.domain === "actual_capitalizations")
+        .map((reference) => reference.source_item_id),
+      excluded_source_reference_ids: context.excluded_source_references
+        .filter((reference) => reference.domain === "actual_capitalizations")
+        .map((reference) => reference.source_item_id),
+    },
+  };
+}
+
+function renderReferenceIds(ids: string[]) {
+  if (ids.length === 0) {
+    return "none";
+  }
+
+  return ids.join(", ");
+}
+
+function renderSavedPlannerReviewContext(context: PlannerReviewContextPayload | null) {
+  if (context === null) {
+    return <p>לא נשמר הקשר בדיקה עבור רשומת חישוב זו.</p>;
+  }
+
+  return (
+    <section>
+      <h3>הקשר בדיקה שנשמר עם רשומת החישוב</h3>
+      <p>מידע זה מוצג כהקשר בדיקה בלבד</p>
+      <h4>מצב איסוף נתונים בעת השמירה</h4>
+      <ul>
+        <li>grants: {context.grants.collection_state}</li>
+        <li>actual_capitalizations: {context.actual_capitalizations.collection_state}</li>
+      </ul>
+      <h4>רשומות שסומנו לכלילה</h4>
+      <ul>
+        <li>grants: {renderReferenceIds(context.grants.included_source_reference_ids)}</li>
+        <li>actual_capitalizations: {renderReferenceIds(context.actual_capitalizations.included_source_reference_ids)}</li>
+      </ul>
+      <h4>רשומות שסומנו להחרגה</h4>
+      <ul>
+        <li>grants: {renderReferenceIds(context.grants.excluded_source_reference_ids)}</li>
+        <li>actual_capitalizations: {renderReferenceIds(context.actual_capitalizations.excluded_source_reference_ids)}</li>
+      </ul>
+    </section>
+  );
+}
+
 function renderSavedCalculationRecordIdentifiers(identifiers: SavedCalculationRecordIdentifiers | null) {
   if (identifiers === null) {
     return null;
@@ -310,6 +377,7 @@ export function CalculationResultScreen() {
   const [resultSource, setResultSource] = useState<"current" | "latest" | null>(hasCurrentCalculation ? "current" : null);
   const [resolvedInputData, setResolvedInputData] = useState<FixationInputPayload | null>(routeState?.inputData ?? null);
   const [resolvedResult, setResolvedResult] = useState<FixationResultResponse | null>(routeState?.result ?? null);
+  const [savedPlannerReviewContext, setSavedPlannerReviewContext] = useState<PlannerReviewContextPayload | null>(null);
   const [savedCalculationRecordIdentifiers, setSavedCalculationRecordIdentifiers] =
     useState<SavedCalculationRecordIdentifiers | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -393,6 +461,7 @@ export function CalculationResultScreen() {
         if (latestSuccessfulRun === undefined) {
           setResolvedResult(null);
           setResolvedInputData(null);
+          setSavedPlannerReviewContext(null);
           setSavedCalculationRecordIdentifiers(null);
           setResultSource(null);
           setResultMessage(
@@ -412,6 +481,7 @@ export function CalculationResultScreen() {
         if (detail.result === null || detail.input_snapshot === null) {
           setResolvedResult(null);
           setResolvedInputData(null);
+          setSavedPlannerReviewContext(null);
           setSavedCalculationRecordIdentifiers(null);
           setResultSource(null);
           setResultMessage("Latest successful calculation result could not be loaded.");
@@ -420,6 +490,7 @@ export function CalculationResultScreen() {
 
         setResolvedResult(detail.result as FixationResultResponse);
         setResolvedInputData(detail.input_snapshot as unknown as FixationInputPayload);
+        setSavedPlannerReviewContext(detail.planner_review_context ?? null);
         setSavedCalculationRecordIdentifiers({
           runId: Number(detail.run.run_id),
           createdAt: typeof detail.run.created_at === "string" ? detail.run.created_at : null,
@@ -433,6 +504,7 @@ export function CalculationResultScreen() {
 
         setResolvedResult(null);
         setResolvedInputData(null);
+        setSavedPlannerReviewContext(null);
         setSavedCalculationRecordIdentifiers(null);
         setResultSource(null);
         setResultErrorMessage(getErrorMessage(error));
@@ -534,9 +606,11 @@ export function CalculationResultScreen() {
     setSavedRunId(null);
 
     try {
+      const plannerReviewContext = buildSavedPlannerReviewContext(activeSessionReviewContext);
       const response = await saveFixation({
         client_id: clientId,
         input_data: resolvedInputData as unknown as Record<string, unknown>,
+        ...(plannerReviewContext === undefined ? {} : { planner_review_context: plannerReviewContext }),
       });
       setSavedRunId(response.run_id);
     } catch (error) {
@@ -618,6 +692,7 @@ export function CalculationResultScreen() {
           {renderFields("Backend Calculation Summary", summaryFields)}
           {renderFields("Backend Impact Values", impactFields)}
           {renderConvertedInputSummary(resolvedInputData)}
+          {resultSource === "latest" ? renderSavedPlannerReviewContext(savedPlannerReviewContext) : null}
           {renderActiveSessionReviewContext(activeSessionReviewContext)}
           {grantResults ? (
             <section>

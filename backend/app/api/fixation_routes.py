@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ValidationError as PydanticValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -13,6 +13,7 @@ from app.models.fixation_run import FixationRun
 from app.schemas.fixation_contracts import (
     FixationInputReview,
     FixationResult,
+    PlannerReviewContextEnvelope,
     ValidationError,
     map_contract_validation_errors,
 )
@@ -33,8 +34,11 @@ router = APIRouter(prefix="/api", tags=["fixation"])
 
 
 class FixationSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_id: int
     input_data: dict[str, Any]
+    planner_review_context: PlannerReviewContextEnvelope | None = None
 
 
 class FixationSaveResponse(BaseModel):
@@ -135,7 +139,12 @@ def calculate_fixation_endpoint(payload: dict[str, Any]) -> FixationResult:
 @router.post("/fixation/save", response_model=FixationSaveResponse)
 def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -> FixationSaveResponse:
     _require_client(db, payload.client_id)
-    run_id = run_fixation(client_id=payload.client_id, input_data=payload.input_data, db_session=db)
+    run_id = run_fixation(
+        client_id=payload.client_id,
+        input_data=payload.input_data,
+        db_session=db,
+        planner_review_context=payload.planner_review_context,
+    )
     run = db.get(FixationRun, run_id)
     if run is None:
         raise HTTPException(
@@ -186,6 +195,11 @@ def fixation_run_detail(run_id: int, db: Session = Depends(get_db)) -> dict[str,
         },
         "input_snapshot": (
             detail.fixation_input_snapshot.input_payload
+            if detail.fixation_input_snapshot is not None
+            else None
+        ),
+        "planner_review_context": (
+            detail.fixation_input_snapshot.planner_review_context
             if detail.fixation_input_snapshot is not None
             else None
         ),

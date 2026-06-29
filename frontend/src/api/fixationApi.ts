@@ -116,9 +116,21 @@ export interface FixationResultResponse {
   [key: string]: unknown;
 }
 
+export interface PlannerReviewContextDomainPayload {
+  collection_state: FixationReviewCollectionState;
+  included_source_reference_ids: string[];
+  excluded_source_reference_ids: string[];
+}
+
+export interface PlannerReviewContextPayload {
+  grants: PlannerReviewContextDomainPayload;
+  actual_capitalizations: PlannerReviewContextDomainPayload;
+}
+
 export interface SaveFixationPayload {
   client_id: number;
   input_data: Record<string, unknown>;
+  planner_review_context?: PlannerReviewContextPayload;
 }
 
 export interface SaveFixationResponse {
@@ -136,6 +148,7 @@ export interface FixationHistoryEntry {
 export interface FixationRunDetailResponse {
   run: Record<string, unknown>;
   input_snapshot: Record<string, unknown> | null;
+  planner_review_context?: PlannerReviewContextPayload | null;
   result: Record<string, unknown> | null;
   audit_rows: Array<Record<string, unknown>>;
   validation_errors: Array<Record<string, unknown>>;

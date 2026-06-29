@@ -348,6 +348,26 @@ class ActualCapitalizationReviewDomain(BaseModel):
         return self
 
 
+class PlannerReviewContextDomain(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    collection_state: ReviewCollectionState
+    included_source_reference_ids: list[str]
+    excluded_source_reference_ids: list[str]
+
+    @field_validator("included_source_reference_ids", "excluded_source_reference_ids")
+    @classmethod
+    def validate_source_reference_ids(cls, value: list[str]) -> list[str]:
+        return [_require_valid_source_item_id(source_id) for source_id in value]
+
+
+class PlannerReviewContextEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    grants: PlannerReviewContextDomain
+    actual_capitalizations: PlannerReviewContextDomain
+
+
 class FixationInputReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

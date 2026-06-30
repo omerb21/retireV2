@@ -19,6 +19,11 @@ class MissingDataItem(Base):
     missing_item_label: Mapped[str] = mapped_column(String(255), nullable=False)
     missing_status: Mapped[str] = mapped_column(String(100), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    planning_domain: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    related_record_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    related_record_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    advisory_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    neutral_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

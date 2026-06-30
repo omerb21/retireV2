@@ -42,6 +42,24 @@ class Client(Base):
     missing_data_items: Mapped[list["MissingDataItem"]] = relationship(
         "MissingDataItem", back_populates="client"
     )
+    pension_holdings: Mapped[list["PensionHolding"]] = relationship(
+        "PensionHolding", back_populates="client"
+    )
+    capital_assets: Mapped[list["CapitalAsset"]] = relationship(
+        "CapitalAsset", back_populates="client"
+    )
+    recurring_incomes: Mapped[list["RecurringIncome"]] = relationship(
+        "RecurringIncome", back_populates="client"
+    )
+    recurring_expenses: Mapped[list["RecurringExpense"]] = relationship(
+        "RecurringExpense", back_populates="client"
+    )
+    retirement_timing_work_intentions: Mapped[list["RetirementTimingWorkIntention"]] = (
+        relationship("RetirementTimingWorkIntention", back_populates="client")
+    )
+    planner_assumptions: Mapped[list["PlannerAssumption"]] = relationship(
+        "PlannerAssumption", back_populates="client"
+    )
     fixation_runs: Mapped[list["FixationRun"]] = relationship(
         "FixationRun", back_populates="client"
     )

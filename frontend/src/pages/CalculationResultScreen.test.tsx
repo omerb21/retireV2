@@ -235,6 +235,15 @@ describe("CalculationResultScreen", () => {
     expect(await screen.findByRole("heading", { name: "רשומת חישוב שמורה" })).toBeInTheDocument();
     expect(await screen.findByText("מזהה רשומה: 11")).toBeInTheDocument();
     expect(await screen.findByText("נוצרה בתאריך: 2026-05-26T00:00:00")).toBeInTheDocument();
+    expect(await screen.findByText("החישוב השמור הושלם לאחר בדיקת תקינות הקלט.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Saved Input Basis" })).toBeInTheDocument();
+    expect(screen.getByText("This read-only section uses only the input snapshot saved with this calculation run.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Calculation Parameters" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Saved Grant Inputs" })).toBeInTheDocument();
+    expect(screen.getByText("No saved grant inputs.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Saved Actual Capitalization Inputs" })).toBeInTheDocument();
+    expect(screen.getByText("No saved actual capitalization inputs.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Saved IDF Input" })).toBeInTheDocument();
     expect(await screen.findByText("לא נשמר הקשר בדיקה עבור רשומת חישוב זו.")).toBeInTheDocument();
     expect(await screen.findByText(/Trusted Result Status: Current source data matches the calculation input snapshot\./)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Current Workflow Review Context" })).not.toBeInTheDocument();
@@ -321,7 +330,8 @@ describe("CalculationResultScreen", () => {
     expect(
       within(judgmentSection as HTMLElement).queryByText("לא נשמר שיפוט פנימי עבור רשומת חישוב זו.")
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Converted Input Used For Calculation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Saved Input Basis" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Converted Input Used For Calculation" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Calculation Outcome" })).toBeInTheDocument();
     expect(screen.queryByText("לא נשמר הקשר בדיקה עבור רשומת חישוב זו.")).not.toBeInTheDocument();
   });
@@ -435,6 +445,7 @@ describe("CalculationResultScreen", () => {
     expect(
       await screen.findByText(/No successful calculation result is available\. Latest saved calculation did not succeed\./)
     ).toBeInTheDocument();
+    expect(screen.queryByText("החישוב השמור הושלם לאחר בדיקת תקינות הקלט.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
   });
 
@@ -512,6 +523,7 @@ describe("CalculationResultScreen", () => {
     expect(screen.getByText((content, node) => node?.textContent === "Total Impact: 222")).toBeInTheDocument();
     expect(screen.getByText((content, node) => node?.textContent === "Monthly Exempt Pension: 777")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Converted Input Used For Calculation" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Saved Input Basis" })).not.toBeInTheDocument();
     expect(screen.getByText("Grant Inputs: 1")).toBeInTheDocument();
     expect(screen.getByText("Actual Capitalization Inputs: 1")).toBeInTheDocument();
     const contextSection = screen.getByRole("heading", { name: "Current Workflow Review Context" }).closest("section");

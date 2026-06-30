@@ -212,6 +212,102 @@ function renderConvertedInputSummary(inputData: FixationInputPayload | null) {
   );
 }
 
+function formatSavedInputValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "not provided";
+  }
+
+  return stringifyValue(value);
+}
+
+function renderSavedInputBasis(inputData: FixationInputPayload | null) {
+  if (inputData === null) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h3>Saved Input Basis</h3>
+      <p>This read-only section uses only the input snapshot saved with this calculation run.</p>
+
+      <section>
+        <h4>Calculation Parameters</h4>
+        <ul>
+          <li>Calculation ID: {formatSavedInputValue(inputData.calculation_id)}</li>
+          <li>Calculation Version: {inputData.calculation_version}</li>
+          <li>Eligibility Date: {inputData.eligibility_date}</li>
+          <li>Eligibility Year: {inputData.eligibility_year}</li>
+          <li>Monthly Cap: {inputData.monthly_cap}</li>
+          <li>Exemption Percentage: {inputData.exemption_percentage}</li>
+          <li>Capital Multiplier: {inputData.capital_multiplier}</li>
+          <li>Future Grant Reserved: {inputData.future_grant_reserved}</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4>Saved Grant Inputs</h4>
+        {inputData.grants.length === 0 ? (
+          <p>No saved grant inputs.</p>
+        ) : (
+          <ul>
+            {inputData.grants.map((grant) => (
+              <li key={grant.grant_id}>
+                <strong>{grant.grant_id}</strong>
+                <ul>
+                  <li>Employer Name: {formatSavedInputValue(grant.employer_name)}</li>
+                  <li>Nominal Amount: {formatSavedInputValue(grant.nominal_amount)}</li>
+                  <li>Indexed Amount: {grant.indexed_amount}</li>
+                  <li>Grant Date: {grant.grant_date}</li>
+                  <li>Work Start Date: {grant.work_start_date}</li>
+                  <li>Work End Date: {grant.work_end_date}</li>
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h4>Saved Actual Capitalization Inputs</h4>
+        {inputData.actual_capitalizations.length === 0 ? (
+          <p>No saved actual capitalization inputs.</p>
+        ) : (
+          <ul>
+            {inputData.actual_capitalizations.map((capitalization) => (
+              <li key={capitalization.capitalization_id}>
+                <strong>{capitalization.capitalization_id}</strong>
+                <ul>
+                  <li>Amount: {capitalization.amount}</li>
+                  <li>Capitalization Date: {capitalization.capitalization_date}</li>
+                  <li>Source Label: {formatSavedInputValue(capitalization.source_label)}</li>
+                  <li>Notes: {formatSavedInputValue(capitalization.notes)}</li>
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h4>Saved IDF Input</h4>
+        {inputData.idf === null ? (
+          <p>No saved IDF input.</p>
+        ) : (
+          <ul>
+            <li>IDF ID: {inputData.idf.idf_id}</li>
+            <li>Reduction Amount: {inputData.idf.reduction_amount}</li>
+            <li>Original Commutation Percent: {inputData.idf.original_commutation_percent}</li>
+            <li>Current Commutation Percent: {inputData.idf.current_commutation_percent}</li>
+            <li>Commutation Date: {inputData.idf.commutation_date}</li>
+            <li>Promoter Age Date: {inputData.idf.promoter_age_date}</li>
+            <li>Source Label: {formatSavedInputValue(inputData.idf.source_label)}</li>
+          </ul>
+        )}
+      </section>
+    </section>
+  );
+}
+
 function renderSourceReferences(title: string, references: ActiveSessionSourceReference[]) {
   if (references.length === 0) {
     return null;
@@ -394,6 +490,8 @@ export function CalculationResultScreen() {
   const [resultSource, setResultSource] = useState<"current" | "latest" | null>(hasCurrentCalculation ? "current" : null);
   const [resolvedInputData, setResolvedInputData] = useState<FixationInputPayload | null>(routeState?.inputData ?? null);
   const [resolvedResult, setResolvedResult] = useState<FixationResultResponse | null>(routeState?.result ?? null);
+  const [savedInputSnapshot, setSavedInputSnapshot] = useState<FixationInputPayload | null>(null);
+  const [savedValidationErrors, setSavedValidationErrors] = useState<Array<Record<string, unknown>>>([]);
   const [savedPlannerReviewContext, setSavedPlannerReviewContext] = useState<PlannerReviewContextPayload | null>(null);
   const [savedInternalPlannerJudgment, setSavedInternalPlannerJudgment] =
     useState<InternalPlannerJudgmentPayload | null>(null);
@@ -486,6 +584,8 @@ export function CalculationResultScreen() {
         if (latestSuccessfulRun === undefined) {
           setResolvedResult(null);
           setResolvedInputData(null);
+          setSavedInputSnapshot(null);
+          setSavedValidationErrors([]);
           setSavedPlannerReviewContext(null);
           setSavedInternalPlannerJudgment(null);
           setSavedCalculationRecordIdentifiers(null);
@@ -507,6 +607,8 @@ export function CalculationResultScreen() {
         if (detail.result === null || detail.input_snapshot === null) {
           setResolvedResult(null);
           setResolvedInputData(null);
+          setSavedInputSnapshot(null);
+          setSavedValidationErrors([]);
           setSavedPlannerReviewContext(null);
           setSavedInternalPlannerJudgment(null);
           setSavedCalculationRecordIdentifiers(null);
@@ -517,6 +619,12 @@ export function CalculationResultScreen() {
 
         setResolvedResult(detail.result as FixationResultResponse);
         setResolvedInputData(detail.input_snapshot as unknown as FixationInputPayload);
+        setSavedInputSnapshot(detail.input_snapshot as unknown as FixationInputPayload);
+        setSavedValidationErrors(
+          Array.isArray(detail.validation_errors)
+            ? (detail.validation_errors as Array<Record<string, unknown>>)
+            : [],
+        );
         setSavedPlannerReviewContext(detail.planner_review_context ?? null);
         setSavedInternalPlannerJudgment(detail.internal_planner_judgment ?? null);
         setSavedCalculationRecordIdentifiers({
@@ -532,6 +640,8 @@ export function CalculationResultScreen() {
 
         setResolvedResult(null);
         setResolvedInputData(null);
+        setSavedInputSnapshot(null);
+        setSavedValidationErrors([]);
         setSavedPlannerReviewContext(null);
         setSavedInternalPlannerJudgment(null);
         setSavedCalculationRecordIdentifiers(null);
@@ -624,6 +734,8 @@ export function CalculationResultScreen() {
     resolvedResult !== null && typeof resolvedResult.idf_result === "object" && resolvedResult.idf_result !== null
       ? (resolvedResult.idf_result as Record<string, unknown>)
       : null;
+  const savedRunValidationPassed =
+    resultSource === "latest" && resolvedResult?.status === "success" && savedValidationErrors.length === 0;
   const internalPlannerJudgmentRunId = savedCalculationRecordIdentifiers?.runId ?? savedRunId;
   const canCreateInternalPlannerJudgment =
     internalPlannerJudgmentRunId !== null &&
@@ -747,12 +859,13 @@ export function CalculationResultScreen() {
             Result Source: {resultSource === "current" ? "Current backend calculation response" : "תוצאת החישוב השמורה"}
           </p>
           {renderSavedCalculationRecordIdentifiers(savedCalculationRecordIdentifiers)}
+          {savedRunValidationPassed ? <p>החישוב השמור הושלם לאחר בדיקת תקינות הקלט.</p> : null}
           {trustedResultStatus ? <p>Trusted Result Status: {trustedResultStatus}</p> : null}
           {sourceDataChanged ? <p>Current grants or actual capitalizations differ from the calculation input snapshot. Rerun is required.</p> : null}
           {sourceErrorMessage ? <p>{sourceErrorMessage}</p> : null}
           {renderFields("Backend Calculation Summary", summaryFields)}
           {renderFields("Backend Impact Values", impactFields)}
-          {renderConvertedInputSummary(resolvedInputData)}
+          {resultSource === "latest" ? renderSavedInputBasis(savedInputSnapshot) : renderConvertedInputSummary(resolvedInputData)}
           {resultSource === "latest" ? renderSavedPlannerReviewContext(savedPlannerReviewContext) : null}
           {renderActiveSessionReviewContext(activeSessionReviewContext)}
           {internalPlannerJudgmentRunId !== null ? (

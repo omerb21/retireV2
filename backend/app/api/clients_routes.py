@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,9 +18,33 @@ from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
 from app.models.missing_data_item import MissingDataItem
+from app.models.retirement_fact_contracts import (
+    ADVISORY_STATUSES,
+    AMOUNT_BASES,
+    CAPITAL_ASSET_CATEGORIES,
+    CONTINUATION_STATUSES,
+    EXPENSE_CATEGORIES,
+    EXPENSE_TYPES,
+    FREQUENCIES,
+    INCOME_CATEGORIES,
+    PENSION_PRODUCT_TYPES,
+    PLANNING_DOMAINS,
+    SOURCE_STATUSES,
+    TIMING_CONFIDENCES,
+    VERIFICATION_STATES,
+    WORK_AFTER_RETIREMENT_INTENTIONS,
+)
+from app.models.retirement_facts import (
+    CapitalAsset,
+    PensionHolding,
+    RecurringExpense,
+    RecurringIncome,
+    RetirementTimingWorkIntention,
+)
 from app.models.retirement_planning_document import RetirementPlanningDocument
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
+LifecycleFilter = Literal["current", "superseded", "all"]
 
 
 class ApiError(BaseModel):
@@ -222,10 +247,27 @@ class VerificationUpdateRequest(BaseModel):
 
 
 class MissingDataItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     missing_item_type: str
     missing_item_label: str
     missing_status: str
     notes: str | None = None
+    planning_domain: str | None = None
+    related_record_type: str | None = None
+    related_record_id: int | None = None
+    advisory_status: str | None = None
+    neutral_reason: str | None = None
+
+    @field_validator("planning_domain")
+    @classmethod
+    def validate_planning_domain(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, PLANNING_DOMAINS, "planning_domain")
+
+    @field_validator("advisory_status")
+    @classmethod
+    def validate_advisory_status(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, ADVISORY_STATUSES, "advisory_status")
 
 
 class MissingDataItemResponse(BaseModel):
@@ -235,7 +277,556 @@ class MissingDataItemResponse(BaseModel):
     missing_item_label: str
     missing_status: str
     notes: str | None
+    planning_domain: str | None
+    related_record_type: str | None
+    related_record_id: int | None
+    advisory_status: str | None
+    neutral_reason: str | None
     created_at: datetime
+
+
+def _validate_allowed_value(value: str | None, allowed_values: tuple[str, ...], field_name: str) -> str | None:
+    if value is not None and value not in allowed_values:
+        raise ValueError(f"{field_name} must be one of: {', '.join(allowed_values)}")
+    return value
+
+
+def _validate_source_status(value: str | None) -> str | None:
+    return _validate_allowed_value(value, SOURCE_STATUSES, "source_status")
+
+
+def _validate_verification_state(value: str | None) -> str | None:
+    return _validate_allowed_value(value, VERIFICATION_STATES, "verification_state")
+
+
+class PensionHoldingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_name: str
+    product_type: str
+    product_name: str | None = None
+    account_reference: str | None = None
+    known_balance_amount: Decimal | None = None
+    balance_as_of_date: date | None = None
+    known_monthly_pension_amount: Decimal | None = None
+    pension_amount_as_of_date: date | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("product_type")
+    @classmethod
+    def validate_product_type(cls, value: str) -> str:
+        return _validate_allowed_value(value, PENSION_PRODUCT_TYPES, "product_type") or value
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+    @model_validator(mode="after")
+    def validate_required_dates(self) -> "PensionHoldingCreateRequest":
+        if self.known_balance_amount is not None and self.balance_as_of_date is None:
+            raise ValueError("balance_as_of_date is required when known_balance_amount is supplied")
+        if self.known_monthly_pension_amount is not None and self.pension_amount_as_of_date is None:
+            raise ValueError(
+                "pension_amount_as_of_date is required when known_monthly_pension_amount is supplied"
+            )
+        return self
+
+
+class PensionHoldingUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_name: str | None = None
+    product_type: str | None = None
+    product_name: str | None = None
+    account_reference: str | None = None
+    known_balance_amount: Decimal | None = None
+    balance_as_of_date: date | None = None
+    known_monthly_pension_amount: Decimal | None = None
+    pension_amount_as_of_date: date | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("product_type")
+    @classmethod
+    def validate_product_type(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, PENSION_PRODUCT_TYPES, "product_type")
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class PensionHoldingResponse(BaseModel):
+    id: int
+    client_id: int
+    provider_name: str
+    product_type: str
+    lifecycle_status: str
+    source_status: str
+    verification_state: str
+    product_name: str | None
+    account_reference: str | None
+    known_balance_amount: Decimal | None
+    balance_as_of_date: date | None
+    known_monthly_pension_amount: Decimal | None
+    pension_amount_as_of_date: date | None
+    source_type: str | None
+    source_date: date | None
+    source_note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CapitalAssetCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_category: str
+    asset_description: str
+    known_value_amount: Decimal | None = None
+    value_as_of_date: date | None = None
+    liquidity_note: str | None = None
+    restriction_note: str | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("asset_category")
+    @classmethod
+    def validate_asset_category(cls, value: str) -> str:
+        return _validate_allowed_value(value, CAPITAL_ASSET_CATEGORIES, "asset_category") or value
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+    @model_validator(mode="after")
+    def validate_value_date(self) -> "CapitalAssetCreateRequest":
+        if self.known_value_amount is not None and self.value_as_of_date is None:
+            raise ValueError("value_as_of_date is required when known_value_amount is supplied")
+        return self
+
+
+class CapitalAssetUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_category: str | None = None
+    asset_description: str | None = None
+    known_value_amount: Decimal | None = None
+    value_as_of_date: date | None = None
+    liquidity_note: str | None = None
+    restriction_note: str | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("asset_category")
+    @classmethod
+    def validate_asset_category(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, CAPITAL_ASSET_CATEGORIES, "asset_category")
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class CapitalAssetResponse(BaseModel):
+    id: int
+    client_id: int
+    asset_category: str
+    asset_description: str
+    lifecycle_status: str
+    source_status: str
+    verification_state: str
+    known_value_amount: Decimal | None
+    value_as_of_date: date | None
+    liquidity_note: str | None
+    restriction_note: str | None
+    source_type: str | None
+    source_date: date | None
+    source_note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecurringIncomeCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    income_category: str
+    description: str
+    amount: Decimal
+    amount_basis: str
+    frequency: str
+    continuation_status: str
+    start_date: date | None = None
+    end_date: date | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("income_category")
+    @classmethod
+    def validate_income_category(cls, value: str) -> str:
+        return _validate_allowed_value(value, INCOME_CATEGORIES, "income_category") or value
+
+    @field_validator("amount_basis")
+    @classmethod
+    def validate_amount_basis(cls, value: str) -> str:
+        return _validate_allowed_value(value, AMOUNT_BASES, "amount_basis") or value
+
+    @field_validator("frequency")
+    @classmethod
+    def validate_frequency(cls, value: str) -> str:
+        return _validate_allowed_value(value, FREQUENCIES, "frequency") or value
+
+    @field_validator("continuation_status")
+    @classmethod
+    def validate_continuation_status(cls, value: str) -> str:
+        return _validate_allowed_value(value, CONTINUATION_STATUSES, "continuation_status") or value
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class RecurringIncomeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    income_category: str | None = None
+    description: str | None = None
+    amount: Decimal | None = None
+    amount_basis: str | None = None
+    frequency: str | None = None
+    continuation_status: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("income_category")
+    @classmethod
+    def validate_income_category(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, INCOME_CATEGORIES, "income_category")
+
+    @field_validator("amount_basis")
+    @classmethod
+    def validate_amount_basis(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, AMOUNT_BASES, "amount_basis")
+
+    @field_validator("frequency")
+    @classmethod
+    def validate_frequency(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, FREQUENCIES, "frequency")
+
+    @field_validator("continuation_status")
+    @classmethod
+    def validate_continuation_status(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, CONTINUATION_STATUSES, "continuation_status")
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class RecurringIncomeResponse(BaseModel):
+    id: int
+    client_id: int
+    income_category: str
+    description: str
+    amount: Decimal
+    amount_basis: str
+    frequency: str
+    continuation_status: str
+    lifecycle_status: str
+    source_status: str
+    verification_state: str
+    start_date: date | None
+    end_date: date | None
+    source_type: str | None
+    source_date: date | None
+    source_note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecurringExpenseCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expense_category: str
+    description: str
+    amount: Decimal
+    frequency: str
+    expense_type: str
+    continuation_status: str
+    start_date: date | None = None
+    end_date: date | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("expense_category")
+    @classmethod
+    def validate_expense_category(cls, value: str) -> str:
+        return _validate_allowed_value(value, EXPENSE_CATEGORIES, "expense_category") or value
+
+    @field_validator("frequency")
+    @classmethod
+    def validate_frequency(cls, value: str) -> str:
+        return _validate_allowed_value(value, FREQUENCIES, "frequency") or value
+
+    @field_validator("expense_type")
+    @classmethod
+    def validate_expense_type(cls, value: str) -> str:
+        return _validate_allowed_value(value, EXPENSE_TYPES, "expense_type") or value
+
+    @field_validator("continuation_status")
+    @classmethod
+    def validate_continuation_status(cls, value: str) -> str:
+        return _validate_allowed_value(value, CONTINUATION_STATUSES, "continuation_status") or value
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class RecurringExpenseUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expense_category: str | None = None
+    description: str | None = None
+    amount: Decimal | None = None
+    frequency: str | None = None
+    expense_type: str | None = None
+    continuation_status: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("expense_category")
+    @classmethod
+    def validate_expense_category(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, EXPENSE_CATEGORIES, "expense_category")
+
+    @field_validator("frequency")
+    @classmethod
+    def validate_frequency(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, FREQUENCIES, "frequency")
+
+    @field_validator("expense_type")
+    @classmethod
+    def validate_expense_type(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, EXPENSE_TYPES, "expense_type")
+
+    @field_validator("continuation_status")
+    @classmethod
+    def validate_continuation_status(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, CONTINUATION_STATUSES, "continuation_status")
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class RecurringExpenseResponse(BaseModel):
+    id: int
+    client_id: int
+    expense_category: str
+    description: str
+    amount: Decimal
+    frequency: str
+    expense_type: str
+    continuation_status: str
+    lifecycle_status: str
+    source_status: str
+    verification_state: str
+    start_date: date | None
+    end_date: date | None
+    source_type: str | None
+    source_date: date | None
+    source_note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetirementTimingWorkIntentionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timing_confidence: str
+    work_after_retirement_intention: str
+    planned_work_end_date: date | None = None
+    intended_pension_start_date: date | None = None
+    other_known_retirement_date: date | None = None
+    other_known_retirement_date_label: str | None = None
+    anticipated_work_end_date: date | None = None
+    work_intention_note: str | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("timing_confidence")
+    @classmethod
+    def validate_timing_confidence(cls, value: str) -> str:
+        return _validate_allowed_value(value, TIMING_CONFIDENCES, "timing_confidence") or value
+
+    @field_validator("work_after_retirement_intention")
+    @classmethod
+    def validate_work_after_retirement_intention(cls, value: str) -> str:
+        return (
+            _validate_allowed_value(
+                value, WORK_AFTER_RETIREMENT_INTENTIONS, "work_after_retirement_intention"
+            )
+            or value
+        )
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+    @model_validator(mode="after")
+    def validate_other_known_retirement_date_label(self) -> "RetirementTimingWorkIntentionCreateRequest":
+        if self.other_known_retirement_date is not None and self.other_known_retirement_date_label is None:
+            raise ValueError(
+                "other_known_retirement_date_label is required when other_known_retirement_date is supplied"
+            )
+        return self
+
+
+class RetirementTimingWorkIntentionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timing_confidence: str | None = None
+    work_after_retirement_intention: str | None = None
+    planned_work_end_date: date | None = None
+    intended_pension_start_date: date | None = None
+    other_known_retirement_date: date | None = None
+    other_known_retirement_date_label: str | None = None
+    anticipated_work_end_date: date | None = None
+    work_intention_note: str | None = None
+    source_type: str | None = None
+    source_date: date | None = None
+    source_note: str | None = None
+    source_status: str | None = None
+    verification_state: str | None = None
+
+    @field_validator("timing_confidence")
+    @classmethod
+    def validate_timing_confidence(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, TIMING_CONFIDENCES, "timing_confidence")
+
+    @field_validator("work_after_retirement_intention")
+    @classmethod
+    def validate_work_after_retirement_intention(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(
+            value, WORK_AFTER_RETIREMENT_INTENTIONS, "work_after_retirement_intention"
+        )
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str | None) -> str | None:
+        return _validate_source_status(value)
+
+    @field_validator("verification_state")
+    @classmethod
+    def validate_verification_state(cls, value: str | None) -> str | None:
+        return _validate_verification_state(value)
+
+
+class RetirementTimingWorkIntentionResponse(BaseModel):
+    id: int
+    client_id: int
+    timing_confidence: str
+    work_after_retirement_intention: str
+    lifecycle_status: str
+    source_status: str
+    verification_state: str
+    planned_work_end_date: date | None
+    intended_pension_start_date: date | None
+    other_known_retirement_date: date | None
+    other_known_retirement_date_label: str | None
+    anticipated_work_end_date: date | None
+    work_intention_note: str | None
+    source_type: str | None
+    source_date: date | None
+    source_note: str | None
+    created_at: datetime
+    updated_at: datetime
 
 
 def _client_not_found(client_id: int) -> HTTPException:
@@ -405,8 +996,169 @@ def _missing_data_item_to_response(row: MissingDataItem) -> MissingDataItemRespo
         missing_item_label=row.missing_item_label,
         missing_status=row.missing_status,
         notes=row.notes,
+        planning_domain=row.planning_domain,
+        related_record_type=row.related_record_type,
+        related_record_id=row.related_record_id,
+        advisory_status=row.advisory_status,
+        neutral_reason=row.neutral_reason,
         created_at=row.created_at,
     )
+
+
+def _pension_holding_to_response(row: PensionHolding) -> PensionHoldingResponse:
+    return PensionHoldingResponse(
+        id=row.id,
+        client_id=row.client_id,
+        provider_name=row.provider_name,
+        product_type=row.product_type,
+        lifecycle_status=row.lifecycle_status,
+        source_status=row.source_status,
+        verification_state=row.verification_state,
+        product_name=row.product_name,
+        account_reference=row.account_reference,
+        known_balance_amount=row.known_balance_amount,
+        balance_as_of_date=row.balance_as_of_date,
+        known_monthly_pension_amount=row.known_monthly_pension_amount,
+        pension_amount_as_of_date=row.pension_amount_as_of_date,
+        source_type=row.source_type,
+        source_date=row.source_date,
+        source_note=row.source_note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _capital_asset_to_response(row: CapitalAsset) -> CapitalAssetResponse:
+    return CapitalAssetResponse(
+        id=row.id,
+        client_id=row.client_id,
+        asset_category=row.asset_category,
+        asset_description=row.asset_description,
+        lifecycle_status=row.lifecycle_status,
+        source_status=row.source_status,
+        verification_state=row.verification_state,
+        known_value_amount=row.known_value_amount,
+        value_as_of_date=row.value_as_of_date,
+        liquidity_note=row.liquidity_note,
+        restriction_note=row.restriction_note,
+        source_type=row.source_type,
+        source_date=row.source_date,
+        source_note=row.source_note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _recurring_income_to_response(row: RecurringIncome) -> RecurringIncomeResponse:
+    return RecurringIncomeResponse(
+        id=row.id,
+        client_id=row.client_id,
+        income_category=row.income_category,
+        description=row.description,
+        amount=row.amount,
+        amount_basis=row.amount_basis,
+        frequency=row.frequency,
+        continuation_status=row.continuation_status,
+        lifecycle_status=row.lifecycle_status,
+        source_status=row.source_status,
+        verification_state=row.verification_state,
+        start_date=row.start_date,
+        end_date=row.end_date,
+        source_type=row.source_type,
+        source_date=row.source_date,
+        source_note=row.source_note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _recurring_expense_to_response(row: RecurringExpense) -> RecurringExpenseResponse:
+    return RecurringExpenseResponse(
+        id=row.id,
+        client_id=row.client_id,
+        expense_category=row.expense_category,
+        description=row.description,
+        amount=row.amount,
+        frequency=row.frequency,
+        expense_type=row.expense_type,
+        continuation_status=row.continuation_status,
+        lifecycle_status=row.lifecycle_status,
+        source_status=row.source_status,
+        verification_state=row.verification_state,
+        start_date=row.start_date,
+        end_date=row.end_date,
+        source_type=row.source_type,
+        source_date=row.source_date,
+        source_note=row.source_note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _retirement_timing_work_intention_to_response(
+    row: RetirementTimingWorkIntention,
+) -> RetirementTimingWorkIntentionResponse:
+    return RetirementTimingWorkIntentionResponse(
+        id=row.id,
+        client_id=row.client_id,
+        timing_confidence=row.timing_confidence,
+        work_after_retirement_intention=row.work_after_retirement_intention,
+        lifecycle_status=row.lifecycle_status,
+        source_status=row.source_status,
+        verification_state=row.verification_state,
+        planned_work_end_date=row.planned_work_end_date,
+        intended_pension_start_date=row.intended_pension_start_date,
+        other_known_retirement_date=row.other_known_retirement_date,
+        other_known_retirement_date_label=row.other_known_retirement_date_label,
+        anticipated_work_end_date=row.anticipated_work_end_date,
+        work_intention_note=row.work_intention_note,
+        source_type=row.source_type,
+        source_date=row.source_date,
+        source_note=row.source_note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _apply_fact_update(row: Any, payload: BaseModel) -> None:
+    for field_name in payload.model_fields_set:
+        setattr(row, field_name, getattr(payload, field_name))
+
+
+def _validation_error(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"code": "PACKAGE_B_VALIDATION_ERROR", "message": message},
+    )
+
+
+def _validate_pension_holding_dates(row: PensionHolding) -> None:
+    if row.known_balance_amount is not None and row.balance_as_of_date is None:
+        raise _validation_error("balance_as_of_date is required when known_balance_amount is supplied")
+    if row.known_monthly_pension_amount is not None and row.pension_amount_as_of_date is None:
+        raise _validation_error(
+            "pension_amount_as_of_date is required when known_monthly_pension_amount is supplied"
+        )
+
+
+def _validate_capital_asset_value_date(row: CapitalAsset) -> None:
+    if row.known_value_amount is not None and row.value_as_of_date is None:
+        raise _validation_error("value_as_of_date is required when known_value_amount is supplied")
+
+
+def _validate_retirement_timing_work_intention_other_date(
+    row: RetirementTimingWorkIntention,
+) -> None:
+    if row.other_known_retirement_date is not None and row.other_known_retirement_date_label is None:
+        raise _validation_error(
+            "other_known_retirement_date_label is required when other_known_retirement_date is supplied"
+        )
+
+
+def _apply_lifecycle_filter(statement: Any, model: Any, lifecycle_status: LifecycleFilter) -> Any:
+    if lifecycle_status == "all":
+        return statement
+    return statement.where(model.lifecycle_status == lifecycle_status)
 
 
 def _require_employment_record(db: Session, client_id: int, employment_record_id: str) -> EmploymentRecord:
@@ -445,6 +1197,86 @@ def _require_actual_capitalization(db: Session, client_id: int, capitalization_i
         raise _source_item_not_found(
             "ACTUAL_CAPITALIZATION_NOT_FOUND",
             f"Actual capitalization {capitalization_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_pension_holding(db: Session, client_id: int, pension_holding_id: int) -> PensionHolding:
+    row = db.scalar(
+        select(PensionHolding).where(
+            PensionHolding.client_id == client_id,
+            PensionHolding.id == pension_holding_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "PENSION_HOLDING_NOT_FOUND",
+            f"Pension holding {pension_holding_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_capital_asset(db: Session, client_id: int, capital_asset_id: int) -> CapitalAsset:
+    row = db.scalar(
+        select(CapitalAsset).where(
+            CapitalAsset.client_id == client_id,
+            CapitalAsset.id == capital_asset_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "CAPITAL_ASSET_NOT_FOUND",
+            f"Capital asset {capital_asset_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_recurring_income(db: Session, client_id: int, recurring_income_id: int) -> RecurringIncome:
+    row = db.scalar(
+        select(RecurringIncome).where(
+            RecurringIncome.client_id == client_id,
+            RecurringIncome.id == recurring_income_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "RECURRING_INCOME_NOT_FOUND",
+            f"Recurring income {recurring_income_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_recurring_expense(db: Session, client_id: int, recurring_expense_id: int) -> RecurringExpense:
+    row = db.scalar(
+        select(RecurringExpense).where(
+            RecurringExpense.client_id == client_id,
+            RecurringExpense.id == recurring_expense_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "RECURRING_EXPENSE_NOT_FOUND",
+            f"Recurring expense {recurring_expense_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_retirement_timing_work_intention(
+    db: Session,
+    client_id: int,
+    retirement_timing_work_intention_id: int,
+) -> RetirementTimingWorkIntention:
+    row = db.scalar(
+        select(RetirementTimingWorkIntention).where(
+            RetirementTimingWorkIntention.client_id == client_id,
+            RetirementTimingWorkIntention.id == retirement_timing_work_intention_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "RETIREMENT_TIMING_WORK_INTENTION_NOT_FOUND",
+            "Retirement timing work intention "
+            f"{retirement_timing_work_intention_id} was not found for client {client_id}",
         )
     return row
 
@@ -720,6 +1552,301 @@ def update_retirement_planning_document_verification(
     return _document_to_response(document)
 
 
+@router.post("/{client_id}/pension-holdings", response_model=PensionHoldingResponse)
+def create_pension_holding(
+    client_id: int,
+    payload: PensionHoldingCreateRequest,
+    db: Session = Depends(get_db),
+) -> PensionHoldingResponse:
+    _require_client(db, client_id)
+    row = PensionHolding(client_id=client_id, **payload.model_dump(exclude_none=True))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _pension_holding_to_response(row)
+
+
+@router.get("/{client_id}/pension-holdings", response_model=list[PensionHoldingResponse])
+def list_pension_holdings(
+    client_id: int,
+    lifecycle_status: LifecycleFilter = "current",
+    db: Session = Depends(get_db),
+) -> list[PensionHoldingResponse]:
+    _require_client(db, client_id)
+    statement = select(PensionHolding).where(PensionHolding.client_id == client_id)
+    statement = _apply_lifecycle_filter(statement, PensionHolding, lifecycle_status)
+    rows = db.scalars(statement.order_by(PensionHolding.created_at.desc(), PensionHolding.id.desc())).all()
+    return [_pension_holding_to_response(row) for row in rows]
+
+
+@router.get("/{client_id}/pension-holdings/{pension_holding_id}", response_model=PensionHoldingResponse)
+def get_pension_holding(
+    client_id: int,
+    pension_holding_id: int,
+    db: Session = Depends(get_db),
+) -> PensionHoldingResponse:
+    _require_client(db, client_id)
+    row = _require_pension_holding(db, client_id, pension_holding_id)
+    return _pension_holding_to_response(row)
+
+
+@router.put("/{client_id}/pension-holdings/{pension_holding_id}", response_model=PensionHoldingResponse)
+def update_pension_holding(
+    client_id: int,
+    pension_holding_id: int,
+    payload: PensionHoldingUpdateRequest,
+    db: Session = Depends(get_db),
+) -> PensionHoldingResponse:
+    _require_client(db, client_id)
+    row = _require_pension_holding(db, client_id, pension_holding_id)
+    _apply_fact_update(row, payload)
+    _validate_pension_holding_dates(row)
+    db.commit()
+    db.refresh(row)
+    return _pension_holding_to_response(row)
+
+
+@router.post("/{client_id}/capital-assets", response_model=CapitalAssetResponse)
+def create_capital_asset(
+    client_id: int,
+    payload: CapitalAssetCreateRequest,
+    db: Session = Depends(get_db),
+) -> CapitalAssetResponse:
+    _require_client(db, client_id)
+    row = CapitalAsset(client_id=client_id, **payload.model_dump(exclude_none=True))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _capital_asset_to_response(row)
+
+
+@router.get("/{client_id}/capital-assets", response_model=list[CapitalAssetResponse])
+def list_capital_assets(
+    client_id: int,
+    lifecycle_status: LifecycleFilter = "current",
+    db: Session = Depends(get_db),
+) -> list[CapitalAssetResponse]:
+    _require_client(db, client_id)
+    statement = select(CapitalAsset).where(CapitalAsset.client_id == client_id)
+    statement = _apply_lifecycle_filter(statement, CapitalAsset, lifecycle_status)
+    rows = db.scalars(statement.order_by(CapitalAsset.created_at.desc(), CapitalAsset.id.desc())).all()
+    return [_capital_asset_to_response(row) for row in rows]
+
+
+@router.get("/{client_id}/capital-assets/{capital_asset_id}", response_model=CapitalAssetResponse)
+def get_capital_asset(
+    client_id: int,
+    capital_asset_id: int,
+    db: Session = Depends(get_db),
+) -> CapitalAssetResponse:
+    _require_client(db, client_id)
+    row = _require_capital_asset(db, client_id, capital_asset_id)
+    return _capital_asset_to_response(row)
+
+
+@router.put("/{client_id}/capital-assets/{capital_asset_id}", response_model=CapitalAssetResponse)
+def update_capital_asset(
+    client_id: int,
+    capital_asset_id: int,
+    payload: CapitalAssetUpdateRequest,
+    db: Session = Depends(get_db),
+) -> CapitalAssetResponse:
+    _require_client(db, client_id)
+    row = _require_capital_asset(db, client_id, capital_asset_id)
+    _apply_fact_update(row, payload)
+    _validate_capital_asset_value_date(row)
+    db.commit()
+    db.refresh(row)
+    return _capital_asset_to_response(row)
+
+
+@router.post("/{client_id}/recurring-incomes", response_model=RecurringIncomeResponse)
+def create_recurring_income(
+    client_id: int,
+    payload: RecurringIncomeCreateRequest,
+    db: Session = Depends(get_db),
+) -> RecurringIncomeResponse:
+    _require_client(db, client_id)
+    row = RecurringIncome(client_id=client_id, **payload.model_dump(exclude_none=True))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _recurring_income_to_response(row)
+
+
+@router.get("/{client_id}/recurring-incomes", response_model=list[RecurringIncomeResponse])
+def list_recurring_incomes(
+    client_id: int,
+    lifecycle_status: LifecycleFilter = "current",
+    db: Session = Depends(get_db),
+) -> list[RecurringIncomeResponse]:
+    _require_client(db, client_id)
+    statement = select(RecurringIncome).where(RecurringIncome.client_id == client_id)
+    statement = _apply_lifecycle_filter(statement, RecurringIncome, lifecycle_status)
+    rows = db.scalars(statement.order_by(RecurringIncome.created_at.desc(), RecurringIncome.id.desc())).all()
+    return [_recurring_income_to_response(row) for row in rows]
+
+
+@router.get("/{client_id}/recurring-incomes/{recurring_income_id}", response_model=RecurringIncomeResponse)
+def get_recurring_income(
+    client_id: int,
+    recurring_income_id: int,
+    db: Session = Depends(get_db),
+) -> RecurringIncomeResponse:
+    _require_client(db, client_id)
+    row = _require_recurring_income(db, client_id, recurring_income_id)
+    return _recurring_income_to_response(row)
+
+
+@router.put("/{client_id}/recurring-incomes/{recurring_income_id}", response_model=RecurringIncomeResponse)
+def update_recurring_income(
+    client_id: int,
+    recurring_income_id: int,
+    payload: RecurringIncomeUpdateRequest,
+    db: Session = Depends(get_db),
+) -> RecurringIncomeResponse:
+    _require_client(db, client_id)
+    row = _require_recurring_income(db, client_id, recurring_income_id)
+    _apply_fact_update(row, payload)
+    db.commit()
+    db.refresh(row)
+    return _recurring_income_to_response(row)
+
+
+@router.post("/{client_id}/recurring-expenses", response_model=RecurringExpenseResponse)
+def create_recurring_expense(
+    client_id: int,
+    payload: RecurringExpenseCreateRequest,
+    db: Session = Depends(get_db),
+) -> RecurringExpenseResponse:
+    _require_client(db, client_id)
+    row = RecurringExpense(client_id=client_id, **payload.model_dump(exclude_none=True))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _recurring_expense_to_response(row)
+
+
+@router.get("/{client_id}/recurring-expenses", response_model=list[RecurringExpenseResponse])
+def list_recurring_expenses(
+    client_id: int,
+    lifecycle_status: LifecycleFilter = "current",
+    db: Session = Depends(get_db),
+) -> list[RecurringExpenseResponse]:
+    _require_client(db, client_id)
+    statement = select(RecurringExpense).where(RecurringExpense.client_id == client_id)
+    statement = _apply_lifecycle_filter(statement, RecurringExpense, lifecycle_status)
+    rows = db.scalars(statement.order_by(RecurringExpense.created_at.desc(), RecurringExpense.id.desc())).all()
+    return [_recurring_expense_to_response(row) for row in rows]
+
+
+@router.get("/{client_id}/recurring-expenses/{recurring_expense_id}", response_model=RecurringExpenseResponse)
+def get_recurring_expense(
+    client_id: int,
+    recurring_expense_id: int,
+    db: Session = Depends(get_db),
+) -> RecurringExpenseResponse:
+    _require_client(db, client_id)
+    row = _require_recurring_expense(db, client_id, recurring_expense_id)
+    return _recurring_expense_to_response(row)
+
+
+@router.put("/{client_id}/recurring-expenses/{recurring_expense_id}", response_model=RecurringExpenseResponse)
+def update_recurring_expense(
+    client_id: int,
+    recurring_expense_id: int,
+    payload: RecurringExpenseUpdateRequest,
+    db: Session = Depends(get_db),
+) -> RecurringExpenseResponse:
+    _require_client(db, client_id)
+    row = _require_recurring_expense(db, client_id, recurring_expense_id)
+    _apply_fact_update(row, payload)
+    db.commit()
+    db.refresh(row)
+    return _recurring_expense_to_response(row)
+
+
+@router.post(
+    "/{client_id}/retirement-timing-work-intentions",
+    response_model=RetirementTimingWorkIntentionResponse,
+)
+def create_retirement_timing_work_intention(
+    client_id: int,
+    payload: RetirementTimingWorkIntentionCreateRequest,
+    db: Session = Depends(get_db),
+) -> RetirementTimingWorkIntentionResponse:
+    _require_client(db, client_id)
+    row = RetirementTimingWorkIntention(client_id=client_id, **payload.model_dump(exclude_none=True))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _retirement_timing_work_intention_to_response(row)
+
+
+@router.get(
+    "/{client_id}/retirement-timing-work-intentions",
+    response_model=list[RetirementTimingWorkIntentionResponse],
+)
+def list_retirement_timing_work_intentions(
+    client_id: int,
+    lifecycle_status: LifecycleFilter = "current",
+    db: Session = Depends(get_db),
+) -> list[RetirementTimingWorkIntentionResponse]:
+    _require_client(db, client_id)
+    statement = select(RetirementTimingWorkIntention).where(
+        RetirementTimingWorkIntention.client_id == client_id
+    )
+    statement = _apply_lifecycle_filter(statement, RetirementTimingWorkIntention, lifecycle_status)
+    rows = db.scalars(
+        statement.order_by(
+            RetirementTimingWorkIntention.created_at.desc(),
+            RetirementTimingWorkIntention.id.desc(),
+        )
+    ).all()
+    return [_retirement_timing_work_intention_to_response(row) for row in rows]
+
+
+@router.get(
+    "/{client_id}/retirement-timing-work-intentions/{retirement_timing_work_intention_id}",
+    response_model=RetirementTimingWorkIntentionResponse,
+)
+def get_retirement_timing_work_intention(
+    client_id: int,
+    retirement_timing_work_intention_id: int,
+    db: Session = Depends(get_db),
+) -> RetirementTimingWorkIntentionResponse:
+    _require_client(db, client_id)
+    row = _require_retirement_timing_work_intention(
+        db,
+        client_id,
+        retirement_timing_work_intention_id,
+    )
+    return _retirement_timing_work_intention_to_response(row)
+
+
+@router.put(
+    "/{client_id}/retirement-timing-work-intentions/{retirement_timing_work_intention_id}",
+    response_model=RetirementTimingWorkIntentionResponse,
+)
+def update_retirement_timing_work_intention(
+    client_id: int,
+    retirement_timing_work_intention_id: int,
+    payload: RetirementTimingWorkIntentionUpdateRequest,
+    db: Session = Depends(get_db),
+) -> RetirementTimingWorkIntentionResponse:
+    _require_client(db, client_id)
+    row = _require_retirement_timing_work_intention(
+        db,
+        client_id,
+        retirement_timing_work_intention_id,
+    )
+    _apply_fact_update(row, payload)
+    _validate_retirement_timing_work_intention_other_date(row)
+    db.commit()
+    db.refresh(row)
+    return _retirement_timing_work_intention_to_response(row)
+
+
 @router.post("/{client_id}/missing-items", response_model=MissingDataItemResponse)
 def create_missing_data_item(
     client_id: int,
@@ -736,6 +1863,39 @@ def create_missing_data_item(
                 "message": "Missing Item Type must be data or document",
             },
         )
+    v21_fields = {
+        "planning_domain",
+        "related_record_type",
+        "related_record_id",
+        "advisory_status",
+        "neutral_reason",
+    }
+    is_v21_creation = bool(payload.model_fields_set & v21_fields)
+    if is_v21_creation:
+        if payload.planning_domain is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "PLANNING_DOMAIN_REQUIRED",
+                    "message": "planning_domain is required for V2.1 missing information",
+                },
+            )
+        if payload.advisory_status is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "ADVISORY_STATUS_REQUIRED",
+                    "message": "advisory_status is required for V2.1 missing information",
+                },
+            )
+        if payload.advisory_status != "open":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "ADVISORY_STATUS_INVALID",
+                    "message": 'advisory_status must equal "open" for V2.1 missing information',
+                },
+            )
 
     missing_item = MissingDataItem(
         missing_data_item_id=f"MD-{uuid4().hex}",
@@ -744,6 +1904,11 @@ def create_missing_data_item(
         missing_item_label=_required_file_metadata_text(payload.missing_item_label, "Missing Item Label"),
         missing_status=_required_file_metadata_text(payload.missing_status, "Missing Status"),
         notes=payload.notes,
+        planning_domain=payload.planning_domain,
+        related_record_type=payload.related_record_type,
+        related_record_id=payload.related_record_id,
+        advisory_status=payload.advisory_status,
+        neutral_reason=payload.neutral_reason,
     )
     db.add(missing_item)
     db.commit()

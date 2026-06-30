@@ -127,6 +127,22 @@ export interface PlannerReviewContextPayload {
   actual_capitalizations: PlannerReviewContextDomainPayload;
 }
 
+export type InternalPlannerHandlingStatus =
+  | "not_used_for_decision"
+  | "continue_internal_review"
+  | "internal_action_identified";
+
+export interface InternalPlannerJudgmentCreatePayload {
+  handling_status: InternalPlannerHandlingStatus;
+  next_internal_action: string;
+  internal_note?: string | null;
+}
+
+export interface InternalPlannerJudgmentPayload extends InternalPlannerJudgmentCreatePayload {
+  saved_run_id: number;
+  internal_note: string | null;
+}
+
 export interface SaveFixationPayload {
   client_id: number;
   input_data: Record<string, unknown>;
@@ -149,6 +165,7 @@ export interface FixationRunDetailResponse {
   run: Record<string, unknown>;
   input_snapshot: Record<string, unknown> | null;
   planner_review_context?: PlannerReviewContextPayload | null;
+  internal_planner_judgment?: InternalPlannerJudgmentPayload | null;
   result: Record<string, unknown> | null;
   audit_rows: Array<Record<string, unknown>>;
   validation_errors: Array<Record<string, unknown>>;
@@ -230,5 +247,15 @@ export function getFixationHistory(clientId: number): Promise<FixationHistoryEnt
 export function getFixationRunDetail(runId: number): Promise<FixationRunDetailResponse> {
   return requestJson<FixationRunDetailResponse>(`/fixation/runs/${runId}`, {
     method: "GET",
+  });
+}
+
+export function createInternalPlannerJudgment(
+  runId: number,
+  payload: InternalPlannerJudgmentCreatePayload,
+): Promise<InternalPlannerJudgmentPayload> {
+  return requestJson<InternalPlannerJudgmentPayload>(`/fixation/runs/${runId}/internal-planner-judgment`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }

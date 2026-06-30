@@ -45,3 +45,6 @@ class FixationRun(Base):
     fixation_validation_errors: Mapped[list["FixationValidationError"]] = relationship(
         "FixationValidationError", back_populates="fixation_run"
     )
+    internal_planner_judgment: Mapped["InternalPlannerJudgment | None"] = relationship(
+        "InternalPlannerJudgment", back_populates="fixation_run", uselist=False
+    )

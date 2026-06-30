@@ -368,6 +368,40 @@ class PlannerReviewContextEnvelope(BaseModel):
     actual_capitalizations: PlannerReviewContextDomain
 
 
+InternalPlannerHandlingStatus = Literal[
+    "not_used_for_decision",
+    "continue_internal_review",
+    "internal_action_identified",
+]
+
+
+class InternalPlannerJudgmentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    handling_status: InternalPlannerHandlingStatus
+    next_internal_action: str
+    internal_note: str | None = None
+
+    @field_validator("next_internal_action")
+    @classmethod
+    def validate_next_internal_action(cls, value: str) -> str:
+        return _require_non_empty(value, "next_internal_action")
+
+    @field_validator("internal_note")
+    @classmethod
+    def validate_internal_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _require_non_empty(value, "internal_note")
+
+
+class InternalPlannerJudgmentResponse(BaseModel):
+    saved_run_id: int
+    handling_status: InternalPlannerHandlingStatus
+    next_internal_action: str
+    internal_note: str | None = None
+
+
 class FixationInputReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

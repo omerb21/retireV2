@@ -169,6 +169,15 @@ function buildSavedPlannerReviewContext() {
   };
 }
 
+function buildInternalPlannerJudgment() {
+  return {
+    saved_run_id: 14,
+    handling_status: "continue_internal_review",
+    next_internal_action: "Review source records internally",
+    internal_note: "Internal note only"
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -202,6 +211,7 @@ describe("CalculationResultScreen", () => {
             },
             input_snapshot: buildInputSnapshot({ grants: [], actual_capitalizations: [] }),
             result: buildResult(),
+            internal_planner_judgment: null,
             audit_rows: [],
             validation_errors: []
           })
@@ -219,6 +229,8 @@ describe("CalculationResultScreen", () => {
     expect(await screen.findByRole("heading", { name: "Calculation Result" })).toBeInTheDocument();
     expect(await screen.findByText("Client ID: 7")).toBeInTheDocument();
     expect(await screen.findByText("Client Name: Dana Levi")).toBeInTheDocument();
+    expect(await screen.findByText("לא נשמר שיפוט פנימי עבור רשומת חישוב זו.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "שיפוט פנימי של המתכנן" })).toBeInTheDocument();
     expect(await screen.findByText(/Result Source: תוצאת החישוב השמורה/)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "רשומת חישוב שמורה" })).toBeInTheDocument();
     expect(await screen.findByText("מזהה רשומה: 11")).toBeInTheDocument();
@@ -271,6 +283,7 @@ describe("CalculationResultScreen", () => {
             },
             input_snapshot: buildInputSnapshot({ grants: [], actual_capitalizations: [] }),
             planner_review_context: buildSavedPlannerReviewContext(),
+            internal_planner_judgment: buildInternalPlannerJudgment(),
             result: buildResult(),
             audit_rows: [],
             validation_errors: []
@@ -298,6 +311,16 @@ describe("CalculationResultScreen", () => {
     expect(within(contextSection as HTMLElement).getByText("actual_capitalizations: AC-1")).toBeInTheDocument();
     expect(within(contextSection as HTMLElement).getByText("grants: GR-2")).toBeInTheDocument();
     expect(within(contextSection as HTMLElement).getByText("actual_capitalizations: AC-2")).toBeInTheDocument();
+    const judgmentSection = screen.getByRole("heading", { name: "שיפוט פנימי של המתכנן" }).closest("section");
+    expect(judgmentSection).not.toBeNull();
+    expect(within(judgmentSection as HTMLElement).getByText("מצב טיפול פנימי: continue_internal_review")).toBeInTheDocument();
+    expect(
+      within(judgmentSection as HTMLElement).getByText("פעולה פנימית הבאה: Review source records internally")
+    ).toBeInTheDocument();
+    expect(within(judgmentSection as HTMLElement).getByText("הערה פנימית: Internal note only")).toBeInTheDocument();
+    expect(
+      within(judgmentSection as HTMLElement).queryByText("לא נשמר שיפוט פנימי עבור רשומת חישוב זו.")
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Converted Input Used For Calculation" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Calculation Outcome" })).toBeInTheDocument();
     expect(screen.queryByText("לא נשמר הקשר בדיקה עבור רשומת חישוב זו.")).not.toBeInTheDocument();
@@ -561,6 +584,81 @@ describe("CalculationResultScreen", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ client_id: 7, input_data: inputData })
+      })
+    );
+  });
+
+  it("creates one internal planner judgment only after a saved run is available", async () => {
+    const inputData = buildInputSnapshot();
+    const result = buildResult();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockJsonResponse(inputData.grants))
+      .mockResolvedValueOnce(mockJsonResponse(inputData.actual_capitalizations))
+      .mockResolvedValueOnce(mockJsonResponse({ run_id: 43, status: "success" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          saved_run_id: 43,
+          handling_status: "internal_action_identified",
+          next_internal_action: "Review withholding internally",
+          internal_note: "Internal follow-up note"
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/clients/7/fixation/result",
+            state: {
+              clientId: 7,
+              clientName: "Dana Levi",
+              inputData,
+              result,
+              fixationInputPath: "/clients/7/fixation/input",
+              fixationInputState: { clientId: 7, clientName: "Dana Levi" }
+            }
+          }
+        ]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<CalculationResultScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText("לא נשמר שיפוט פנימי עבור רשומת חישוב זו.")).not.toBeInTheDocument();
+
+    const saveButton = await screen.findByRole("button", { name: "Save Result" });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText("Result saved successfully. Run ID: 43")).toBeInTheDocument();
+    expect(await screen.findByText("לא נשמר שיפוט פנימי עבור רשומת חישוב זו.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("מצב טיפול פנימי"), {
+      target: { value: "internal_action_identified" }
+    });
+    fireEvent.change(screen.getByLabelText("פעולה פנימית הבאה"), {
+      target: { value: "Review withholding internally" }
+    });
+    fireEvent.change(screen.getByLabelText("הערה פנימית"), {
+      target: { value: "Internal follow-up note" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "שיפוט פנימי של המתכנן" }));
+
+    expect(await screen.findByText("מצב טיפול פנימי: internal_action_identified")).toBeInTheDocument();
+    expect(await screen.findByText("פעולה פנימית הבאה: Review withholding internally")).toBeInTheDocument();
+    expect(await screen.findByText("הערה פנימית: Internal follow-up note")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/fixation/runs/43/internal-planner-judgment",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          handling_status: "internal_action_identified",
+          next_internal_action: "Review withholding internally",
+          internal_note: "Internal follow-up note"
+        })
       })
     );
   });

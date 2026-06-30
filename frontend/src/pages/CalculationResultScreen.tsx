@@ -15,7 +15,10 @@ import {
   type FixationInputPayload,
   type FixationResultResponse,
   type FixationReviewCollectionState,
+  type InternalPlannerHandlingStatus,
+  type InternalPlannerJudgmentPayload,
   type PlannerReviewContextPayload,
+  createInternalPlannerJudgment,
   getFixationHistory,
   getFixationRunDetail,
   saveFixation,
@@ -352,6 +355,20 @@ function renderSavedCalculationRecordIdentifiers(identifiers: SavedCalculationRe
   );
 }
 
+function renderInternalPlannerJudgment(judgment: InternalPlannerJudgmentPayload | null) {
+  if (judgment === null) {
+    return <p>לא נשמר שיפוט פנימי עבור רשומת חישוב זו.</p>;
+  }
+
+  return (
+    <ul>
+      <li>מצב טיפול פנימי: {judgment.handling_status}</li>
+      <li>פעולה פנימית הבאה: {judgment.next_internal_action}</li>
+      {judgment.internal_note ? <li>הערה פנימית: {judgment.internal_note}</li> : null}
+    </ul>
+  );
+}
+
 export function CalculationResultScreen() {
   const { clientId: clientIdParam } = useParams<{ clientId: string }>();
   const location = useLocation();
@@ -378,11 +395,19 @@ export function CalculationResultScreen() {
   const [resolvedInputData, setResolvedInputData] = useState<FixationInputPayload | null>(routeState?.inputData ?? null);
   const [resolvedResult, setResolvedResult] = useState<FixationResultResponse | null>(routeState?.result ?? null);
   const [savedPlannerReviewContext, setSavedPlannerReviewContext] = useState<PlannerReviewContextPayload | null>(null);
+  const [savedInternalPlannerJudgment, setSavedInternalPlannerJudgment] =
+    useState<InternalPlannerJudgmentPayload | null>(null);
   const [savedCalculationRecordIdentifiers, setSavedCalculationRecordIdentifiers] =
     useState<SavedCalculationRecordIdentifiers | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [savedRunId, setSavedRunId] = useState<number | null>(null);
+  const [judgmentHandlingStatus, setJudgmentHandlingStatus] =
+    useState<InternalPlannerHandlingStatus>("not_used_for_decision");
+  const [judgmentNextInternalAction, setJudgmentNextInternalAction] = useState("");
+  const [judgmentInternalNote, setJudgmentInternalNote] = useState("");
+  const [isCreatingJudgment, setIsCreatingJudgment] = useState(false);
+  const [judgmentErrorMessage, setJudgmentErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -462,6 +487,7 @@ export function CalculationResultScreen() {
           setResolvedResult(null);
           setResolvedInputData(null);
           setSavedPlannerReviewContext(null);
+          setSavedInternalPlannerJudgment(null);
           setSavedCalculationRecordIdentifiers(null);
           setResultSource(null);
           setResultMessage(
@@ -482,6 +508,7 @@ export function CalculationResultScreen() {
           setResolvedResult(null);
           setResolvedInputData(null);
           setSavedPlannerReviewContext(null);
+          setSavedInternalPlannerJudgment(null);
           setSavedCalculationRecordIdentifiers(null);
           setResultSource(null);
           setResultMessage("Latest successful calculation result could not be loaded.");
@@ -491,6 +518,7 @@ export function CalculationResultScreen() {
         setResolvedResult(detail.result as FixationResultResponse);
         setResolvedInputData(detail.input_snapshot as unknown as FixationInputPayload);
         setSavedPlannerReviewContext(detail.planner_review_context ?? null);
+        setSavedInternalPlannerJudgment(detail.internal_planner_judgment ?? null);
         setSavedCalculationRecordIdentifiers({
           runId: Number(detail.run.run_id),
           createdAt: typeof detail.run.created_at === "string" ? detail.run.created_at : null,
@@ -505,6 +533,7 @@ export function CalculationResultScreen() {
         setResolvedResult(null);
         setResolvedInputData(null);
         setSavedPlannerReviewContext(null);
+        setSavedInternalPlannerJudgment(null);
         setSavedCalculationRecordIdentifiers(null);
         setResultSource(null);
         setResultErrorMessage(getErrorMessage(error));
@@ -595,6 +624,12 @@ export function CalculationResultScreen() {
     resolvedResult !== null && typeof resolvedResult.idf_result === "object" && resolvedResult.idf_result !== null
       ? (resolvedResult.idf_result as Record<string, unknown>)
       : null;
+  const internalPlannerJudgmentRunId = savedCalculationRecordIdentifiers?.runId ?? savedRunId;
+  const canCreateInternalPlannerJudgment =
+    internalPlannerJudgmentRunId !== null &&
+    savedInternalPlannerJudgment === null &&
+    judgmentNextInternalAction.trim().length > 0 &&
+    !isCreatingJudgment;
 
   async function handleSaveResult() {
     if (clientId === null || resolvedInputData === null || !canSaveCurrentResult) {
@@ -604,6 +639,8 @@ export function CalculationResultScreen() {
     setIsSaving(true);
     setSaveErrorMessage(null);
     setSavedRunId(null);
+    setSavedInternalPlannerJudgment(null);
+    setJudgmentErrorMessage(null);
 
     try {
       const plannerReviewContext = buildSavedPlannerReviewContext(activeSessionReviewContext);
@@ -617,6 +654,30 @@ export function CalculationResultScreen() {
       setSaveErrorMessage(getErrorMessage(error));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleCreateInternalPlannerJudgment() {
+    if (internalPlannerJudgmentRunId === null || !canCreateInternalPlannerJudgment) {
+      return;
+    }
+
+    setIsCreatingJudgment(true);
+    setJudgmentErrorMessage(null);
+
+    try {
+      const createdJudgment = await createInternalPlannerJudgment(internalPlannerJudgmentRunId, {
+        handling_status: judgmentHandlingStatus,
+        next_internal_action: judgmentNextInternalAction.trim(),
+        internal_note: judgmentInternalNote.trim() === "" ? null : judgmentInternalNote.trim(),
+      });
+      setSavedInternalPlannerJudgment(createdJudgment);
+      setJudgmentNextInternalAction("");
+      setJudgmentInternalNote("");
+    } catch (error) {
+      setJudgmentErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsCreatingJudgment(false);
     }
   }
 
@@ -694,6 +755,54 @@ export function CalculationResultScreen() {
           {renderConvertedInputSummary(resolvedInputData)}
           {resultSource === "latest" ? renderSavedPlannerReviewContext(savedPlannerReviewContext) : null}
           {renderActiveSessionReviewContext(activeSessionReviewContext)}
+          {internalPlannerJudgmentRunId !== null ? (
+            <section>
+              <h3>שיפוט פנימי של המתכנן</h3>
+              {renderInternalPlannerJudgment(savedInternalPlannerJudgment)}
+              {savedInternalPlannerJudgment === null ? (
+                <>
+                  <p>
+                    <label htmlFor="internal-planner-handling-status">מצב טיפול פנימי</label>
+                    <select
+                      id="internal-planner-handling-status"
+                      value={judgmentHandlingStatus}
+                      onChange={(event) =>
+                        setJudgmentHandlingStatus(event.target.value as InternalPlannerHandlingStatus)
+                      }
+                    >
+                      <option value="not_used_for_decision">not_used_for_decision</option>
+                      <option value="continue_internal_review">continue_internal_review</option>
+                      <option value="internal_action_identified">internal_action_identified</option>
+                    </select>
+                  </p>
+                  <p>
+                    <label htmlFor="internal-planner-next-action">פעולה פנימית הבאה</label>
+                    <input
+                      id="internal-planner-next-action"
+                      value={judgmentNextInternalAction}
+                      onChange={(event) => setJudgmentNextInternalAction(event.target.value)}
+                    />
+                  </p>
+                  <p>
+                    <label htmlFor="internal-planner-note">הערה פנימית</label>
+                    <textarea
+                      id="internal-planner-note"
+                      value={judgmentInternalNote}
+                      onChange={(event) => setJudgmentInternalNote(event.target.value)}
+                    />
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!canCreateInternalPlannerJudgment}
+                    onClick={() => void handleCreateInternalPlannerJudgment()}
+                  >
+                    שיפוט פנימי של המתכנן
+                  </button>
+                  {judgmentErrorMessage ? <p>{judgmentErrorMessage}</p> : null}
+                </>
+              ) : null}
+            </section>
+          ) : null}
           {grantResults ? (
             <section>
               <h3>Grant Results</h3>

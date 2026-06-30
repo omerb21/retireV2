@@ -17,6 +17,7 @@ from app.models.fixation_input_snapshot import FixationInputSnapshot
 from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
+from app.models.internal_planner_judgment import InternalPlannerJudgment
 from app.schemas.fixation_contracts import FixationInput, FixationResult
 
 
@@ -158,6 +159,14 @@ def _planner_review_context() -> dict:
     }
 
 
+def _internal_planner_judgment_payload() -> dict:
+    return {
+        "handling_status": "continue_internal_review",
+        "next_internal_action": "Review supporting source records internally",
+        "internal_note": "Internal planner note",
+    }
+
+
 def _invalid_fixation_input(calc_id: str) -> dict:
     payload = _fixation_input(calc_id=calc_id, eligibility_year=2026)
     payload["eligibility_date"] = "2025-01-01"
@@ -172,6 +181,9 @@ def _counts(session_local: sessionmaker) -> dict[str, int]:
             "results": int(db.scalar(select(func.count()).select_from(FixationResultModel)) or 0),
             "audit_rows": int(db.scalar(select(func.count()).select_from(FixationAuditRow)) or 0),
             "validation_errors": int(db.scalar(select(func.count()).select_from(FixationValidationError)) or 0),
+            "internal_planner_judgments": int(
+                db.scalar(select(func.count()).select_from(InternalPlannerJudgment)) or 0
+            ),
     }
 
 
@@ -258,6 +270,7 @@ def test_phase10_review_validate_endpoint_validates_without_calculation_or_persi
             "results": 0,
             "audit_rows": 0,
             "validation_errors": 0,
+            "internal_planner_judgments": 0,
         }
     finally:
         app.dependency_overrides.clear()
@@ -319,6 +332,7 @@ def test_phase10_review_convert_endpoint_transient_conversion_without_calculatio
             "results": 0,
             "audit_rows": 0,
             "validation_errors": 0,
+            "internal_planner_judgments": 0,
         }
     finally:
         app.dependency_overrides.clear()
@@ -353,6 +367,7 @@ def test_phase10_review_convert_endpoint_rejects_blocking_states(
             "results": 0,
             "audit_rows": 0,
             "validation_errors": 0,
+            "internal_planner_judgments": 0,
         }
     finally:
         app.dependency_overrides.clear()
@@ -375,6 +390,7 @@ def test_phase10_review_convert_endpoint_rejects_invalid_payload_with_stable_err
             "results": 0,
             "audit_rows": 0,
             "validation_errors": 0,
+            "internal_planner_judgments": 0,
         }
     finally:
         app.dependency_overrides.clear()
@@ -496,6 +512,7 @@ def test_phase10_validate_calculate_consistency_without_persistence(tmp_path: Pa
             "results": 0,
             "audit_rows": 0,
             "validation_errors": 0,
+            "internal_planner_judgments": 0,
         }
     finally:
         app.dependency_overrides.clear()
@@ -611,6 +628,128 @@ def test_phase10_save_without_planner_review_context_remains_valid(tmp_path: Pat
         assert detail_resp.json()["planner_review_context"] is None
         assert detail_resp.json()["input_snapshot"] is not None
         assert detail_resp.json()["result"] is not None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
+    tmp_path: Path,
+) -> None:
+    client, session_local = _build_client(tmp_path, db_name="phase10_internal_judgment.db")
+    try:
+        client_id = _create_client(client, id_number="3201")
+        input_payload = _fixation_input(calc_id="calc-internal-judgment")
+        review_context = _planner_review_context()
+
+        save_resp = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": client_id,
+                "input_data": input_payload,
+                "planner_review_context": review_context,
+            },
+        )
+        assert save_resp.status_code == 200
+        run_id = save_resp.json()["run_id"]
+
+        before_detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        assert before_detail_resp.status_code == 200
+        before_detail = before_detail_resp.json()
+        assert before_detail["internal_planner_judgment"] is None
+        before_snapshot = copy.deepcopy(before_detail["input_snapshot"])
+        before_result = copy.deepcopy(before_detail["result"])
+        before_review_context = copy.deepcopy(before_detail["planner_review_context"])
+
+        create_resp = client.post(
+            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            json=_internal_planner_judgment_payload(),
+        )
+        assert create_resp.status_code == 200
+        assert create_resp.json() == {
+            "saved_run_id": run_id,
+            **_internal_planner_judgment_payload(),
+        }
+
+        detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        assert detail["internal_planner_judgment"] == create_resp.json()
+        assert detail["input_snapshot"] == before_snapshot
+        assert detail["result"] == before_result
+        assert detail["planner_review_context"] == before_review_context
+
+        duplicate_resp = client.post(
+            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            json={
+                "handling_status": "internal_action_identified",
+                "next_internal_action": "Different internal action",
+                "internal_note": "Replacement attempt",
+            },
+        )
+        assert duplicate_resp.status_code == 409
+        assert duplicate_resp.json()["detail"]["code"] == "INTERNAL_PLANNER_JUDGMENT_ALREADY_EXISTS"
+
+        with session_local() as db:
+            judgments = list(db.scalars(select(InternalPlannerJudgment)).all())
+            assert len(judgments) == 1
+            assert judgments[0].fixation_run_id == run_id
+            assert judgments[0].handling_status == "continue_internal_review"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_and_extra_fields(
+    tmp_path: Path,
+) -> None:
+    client, session_local = _build_client(tmp_path, db_name="phase10_internal_judgment_errors.db")
+    try:
+        missing_resp = client.post(
+            "/api/fixation/runs/999999/internal-planner-judgment",
+            json=_internal_planner_judgment_payload(),
+        )
+        assert missing_resp.status_code == 404
+        assert missing_resp.json()["detail"]["code"] == "FIXATION_RUN_NOT_FOUND"
+
+        client_id = _create_client(client, id_number="3202")
+        save_resp = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": client_id,
+                "input_data": _fixation_input(calc_id="calc-internal-jgment-errors"),
+            },
+        )
+        assert save_resp.status_code == 200
+        run_id = save_resp.json()["run_id"]
+
+        invalid_status_resp = client.post(
+            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            json={
+                **_internal_planner_judgment_payload(),
+                "handling_status": "ready_for_client_decision",
+            },
+        )
+        assert invalid_status_resp.status_code == 422
+
+        extra_field_resp = client.post(
+            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            json={
+                **_internal_planner_judgment_payload(),
+                "saved_run_id": run_id,
+            },
+        )
+        assert extra_field_resp.status_code == 422
+
+        blank_action_resp = client.post(
+            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            json={
+                "handling_status": "not_used_for_decision",
+                "next_internal_action": " ",
+            },
+        )
+        assert blank_action_resp.status_code == 422
+
+        counts = _counts(session_local)
+        assert counts["internal_planner_judgments"] == 0
     finally:
         app.dependency_overrides.clear()
 
@@ -764,6 +903,7 @@ def test_phase10_transaction_safety_rollback_on_save_failure(
             "results": 0,
             "audit_rows": 0,
             "validation_errors": 0,
+            "internal_planner_judgments": 0,
         }
     finally:
         app.dependency_overrides.clear()

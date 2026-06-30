@@ -23,7 +23,22 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.grant import Grant
-from app.schemas.fixation_contracts import FixationInput, FixationResult, PlannerReviewContextEnvelope, ValidationError
+from app.models.internal_planner_judgment import InternalPlannerJudgment
+from app.schemas.fixation_contracts import (
+    FixationInput,
+    FixationResult,
+    InternalPlannerJudgmentCreateRequest,
+    PlannerReviewContextEnvelope,
+    ValidationError,
+)
+
+
+class InternalPlannerJudgmentRunNotFoundError(ValueError):
+    pass
+
+
+class InternalPlannerJudgmentAlreadyExistsError(ValueError):
+    pass
 
 
 def _new_id(prefix: str) -> str:
@@ -360,6 +375,43 @@ def get_fixation_run_detail(run_id: int | str, db_session: Session) -> FixationR
             selectinload(FixationRun.fixation_result),
             selectinload(FixationRun.fixation_audit_rows),
             selectinload(FixationRun.fixation_validation_errors),
+            selectinload(FixationRun.internal_planner_judgment),
         )
     )
     return db_session.scalars(stmt).first()
+
+
+def create_internal_planner_judgment(
+    run_id: int | str,
+    judgment_data: InternalPlannerJudgmentCreateRequest,
+    db_session: Session,
+) -> InternalPlannerJudgment:
+    run_key = int(run_id)
+    if db_session.get(FixationRun, run_key) is None:
+        raise InternalPlannerJudgmentRunNotFoundError(f"Fixation run {run_key} was not found")
+
+    existing_judgment = db_session.scalar(
+        select(InternalPlannerJudgment).where(InternalPlannerJudgment.fixation_run_id == run_key)
+    )
+    if existing_judgment is not None:
+        raise InternalPlannerJudgmentAlreadyExistsError(
+            f"Fixation run {run_key} already has an internal planner judgment"
+        )
+
+    judgment = InternalPlannerJudgment(
+        internal_planner_judgment_id=_new_id("judgment"),
+        fixation_run_id=run_key,
+        handling_status=judgment_data.handling_status,
+        next_internal_action=judgment_data.next_internal_action,
+        internal_note=judgment_data.internal_note,
+    )
+
+    try:
+        db_session.add(judgment)
+        db_session.commit()
+        db_session.refresh(judgment)
+    except Exception:
+        db_session.rollback()
+        raise
+
+    return judgment

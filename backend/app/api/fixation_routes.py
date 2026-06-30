@@ -13,6 +13,8 @@ from app.models.fixation_run import FixationRun
 from app.schemas.fixation_contracts import (
     FixationInputReview,
     FixationResult,
+    InternalPlannerJudgmentCreateRequest,
+    InternalPlannerJudgmentResponse,
     PlannerReviewContextEnvelope,
     ValidationError,
     map_contract_validation_errors,
@@ -23,7 +25,10 @@ from app.schemas.fixation_review import (
     convert_review_to_fixation_input,
 )
 from app.services.fixation_service import (
+    InternalPlannerJudgmentAlreadyExistsError,
+    InternalPlannerJudgmentRunNotFoundError,
     calculate_fixation_payload,
+    create_internal_planner_judgment,
     get_fixation_history,
     get_fixation_run_detail,
     get_latest_fixation_result,
@@ -72,6 +77,28 @@ def _run_not_found(run_id: int) -> HTTPException:
 def _require_client(db: Session, client_id: int) -> None:
     if db.get(Client, client_id) is None:
         raise _client_not_found(client_id)
+
+
+def _internal_planner_judgment_already_exists(run_id: int) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "INTERNAL_PLANNER_JUDGMENT_ALREADY_EXISTS",
+            "message": f"Fixation run {run_id} already has an internal planner judgment",
+        },
+    )
+
+
+def _serialize_internal_planner_judgment(judgment: Any) -> dict[str, Any] | None:
+    if judgment is None:
+        return None
+
+    return {
+        "saved_run_id": int(judgment.fixation_run_id),
+        "handling_status": judgment.handling_status,
+        "next_internal_action": judgment.next_internal_action,
+        "internal_note": judgment.internal_note,
+    }
 
 
 @router.post("/fixation/review/validate", response_model=FixationReviewValidationResponse)
@@ -155,6 +182,29 @@ def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -
     return FixationSaveResponse(run_id=run_id, status=run.status)
 
 
+@router.post(
+    "/fixation/runs/{run_id}/internal-planner-judgment",
+    response_model=InternalPlannerJudgmentResponse,
+)
+def create_fixation_run_internal_planner_judgment(
+    run_id: int,
+    payload: InternalPlannerJudgmentCreateRequest,
+    db: Session = Depends(get_db),
+) -> InternalPlannerJudgmentResponse:
+    try:
+        judgment = create_internal_planner_judgment(
+            run_id=run_id,
+            judgment_data=payload,
+            db_session=db,
+        )
+    except InternalPlannerJudgmentRunNotFoundError:
+        raise _run_not_found(run_id)
+    except InternalPlannerJudgmentAlreadyExistsError:
+        raise _internal_planner_judgment_already_exists(run_id)
+
+    return InternalPlannerJudgmentResponse(**_serialize_internal_planner_judgment(judgment))
+
+
 @router.get("/clients/{client_id}/fixation/latest", response_model=LatestResultResponse)
 def latest_fixation_result(client_id: int, db: Session = Depends(get_db)) -> LatestResultResponse:
     _require_client(db, client_id)
@@ -203,6 +253,7 @@ def fixation_run_detail(run_id: int, db: Session = Depends(get_db)) -> dict[str,
             if detail.fixation_input_snapshot is not None
             else None
         ),
+        "internal_planner_judgment": _serialize_internal_planner_judgment(detail.internal_planner_judgment),
         "result": detail.fixation_result.result_payload if detail.fixation_result is not None else None,
         "audit_rows": [
             {

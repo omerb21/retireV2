@@ -19,6 +19,7 @@ import {
   updateClientProfile,
   updateRetirementPlanningDocumentVerification
 } from "../api/clientsApi";
+import { RetirementPlanningFactsSection } from "./RetirementPlanningFactsSection";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
@@ -540,7 +541,9 @@ export function ClientDetailScreen() {
       <section aria-labelledby="retirement-planning-data-matrix-heading">
         <h3 id="retirement-planning-data-matrix-heading">Retirement Planning Data Matrix</h3>
         <ul>
-          <li>Retirement Planning Facts</li>
+          <li>
+            <RetirementPlanningFactsSection clientId={parsedClientId} />
+          </li>
           <li>Documents</li>
           <li>Calculated Artifacts</li>
           <li>Workflow Status</li>

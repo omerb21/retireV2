@@ -195,6 +195,182 @@ export interface MissingDataItemPayload {
   notes: string | null;
 }
 
+export type LifecycleStatusFilter = "current" | "superseded" | "all";
+
+export interface FactMetadataPayload {
+  source_status?: string | null;
+  verification_state?: string | null;
+  source_type?: string | null;
+  source_date?: string | null;
+  source_note?: string | null;
+}
+
+export interface PensionHoldingItem {
+  id: number;
+  client_id: number;
+  provider_name: string;
+  product_type: string;
+  lifecycle_status: string;
+  source_status: string;
+  verification_state: string;
+  product_name: string | null;
+  account_reference: string | null;
+  known_balance_amount: number | string | null;
+  balance_as_of_date: string | null;
+  known_monthly_pension_amount: number | string | null;
+  pension_amount_as_of_date: string | null;
+  source_type: string | null;
+  source_date: string | null;
+  source_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PensionHoldingCreatePayload extends FactMetadataPayload {
+  provider_name: string;
+  product_type: string;
+  product_name?: string | null;
+  account_reference?: string | null;
+  known_balance_amount?: string | null;
+  balance_as_of_date?: string | null;
+  known_monthly_pension_amount?: string | null;
+  pension_amount_as_of_date?: string | null;
+}
+
+export type PensionHoldingUpdatePayload = Partial<PensionHoldingCreatePayload>;
+
+export interface CapitalAssetItem {
+  id: number;
+  client_id: number;
+  asset_category: string;
+  asset_description: string;
+  lifecycle_status: string;
+  source_status: string;
+  verification_state: string;
+  known_value_amount: number | string | null;
+  value_as_of_date: string | null;
+  liquidity_note: string | null;
+  restriction_note: string | null;
+  source_type: string | null;
+  source_date: string | null;
+  source_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CapitalAssetCreatePayload extends FactMetadataPayload {
+  asset_category: string;
+  asset_description: string;
+  known_value_amount?: string | null;
+  value_as_of_date?: string | null;
+  liquidity_note?: string | null;
+  restriction_note?: string | null;
+}
+
+export type CapitalAssetUpdatePayload = Partial<CapitalAssetCreatePayload>;
+
+export interface RecurringIncomeItem {
+  id: number;
+  client_id: number;
+  income_category: string;
+  description: string;
+  amount: number | string;
+  amount_basis: string;
+  frequency: string;
+  continuation_status: string;
+  lifecycle_status: string;
+  source_status: string;
+  verification_state: string;
+  start_date: string | null;
+  end_date: string | null;
+  source_type: string | null;
+  source_date: string | null;
+  source_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecurringIncomeCreatePayload extends FactMetadataPayload {
+  income_category: string;
+  description: string;
+  amount: string;
+  amount_basis: string;
+  frequency: string;
+  continuation_status: string;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export type RecurringIncomeUpdatePayload = Partial<RecurringIncomeCreatePayload>;
+
+export interface RecurringExpenseItem {
+  id: number;
+  client_id: number;
+  expense_category: string;
+  description: string;
+  amount: number | string;
+  frequency: string;
+  expense_type: string;
+  continuation_status: string;
+  lifecycle_status: string;
+  source_status: string;
+  verification_state: string;
+  start_date: string | null;
+  end_date: string | null;
+  source_type: string | null;
+  source_date: string | null;
+  source_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecurringExpenseCreatePayload extends FactMetadataPayload {
+  expense_category: string;
+  description: string;
+  amount: string;
+  frequency: string;
+  expense_type: string;
+  continuation_status: string;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export type RecurringExpenseUpdatePayload = Partial<RecurringExpenseCreatePayload>;
+
+export interface RetirementTimingWorkIntentionItem {
+  id: number;
+  client_id: number;
+  timing_confidence: string;
+  work_after_retirement_intention: string;
+  lifecycle_status: string;
+  source_status: string;
+  verification_state: string;
+  planned_work_end_date: string | null;
+  intended_pension_start_date: string | null;
+  other_known_retirement_date: string | null;
+  other_known_retirement_date_label: string | null;
+  anticipated_work_end_date: string | null;
+  work_intention_note: string | null;
+  source_type: string | null;
+  source_date: string | null;
+  source_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetirementTimingWorkIntentionCreatePayload extends FactMetadataPayload {
+  timing_confidence: string;
+  work_after_retirement_intention: string;
+  planned_work_end_date?: string | null;
+  intended_pension_start_date?: string | null;
+  other_known_retirement_date?: string | null;
+  other_known_retirement_date_label?: string | null;
+  anticipated_work_end_date?: string | null;
+  work_intention_note?: string | null;
+}
+
+export type RetirementTimingWorkIntentionUpdatePayload = Partial<RetirementTimingWorkIntentionCreatePayload>;
+
 async function parseResponseBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -431,4 +607,167 @@ export function createMissingDataItem(
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+function factListPath(clientId: number, resourcePath: string, lifecycleStatus: LifecycleStatusFilter): string {
+  return `/clients/${clientId}/${resourcePath}?lifecycle_status=${encodeURIComponent(lifecycleStatus)}`;
+}
+
+export function getPensionHoldings(
+  clientId: number,
+  lifecycleStatus: LifecycleStatusFilter = "current"
+): Promise<PensionHoldingItem[]> {
+  return requestJson<PensionHoldingItem[]>(factListPath(clientId, "pension-holdings", lifecycleStatus), {
+    method: "GET"
+  });
+}
+
+export function createPensionHolding(
+  clientId: number,
+  payload: PensionHoldingCreatePayload
+): Promise<PensionHoldingItem> {
+  return requestJson<PensionHoldingItem>(`/clients/${clientId}/pension-holdings`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updatePensionHolding(
+  clientId: number,
+  pensionHoldingId: number,
+  payload: PensionHoldingUpdatePayload
+): Promise<PensionHoldingItem> {
+  return requestJson<PensionHoldingItem>(`/clients/${clientId}/pension-holdings/${pensionHoldingId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getCapitalAssets(
+  clientId: number,
+  lifecycleStatus: LifecycleStatusFilter = "current"
+): Promise<CapitalAssetItem[]> {
+  return requestJson<CapitalAssetItem[]>(factListPath(clientId, "capital-assets", lifecycleStatus), {
+    method: "GET"
+  });
+}
+
+export function createCapitalAsset(
+  clientId: number,
+  payload: CapitalAssetCreatePayload
+): Promise<CapitalAssetItem> {
+  return requestJson<CapitalAssetItem>(`/clients/${clientId}/capital-assets`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateCapitalAsset(
+  clientId: number,
+  capitalAssetId: number,
+  payload: CapitalAssetUpdatePayload
+): Promise<CapitalAssetItem> {
+  return requestJson<CapitalAssetItem>(`/clients/${clientId}/capital-assets/${capitalAssetId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getRecurringIncomes(
+  clientId: number,
+  lifecycleStatus: LifecycleStatusFilter = "current"
+): Promise<RecurringIncomeItem[]> {
+  return requestJson<RecurringIncomeItem[]>(factListPath(clientId, "recurring-incomes", lifecycleStatus), {
+    method: "GET"
+  });
+}
+
+export function createRecurringIncome(
+  clientId: number,
+  payload: RecurringIncomeCreatePayload
+): Promise<RecurringIncomeItem> {
+  return requestJson<RecurringIncomeItem>(`/clients/${clientId}/recurring-incomes`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateRecurringIncome(
+  clientId: number,
+  recurringIncomeId: number,
+  payload: RecurringIncomeUpdatePayload
+): Promise<RecurringIncomeItem> {
+  return requestJson<RecurringIncomeItem>(`/clients/${clientId}/recurring-incomes/${recurringIncomeId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getRecurringExpenses(
+  clientId: number,
+  lifecycleStatus: LifecycleStatusFilter = "current"
+): Promise<RecurringExpenseItem[]> {
+  return requestJson<RecurringExpenseItem[]>(factListPath(clientId, "recurring-expenses", lifecycleStatus), {
+    method: "GET"
+  });
+}
+
+export function createRecurringExpense(
+  clientId: number,
+  payload: RecurringExpenseCreatePayload
+): Promise<RecurringExpenseItem> {
+  return requestJson<RecurringExpenseItem>(`/clients/${clientId}/recurring-expenses`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateRecurringExpense(
+  clientId: number,
+  recurringExpenseId: number,
+  payload: RecurringExpenseUpdatePayload
+): Promise<RecurringExpenseItem> {
+  return requestJson<RecurringExpenseItem>(`/clients/${clientId}/recurring-expenses/${recurringExpenseId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getRetirementTimingWorkIntentions(
+  clientId: number,
+  lifecycleStatus: LifecycleStatusFilter = "current"
+): Promise<RetirementTimingWorkIntentionItem[]> {
+  return requestJson<RetirementTimingWorkIntentionItem[]>(
+    factListPath(clientId, "retirement-timing-work-intentions", lifecycleStatus),
+    {
+      method: "GET"
+    }
+  );
+}
+
+export function createRetirementTimingWorkIntention(
+  clientId: number,
+  payload: RetirementTimingWorkIntentionCreatePayload
+): Promise<RetirementTimingWorkIntentionItem> {
+  return requestJson<RetirementTimingWorkIntentionItem>(
+    `/clients/${clientId}/retirement-timing-work-intentions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function updateRetirementTimingWorkIntention(
+  clientId: number,
+  retirementTimingWorkIntentionId: number,
+  payload: RetirementTimingWorkIntentionUpdatePayload
+): Promise<RetirementTimingWorkIntentionItem> {
+  return requestJson<RetirementTimingWorkIntentionItem>(
+    `/clients/${clientId}/retirement-timing-work-intentions/${retirementTimingWorkIntentionId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
 }

@@ -1,8 +1,34 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClientDetailScreen } from "./ClientDetailScreen";
+
+vi.mock("./RetirementPlanningFactsSection", () => ({
+  RetirementPlanningFactsSection: () => (
+    <section aria-label="Retirement Planning Facts mock">Retirement Planning Facts</section>
+  )
+}));
+
+vi.mock("./PlannerAssumptionsSection", () => ({
+  PlannerAssumptionsSection: () => (
+    <section aria-label="Planner Assumptions mock">Planner Assumptions</section>
+  )
+}));
+
+vi.mock("./AdvisoryMissingInformationSection", () => ({
+  AdvisoryMissingInformationSection: () => (
+    <section aria-label="Advisory Missing Information mock">Advisory Missing Information</section>
+  )
+}));
+
+vi.mock("./RetirementPlanningConsolidatedReviewSection", () => ({
+  RetirementPlanningConsolidatedReviewSection: () => (
+    <section aria-label="Retirement Planning Consolidated Review mock">
+      Retirement Planning Consolidated Review
+    </section>
+  )
+}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -293,6 +319,82 @@ describe("ClientDetailScreen", () => {
       })
     );
     expect(screen.getByText("Professional Identification: professionally_identified")).toBeInTheDocument();
+  });
+
+  it("places the consolidated review inside the data matrix after maintenance sections and before documents", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          json: async () => ({
+            client_id: 7,
+            full_name: "Dana Levi",
+            id_number: "123456789",
+            birth_date: null,
+            file_status: "file_created",
+            professional_identification_status: "identification_incomplete"
+          })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          json: async () => ({ profile: null })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          json: async () => []
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          json: async () => []
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          json: async () => []
+        })
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/clients/7"]}>
+        <Routes>
+          <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const matrixHeading = await screen.findByRole("heading", { name: "Retirement Planning Data Matrix" });
+    const matrix = within(matrixHeading.closest("section") as HTMLElement);
+    const entries = matrix.getAllByRole("listitem").map((item) => item.textContent);
+
+    expect(entries).toEqual([
+      "Retirement Planning Facts",
+      "Planner Assumptions",
+      "Advisory Missing Information",
+      "Retirement Planning Consolidated Review",
+      "Documents",
+      "Calculated Artifacts",
+      "Workflow Status"
+    ]);
+    expect(matrix.getByLabelText("Retirement Planning Consolidated Review mock")).toBeInTheDocument();
+    expect(matrix.queryByRole("link", { name: /consolidated review/i })).not.toBeInTheDocument();
+    expect(matrix.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(matrix.queryByText(/route-query|dedicated screen|drawer/i)).not.toBeInTheDocument();
   });
 
   it("displays backend profile save errors", async () => {

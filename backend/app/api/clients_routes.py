@@ -21,6 +21,8 @@ from app.models.missing_data_item import MissingDataItem
 from app.models.retirement_fact_contracts import (
     ADVISORY_STATUSES,
     AMOUNT_BASES,
+    ASSUMPTION_CATEGORIES,
+    ASSUMPTION_OWNERS,
     CAPITAL_ASSET_CATEGORIES,
     CONTINUATION_STATUSES,
     EXPENSE_CATEGORIES,
@@ -37,6 +39,7 @@ from app.models.retirement_fact_contracts import (
 from app.models.retirement_facts import (
     CapitalAsset,
     PensionHolding,
+    PlannerAssumption,
     RecurringExpense,
     RecurringIncome,
     RetirementTimingWorkIntention,
@@ -270,6 +273,26 @@ class MissingDataItemRequest(BaseModel):
         return _validate_allowed_value(value, ADVISORY_STATUSES, "advisory_status")
 
 
+class MissingDataItemUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    planning_domain: str | None = None
+    related_record_type: str | None = None
+    related_record_id: int | None = None
+    advisory_status: str | None = None
+    neutral_reason: str | None = None
+
+    @field_validator("planning_domain")
+    @classmethod
+    def validate_planning_domain(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, PLANNING_DOMAINS, "planning_domain")
+
+    @field_validator("advisory_status")
+    @classmethod
+    def validate_advisory_status(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, ADVISORY_STATUSES, "advisory_status")
+
+
 class MissingDataItemResponse(BaseModel):
     missing_data_item_id: str
     client_id: int
@@ -283,6 +306,68 @@ class MissingDataItemResponse(BaseModel):
     advisory_status: str | None
     neutral_reason: str | None
     created_at: datetime
+
+
+class PlannerAssumptionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assumption_category: str
+    title: str
+    assumption_value_text: str
+    rationale: str
+    owner: str
+    effective_start_date: date | None = None
+    effective_end_date: date | None = None
+    review_date: date | None = None
+
+    @field_validator("assumption_category")
+    @classmethod
+    def validate_assumption_category(cls, value: str) -> str:
+        return _validate_allowed_value(value, ASSUMPTION_CATEGORIES, "assumption_category") or value
+
+    @field_validator("owner")
+    @classmethod
+    def validate_owner(cls, value: str) -> str:
+        return _validate_allowed_value(value, ASSUMPTION_OWNERS, "owner") or value
+
+
+class PlannerAssumptionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assumption_category: str | None = None
+    title: str | None = None
+    assumption_value_text: str | None = None
+    rationale: str | None = None
+    owner: str | None = None
+    effective_start_date: date | None = None
+    effective_end_date: date | None = None
+    review_date: date | None = None
+
+    @field_validator("assumption_category")
+    @classmethod
+    def validate_assumption_category(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, ASSUMPTION_CATEGORIES, "assumption_category")
+
+    @field_validator("owner")
+    @classmethod
+    def validate_owner(cls, value: str | None) -> str | None:
+        return _validate_allowed_value(value, ASSUMPTION_OWNERS, "owner")
+
+
+class PlannerAssumptionResponse(BaseModel):
+    id: int
+    client_id: int
+    assumption_category: str
+    title: str
+    assumption_value_text: str
+    rationale: str
+    owner: str
+    lifecycle_status: str
+    effective_start_date: date | None
+    effective_end_date: date | None
+    review_date: date | None
+    created_at: datetime
+    updated_at: datetime
 
 
 def _validate_allowed_value(value: str | None, allowed_values: tuple[str, ...], field_name: str) -> str | None:
@@ -1005,6 +1090,24 @@ def _missing_data_item_to_response(row: MissingDataItem) -> MissingDataItemRespo
     )
 
 
+def _planner_assumption_to_response(row: PlannerAssumption) -> PlannerAssumptionResponse:
+    return PlannerAssumptionResponse(
+        id=row.id,
+        client_id=row.client_id,
+        assumption_category=row.assumption_category,
+        title=row.title,
+        assumption_value_text=row.assumption_value_text,
+        rationale=row.rationale,
+        owner=row.owner,
+        lifecycle_status=row.lifecycle_status,
+        effective_start_date=row.effective_start_date,
+        effective_end_date=row.effective_end_date,
+        review_date=row.review_date,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 def _pension_holding_to_response(row: PensionHolding) -> PensionHoldingResponse:
     return PensionHoldingResponse(
         id=row.id,
@@ -1277,6 +1380,44 @@ def _require_retirement_timing_work_intention(
             "RETIREMENT_TIMING_WORK_INTENTION_NOT_FOUND",
             "Retirement timing work intention "
             f"{retirement_timing_work_intention_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_planner_assumption(
+    db: Session,
+    client_id: int,
+    planner_assumption_id: int,
+) -> PlannerAssumption:
+    row = db.scalar(
+        select(PlannerAssumption).where(
+            PlannerAssumption.client_id == client_id,
+            PlannerAssumption.id == planner_assumption_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "PLANNER_ASSUMPTION_NOT_FOUND",
+            f"Planner assumption {planner_assumption_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_missing_data_item(
+    db: Session,
+    client_id: int,
+    missing_data_item_id: str,
+) -> MissingDataItem:
+    row = db.scalar(
+        select(MissingDataItem).where(
+            MissingDataItem.client_id == client_id,
+            MissingDataItem.missing_data_item_id == missing_data_item_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "MISSING_DATA_ITEM_NOT_FOUND",
+            f"Missing data item {missing_data_item_id} was not found for client {client_id}",
         )
     return row
 
@@ -1847,6 +1988,59 @@ def update_retirement_timing_work_intention(
     return _retirement_timing_work_intention_to_response(row)
 
 
+@router.post("/{client_id}/planner-assumptions", response_model=PlannerAssumptionResponse)
+def create_planner_assumption(
+    client_id: int,
+    payload: PlannerAssumptionCreateRequest,
+    db: Session = Depends(get_db),
+) -> PlannerAssumptionResponse:
+    _require_client(db, client_id)
+    row = PlannerAssumption(client_id=client_id, **payload.model_dump(exclude_none=True))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _planner_assumption_to_response(row)
+
+
+@router.get("/{client_id}/planner-assumptions", response_model=list[PlannerAssumptionResponse])
+def list_planner_assumptions(
+    client_id: int,
+    lifecycle_status: LifecycleFilter = "current",
+    db: Session = Depends(get_db),
+) -> list[PlannerAssumptionResponse]:
+    _require_client(db, client_id)
+    statement = select(PlannerAssumption).where(PlannerAssumption.client_id == client_id)
+    statement = _apply_lifecycle_filter(statement, PlannerAssumption, lifecycle_status)
+    rows = db.scalars(statement.order_by(PlannerAssumption.created_at.desc(), PlannerAssumption.id.desc())).all()
+    return [_planner_assumption_to_response(row) for row in rows]
+
+
+@router.get("/{client_id}/planner-assumptions/{planner_assumption_id}", response_model=PlannerAssumptionResponse)
+def get_planner_assumption(
+    client_id: int,
+    planner_assumption_id: int,
+    db: Session = Depends(get_db),
+) -> PlannerAssumptionResponse:
+    _require_client(db, client_id)
+    row = _require_planner_assumption(db, client_id, planner_assumption_id)
+    return _planner_assumption_to_response(row)
+
+
+@router.put("/{client_id}/planner-assumptions/{planner_assumption_id}", response_model=PlannerAssumptionResponse)
+def update_planner_assumption(
+    client_id: int,
+    planner_assumption_id: int,
+    payload: PlannerAssumptionUpdateRequest,
+    db: Session = Depends(get_db),
+) -> PlannerAssumptionResponse:
+    _require_client(db, client_id)
+    row = _require_planner_assumption(db, client_id, planner_assumption_id)
+    _apply_fact_update(row, payload)
+    db.commit()
+    db.refresh(row)
+    return _planner_assumption_to_response(row)
+
+
 @router.post("/{client_id}/missing-items", response_model=MissingDataItemResponse)
 def create_missing_data_item(
     client_id: int,
@@ -1930,6 +2124,22 @@ def list_missing_data_items(
     ).all()
 
     return [_missing_data_item_to_response(row) for row in items]
+
+
+@router.put("/{client_id}/missing-items/{missing_data_item_id}", response_model=MissingDataItemResponse)
+def update_missing_data_item(
+    client_id: int,
+    missing_data_item_id: str,
+    payload: MissingDataItemUpdateRequest,
+    db: Session = Depends(get_db),
+) -> MissingDataItemResponse:
+    _require_client(db, client_id)
+    row = _require_missing_data_item(db, client_id, missing_data_item_id)
+    for field_name in payload.model_fields_set:
+        setattr(row, field_name, getattr(payload, field_name))
+    db.commit()
+    db.refresh(row)
+    return _missing_data_item_to_response(row)
 
 
 @router.post("/{client_id}/employment-records", response_model=EmploymentRecordResponse)

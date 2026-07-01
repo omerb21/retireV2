@@ -185,6 +185,11 @@ export interface MissingDataItem {
   missing_item_label: string;
   missing_status: string;
   notes: string | null;
+  planning_domain: string | null;
+  related_record_type: string | null;
+  related_record_id: number | null;
+  advisory_status: string | null;
+  neutral_reason: string | null;
   created_at: string;
 }
 
@@ -196,6 +201,51 @@ export interface MissingDataItemPayload {
 }
 
 export type LifecycleStatusFilter = "current" | "superseded" | "all";
+
+export interface AdvisoryMissingInformationCreatePayload {
+  missing_item_type: string;
+  missing_item_label: string;
+  missing_status: string;
+  notes: string | null;
+  planning_domain: string;
+  advisory_status: "open";
+  neutral_reason?: string | null;
+}
+
+export interface AdvisoryMissingInformationUpdatePayload {
+  planning_domain?: string | null;
+  advisory_status?: "open" | "resolved" | "no longer relevant" | null;
+  neutral_reason?: string | null;
+}
+
+export interface PlannerAssumptionItem {
+  id: number;
+  client_id: number;
+  assumption_category: string;
+  title: string;
+  assumption_value_text: string;
+  rationale: string;
+  owner: string;
+  lifecycle_status: string;
+  effective_start_date: string | null;
+  effective_end_date: string | null;
+  review_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlannerAssumptionCreatePayload {
+  assumption_category: string;
+  title: string;
+  assumption_value_text: string;
+  rationale: string;
+  owner: string;
+  effective_start_date?: string | null;
+  effective_end_date?: string | null;
+  review_date?: string | null;
+}
+
+export type PlannerAssumptionUpdatePayload = Partial<PlannerAssumptionCreatePayload>;
 
 export interface FactMetadataPayload {
   source_status?: string | null;
@@ -609,8 +659,59 @@ export function createMissingDataItem(
   });
 }
 
+export function createAdvisoryMissingInformation(
+  clientId: number,
+  payload: AdvisoryMissingInformationCreatePayload
+): Promise<MissingDataItem> {
+  return requestJson<MissingDataItem>(`/clients/${clientId}/missing-items`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateAdvisoryMissingInformation(
+  clientId: number,
+  missingDataItemId: string,
+  payload: AdvisoryMissingInformationUpdatePayload
+): Promise<MissingDataItem> {
+  return requestJson<MissingDataItem>(`/clients/${clientId}/missing-items/${missingDataItemId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
 function factListPath(clientId: number, resourcePath: string, lifecycleStatus: LifecycleStatusFilter): string {
   return `/clients/${clientId}/${resourcePath}?lifecycle_status=${encodeURIComponent(lifecycleStatus)}`;
+}
+
+export function getPlannerAssumptions(
+  clientId: number,
+  lifecycleStatus: LifecycleStatusFilter = "current"
+): Promise<PlannerAssumptionItem[]> {
+  return requestJson<PlannerAssumptionItem[]>(factListPath(clientId, "planner-assumptions", lifecycleStatus), {
+    method: "GET"
+  });
+}
+
+export function createPlannerAssumption(
+  clientId: number,
+  payload: PlannerAssumptionCreatePayload
+): Promise<PlannerAssumptionItem> {
+  return requestJson<PlannerAssumptionItem>(`/clients/${clientId}/planner-assumptions`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updatePlannerAssumption(
+  clientId: number,
+  plannerAssumptionId: number,
+  payload: PlannerAssumptionUpdatePayload
+): Promise<PlannerAssumptionItem> {
+  return requestJson<PlannerAssumptionItem>(`/clients/${clientId}/planner-assumptions/${plannerAssumptionId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function getPensionHoldings(

@@ -19,6 +19,8 @@ import {
   updateClientProfile,
   updateRetirementPlanningDocumentVerification
 } from "../api/clientsApi";
+import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
+import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
 import { RetirementPlanningFactsSection } from "./RetirementPlanningFactsSection";
 
 function getErrorMessage(error: unknown): string {
@@ -543,6 +545,12 @@ export function ClientDetailScreen() {
         <ul>
           <li>
             <RetirementPlanningFactsSection clientId={parsedClientId} />
+          </li>
+          <li>
+            <PlannerAssumptionsSection clientId={parsedClientId} />
+          </li>
+          <li>
+            <AdvisoryMissingInformationSection clientId={parsedClientId} />
           </li>
           <li>Documents</li>
           <li>Calculated Artifacts</li>

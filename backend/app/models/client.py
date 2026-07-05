@@ -45,6 +45,9 @@ class Client(Base):
     pension_holdings: Mapped[list["PensionHolding"]] = relationship(
         "PensionHolding", back_populates="client"
     )
+    pension_analysis_records: Mapped[list["PensionAnalysisRecord"]] = relationship(
+        "PensionAnalysisRecord", back_populates="client"
+    )
     capital_assets: Mapped[list["CapitalAsset"]] = relationship(
         "CapitalAsset", back_populates="client"
     )

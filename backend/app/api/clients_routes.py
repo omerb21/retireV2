@@ -18,6 +18,12 @@ from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
 from app.models.missing_data_item import MissingDataItem
+from app.models.pension_analysis_record import PensionAnalysisRecord
+from app.models.pension_analysis_record_contracts import (
+    PensionAnalysisRecordCreateRequest,
+    PensionAnalysisRecordResponse,
+    PensionAnalysisRecordUpdateRequest,
+)
 from app.models.retirement_fact_contracts import (
     ADVISORY_STATUSES,
     AMOUNT_BASES,
@@ -1131,6 +1137,17 @@ def _pension_holding_to_response(row: PensionHolding) -> PensionHoldingResponse:
     )
 
 
+def _pension_analysis_record_to_response(row: PensionAnalysisRecord) -> PensionAnalysisRecordResponse:
+    return PensionAnalysisRecordResponse(
+        id=row.id,
+        client_id=row.client_id,
+        pension_holding_id=row.pension_holding_id,
+        analysis_record_text=row.analysis_record_text,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 def _capital_asset_to_response(row: CapitalAsset) -> CapitalAssetResponse:
     return CapitalAssetResponse(
         id=row.id,
@@ -1315,6 +1332,25 @@ def _require_pension_holding(db: Session, client_id: int, pension_holding_id: in
         raise _source_item_not_found(
             "PENSION_HOLDING_NOT_FOUND",
             f"Pension holding {pension_holding_id} was not found for client {client_id}",
+        )
+    return row
+
+
+def _require_pension_analysis_record(
+    db: Session,
+    client_id: int,
+    pension_holding_id: int,
+) -> PensionAnalysisRecord:
+    row = db.scalar(
+        select(PensionAnalysisRecord).where(
+            PensionAnalysisRecord.client_id == client_id,
+            PensionAnalysisRecord.pension_holding_id == pension_holding_id,
+        )
+    )
+    if row is None:
+        raise _source_item_not_found(
+            "PENSION_ANALYSIS_RECORD_NOT_FOUND",
+            f"Pension analysis record was not found for pension holding {pension_holding_id}",
         )
     return row
 
@@ -1745,6 +1781,82 @@ def update_pension_holding(
     db.commit()
     db.refresh(row)
     return _pension_holding_to_response(row)
+
+
+@router.post(
+    "/{client_id}/pension-holdings/{pension_holding_id}/analysis-record",
+    response_model=PensionAnalysisRecordResponse,
+)
+def create_pension_analysis_record(
+    client_id: int,
+    pension_holding_id: int,
+    payload: PensionAnalysisRecordCreateRequest,
+    db: Session = Depends(get_db),
+) -> PensionAnalysisRecordResponse:
+    _require_client(db, client_id)
+    _require_pension_holding(db, client_id, pension_holding_id)
+    existing = db.scalar(
+        select(PensionAnalysisRecord).where(
+            PensionAnalysisRecord.client_id == client_id,
+            PensionAnalysisRecord.pension_holding_id == pension_holding_id,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PENSION_ANALYSIS_RECORD_EXISTS",
+                "message": f"Pension analysis record already exists for pension holding {pension_holding_id}",
+            },
+        )
+    row = PensionAnalysisRecord(
+        client_id=client_id,
+        pension_holding_id=pension_holding_id,
+        analysis_record_text=payload.analysis_record_text,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _pension_analysis_record_to_response(row)
+
+
+@router.get(
+    "/{client_id}/pension-holdings/{pension_holding_id}/analysis-record",
+    response_model=PensionAnalysisRecordResponse | None,
+)
+def get_pension_analysis_record(
+    client_id: int,
+    pension_holding_id: int,
+    db: Session = Depends(get_db),
+) -> PensionAnalysisRecordResponse | None:
+    _require_client(db, client_id)
+    _require_pension_holding(db, client_id, pension_holding_id)
+    row = db.scalar(
+        select(PensionAnalysisRecord).where(
+            PensionAnalysisRecord.client_id == client_id,
+            PensionAnalysisRecord.pension_holding_id == pension_holding_id,
+        )
+    )
+    return None if row is None else _pension_analysis_record_to_response(row)
+
+
+@router.put(
+    "/{client_id}/pension-holdings/{pension_holding_id}/analysis-record",
+    response_model=PensionAnalysisRecordResponse,
+)
+def update_pension_analysis_record(
+    client_id: int,
+    pension_holding_id: int,
+    payload: PensionAnalysisRecordUpdateRequest,
+    db: Session = Depends(get_db),
+) -> PensionAnalysisRecordResponse:
+    _require_client(db, client_id)
+    _require_pension_holding(db, client_id, pension_holding_id)
+    row = _require_pension_analysis_record(db, client_id, pension_holding_id)
+    row.analysis_record_text = payload.analysis_record_text
+    db.commit()
+    db.refresh(row)
+    return _pension_analysis_record_to_response(row)
 
 
 @router.post("/{client_id}/capital-assets", response_model=CapitalAssetResponse)

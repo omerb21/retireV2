@@ -289,6 +289,19 @@ export interface PensionHoldingCreatePayload extends FactMetadataPayload {
 
 export type PensionHoldingUpdatePayload = Partial<PensionHoldingCreatePayload>;
 
+export interface PensionAnalysisRecordItem {
+  id: number;
+  client_id: number;
+  pension_holding_id: number;
+  analysis_record_text: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PensionAnalysisRecordPayload {
+  analysis_record_text: string;
+}
+
 export interface CapitalAssetItem {
   id: number;
   client_id: number;
@@ -742,6 +755,46 @@ export function updatePensionHolding(
     method: "PUT",
     body: JSON.stringify(payload)
   });
+}
+
+export function getPensionAnalysisRecord(
+  clientId: number,
+  pensionHoldingId: number
+): Promise<PensionAnalysisRecordItem | null> {
+  return requestJson<PensionAnalysisRecordItem | null>(
+    `/clients/${clientId}/pension-holdings/${pensionHoldingId}/analysis-record`,
+    {
+      method: "GET"
+    }
+  );
+}
+
+export function createPensionAnalysisRecord(
+  clientId: number,
+  pensionHoldingId: number,
+  payload: PensionAnalysisRecordPayload
+): Promise<PensionAnalysisRecordItem> {
+  return requestJson<PensionAnalysisRecordItem>(
+    `/clients/${clientId}/pension-holdings/${pensionHoldingId}/analysis-record`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function updatePensionAnalysisRecord(
+  clientId: number,
+  pensionHoldingId: number,
+  payload: PensionAnalysisRecordPayload
+): Promise<PensionAnalysisRecordItem> {
+  return requestJson<PensionAnalysisRecordItem>(
+    `/clients/${clientId}/pension-holdings/${pensionHoldingId}/analysis-record`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
 }
 
 export function getCapitalAssets(

@@ -10,6 +10,12 @@ vi.mock("./RetirementPlanningFactsSection", () => ({
   )
 }));
 
+vi.mock("./PensionAnalysisRecordSection", () => ({
+  PensionAnalysisRecordSection: () => (
+    <section aria-label="Pension Analysis Records mock">Pension Analysis Records</section>
+  )
+}));
+
 vi.mock("./PlannerAssumptionsSection", () => ({
   PlannerAssumptionsSection: () => (
     <section aria-label="Planner Assumptions mock">Planner Assumptions</section>
@@ -166,6 +172,7 @@ describe("ClientDetailScreen", () => {
     expect(screen.getByRole("heading", { name: "Retirement Planning Documents" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Missing Data Tracking" })).toBeInTheDocument();
     expect(screen.getByText("Retirement Planning Facts")).toBeInTheDocument();
+    expect(screen.getByText("Pension Analysis Records")).toBeInTheDocument();
     expect(screen.getByText("Documents")).toBeInTheDocument();
     expect(screen.getByText("Calculated Artifacts")).toBeInTheDocument();
     expect(screen.getByText("Workflow Status")).toBeInTheDocument();
@@ -384,6 +391,7 @@ describe("ClientDetailScreen", () => {
 
     expect(entries).toEqual([
       "Retirement Planning Facts",
+      "Pension Analysis Records",
       "Planner Assumptions",
       "Advisory Missing Information",
       "Retirement Planning Consolidated Review",

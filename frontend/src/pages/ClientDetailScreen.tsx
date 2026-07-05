@@ -20,6 +20,7 @@ import {
   updateRetirementPlanningDocumentVerification
 } from "../api/clientsApi";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
+import { PensionAnalysisRecordSection } from "./PensionAnalysisRecordSection";
 import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
 import { RetirementPlanningConsolidatedReviewSection } from "./RetirementPlanningConsolidatedReviewSection";
 import { RetirementPlanningFactsSection } from "./RetirementPlanningFactsSection";
@@ -546,6 +547,9 @@ export function ClientDetailScreen() {
         <ul>
           <li>
             <RetirementPlanningFactsSection clientId={parsedClientId} />
+          </li>
+          <li>
+            <PensionAnalysisRecordSection clientId={parsedClientId} />
           </li>
           <li>
             <PlannerAssumptionsSection clientId={parsedClientId} />

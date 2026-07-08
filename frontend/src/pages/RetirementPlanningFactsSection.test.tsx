@@ -442,10 +442,11 @@ describe("RetirementPlanningFactsSection", () => {
       );
     });
 
+    const retirementPlanningFactsRegion = screen.getByRole("region", { name: "Retirement Planning Facts" });
     for (const config of resourceConfigs) {
-      expect(screen.getByRole("heading", { name: config.heading })).toBeInTheDocument();
+      expect(within(retirementPlanningFactsRegion).getByRole("heading", { name: config.heading })).toBeInTheDocument();
     }
-    expect(screen.getAllByLabelText("Lifecycle Filter")).toHaveLength(5);
+    expect(within(retirementPlanningFactsRegion).getAllByLabelText("Lifecycle Filter")).toHaveLength(resourceConfigs.length);
     expect(screen.queryByText("PlannerAssumption")).not.toBeInTheDocument();
     expect(screen.queryByText("Planner Assumption")).not.toBeInTheDocument();
     expect(screen.queryByText("MissingDataItem maintenance")).not.toBeInTheDocument();

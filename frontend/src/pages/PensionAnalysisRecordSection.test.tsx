@@ -81,7 +81,9 @@ describe("PensionAnalysisRecordSection", () => {
     render(<PensionAnalysisRecordSection clientId={7} />);
 
     expect(screen.getByText("Loading pension analysis records...")).toBeInTheDocument();
-    expect(await screen.findByText("Existing Pension Provider")).toBeInTheDocument();
+    expect(
+      await screen.findByText((_, element) => element?.textContent === "Provider Name: Existing Pension Provider")
+    ).toBeInTheDocument();
     expect(screen.getByText("Product Type: pension fund")).toBeInTheDocument();
     expect(screen.getByText("Known Monthly Pension Amount: 200.00")).toBeInTheDocument();
     expect(screen.getByText("Pension Amount As Of Date: 2026-01-02")).toBeInTheDocument();

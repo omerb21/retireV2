@@ -279,7 +279,7 @@ def test_fact_resource_delete_and_supersede_routes_absent(tmp_path: Path, case: 
         app.dependency_overrides.clear()
 
 
-def test_planner_assumption_route_absent(tmp_path: Path) -> None:
+def test_planner_assumption_route_present_rejects_incomplete_package_d_payload(tmp_path: Path) -> None:
     client, _ = _build_client(tmp_path)
     try:
         client_id = _create_client(client, id_number="B-2301")
@@ -287,7 +287,18 @@ def test_planner_assumption_route_absent(tmp_path: Path) -> None:
             f"/api/clients/{client_id}/planner-assumptions",
             json={"title": "Not authorized"},
         )
-        assert planner_assumption_resp.status_code == 404
+        assert planner_assumption_resp.status_code == 422
+        missing_fields = {
+            tuple(error["loc"])
+            for error in planner_assumption_resp.json()["detail"]
+            if error["type"] == "missing"
+        }
+        assert missing_fields == {
+            ("body", "assumption_category"),
+            ("body", "assumption_value_text"),
+            ("body", "rationale"),
+            ("body", "owner"),
+        }
     finally:
         app.dependency_overrides.clear()
 

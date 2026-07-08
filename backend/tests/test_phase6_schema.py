@@ -42,6 +42,17 @@ APPROVED_TABLES = {
     "fixation_validation_errors",
 }
 
+ACCEPTED_ADDITIVE_TABLES = {
+    "capital_asset",
+    "internal_planner_judgments",
+    "pension_analysis_record",
+    "pension_holding",
+    "planner_assumption",
+    "recurring_expense",
+    "recurring_income",
+    "retirement_timing_work_intention",
+}
+
 EXCLUDED_TABLES = {
     "users",
     "pension_results",
@@ -84,8 +95,7 @@ def test_phase6_migration_applies_and_exact_table_set_exists(tmp_path: Path) -> 
     inspector = inspect(create_engine(f"sqlite:///{db_path.as_posix()}"))
     actual_tables = set(inspector.get_table_names())
 
-    assert APPROVED_TABLES.issubset(actual_tables)
-    assert actual_tables - {"alembic_version"} == APPROVED_TABLES
+    assert actual_tables - {"alembic_version"} == APPROVED_TABLES | ACCEPTED_ADDITIVE_TABLES
     assert EXCLUDED_TABLES.isdisjoint(actual_tables)
 
     clients_columns = {col["name"] for col in inspector.get_columns("clients")}

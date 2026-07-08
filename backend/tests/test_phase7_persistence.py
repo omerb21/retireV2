@@ -40,6 +40,17 @@ APPROVED_TABLES = {
     "fixation_validation_errors",
 }
 
+ACCEPTED_ADDITIVE_TABLES = {
+    "capital_asset",
+    "internal_planner_judgments",
+    "pension_analysis_record",
+    "pension_holding",
+    "planner_assumption",
+    "recurring_expense",
+    "recurring_income",
+    "retirement_timing_work_intention",
+}
+
 
 def _backend_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -404,4 +415,4 @@ def test_database_contains_only_approved_phase1_tables_plus_alembic_version(tmp_
     db_path = tmp_path / "phase7_tables.db"
     _upgrade_sqlite_database(db_path)
     actual_tables = set(inspect(create_engine(f"sqlite:///{db_path.as_posix()}")) .get_table_names())
-    assert actual_tables == APPROVED_TABLES | {"alembic_version"}
+    assert actual_tables == APPROVED_TABLES | ACCEPTED_ADDITIVE_TABLES | {"alembic_version"}

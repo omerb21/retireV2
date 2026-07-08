@@ -31,6 +31,17 @@ APPROVED_TABLES = {
     "fixation_validation_errors",
 }
 
+ACCEPTED_ADDITIVE_TABLES = {
+    "capital_asset",
+    "internal_planner_judgments",
+    "pension_analysis_record",
+    "pension_holding",
+    "planner_assumption",
+    "recurring_expense",
+    "recurring_income",
+    "retirement_timing_work_intention",
+}
+
 
 def _backend_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -642,7 +653,7 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert "5b8d2e1f4c61_package_3_verification_missing_data.py" in migration_names
         assert "7c1d9e4a2b83_slice_1_actual_capitalization_metadata.py" in migration_names
         tables = set(inspect(create_engine(f"sqlite:///{db_path.as_posix()}")) .get_table_names())
-        assert tables == APPROVED_TABLES | {"alembic_version"}
+        assert tables == APPROVED_TABLES | ACCEPTED_ADDITIVE_TABLES | {"alembic_version"}
 
     finally:
         app.dependency_overrides.clear()

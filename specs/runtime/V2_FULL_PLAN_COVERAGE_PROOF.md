@@ -24,7 +24,7 @@ The project has three accepted control documents: (1) Master Sequence, (2) Mecha
 
 | Milestone | Name | Exists | Purpose | Dependencies | Data objects/tables | Backend | Frontend | Tests | Exclusions | Output | Next milestone | Unknowns | Stop conditions | Ledger rows | Gap rows | Status | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---:|---:|---|---|
-| M01 | Internal Pension Analysis Workspace | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 10 | 4 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
+| M01 | Internal Pension Analysis Workspace | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 15 | 6 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows and five dedicated M01 foundation controls. |
 | M02 | Clearinghouse Intake and Raw Source Preservation | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 6 | 6 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
 | M03 | Clearinghouse Parser and Normalized Import Model | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 7 | 7 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
 | M04 | Pension Balance Ledger | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 9 | 9 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
@@ -47,17 +47,17 @@ Milestone proof result: `PASS`. No milestone has zero ledger rows or zero gap ro
 
 | Check | Expected | Actual | Result | Notes |
 |---|---|---|---|---|
-| Total rows | 107 | 107 | PASS | Mechanical rows parsed. |
-| Status counts reconcile | 14/30/40/2/0/21 | 14/30/40/2/0/21 | PASS | Sum is 107. |
-| Every row has Ledger ID | 107 | 107 | PASS | IDs parsed and unique. |
-| Every row has V1 domain | 107 | 107 | PASS | No blank domain. |
-| Every row has small capability | 107 | 107 | PASS | No blank capability. |
-| Every row has V2 milestone | 107 | 107 | PASS | All contain M01-M16 mapping. |
-| Every row has status | 107 | 107 | PASS | All use allowed statuses. |
+| Total rows | 112 | 112 | PASS | Mechanical rows parsed. |
+| Status counts reconcile | 17/32/40/2/0/21 | 17/32/40/2/0/21 | PASS | Sum is 112. |
+| Every row has Ledger ID | 112 | 112 | PASS | IDs parsed and unique. |
+| Every row has V1 domain | 112 | 112 | PASS | No blank domain. |
+| Every row has small capability | 112 | 112 | PASS | No blank capability. |
+| Every row has V2 milestone | 112 | 112 | PASS | All contain M01-M16 mapping. |
+| Every row has status | 112 | 112 | PASS | All use allowed statuses. |
 | No broad domain marked complete | None | None | PASS | Only small rows carry verification status. |
-| Verified rows name implementation and tests | 14 | 14 | PASS | No verified row has `None found` implementation/test evidence. |
-| Non-verified rows name missing parts | 93 | 93 | PASS | No blank missing-parts field. |
-| Mandatory domains A-N present | 14 | 14 | PASS | Prefixes A through N present. |
+| Verified rows name implementation and tests | 17 | 17 | PASS | No verified row has `None found` implementation/test evidence. |
+| Non-verified rows name missing parts | 95 | 95 | PASS | No blank missing-parts field. |
+| Mandatory domains A-N present | 14 | 14 | PASS | Prefixes A through N remain present; O contains dedicated M01 control rows. |
 | B-008/B-009/B-010 split | 3 rows | 3 rows | PASS | Convert, restore, and process-directory are separate. |
 
 Ledger proof result: `PASS`.
@@ -66,19 +66,19 @@ Ledger proof result: `PASS`.
 
 | Check | Expected | Actual | Result | Notes |
 |---|---|---|---|---|
-| Total gap rows | 93 | 93 | PASS | Parsed mechanically. |
-| Gap statuses reconcile | 30/40/2/0/21 | 30/40/2/0/21 | PASS | Matches non-verified ledger rows. |
-| Every row has Gap ID | 93 | 93 | PASS | GAP-001 through GAP-093. |
-| Every row has Ledger ID | 93 | 93 | PASS | One-to-one mapping. |
-| Every row has gap type | 93 | 93 | PASS | No blank type. |
-| Every row has severity | 93 | 93 | PASS | Allowed severity present. |
-| Every row has Master milestone | 93 | 93 | PASS | All map to M01-M16. |
-| Every row has missing behavior | 93 | 93 | PASS | No blank missing field. |
-| Every row has next action | 93 | 93 | PASS | Unknowns use inspection; replacements use review. |
-| Every row has package type | 93 | 93 | PASS | No blank package type. |
-| Every row has evidence basis | 93 | 93 | PASS | Evidence field populated. |
-| Gap IDs unique | 93 | 93 | PASS | No duplicates. |
-| Ledger IDs unique in register | 93 | 93 | PASS | No verified IDs included. |
+| Total gap rows | 95 | 95 | PASS | Parsed mechanically. |
+| Gap statuses reconcile | 32/40/2/0/21 | 32/40/2/0/21 | PASS | Matches non-verified ledger rows. |
+| Every row has Gap ID | 95 | 95 | PASS | GAP-001 through GAP-095. |
+| Every row has Ledger ID | 95 | 95 | PASS | One-to-one mapping. |
+| Every row has gap type | 95 | 95 | PASS | No blank type. |
+| Every row has severity | 95 | 95 | PASS | Allowed severity present. |
+| Every row has Master milestone | 95 | 95 | PASS | All map to M01-M16. |
+| Every row has missing behavior | 95 | 95 | PASS | No blank missing field. |
+| Every row has next action | 95 | 95 | PASS | Unknowns use inspection; replacements use review. |
+| Every row has package type | 95 | 95 | PASS | No blank package type. |
+| Every row has evidence basis | 95 | 95 | PASS | Evidence field populated. |
+| Gap IDs unique | 95 | 95 | PASS | No duplicates. |
+| Ledger IDs unique in register | 95 | 95 | PASS | No verified IDs included. |
 | Unknown inspection register | 21 | 21 | PASS | Matches unknown ledger rows. |
 | Replacement review register | 2 | 2 | PASS | Matches replacement rows. |
 
@@ -88,13 +88,13 @@ Gap register proof result: `PASS`.
 
 | Capability group | Master milestone(s) | Ledger ID(s) | Gap ID(s) if not verified | Status | Current implementation summary | Notes |
 |---|---|---|---|---|---|---|
-| Internal planner workspace | M01 | NONE | NONE | FAIL | UNMAPPED_CONTROL_GAP | Master/02K/02L cover it, but no dedicated mechanical Ledger ID exists. |
+| Internal planner workspace | M01 | O-001 | GAP-094 | PASS | PARTIAL_MIXED | Dedicated control row records existing section composition and the frozen workspace-completion gap. |
 | Client context | M01 | A-001, A-002, A-003, A-004, A-005 | GAP-001, GAP-002 | PASS | PARTIAL_MIXED | Mapping is mechanical from ledger and gap register. |
 | Pension holdings | M01 | B-001, B-002, B-003, B-004, B-005 | GAP-003, GAP-004 | PASS | PARTIAL_MIXED | Mapping is mechanical from ledger and gap register. |
-| Pension analysis records | M01 | NONE | NONE | FAIL | UNMAPPED_CONTROL_GAP | Existing V2 implementation is cited by supporting sources, but the parity ledger has no row. |
-| Planner assumptions | M01 | NONE | NONE | FAIL | UNMAPPED_CONTROL_GAP | Existing V2 implementation is cited by supporting sources, but the parity ledger has no row. |
-| Advisory missing information | M01 | NONE | NONE | FAIL | UNMAPPED_CONTROL_GAP | Existing V2 implementation is cited by supporting sources, but the parity ledger has no row. |
-| Consolidated internal review | M01 | NONE | NONE | FAIL | UNMAPPED_CONTROL_GAP | Existing V2 implementation is cited by supporting sources, but the parity ledger has no row. |
+| Pension analysis records | M01 | O-002 | GAP-095 | PASS | PARTIAL_MIXED | Bounded manual per-holding record exists; richer analysis outcomes remain unauthorized. |
+| Planner assumptions | M01 | O-003 | NONE | PASS | VERIFIED | Exact bounded maintenance implementation and tests are named; calculation authority is excluded. |
+| Advisory missing information | M01 | O-004 | NONE | PASS | VERIFIED | Exact bounded internal maintenance implementation and tests are named; client tasks are excluded. |
+| Consolidated internal review | M01 | O-005 | NONE | PASS | VERIFIED | Exact read-only seven-group review implementation and focused test are named. |
 | Clearinghouse intake | M02 | C-001 | GAP-010 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | Raw file preservation | M02 | C-002 | GAP-011 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | XML parsing | M03 | C-003, B-007 | GAP-012, GAP-006 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
@@ -185,7 +185,7 @@ Gap register proof result: `PASS`.
 | Backup/restore validation | M16 | N-007 | GAP-092 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | Production hardening | M16 | N-008 | GAP-093 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 
-Mandatory capability proof result: `FAIL`. Failed mappings: Internal planner workspace; Pension analysis records; Planner assumptions; Advisory missing information; Consolidated internal review.
+Mandatory capability proof result: `PASS`. All mandatory capability groups have dedicated Ledger IDs and every non-verified row has a corresponding Gap ID.
 
 ## 7. Orphan Detection
 
@@ -276,12 +276,14 @@ Critical blocker proof result: `PASS`.
 
 ## 11. Final Coverage Verdict
 
-Coverage proof fails because five mandatory capability groups lack dedicated Mechanical Parity Ledger IDs and therefore cannot satisfy the required milestone-ledger-gap relationship: Internal planner workspace, Pension analysis records, Planner assumptions, Advisory missing information, and Consolidated internal review.
+Coverage proof passes for milestone/capability/gap mapping only.
 
-All other audited areas pass: milestone structure, ledger reconciliation, gap reconciliation, orphan detection, false-completion guardrails, and critical-blocker mapping.
+This does not prove implementation completeness or execution-readiness.
 
-This failure does not mean those five capabilities are absent from V2 implementation; supporting sources describe them. It means the current three control documents do not mechanically cover them at Ledger-ID level, so full plan coverage cannot be proven under this package's rules.
+This does not prove V1 parity.
 
-02M remains frozen. No implementation is recommended or authorized. The missing mappings must be corrected in a separately authorized control-document package because this proof may not modify the ledger or gap register.
+02M remains frozen until management review.
 
-FULL_PLAN_COVERAGE_PROOF_FAIL
+No implementation is recommended or authorized by this proof.
+
+FULL_PLAN_COVERAGE_PROOF_PASS

@@ -10,21 +10,21 @@ Implementation authorization: `NO`
 
 ## 1. Current Truth Statement
 
-The Mechanical Parity Ledger shows that V1 parity is not achieved. Only 14 rows are `V2_EXISTS_VERIFIED`; 93 rows require action, inspection, deferral, replacement review, or implementation. This register closes no gap, claims no parity, changes neither ledger nor Master Sequence, and authorizes no implementation. 02M remains frozen during this package.
+The Mechanical Parity Ledger shows that V1 parity is not achieved. Only 17 rows are `V2_EXISTS_VERIFIED`; 95 rows require action, inspection, deferral, replacement review, or implementation. This register closes no gap, claims no parity, changes neither ledger nor Master Sequence, and authorizes no implementation. 02M remains frozen during this package.
 
 ## 2. Count Reconciliation
 
 | Count item | Expected | Actual | Result |
 |---|---:|---:|---|
-| Total ledger rows | 107 | 107 | MATCH |
-| V2_EXISTS_VERIFIED excluded | 14 | 14 | MATCH |
-| V2_PARTIAL included | 30 | 30 | MATCH |
+| Total ledger rows | 112 | 112 | MATCH |
+| V2_EXISTS_VERIFIED excluded | 17 | 17 | MATCH |
+| V2_PARTIAL included | 32 | 32 | MATCH |
 | V2_MISSING included | 40 | 40 | MATCH |
 | V2_REPLACED_BY_NEW_DESIGN included | 2 | 2 | MATCH |
 | V2_EXCLUDED_BY_DECISION included | 0 | 0 | MATCH |
 | UNKNOWN_NEEDS_INSPECTION included | 21 | 21 | MATCH |
-| Total expected gap rows | 93 | 93 | MATCH |
-| Total actually listed | 93 | 93 | MATCH |
+| Total expected gap rows | 95 | 95 | MATCH |
+| Total actually listed | 95 | 95 | MATCH |
 
 Count reconciliation result: `PASS`.
 
@@ -141,6 +141,8 @@ Count reconciliation result: `PASS`.
 | GAP-091 | N-006 | Validation / production | Security/privacy validation | V2_PARTIAL | PARTIAL_IMPLEMENTATION_GAP | CRITICAL_BLOCKER | M16 | Threat model, authz, upload/privacy, penetration/security checks | Production requires E2E correctness, security, recovery, and operations. | M16 production acceptance | Contract and close Threat model, authz, upload/privacy, penetration/security checks; preserve verified behavior and add targeted tests. | M16 security package | V2-M16-GAP- | V1: V1 has policy/PII tests; full assessment not evidenced; Stage17 policy/PII tests. V2: Governance and ownership tests only; No full security suite; tests governance/API tests; runtime V2 validation. | Especially required before M02/M08/M14 production. |
 | GAP-092 | N-007 | Validation / production | Backup/restore validation | V2_MISSING | IMPLEMENTATION_GAP | CRITICAL_BLOCKER | M16 | Backup, restore, RPO/RTO rehearsal | Production requires E2E correctness, security, recovery, and operations. | M16 production acceptance | Create the first M16 operations package contract for Backup, restore, RPO/RTO rehearsal, with exact files, tests, and stop conditions. | M16 operations package | V2-M16-GAP- | V1: V1 snapshot restore exists but infrastructure backup proof unclear; snapshot routes/tests. V2: None found for database/artifact backup restore; None; tests None; runtime None. | App snapshot is not infrastructure backup. |
 | GAP-093 | N-008 | Validation / production | Production hardening | V2_PARTIAL | PARTIAL_IMPLEMENTATION_GAP | CRITICAL_BLOCKER | M16 | Auth, observability, rate limits, SLOs, recovery, load, deployment rehearsal | Production requires E2E correctness, security, recovery, and operations. | M16 production acceptance | Contract and close Auth, observability, rate limits, SLOs, recovery, load, deployment rehearsal; preserve verified behavior and add targeted tests. | M16 hardening package | V2-M16-GAP- | V1: V1 health routes/tests exist; overall production controls not fully evidenced; system health routes; test suite. V2: Basic app/build/governance foundations; Health/runtime basics; tests governance/full suites; runtime V2 validation. | Cannot be complete before M01-M15. |
+| GAP-094 | O-001 | M01 foundation controls | Internal planner workspace | V2_PARTIAL | PARTIAL_IMPLEMENTATION_GAP | MEDIUM | M01 | Dedicated contracted workspace heading/composition and targeted workspace acceptance evidence | M01 cannot close mechanically while its named workspace remains only an unaccepted composition package. | M01 closure | After management review, execute the frozen 02M package exactly within its accepted frontend/test boundary and record targeted acceptance evidence. | Frozen 02M frontend composition package after management review | V1: `specs/reference/v1_discovery_full.md`; `V1-CAP-033` coverage row; no exact bounded workspace route/component/test isolated. V2: `frontend/src/pages/ClientDetailScreen.tsx`; four existing section components and focused tests; broad runtime/build evidence in `IAP_01B_6_completion_report.md`. | Existing section presence is positive evidence but not completion of the dedicated workspace contract. |
+| GAP-095 | O-002 | M01 foundation controls | Pension analysis records | V2_PARTIAL | PARTIAL_IMPLEMENTATION_GAP | MEDIUM | M01 | Broader analysis outcome authority and exact V1 equivalence beyond the bounded manual record | The bounded record is usable, but richer pension-analysis outcomes cannot be inferred or implemented without product authority. | M01 closure for bounded record; future pension-analysis scope | Preserve the verified bounded record and require a future product/contract decision before any richer analysis fields, calculations, scoring, projection, or recommendations. | Future pension-analysis product/contract decision | V1: `specs/reference/v1_discovery_full.md`; `V1-CAP-030` coverage row describes per-holding analysis-like references but not an exact richer contract. V2: analysis-record model/contracts/routes/UI; `backend/tests/test_v22_slice1_analysis_record_api.py`; `frontend/src/pages/PensionAnalysisRecordSection.test.tsx`; V2 validation. | This gap does not block use of the implemented manual analysis-record foundation. |
 
 Every non-verified Ledger ID appears exactly once; verified rows are excluded.
 
@@ -150,7 +152,7 @@ Counts assign each gap to the first milestone named in the ledger row; later mil
 
 | Milestone | Total gaps | Critical | High | Medium | Low | Unknown risk | First required package before implementation | Can open now? | Reason |
 |---|---:|---:|---:|---:|---:|---:|---|---|---|
-| M01 | 4 | 0 | 1 | 1 | 1 | 1 | Review register, then accepted 02M | YES_AFTER_REVIEW | Remaining gaps do not require 02M files; this file grants no authority. |
+| M01 | 6 | 0 | 1 | 3 | 1 | 1 | Review register, then accepted 02M | YES_AFTER_REVIEW | Dedicated workspace remains frozen; the bounded analysis record is retained while richer outcomes require future authority. This file grants no authority. |
 | M02 | 6 | 5 | 1 | 0 | 0 | 0 | Intake/storage/security contract | NO | Intake/storage/security contracts are unresolved. |
 | M03 | 5 | 4 | 1 | 0 | 0 | 0 | Parser/staging/trace contract | NO | Earlier dependencies and 5 owned gaps remain open. |
 | M04 | 7 | 3 | 4 | 0 | 0 | 0 | Ledger/source-precedence contract | NO | Earlier dependencies and 7 owned gaps remain open. |
@@ -321,6 +323,6 @@ Unknown rows require inspection first; replacement rows require replacement revi
 
 Ready for review only. This register closes no gap, claims no parity, and authorizes no implementation. 02M remains frozen until review.
 
-Total gap rows: 93. Severity counts: CRITICAL_BLOCKER=72, HIGH=15, MEDIUM=1, LOW=2, UNKNOWN_RISK=3.
+Total gap rows: 95. Severity counts: CRITICAL_BLOCKER=72, HIGH=15, MEDIUM=3, LOW=2, UNKNOWN_RISK=3.
 
 GAP_REGISTER_READY_FOR_REVIEW

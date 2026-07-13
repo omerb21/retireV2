@@ -36,8 +36,8 @@ The project has three accepted control documents: (1) Master Sequence, (2) Mecha
 | M10 | Scenario Engine | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 10 | 10 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
 | M11 | Scenario Comparison and Planner Review | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 6 | 6 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
 | M12 | Planner Judgment / Recommendation Layer | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 6 | 5 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
-| M13 | Client Output Model | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 4 | 4 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
-| M14 | Reports, PDF, Export, and 161D/Fixation Outputs | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 5 | 5 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
+| M13 | Client Output Model | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 5 | 5 | PASS | All 12 required fields are explicit; RTL/Hebrew output requirements are mapped. |
+| M14 | Reports, PDF, Export, and 161D/Fixation Outputs | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 6 | 6 | PASS | All 12 required fields are explicit; RTL/Hebrew renderer validation is mapped. |
 | M15 | Audit Trail, Run History, and Explainability | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 11 | 7 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
 | M16 | End-to-End Validation and Production Hardening | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | YES | 8 | 7 | PASS | All 12 required fields are explicit; mapped counts include multi-milestone rows. |
 
@@ -47,16 +47,16 @@ Milestone proof result: `PASS`. No milestone has zero ledger rows or zero gap ro
 
 | Check | Expected | Actual | Result | Notes |
 |---|---|---|---|---|
-| Total rows | 112 | 112 | PASS | Mechanical rows parsed. |
-| Status counts reconcile | 17/32/40/2/0/21 | 17/32/40/2/0/21 | PASS | Sum is 112. |
-| Every row has Ledger ID | 112 | 112 | PASS | IDs parsed and unique. |
-| Every row has V1 domain | 112 | 112 | PASS | No blank domain. |
-| Every row has small capability | 112 | 112 | PASS | No blank capability. |
-| Every row has V2 milestone | 112 | 112 | PASS | All contain M01-M16 mapping. |
-| Every row has status | 112 | 112 | PASS | All use allowed statuses. |
+| Total rows | 113 | 113 | PASS | Mechanical rows parsed. |
+| Status counts reconcile | 17/32/41/2/0/21 | 17/32/41/2/0/21 | PASS | Sum is 113. |
+| Every row has Ledger ID | 113 | 113 | PASS | IDs parsed and unique. |
+| Every row has V1 domain | 113 | 113 | PASS | No blank domain. |
+| Every row has small capability | 113 | 113 | PASS | No blank capability. |
+| Every row has V2 milestone | 113 | 113 | PASS | All contain M01-M16 mapping. |
+| Every row has status | 113 | 113 | PASS | All use allowed statuses. |
 | No broad domain marked complete | None | None | PASS | Only small rows carry verification status. |
 | Verified rows name implementation and tests | 17 | 17 | PASS | No verified row has `None found` implementation/test evidence. |
-| Non-verified rows name missing parts | 95 | 95 | PASS | No blank missing-parts field. |
+| Non-verified rows name missing parts | 96 | 96 | PASS | No blank missing-parts field. |
 | Mandatory domains A-N present | 14 | 14 | PASS | Prefixes A through N remain present; O contains dedicated M01 control rows. |
 | B-008/B-009/B-010 split | 3 rows | 3 rows | PASS | Convert, restore, and process-directory are separate. |
 
@@ -66,19 +66,19 @@ Ledger proof result: `PASS`.
 
 | Check | Expected | Actual | Result | Notes |
 |---|---|---|---|---|
-| Total gap rows | 95 | 95 | PASS | Parsed mechanically. |
-| Gap statuses reconcile | 32/40/2/0/21 | 32/40/2/0/21 | PASS | Matches non-verified ledger rows. |
-| Every row has Gap ID | 95 | 95 | PASS | GAP-001 through GAP-095. |
-| Every row has Ledger ID | 95 | 95 | PASS | One-to-one mapping. |
-| Every row has gap type | 95 | 95 | PASS | No blank type. |
-| Every row has severity | 95 | 95 | PASS | Allowed severity present. |
-| Every row has Master milestone | 95 | 95 | PASS | All map to M01-M16. |
-| Every row has missing behavior | 95 | 95 | PASS | No blank missing field. |
-| Every row has next action | 95 | 95 | PASS | Unknowns use inspection; replacements use review. |
-| Every row has package type | 95 | 95 | PASS | No blank package type. |
-| Every row has evidence basis | 95 | 95 | PASS | Evidence field populated. |
-| Gap IDs unique | 95 | 95 | PASS | No duplicates. |
-| Ledger IDs unique in register | 95 | 95 | PASS | No verified IDs included. |
+| Total gap rows | 96 | 96 | PASS | Parsed mechanically. |
+| Gap statuses reconcile | 32/41/2/0/21 | 32/41/2/0/21 | PASS | Matches non-verified ledger rows. |
+| Every row has Gap ID | 96 | 96 | PASS | GAP-001 through GAP-096. |
+| Every row has Ledger ID | 96 | 96 | PASS | One-to-one mapping. |
+| Every row has gap type | 96 | 96 | PASS | No blank type. |
+| Every row has severity | 96 | 96 | PASS | Allowed severity present. |
+| Every row has Master milestone | 96 | 96 | PASS | All map to M01-M16. |
+| Every row has missing behavior | 96 | 96 | PASS | No blank missing field. |
+| Every row has next action | 96 | 96 | PASS | Unknowns use inspection; replacements use review. |
+| Every row has package type | 96 | 96 | PASS | No blank package type. |
+| Every row has evidence basis | 96 | 96 | PASS | Evidence field populated. |
+| Gap IDs unique | 96 | 96 | PASS | No duplicates. |
+| Ledger IDs unique in register | 96 | 96 | PASS | No verified IDs included. |
 | Unknown inspection register | 21 | 21 | PASS | Matches unknown ledger rows. |
 | Replacement review register | 2 | 2 | PASS | Matches replacement rows. |
 
@@ -169,6 +169,7 @@ Gap register proof result: `PASS`.
 | Artifact storage/checksum | M14 | L-006 | GAP-078 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | Source manifest | M13 M15 | L-007 | GAP-079 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | Client-facing redaction | M13 | L-008 | GAP-080 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
+| RTL/Hebrew layout | M13-M14 | L-009 | GAP-096 | PASS | NOT_VERIFIED | Required locale/layout capability is explicitly mapped; no implementation is implied. |
 | Immutable run history | M15 | M-001 | GAP-081 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | Audit events | M15 | M-002 | GAP-082 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
 | Source-to-output trace | M15 | M-003 | GAP-083 | PASS | NOT_VERIFIED | Mapping is mechanical from ledger and gap register. |
@@ -221,7 +222,7 @@ Orphan detection result: `PASS`.
 | Clearinghouse | B-006 B-007 B-010 C-001 C-002 C-003 C-004 C-005 C-006 C-007 | YES | NO | PASS |
 | Tax engine | G-005 G-007 G-008 G-009 G-010 H-001 H-006 | YES | NO | PASS |
 | Scenario engine | I-001 I-002 I-003 I-004 I-005 I-006 I-007 I-008 I-009 J-001 | YES | NO | PASS |
-| Reports/client outputs | L-001 L-002 L-003 L-004 L-005 L-006 L-007 L-008 G-012 | YES | NO | PASS |
+| Reports/client outputs | L-001 L-002 L-003 L-004 L-005 L-006 L-007 L-008 L-009 G-012 | YES | NO | PASS |
 | Audit/run history | M-001 M-002 M-003 M-005 M-006 M-007 | YES | NO | PASS |
 | Production readiness | N-002 N-003 N-004 N-005 N-006 N-007 N-008 | YES | NO | PASS |
 

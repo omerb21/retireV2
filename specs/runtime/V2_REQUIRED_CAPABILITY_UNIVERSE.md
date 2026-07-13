@@ -157,7 +157,7 @@ A requirement may use multiple source types. Source type establishes why the req
 | REQ-113 | L. Client outputs and reports | Artifact storage/checksum | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE | Artifact storage/checksum is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | M14 | L-006 | GAP-078 | REQ_MAPPED_UNKNOWN | V2 evidence exists or is referenced, but parity/equivalence remains unverified pending bounded inspection. | Inspect the exact V1/V2 behavior and assign a supported parity status. | HIGH | yes | Planning evidence is not implementation evidence. |
 | REQ-114 | L. Client outputs and reports | Source manifest | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE | Source manifest is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | M13-M15 | L-007 | GAP-079 | REQ_MAPPED_GAP | Mapped ledger capability is partial, missing, or replaced and has an explicit gap. | Resolve the cited gap under its milestone contract and acceptance gate. | HIGH | yes | Planning evidence is not implementation evidence. |
 | REQ-115 | L. Client outputs and reports | Client-facing redaction | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE | Client-facing redaction is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | M13 | L-008 | GAP-080 | REQ_MAPPED_UNKNOWN | V2 evidence exists or is referenced, but parity/equivalence remains unverified pending bounded inspection. | Inspect the exact V1/V2 behavior and assign a supported parity status. | HIGH | yes | Planning evidence is not implementation evidence. |
-| REQ-116 | L. Client outputs and reports | RTL/Hebrew layout | MASTER_SEQUENCE; PROFESSIONAL_DOMAIN | RTL/Hebrew layout is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | M13-M14 | None | None | REQ_UNMAPPED | No current Master-to-Ledger-to-Gap control row proves this requirement. | Add an explicit Master milestone mapping plus dedicated Ledger and Gap rows before planning implementation. | HIGH | yes | No implementation may begin until the stated control decision/mapping exists. |
+| REQ-116 | L. Client outputs and reports | RTL/Hebrew layout | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE; PROFESSIONAL_DOMAIN | RTL/Hebrew layout is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | M13-M14 | L-009 | GAP-096 | REQ_MAPPED_GAP | The requirement is now mapped to an explicit missing ledger capability and a dedicated high-severity gap; no implementation evidence exists. | Resolve the cited M13 locale/output contract and M14 renderer/layout validation gap under separate accepted packages. | HIGH | yes | Control mapping is complete; no renderer, report, PDF, UI, or implementation work is authorized. |
 | REQ-117 | L. Client outputs and reports | Output approval workflow | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE | Output approval workflow is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | M13; M12 | L-001, K-004 | GAP-073, GAP-071 | REQ_MAPPED_UNKNOWN | V2 evidence exists or is referenced, but parity/equivalence remains unverified pending bounded inspection. | Inspect the exact V1/V2 behavior and assign a supported parity status. | HIGH | yes | Planning evidence is not implementation evidence. |
 | REQ-118 | M. Audit / run history / explainability | Immutable run history | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE | Immutable run history is required to make audit / run history / explainability complete, deterministic, reviewable, and testable at a capability boundary. | M15 | M-001 | GAP-081 | REQ_MAPPED_GAP | Mapped ledger capability is partial, missing, or replaced and has an explicit gap. | Resolve the cited gap under its milestone contract and acceptance gate. | HIGH | yes | Planning evidence is not implementation evidence. |
 | REQ-119 | M. Audit / run history / explainability | Audit events | MASTER_SEQUENCE; PARITY_LEDGER; GAP_REGISTER; V1_EVIDENCE | Audit events is required to make audit / run history / explainability complete, deterministic, reviewable, and testable at a capability boundary. | M15 | M-002 | GAP-082 | REQ_MAPPED_GAP | Mapped ledger capability is partial, missing, or replaced and has an explicit gap. | Resolve the cited gap under its milestone contract and acceptance gate. | HIGH | yes | Planning evidence is not implementation evidence. |
@@ -216,17 +216,17 @@ The rows are intentionally capability-sized. Clearinghouse, tax, reports, scenar
 | I. Scenarios | 11 | 0 | 11 | 0 | 0 | 0 | None | Counts classify requirement-to-control mapping, not implementation completeness. |
 | J. Scenario comparison and review | 6 | 0 | 4 | 2 | 0 | 0 | None | Counts classify requirement-to-control mapping, not implementation completeness. |
 | K. Planner judgment and recommendations | 7 | 1 | 4 | 1 | 0 | 1 | Recommendation legal/professional disclaimer if needed | Counts classify requirement-to-control mapping, not implementation completeness. |
-| L. Client outputs and reports | 10 | 0 | 4 | 5 | 1 | 0 | RTL/Hebrew layout | Counts classify requirement-to-control mapping, not implementation completeness. |
+| L. Client outputs and reports | 10 | 0 | 5 | 5 | 0 | 0 | None | RTL/Hebrew layout is mapped to L-009/GAP-096 but remains unimplemented. |
 | M. Audit / run history / explainability | 9 | 1 | 5 | 1 | 0 | 2 | Tamper detection if required | Counts classify requirement-to-control mapping, not implementation completeness. |
 | N. Validation / production | 11 | 1 | 8 | 2 | 0 | 0 | None | Counts classify requirement-to-control mapping, not implementation completeness. |
 
-Total requirement rows: 137. Status counts: `REQ_MAPPED_VERIFIED=18`, `REQ_MAPPED_GAP=90`, `REQ_MAPPED_UNKNOWN=24`, `REQ_UNMAPPED=1`, `REQ_NEEDS_DOMAIN_DECISION=4`.
+Total requirement rows: 137. Status counts: `REQ_MAPPED_VERIFIED=18`, `REQ_MAPPED_GAP=91`, `REQ_MAPPED_UNKNOWN=24`, `REQ_UNMAPPED=0`, `REQ_NEEDS_DOMAIN_DECISION=4`.
 
 ## 7. Unmapped Requirement Register
 
 | Requirement ID | Capability | Why required | Why unmapped | What document must be patched later | Expected milestone | Expected ledger/gap action |
 |---|---|---|---|---|---|---|
-| REQ-116 | RTL/Hebrew layout | RTL/Hebrew layout is required to make client outputs and reports complete, deterministic, reviewable, and testable at a capability boundary. | No current dedicated control mapping exists. | Master Sequence, then Mechanical Parity Ledger and Full Gap Register | M13-M14 | Add one dedicated ledger row and, unless verified by evidence, one dedicated gap row. |
+| None | None | None | None | None | None | None |
 
 ## 8. Domain Decision Register
 
@@ -281,10 +281,10 @@ The Required Capability Universe is acceptable only if:
 - no implementation is authorized; and
 - 02M remains frozen.
 
-Mechanical package checks: 137 unique sequential Requirement IDs; 14 mandatory domains; 1 unmapped requirement; 4 domain-decision requirements; all 14 negative challenges represented.
+Mechanical package checks: 137 unique sequential Requirement IDs; 14 mandatory domains; 0 unmapped requirements; 4 domain-decision requirements; all 14 negative challenges represented.
 
 ## 12. Final Status
 
-Ready for review only. This universe does not prove the plan is complete, does not prove V1 parity, and authorizes no implementation. 02M remains frozen until universe review and a subsequent coverage proof against this external requirement set.
+Ready for Universe coverage proof and review only. Every current Universe requirement now has a control mapping or an explicit domain-decision status, but this does not prove implementation completeness, plan completeness, or V1 parity and authorizes no implementation. 02M remains frozen until universe review and a subsequent coverage proof against this external requirement set.
 
 REQUIRED_CAPABILITY_UNIVERSE_READY_FOR_REVIEW

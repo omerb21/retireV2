@@ -32,8 +32,8 @@ The complete intended Retire V2 system is an internal-planner-led, deterministic
 10. **M10 Scenario Engine** - execute immutable scenarios over locked source, conversion, tax, pension, and cashflow inputs.
 11. **M11 Scenario Comparison and Planner Review** - compare persisted results without recalculation or mutation.
 12. **M12 Planner Judgment / Recommendation Layer** - attach auditable professional judgment and approved recommendation records to reviewed scenarios.
-13. **M13 Client Output Model** - freeze the approved, source-backed data contract for client presentation.
-14. **M14 Reports, PDF, Export, and 161D/Fixation Outputs** - render approved outputs from immutable result snapshots only.
+13. **M13 Client Output Model** - freeze the approved, source-backed, locale-aware data contract for client presentation, including explicit RTL/Hebrew requirements.
+14. **M14 Reports, PDF, Export, and 161D/Fixation Outputs** - render approved outputs from immutable result snapshots with deterministic RTL/Hebrew layout validation.
 15. **M15 Audit Trail, Run History, and Explainability** - unify cross-domain source-to-output trace and immutable run history.
 16. **M16 End-to-End Validation and Production Hardening** - prove the full workflow and production controls under realistic failure and recovery conditions.
 
@@ -223,7 +223,7 @@ The order is mandatory. M07 precedes M08 because external values must enter an a
 
 ### M13 Client Output Model
 
-- **Purpose:** Define the immutable data contract that may be presented to a client.
+- **Purpose:** Define the immutable, locale-aware data contract that may be presented to a client, including required RTL/Hebrew content and direction metadata.
 - **Why needed:** Internal screens and engine payloads cannot safely serve as client output without content, approval, limitation, and source rules.
 - **Dependencies:** M12 approved planner judgment/recommendation; selected scenario; output audience/content/legal approval; localization and accessibility rules.
 - **Main data objects/tables expected:** `client_output_snapshot`, `output_section`, selected scenario/comparison/judgment references, disclosure/limitation set, approval record, locale, template contract version, and source manifest.
@@ -231,14 +231,14 @@ The order is mandatory. M07 precedes M08 because external values must enter an a
 - **Expected frontend work:** Internal preview and approval screen, section inclusion controls only where contracted, source manifest, limitations, and client-safe rendering preview.
 - **Expected tests:** Exact field allowlist, prohibited internal fields, source completeness, approval requirement, localization/RTL, accessibility, redaction, snapshot immutability, and no recalculation.
 - **Explicit exclusions:** PDF rendering, 161D form generation, live calculations, unapproved recommendations, and direct delivery to clients.
-- **Output:** Approved client-output snapshot ready for renderers.
+- **Output:** Approved client-output snapshot with explicit locale/direction requirements ready for renderers.
 - **Next milestone unlocked:** M14.
 - **Known unknowns:** Mandatory sections, wording/legal disclaimers, languages, branding, approval roles, and delivery channels.
 - **Stop conditions:** Audience/content contract incomplete, internal-only data leaks, output numbers are recomputed, or source manifest/approval is missing.
 
 ### M14 Reports, PDF, Export, and 161D/Fixation Outputs
 
-- **Purpose:** Render approved snapshots into reports, PDFs, exports, and authorized 161D/Fixation artifacts.
+- **Purpose:** Render approved snapshots into reports, PDFs, exports, and authorized 161D/Fixation artifacts with deterministic RTL/Hebrew layout where required.
 - **Why needed:** Final deliverables require stable formatting and legal/form correctness without calculation leakage.
 - **Dependencies:** M13 client-output snapshots; official form/template authority; rendering/storage/versioning/signature/delivery contracts; existing Fixation result anchors.
 - **Main data objects/tables expected:** `render_job`, `rendered_artifact`, template/form version, source-output snapshot ID, checksum, MIME type, generation status, approval/delivery metadata, and artifact audit events.
@@ -246,7 +246,7 @@ The order is mandatory. M07 precedes M08 because external values must enter an a
 - **Expected frontend work:** Preview, generate, status, download/view, version/source display, approval, and failure handling.
 - **Expected tests:** Golden rendered content, pixel/layout/RTL checks, PDF text/field readback, official form mapping, checksum/repeatability, prohibited-field absence, renderer failure/retry, and browser download flow.
 - **Explicit exclusions:** Renderer calculations, editing source results in reports, unapproved electronic filing, and automatic client delivery.
-- **Output:** Versioned artifacts traceable to one approved output snapshot.
+- **Output:** Versioned artifacts, including validated RTL/Hebrew layout where required, traceable to one approved output snapshot.
 - **Next milestone unlocked:** M15.
 - **Known unknowns:** Exact report set, 161D/form versions, fillable versus flattened output, electronic filing, signatures, storage retention, and delivery.
 - **Stop conditions:** Template/form authority missing, renderer changes numbers, artifact cannot be traced/reproduced, or legal/layout verification fails.

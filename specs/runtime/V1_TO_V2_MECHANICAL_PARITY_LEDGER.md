@@ -145,6 +145,7 @@ Evidence conventions used below:
 | L-006 | Client outputs / reports | Artifact storage/checksum | V1 map shows artifact PDF/report services; checksum semantics unclear | download routes; no checksum test isolated | M14 | Retirement planning document metadata only | Document registration/download not evidenced as generated artifact | metadata tests only | V2 validation | UNKNOWN_NEEDS_INSPECTION | V1 integrity semantics; V2 artifact store/checksum | V1 inspection then M14 storage package | Metadata row is not rendered artifact. |
 | L-007 | Client outputs / reports | Source manifest | V1 evidence includes data fetchers; exact manifest absent | No exact source-manifest test found | M13-M15 | Saved fixation input basis only | Run-detail source context | run-detail/workspace tests | V2 validation | V2_PARTIAL | Client-output-wide source manifest | M13/M15 trace package | Fixation explainability is narrower. |
 | L-008 | Client outputs / reports | Client-facing redaction | V1 map includes PII redaction tests for traces; report redaction unclear | stage17 PII redaction tests; report path not isolated | M13 | None found for client outputs | None | None | None | UNKNOWN_NEEDS_INSPECTION | Output-specific V1 rules and V2 redaction tests | V1 inspection then M13 security package | Trace redaction does not prove report redaction. |
+| L-009 | Client outputs / reports | RTL/Hebrew layout | V1 map and audit identify Hebrew report/PDF paths; exact layout acceptance evidence is not isolated | V1 report/fixation templates and PDF services; no bounded RTL/Hebrew layout test set established for parity | M13-M14 | None found | No V2 client-output/report renderer or RTL/Hebrew layout implementation evidenced | None | None | V2_MISSING | RTL/Hebrew output contract, directionality rules, renderer/layout validation, PDF/browser readback, and report acceptance evidence | M13 locale/output contract then M14 RTL renderer package | Planning references and internal Hebrew text do not prove client-output RTL layout. |
 | M-001 | Audit / run history / explainability | Immutable run history | V1 map; snapshots/scenario/fixation services | snapshot/fixation/scenario tests | M15 | fixation runs/input snapshots/results/history | latest/history/detail APIs/UI | phase7/8/10 tests; RunHistory/RunDetail tests | V2 validation | V2_PARTIAL | Conversion/tax/scenario/output run histories | M15 cross-domain run package | Fixation domain is verified. |
 | M-002 | Audit / run history / explainability | Audit events | V1 map; debug/agent-eyes trace routes | trace routes/tests | M15 | fixation audit rows only | Run detail audit rows | fixation persistence/API/UI tests | V2 validation | V2_PARTIAL | Append-only cross-domain event model and actor access | M15 audit-event package | Calculation rows are not general events. |
 | M-003 | Audit / run history / explainability | Source-to-output trace | V1 map; data fetchers/traces/snapshots | trace and report services | M15 | Fixation source snapshot/result/audit linkage | Run detail/workspace | phase8/10 and UI tests | V2 validation | V2_PARTIAL | Raw import through report artifact graph | M15 trace graph package | Verified only for bounded fixation inputs/results. |
@@ -181,12 +182,12 @@ All mandatory domains A-N are represented in the table with their required minim
 - I Scenarios: I-001 through I-009.
 - J Scenario comparison and review: J-001 through J-006.
 - K Planner judgment / recommendations: K-001 through K-006.
-- L Client outputs / reports: L-001 through L-008.
+- L Client outputs / reports: L-001 through L-009.
 - M Audit / run history / explainability: M-001 through M-007.
 - N Validation / production: N-001 through N-008.
 - O M01 foundation controls: O-001 through O-005.
 
-The table contains 112 mechanical rows. Portfolio convert, restore, and process-directory are separate rows because each action has a distinct route, dependency boundary, missing V2 behavior, and required package type. The five M01 foundation controls have dedicated rows so workspace, analysis-record, assumption, missing-information, and consolidated-review coverage can be proved mechanically.
+The table contains 113 mechanical rows. Portfolio convert, restore, and process-directory are separate rows because each action has a distinct route, dependency boundary, missing V2 behavior, and required package type. The five M01 foundation controls and the RTL/Hebrew client-output requirement have dedicated rows so their coverage can be proved mechanically.
 
 ## 5. Domain Summary
 
@@ -203,12 +204,12 @@ The table contains 112 mechanical rows. Portfolio convert, restore, and process-
 | I Scenarios | 9 | 0 | 0 | 9 | 0 | 0 | 0 | Scenario engine and immutable runs | M10 |
 | J Scenario comparison | 6 | 0 | 0 | 4 | 0 | 0 | 2 | Saved-output comparison | M11 |
 | K Judgment / recommendations | 6 | 1 | 2 | 1 | 1 | 0 | 1 | Evidence-linked recommendations/approval | M12 |
-| L Client outputs / reports | 8 | 0 | 1 | 3 | 0 | 0 | 4 | Client output snapshot and 161D/PDF | M13-M14 |
+| L Client outputs / reports | 9 | 0 | 1 | 4 | 0 | 0 | 4 | Client output snapshot, RTL/Hebrew layout, and 161D/PDF | M13-M14 |
 | M Audit / history | 7 | 1 | 5 | 0 | 0 | 0 | 1 | Cross-domain source-to-output manifest | M15 |
 | N Validation / production | 8 | 1 | 3 | 2 | 0 | 0 | 2 | E2E, backup/restore, security hardening | M16 |
 | O M01 foundation controls | 5 | 3 | 2 | 0 | 0 | 0 | 0 | Dedicated workspace composition and bounded analysis authority | M01 |
 
-Overall status counts: `V2_EXISTS_VERIFIED=17`, `V2_PARTIAL=32`, `V2_MISSING=40`, `V2_REPLACED_BY_NEW_DESIGN=2`, `V2_EXCLUDED_BY_DECISION=0`, `UNKNOWN_NEEDS_INSPECTION=21`.
+Overall status counts: `V2_EXISTS_VERIFIED=17`, `V2_PARTIAL=32`, `V2_MISSING=41`, `V2_REPLACED_BY_NEW_DESIGN=2`, `V2_EXCLUDED_BY_DECISION=0`, `UNKNOWN_NEEDS_INSPECTION=21`.
 
 ## 6. False Completion Guardrails
 

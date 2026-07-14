@@ -145,6 +145,15 @@ One case is an intentional-change contract, not a manual-domain-decision case. I
 | V1GOLDEN-034 | route/security golden | route-level / integration | Assert: request is blocked/not returned; no client2 content or navigation link exposed | report client routing test | YES |
 | V1GOLDEN-035 | rendered + text snapshot | PDF-output / snapshot | Assert: HTML/PDF dir/reading order is RTL; Hebrew text extractable; identity fields present; table headers/rows inspectable; long label does not remove adjacent content | captured report HTML/PDF and template | YES |
 
+## 7A. CLOSURE-03C Tax Golden Expected-Output Cases
+
+CLOSURE-03C evaluated 791 RAW-REM-03 golden candidates. The current RAW-REM-03 evidence records source locations and mapping outcomes but does not reproduce exact expected-output assertions or literals, and no candidate source reference exactly matches an existing golden case source reference. Therefore no CLOSURE-03C golden case is closed in this package; all 791 candidates remain blocked for manual source review. No expected output, numeric result, tax interpretation, formula, or legal rule is inferred.
+
+| Golden case ID | V1LOGIC ID(s) | RAW-REM source | RAW-REM outcome | Source decision reference | Source-grounded expected-output statement | Evidence type | Input fixture requirement | Expected output boundary | Forbidden inference boundary | Closure package | Closure status | Limitations |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+No CLOSURE-03C golden expected-output cases were closed.
+
 ## 8. Final Status
 
 Totals: 35 golden cases; 34 ready; 1 intentional-change case; 0 missing failures; 0 manual domain decisions; 17 high-risk domains represented.

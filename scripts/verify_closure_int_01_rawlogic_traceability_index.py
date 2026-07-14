@@ -12,7 +12,9 @@ PLAN_PASS = "CLOSURE_INT_01_RAWLOGIC_TO_CORE_MAP_TRACEABILITY_INDEX_PASS"
 PLAN_FAIL = "CLOSURE_INT_01_RAWLOGIC_TO_CORE_MAP_TRACEABILITY_INDEX_FAIL"
 INDEX_MARKER = "CLOSURE_INT_01_RAWLOGIC_TRACEABILITY_INDEX_CREATED"
 ALLOWED_RAW_REM = {"RAW-REM-03", "RAW-REM-04", "RAW-REM-05"}
-ALLOWED_STATUS = {"NOT_CLOSED", "PLANNED_FOR_CLOSURE_PACKAGE"}
+ALLOWED_STATUS = {"NOT_CLOSED", "PLANNED_FOR_CLOSURE_PACKAGE", "CLOSED_BY_FUTURE_PATCH"}
+RECOGNIZED_CLOSURE_PACKAGE = "CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS"
+EXPECTED_CLOSURE_03A_ROWS = 91
 ALLOWED_ARTIFACTS = {
     "BEHAVIOR_FORMULA_RULE_PARITY_MAP",
     "GOLDEN_MASTER_EXPECTED_OUTPUT_CASES",
@@ -73,6 +75,17 @@ def parse_rows(text: str, width: int) -> list[list[str]]:
             continue
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) == width and re.fullmatch(r"V1LOGIC-\d{3,}", cells[0]):
+            rows.append(cells)
+    return rows
+
+
+def parse_behavior_contract_rows(text: str) -> list[list[str]]:
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith("|") or re.match(r"^\|[\s:|-]+\|$", line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 13 and re.fullmatch(r"C03A-BEH-\d{3}", cells[0]):
             rows.append(cells)
     return rows
 
@@ -145,6 +158,8 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
         "RAW-REM-03": repo_root / "specs/runtime/raw_remediation/RAW_REM_03_HIGH_RISK_TAX_FIXATION_INDEXATION_DECISIONS.md",
         "RAW-REM-04": repo_root / "specs/runtime/raw_remediation/RAW_REM_04_CLEARINGHOUSE_PARSER_BALANCE_LEDGER_DECISIONS.md",
         "RAW-REM-05": repo_root / "specs/runtime/raw_remediation/RAW_REM_05_PENSION_COEFFICIENT_ANNUITY_CAPITAL_CONVERSION_DECISIONS.md",
+        "closure_03a": repo_root / "specs/runtime/raw_remediation/closure/CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS.md",
+        "behavior_map": repo_root / "specs/runtime/V1_BEHAVIOR_FORMULA_RULE_PARITY_MAP.md",
     }
     failures: list[Failure] = []
     texts: dict[str, str] = {}
@@ -174,8 +189,27 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
     for logic_id in sorted(set(indexed) - set(decisions)):
         add(failures, "EXTRA_INDEX_LOGIC_ID", logic_id, "RAW-REM-03/04/05 decision ID", "extra", paths["index"])
 
+    closure_report: dict[str, list[list[str]]] = {}
+    for row in parse_rows(texts["closure_03a"], 9):
+        closure_report.setdefault(row[0], []).append(row)
+    behavior_contract_section = section(
+        texts["behavior_map"],
+        "## 11A. CLOSURE-03A Tax Behavior Contracts",
+        "## 12. Final Status",
+    )
+    behavior_contracts: dict[str, list[list[str]]] = {}
+    for row in parse_behavior_contract_rows(behavior_contract_section):
+        behavior_contracts.setdefault(row[1], []).append(row)
+
     referenced_packages: set[str] = set()
     artifact_types: set[str] = set()
+    valid_closure_03a: set[str] = set()
+    invalid_closed: set[str] = set()
+
+    def add_closed_failure(code: str, logic_id: str, expected: str, actual: str, source: Path) -> None:
+        invalid_closed.add(logic_id)
+        add(failures, code, logic_id, expected, actual, source)
+
     for row in index_rows:
         logic_id, raw_rem, source_file, outcome, subdomain, package, primary, secondary, status, evidence, _notes = row
         if raw_rem not in ALLOWED_RAW_REM:
@@ -206,11 +240,58 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
         if secondary != "NONE" and secondary not in ALLOWED_ARTIFACTS:
             add(failures, "INVALID_SECONDARY_ARTIFACT_TYPE", logic_id, "NONE or allowed artifact", secondary, paths["index"])
         if status not in ALLOWED_STATUS:
-            add(failures, "INVALID_CLOSURE_STATUS", logic_id, "NOT_CLOSED or PLANNED_FOR_CLOSURE_PACKAGE", status, paths["index"])
-        if status == "CLOSED_BY_FUTURE_PATCH":
-            add(failures, "CLOSED_ROW_FORBIDDEN", logic_id, "not closed", status, paths["index"])
-        if evidence != "EMPTY_NOT_CLOSED":
-            add(failures, "INVALID_CLOSURE_EVIDENCE", logic_id, "EMPTY_NOT_CLOSED", evidence, paths["index"])
+            add(failures, "INVALID_CLOSURE_STATUS", logic_id, ", ".join(sorted(ALLOWED_STATUS)), status, paths["index"])
+        elif status == "CLOSED_BY_FUTURE_PATCH":
+            package_ref, separator, contract_ref = evidence.partition(":")
+            report_rows = closure_report.get(logic_id, [])
+            behavior_rows = behavior_contracts.get(logic_id, [])
+            row_valid = True
+
+            def reject(code: str, expected: str, actual: str, source_path: Path = paths["index"]) -> None:
+                nonlocal row_valid
+                row_valid = False
+                add_closed_failure(code, logic_id, expected, actual, source_path)
+
+            if evidence == "EMPTY_NOT_CLOSED" or not separator or not contract_ref:
+                reject("CLOSED_EVIDENCE_MISSING", "recognized package ID and contract ID", evidence)
+            if package_ref != RECOGNIZED_CLOSURE_PACKAGE:
+                reject("UNKNOWN_CLOSURE_PACKAGE", RECOGNIZED_CLOSURE_PACKAGE, package_ref or "empty")
+            if raw_rem != "RAW-REM-03":
+                reject("CLOSED_SOURCE_NOT_ALLOWED", "RAW-REM-03", raw_rem)
+            if outcome != "TAXMAP_NEEDS_BEHAVIOR_CONTRACT":
+                reject("CLOSED_OUTCOME_NOT_SELECTED", "TAXMAP_NEEDS_BEHAVIOR_CONTRACT", outcome)
+            if len(report_rows) != 1:
+                reject("CLOSURE_03A_REPORT_CARDINALITY", "exactly one report row", str(len(report_rows)), paths["closure_03a"])
+            else:
+                report = report_rows[0]
+                if report[1] != contract_ref or report[6] != evidence or report[7] != "CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT":
+                    reject(
+                        "CLOSURE_03A_REPORT_MISMATCH",
+                        f"{contract_ref} / {evidence} / CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT",
+                        f"{report[1]} / {report[6]} / {report[7]}",
+                        paths["closure_03a"],
+                    )
+            if len(behavior_rows) != 1:
+                reject("CLOSURE_03A_BEHAVIOR_MAP_CARDINALITY", "exactly one behavior contract", str(len(behavior_rows)), paths["behavior_map"])
+            else:
+                behavior = behavior_rows[0]
+                if (
+                    behavior[0] != contract_ref
+                    or behavior[2] != "RAW-REM-03"
+                    or behavior[3] != "TAXMAP_NEEDS_BEHAVIOR_CONTRACT"
+                    or behavior[10] != RECOGNIZED_CLOSURE_PACKAGE
+                    or behavior[11] != "CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT"
+                ):
+                    reject(
+                        "CLOSURE_03A_BEHAVIOR_MAP_MISMATCH",
+                        f"{contract_ref} / RAW-REM-03 / TAXMAP_NEEDS_BEHAVIOR_CONTRACT / {RECOGNIZED_CLOSURE_PACKAGE} / CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT",
+                        f"{behavior[0]} / {behavior[2]} / {behavior[3]} / {behavior[10]} / {behavior[11]}",
+                        paths["behavior_map"],
+                    )
+            if row_valid:
+                valid_closure_03a.add(logic_id)
+        elif evidence != "EMPTY_NOT_CLOSED":
+            add(failures, "INVALID_CLOSURE_EVIDENCE", logic_id, "EMPTY_NOT_CLOSED for a non-closed row", evidence, paths["index"])
         referenced_packages.update(part for part in package.split(";") if part.startswith("CLOSURE-"))
         artifact_types.add(primary)
         if secondary != "NONE":
@@ -223,6 +304,12 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
     for raw_rem, expected in expected_counts.items():
         if source_counts[raw_rem] != expected:
             add(failures, "SOURCE_ROW_COUNT_INVALID", "", f"{raw_rem}={expected}", str(source_counts[raw_rem]), paths["index"])
+
+    closed_rows = sum(row[8] == "CLOSED_BY_FUTURE_PATCH" for row in index_rows)
+    if closed_rows != EXPECTED_CLOSURE_03A_ROWS:
+        add(failures, "CLOSED_ROW_COUNT_INVALID", "", str(EXPECTED_CLOSURE_03A_ROWS), str(closed_rows), paths["index"])
+    if len(valid_closure_03a) != EXPECTED_CLOSURE_03A_ROWS:
+        add(failures, "CLOSURE_03A_VALID_ROW_COUNT_INVALID", "", str(EXPECTED_CLOSURE_03A_ROWS), str(len(valid_closure_03a)), paths["index"])
 
     summary = section(texts["plan"], "## 8. Summary by Future Closure Package", "## 9. Traceability Integrity Rules")
     for package_id in ALL_SUMMARY_PACKAGES:
@@ -252,6 +339,16 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
         if match:
             add(failures, code, "", "forbidden conclusion absent", match.group(0), paths["plan"])
 
+    index_forbidden_patterns = {
+        "INDEX_IMPLEMENTATION_READINESS_CLAIM": r"(?i)(?:implementation|execution)\s*(?:is|:)\s*`?(?:READY|AUTHORIZED|COMPLETE|YES)`?",
+        "INDEX_FULL_PLANNING_COMPLETENESS_CLAIM": r"(?i)full planning completeness\s*(?:is|:)\s*`?(?:PROVEN|PASS|COMPLETE)`?",
+        "INDEX_02M_UNFROZEN": r"(?i)02M\s*(?:is|:)\s*`?UNFROZEN`?",
+    }
+    for code, pattern in index_forbidden_patterns.items():
+        match = re.search(pattern, texts["index"])
+        if match:
+            add(failures, code, "", "forbidden row conclusion absent", match.group(0), paths["index"])
+
     if texts["plan"].count(PLAN_PASS) != 1 or texts["plan"].count(PLAN_FAIL) != 0:
         add(failures, "INVALID_PLAN_MARKER", "", "one PASS and zero FAIL markers", f"PASS={texts['plan'].count(PLAN_PASS)}; FAIL={texts['plan'].count(PLAN_FAIL)}", paths["plan"])
     if texts["index"].count(INDEX_MARKER) != 1:
@@ -264,9 +361,9 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
         "raw_rem_03_rows": source_counts["RAW-REM-03"],
         "raw_rem_04_rows": source_counts["RAW-REM-04"],
         "raw_rem_05_rows": source_counts["RAW-REM-05"],
-        "closed_rows": sum(row[8] == "CLOSED_BY_FUTURE_PATCH" for row in index_rows),
-        "closure_packages_referenced": len(referenced_packages),
-        "target_artifact_types_referenced": len(artifact_types),
+        "closed_rows": closed_rows,
+        "closure_03a_closed_rows": len(valid_closure_03a),
+        "invalid_closed_rows": len(invalid_closed),
     }
     return failures, counts
 

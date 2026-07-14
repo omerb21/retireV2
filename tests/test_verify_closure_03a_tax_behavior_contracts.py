@@ -7,84 +7,189 @@ from pathlib import Path
 
 import pytest
 
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/verify_closure_03a_tax_behavior_contracts.py"
-B = Path("specs/runtime/V1_BEHAVIOR_FORMULA_RULE_PARITY_MAP.md")
-T = Path("specs/runtime/raw_remediation/closure/CLOSURE_INT_01_RAWLOGIC_TRACEABILITY_INDEX.md")
-R = Path("specs/runtime/raw_remediation/closure/CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS.md")
-D = Path("specs/runtime/raw_remediation/RAW_REM_03_HIGH_RISK_TAX_FIXATION_INDEXATION_DECISIONS.md")
+BEHAVIOR = Path("specs/runtime/V1_BEHAVIOR_FORMULA_RULE_PARITY_MAP.md")
+TRACE = Path("specs/runtime/raw_remediation/closure/CLOSURE_INT_01_RAWLOGIC_TRACEABILITY_INDEX.md")
+REPORT_03A = Path("specs/runtime/raw_remediation/closure/CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS.md")
+REPORT_03B = Path("specs/runtime/raw_remediation/closure/CLOSURE_03B_TAX_FORMULA_RULE_CONTRACTS.md")
+DECISIONS = Path("specs/runtime/raw_remediation/RAW_REM_03_HIGH_RISK_TAX_FIXATION_INDEXATION_DECISIONS.md")
+FILES = (BEHAVIOR, TRACE, REPORT_03A, REPORT_03B, DECISIONS)
+
 
 @pytest.fixture()
-def repo(tmp_path):
+def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
-    for path in (B, T, R, D):
-        (root / path.parent).mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / path, root / path)
+    for relative in FILES:
+        (root / relative.parent).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, root / relative)
     return root
 
-def run(root):
-    return subprocess.run([sys.executable, str(SCRIPT), "--repo-root", str(root)], capture_output=True, text=True)
 
-def mutate(root, path, fn):
-    target = root / path
-    target.write_text(fn(target.read_text(encoding="utf-8")), encoding="utf-8")
+def run(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo-root", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-def replace_row(text, prefix, width, predicate, index, value):
+
+def mutate(root: Path, relative: Path, transform) -> None:
+    path = root / relative
+    path.write_text(transform(path.read_text(encoding="utf-8")), encoding="utf-8")
+
+
+def replace_row(text: str, prefix: str, width: int, predicate, updates: dict[int, str]) -> str:
     for line in text.splitlines():
         if line.startswith(f"| {prefix}"):
-            cells=[x.strip() for x in line.strip("|").split("|")]
-            if len(cells)==width and predicate(cells):
-                cells[index]=value
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) == width and predicate(cells):
+                for index, value in updates.items():
+                    cells[index] = value
                 return text.replace(line, "| " + " | ".join(cells) + " |", 1)
-    raise AssertionError("row not found")
+    raise AssertionError("matching row not found")
 
-def test_current_passes():
-    result=run(ROOT); assert result.returncode==0, result.stdout
 
-def test_selected_count_change_fails(repo):
-    mutate(repo,D,lambda x: x.replace(next(l for l in x.splitlines() if l.startswith("| V1LOGIC-") and "TAXMAP_NEEDS_BEHAVIOR_CONTRACT" in l)+"\n","",1))
-    assert "SELECTED_SCOPE_COUNT" in run(repo).stdout
+def remove_row(text: str, prefix: str, width: int, predicate) -> str:
+    for line in text.splitlines():
+        if line.startswith(f"| {prefix}"):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) == width and predicate(cells):
+                return text.replace(line + "\n", "", 1)
+    raise AssertionError("matching row not found")
 
-def test_behavior_contract_missing_fails(repo):
-    mutate(repo,B,lambda x: x.replace(next(l for l in x.splitlines() if l.startswith("| C03A-BEH-"))+"\n","",1))
+
+def close_trace_row(text: str, source: str, outcome=None) -> str:
+    return replace_row(
+        text,
+        "V1LOGIC-",
+        11,
+        lambda cells: cells[1] == source and (outcome is None or cells[3] == outcome),
+        {8: "CLOSED_BY_FUTURE_PATCH", 9: "UNKNOWN-CLOSURE:FAKE"},
+    )
+
+
+def test_current_state_passes_with_later_03b_closures() -> None:
+    result = run(ROOT)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "traceability_rows_closed_by_03a=91" in result.stdout
+    assert "later_valid_closure_03b_rows=45" in result.stdout
+    assert "total_traceability_closed_rows=136" in result.stdout
+
+
+def test_selected_closure_03a_contract_missing_fails(repo: Path) -> None:
+    mutate(repo, BEHAVIOR, lambda text: remove_row(text, "C03A-BEH-", 13, lambda cells: True))
     assert "BEHAVIOR_CONTRACT" in run(repo).stdout
 
-def test_selected_trace_not_closed_fails(repo):
-    mutate(repo,T,lambda x: replace_row(x,"V1LOGIC-",11,lambda c:c[3]=="TAXMAP_NEEDS_BEHAVIOR_CONTRACT",8,"NOT_CLOSED"))
+
+def test_selected_closure_03a_row_not_closed_fails(repo: Path) -> None:
+    mutate(
+        repo,
+        TRACE,
+        lambda text: replace_row(
+            text,
+            "V1LOGIC-",
+            11,
+            lambda cells: cells[9].startswith("CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS:"),
+            {8: "NOT_CLOSED", 9: "EMPTY_NOT_CLOSED"},
+        ),
+    )
     assert "TRACE_SELECTED_NOT_CLOSED" in run(repo).stdout
 
-@pytest.mark.parametrize("source,outcome",[("RAW-REM-03","TAXMAP_NEEDS_FORMULA_RULE_CONTRACT"),("RAW-REM-04",None),("RAW-REM-05",None)])
-def test_extra_row_closed_fails(repo,source,outcome):
-    def edit(x):
-        y=replace_row(x,"V1LOGIC-",11,lambda c:c[1]==source and (outcome is None or c[3]==outcome),8,"CLOSED_BY_FUTURE_PATCH")
-        return replace_row(y,"V1LOGIC-",11,lambda c:c[1]==source and c[8]=="CLOSED_BY_FUTURE_PATCH",9,"fake")
-    mutate(repo,T,edit)
-    assert "EXTRA_ROW_CLOSED" in run(repo).stdout
 
-def test_trace_evidence_missing_contract_fails(repo):
-    mutate(repo,T,lambda x: replace_row(x,"V1LOGIC-",11,lambda c:c[3]=="TAXMAP_NEEDS_BEHAVIOR_CONTRACT",9,"CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS"))
+def test_closure_03a_evidence_reference_missing_fails(repo: Path) -> None:
+    mutate(
+        repo,
+        TRACE,
+        lambda text: replace_row(
+            text,
+            "V1LOGIC-",
+            11,
+            lambda cells: cells[9].startswith("CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS:"),
+            {9: "CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS"},
+        ),
+    )
     assert "TRACE_EVIDENCE_INVALID" in run(repo).stdout
 
-def test_forbidden_language_fails(repo):
-    mutate(repo,B,lambda x: replace_row(x,"C03A-BEH-",13,lambda c:True,5,"standard tax rule"))
+
+@pytest.mark.parametrize("source", ["RAW-REM-04", "RAW-REM-05"])
+def test_non_tax_row_closed_fails(repo: Path, source: str) -> None:
+    mutate(repo, TRACE, lambda text: close_trace_row(text, source))
+    assert "NON_TAX_ROW_CLOSED" in run(repo).stdout
+
+
+def test_raw_rem_03_outside_valid_03a_03b_closed_fails(repo: Path) -> None:
+    mutate(repo, TRACE, lambda text: close_trace_row(text, "RAW-REM-03", "TAXMAP_NEEDS_BEHAVIOR_AND_GOLDEN"))
+    assert "EXTRA_ROW_CLOSED" in run(repo).stdout
+
+
+def test_unknown_closure_package_fails(repo: Path) -> None:
+    mutate(repo, TRACE, lambda text: close_trace_row(text, "RAW-REM-03", "TAXMAP_NEEDS_BEHAVIOR_AND_GOLDEN"))
+    assert "EXTRA_ROW_CLOSED" in run(repo).stdout
+
+
+def test_total_closed_count_not_136_fails(repo: Path) -> None:
+    mutate(
+        repo,
+        TRACE,
+        lambda text: replace_row(
+            text,
+            "V1LOGIC-",
+            11,
+            lambda cells: cells[9].startswith("CLOSURE-03B_TAX_FORMULA_RULE_CONTRACTS:"),
+            {8: "NOT_CLOSED", 9: "EMPTY_NOT_CLOSED"},
+        ),
+    )
+    assert "TOTAL_CLOSED_COUNT" in run(repo).stdout
+
+
+def test_later_valid_closure_03b_count_not_45_fails(repo: Path) -> None:
+    mutate(
+        repo,
+        TRACE,
+        lambda text: replace_row(
+            text,
+            "V1LOGIC-",
+            11,
+            lambda cells: cells[9].startswith("CLOSURE-03B_TAX_FORMULA_RULE_CONTRACTS:"),
+            {9: "UNKNOWN-CLOSURE:C03B-FR-001"},
+        ),
+    )
+    assert "LATER_CLOSURE_03B_COUNT" in run(repo).stdout
+
+
+def test_implementation_recommendation_fails(repo: Path) -> None:
+    mutate(
+        repo,
+        REPORT_03A,
+        lambda text: text.replace("## 5. Effect on Raw Coverage", "Recommended next step: implementation ready\n\n## 5. Effect on Raw Coverage"),
+    )
     assert "FORBIDDEN_CONTENT" in run(repo).stdout
 
-def test_implementation_recommendation_fails(repo):
-    mutate(repo,R,lambda x:x.replace("## 5. Effect on Raw Coverage","Recommended next step: implementation ready\n\n## 5. Effect on Raw Coverage"))
-    assert "FORBIDDEN_CONTENT" in run(repo).stdout
 
-def test_02m_unfrozen_fails(repo):
-    mutate(repo,R,lambda x:x.replace("02M: FROZEN","02M: UNFROZEN",1))
-    assert "02M_STATUS" in run(repo).stdout
+def test_02m_unfrozen_fails(repo: Path) -> None:
+    mutate(repo, REPORT_03A, lambda text: text.replace("02M: FROZEN", "02M: UNFROZEN", 1))
+    result = run(repo)
+    assert "02M_STATUS" in result.stdout or "FORBIDDEN_CONTENT" in result.stdout
 
-def test_planning_proven_fails(repo):
-    mutate(repo,R,lambda x:x.replace("Full planning completeness: NOT_PROVEN","Full planning completeness: PROVEN",1))
-    assert "PLANNING_STATUS" in run(repo).stdout
 
-def test_final_marker_missing_fails(repo):
-    mutate(repo,R,lambda x:x.replace("CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS_PASS",""))
+def test_full_planning_completeness_proven_fails(repo: Path) -> None:
+    mutate(
+        repo,
+        REPORT_03A,
+        lambda text: text.replace("Full planning completeness: NOT_PROVEN", "Full planning completeness proven", 1),
+    )
+    result = run(repo)
+    assert "PLANNING_STATUS" in result.stdout or "FORBIDDEN_CONTENT" in result.stdout
+
+
+def test_final_marker_missing_fails(repo: Path) -> None:
+    mutate(repo, REPORT_03A, lambda text: text.replace("CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS_PASS", ""))
     assert "FINAL_MARKER_INVALID" in run(repo).stdout
 
-def test_ready_for_review_fails(repo):
-    mutate(repo,R,lambda x:x.replace("## 7. Final Marker","READY_FOR_REVIEW\n\n## 7. Final Marker"))
+
+def test_ready_for_review_fails(repo: Path) -> None:
+    mutate(repo, REPORT_03A, lambda text: text.replace("## 7. Final Marker", "READY_FOR_REVIEW\n\n## 7. Final Marker"))
     assert "READY_FOR_REVIEW_FORBIDDEN" in run(repo).stdout

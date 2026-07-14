@@ -13,8 +13,13 @@ PLAN_FAIL = "CLOSURE_INT_01_RAWLOGIC_TO_CORE_MAP_TRACEABILITY_INDEX_FAIL"
 INDEX_MARKER = "CLOSURE_INT_01_RAWLOGIC_TRACEABILITY_INDEX_CREATED"
 ALLOWED_RAW_REM = {"RAW-REM-03", "RAW-REM-04", "RAW-REM-05"}
 ALLOWED_STATUS = {"NOT_CLOSED", "PLANNED_FOR_CLOSURE_PACKAGE", "CLOSED_BY_FUTURE_PATCH"}
-RECOGNIZED_CLOSURE_PACKAGE = "CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS"
+RECOGNIZED_CLOSURE_PACKAGES = {
+    "CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS",
+    "CLOSURE-03B_TAX_FORMULA_RULE_CONTRACTS",
+}
 EXPECTED_CLOSURE_03A_ROWS = 91
+EXPECTED_CLOSURE_03B_ROWS = 45
+EXPECTED_CLOSED_ROWS = EXPECTED_CLOSURE_03A_ROWS + EXPECTED_CLOSURE_03B_ROWS
 ALLOWED_ARTIFACTS = {
     "BEHAVIOR_FORMULA_RULE_PARITY_MAP",
     "GOLDEN_MASTER_EXPECTED_OUTPUT_CASES",
@@ -90,6 +95,17 @@ def parse_behavior_contract_rows(text: str) -> list[list[str]]:
     return rows
 
 
+def parse_formula_rule_contract_rows(text: str) -> list[list[str]]:
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith("|") or re.match(r"^\|[\s:|-]+\|$", line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 14 and re.fullmatch(r"C03B-FR-\d{3}", cells[0]):
+            rows.append(cells)
+    return rows
+
+
 def section(text: str, heading: str, next_heading: str) -> str:
     match = re.search(
         rf"^{re.escape(heading)}\s*$.*?(?=^{re.escape(next_heading)}\s*$)",
@@ -159,6 +175,7 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
         "RAW-REM-04": repo_root / "specs/runtime/raw_remediation/RAW_REM_04_CLEARINGHOUSE_PARSER_BALANCE_LEDGER_DECISIONS.md",
         "RAW-REM-05": repo_root / "specs/runtime/raw_remediation/RAW_REM_05_PENSION_COEFFICIENT_ANNUITY_CAPITAL_CONVERSION_DECISIONS.md",
         "closure_03a": repo_root / "specs/runtime/raw_remediation/closure/CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS.md",
+        "closure_03b": repo_root / "specs/runtime/raw_remediation/closure/CLOSURE_03B_TAX_FORMULA_RULE_CONTRACTS.md",
         "behavior_map": repo_root / "specs/runtime/V1_BEHAVIOR_FORMULA_RULE_PARITY_MAP.md",
     }
     failures: list[Failure] = []
@@ -189,21 +206,33 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
     for logic_id in sorted(set(indexed) - set(decisions)):
         add(failures, "EXTRA_INDEX_LOGIC_ID", logic_id, "RAW-REM-03/04/05 decision ID", "extra", paths["index"])
 
-    closure_report: dict[str, list[list[str]]] = {}
+    closure_report_03a: dict[str, list[list[str]]] = {}
     for row in parse_rows(texts["closure_03a"], 9):
-        closure_report.setdefault(row[0], []).append(row)
-    behavior_contract_section = section(
+        closure_report_03a.setdefault(row[0], []).append(row)
+    closure_report_03b: dict[str, list[list[str]]] = {}
+    for row in parse_rows(texts["closure_03b"], 10):
+        closure_report_03b.setdefault(row[0], []).append(row)
+    behavior_contract_section_03a = section(
         texts["behavior_map"],
         "## 11A. CLOSURE-03A Tax Behavior Contracts",
+        "## 11B. CLOSURE-03B Tax Formula/Rule Contracts",
+    )
+    behavior_contracts_03a: dict[str, list[list[str]]] = {}
+    for row in parse_behavior_contract_rows(behavior_contract_section_03a):
+        behavior_contracts_03a.setdefault(row[1], []).append(row)
+    formula_rule_contract_section_03b = section(
+        texts["behavior_map"],
+        "## 11B. CLOSURE-03B Tax Formula/Rule Contracts",
         "## 12. Final Status",
     )
-    behavior_contracts: dict[str, list[list[str]]] = {}
-    for row in parse_behavior_contract_rows(behavior_contract_section):
-        behavior_contracts.setdefault(row[1], []).append(row)
+    formula_rule_contracts_03b: dict[str, list[list[str]]] = {}
+    for row in parse_formula_rule_contract_rows(formula_rule_contract_section_03b):
+        formula_rule_contracts_03b.setdefault(row[1], []).append(row)
 
     referenced_packages: set[str] = set()
     artifact_types: set[str] = set()
     valid_closure_03a: set[str] = set()
+    valid_closure_03b: set[str] = set()
     invalid_closed: set[str] = set()
 
     def add_closed_failure(code: str, logic_id: str, expected: str, actual: str, source: Path) -> None:
@@ -243,8 +272,6 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
             add(failures, "INVALID_CLOSURE_STATUS", logic_id, ", ".join(sorted(ALLOWED_STATUS)), status, paths["index"])
         elif status == "CLOSED_BY_FUTURE_PATCH":
             package_ref, separator, contract_ref = evidence.partition(":")
-            report_rows = closure_report.get(logic_id, [])
-            behavior_rows = behavior_contracts.get(logic_id, [])
             row_valid = True
 
             def reject(code: str, expected: str, actual: str, source_path: Path = paths["index"]) -> None:
@@ -254,42 +281,80 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
 
             if evidence == "EMPTY_NOT_CLOSED" or not separator or not contract_ref:
                 reject("CLOSED_EVIDENCE_MISSING", "recognized package ID and contract ID", evidence)
-            if package_ref != RECOGNIZED_CLOSURE_PACKAGE:
-                reject("UNKNOWN_CLOSURE_PACKAGE", RECOGNIZED_CLOSURE_PACKAGE, package_ref or "empty")
             if raw_rem != "RAW-REM-03":
                 reject("CLOSED_SOURCE_NOT_ALLOWED", "RAW-REM-03", raw_rem)
-            if outcome != "TAXMAP_NEEDS_BEHAVIOR_CONTRACT":
-                reject("CLOSED_OUTCOME_NOT_SELECTED", "TAXMAP_NEEDS_BEHAVIOR_CONTRACT", outcome)
-            if len(report_rows) != 1:
-                reject("CLOSURE_03A_REPORT_CARDINALITY", "exactly one report row", str(len(report_rows)), paths["closure_03a"])
-            else:
-                report = report_rows[0]
-                if report[1] != contract_ref or report[6] != evidence or report[7] != "CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT":
-                    reject(
-                        "CLOSURE_03A_REPORT_MISMATCH",
-                        f"{contract_ref} / {evidence} / CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT",
-                        f"{report[1]} / {report[6]} / {report[7]}",
-                        paths["closure_03a"],
-                    )
-            if len(behavior_rows) != 1:
-                reject("CLOSURE_03A_BEHAVIOR_MAP_CARDINALITY", "exactly one behavior contract", str(len(behavior_rows)), paths["behavior_map"])
-            else:
-                behavior = behavior_rows[0]
-                if (
-                    behavior[0] != contract_ref
-                    or behavior[2] != "RAW-REM-03"
-                    or behavior[3] != "TAXMAP_NEEDS_BEHAVIOR_CONTRACT"
-                    or behavior[10] != RECOGNIZED_CLOSURE_PACKAGE
-                    or behavior[11] != "CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT"
-                ):
-                    reject(
-                        "CLOSURE_03A_BEHAVIOR_MAP_MISMATCH",
-                        f"{contract_ref} / RAW-REM-03 / TAXMAP_NEEDS_BEHAVIOR_CONTRACT / {RECOGNIZED_CLOSURE_PACKAGE} / CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT",
-                        f"{behavior[0]} / {behavior[2]} / {behavior[3]} / {behavior[10]} / {behavior[11]}",
-                        paths["behavior_map"],
-                    )
-            if row_valid:
-                valid_closure_03a.add(logic_id)
+            if package_ref not in RECOGNIZED_CLOSURE_PACKAGES:
+                reject("UNKNOWN_CLOSURE_PACKAGE", ", ".join(sorted(RECOGNIZED_CLOSURE_PACKAGES)), package_ref or "empty")
+            elif package_ref == "CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS":
+                report_rows = closure_report_03a.get(logic_id, [])
+                behavior_rows = behavior_contracts_03a.get(logic_id, [])
+                if outcome != "TAXMAP_NEEDS_BEHAVIOR_CONTRACT":
+                    reject("CLOSED_OUTCOME_NOT_SELECTED", "TAXMAP_NEEDS_BEHAVIOR_CONTRACT", outcome)
+                if len(report_rows) != 1:
+                    reject("CLOSURE_03A_REPORT_CARDINALITY", "exactly one report row", str(len(report_rows)), paths["closure_03a"])
+                else:
+                    report = report_rows[0]
+                    if report[1] != contract_ref or report[6] != evidence or report[7] != "CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT":
+                        reject(
+                            "CLOSURE_03A_REPORT_MISMATCH",
+                            f"{contract_ref} / {evidence} / CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT",
+                            f"{report[1]} / {report[6]} / {report[7]}",
+                            paths["closure_03a"],
+                        )
+                if len(behavior_rows) != 1:
+                    reject("CLOSURE_03A_BEHAVIOR_MAP_CARDINALITY", "exactly one behavior contract", str(len(behavior_rows)), paths["behavior_map"])
+                else:
+                    behavior = behavior_rows[0]
+                    if (
+                        behavior[0] != contract_ref
+                        or behavior[2] != "RAW-REM-03"
+                        or behavior[3] != "TAXMAP_NEEDS_BEHAVIOR_CONTRACT"
+                        or behavior[10] != package_ref
+                        or behavior[11] != "CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT"
+                    ):
+                        reject(
+                            "CLOSURE_03A_BEHAVIOR_MAP_MISMATCH",
+                            f"{contract_ref} / RAW-REM-03 / TAXMAP_NEEDS_BEHAVIOR_CONTRACT / {package_ref} / CLOSED_BY_CLOSURE_03A_BEHAVIOR_CONTRACT",
+                            f"{behavior[0]} / {behavior[2]} / {behavior[3]} / {behavior[10]} / {behavior[11]}",
+                            paths["behavior_map"],
+                        )
+                if row_valid:
+                    valid_closure_03a.add(logic_id)
+            elif package_ref == "CLOSURE-03B_TAX_FORMULA_RULE_CONTRACTS":
+                report_rows = closure_report_03b.get(logic_id, [])
+                formula_rows = formula_rule_contracts_03b.get(logic_id, [])
+                if outcome != "TAXMAP_NEEDS_FORMULA_RULE_CONTRACT":
+                    reject("CLOSED_OUTCOME_NOT_SELECTED", "TAXMAP_NEEDS_FORMULA_RULE_CONTRACT", outcome)
+                if len(report_rows) != 1:
+                    reject("CLOSURE_03B_REPORT_CARDINALITY", "exactly one report row", str(len(report_rows)), paths["closure_03b"])
+                else:
+                    report = report_rows[0]
+                    if report[1] != contract_ref or report[7] != evidence or report[8] != "CLOSED_BY_CLOSURE_03B_FORMULA_RULE_CONTRACT":
+                        reject(
+                            "CLOSURE_03B_REPORT_MISMATCH",
+                            f"{contract_ref} / {evidence} / CLOSED_BY_CLOSURE_03B_FORMULA_RULE_CONTRACT",
+                            f"{report[1]} / {report[7]} / {report[8]}",
+                            paths["closure_03b"],
+                        )
+                if len(formula_rows) != 1:
+                    reject("CLOSURE_03B_BEHAVIOR_MAP_CARDINALITY", "exactly one formula/rule contract", str(len(formula_rows)), paths["behavior_map"])
+                else:
+                    formula = formula_rows[0]
+                    if (
+                        formula[0] != contract_ref
+                        or formula[2] != "RAW-REM-03"
+                        or formula[3] != "TAXMAP_NEEDS_FORMULA_RULE_CONTRACT"
+                        or formula[11] != package_ref
+                        or formula[12] != "CLOSED_BY_CLOSURE_03B_FORMULA_RULE_CONTRACT"
+                    ):
+                        reject(
+                            "CLOSURE_03B_BEHAVIOR_MAP_MISMATCH",
+                            f"{contract_ref} / RAW-REM-03 / TAXMAP_NEEDS_FORMULA_RULE_CONTRACT / {package_ref} / CLOSED_BY_CLOSURE_03B_FORMULA_RULE_CONTRACT",
+                            f"{formula[0]} / {formula[2]} / {formula[3]} / {formula[11]} / {formula[12]}",
+                            paths["behavior_map"],
+                        )
+                if row_valid:
+                    valid_closure_03b.add(logic_id)
         elif evidence != "EMPTY_NOT_CLOSED":
             add(failures, "INVALID_CLOSURE_EVIDENCE", logic_id, "EMPTY_NOT_CLOSED for a non-closed row", evidence, paths["index"])
         referenced_packages.update(part for part in package.split(";") if part.startswith("CLOSURE-"))
@@ -306,10 +371,12 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
             add(failures, "SOURCE_ROW_COUNT_INVALID", "", f"{raw_rem}={expected}", str(source_counts[raw_rem]), paths["index"])
 
     closed_rows = sum(row[8] == "CLOSED_BY_FUTURE_PATCH" for row in index_rows)
-    if closed_rows != EXPECTED_CLOSURE_03A_ROWS:
-        add(failures, "CLOSED_ROW_COUNT_INVALID", "", str(EXPECTED_CLOSURE_03A_ROWS), str(closed_rows), paths["index"])
+    if closed_rows != EXPECTED_CLOSED_ROWS:
+        add(failures, "CLOSED_ROW_COUNT_INVALID", "", str(EXPECTED_CLOSED_ROWS), str(closed_rows), paths["index"])
     if len(valid_closure_03a) != EXPECTED_CLOSURE_03A_ROWS:
         add(failures, "CLOSURE_03A_VALID_ROW_COUNT_INVALID", "", str(EXPECTED_CLOSURE_03A_ROWS), str(len(valid_closure_03a)), paths["index"])
+    if len(valid_closure_03b) != EXPECTED_CLOSURE_03B_ROWS:
+        add(failures, "CLOSURE_03B_VALID_ROW_COUNT_INVALID", "", str(EXPECTED_CLOSURE_03B_ROWS), str(len(valid_closure_03b)), paths["index"])
 
     summary = section(texts["plan"], "## 8. Summary by Future Closure Package", "## 9. Traceability Integrity Rules")
     for package_id in ALL_SUMMARY_PACKAGES:
@@ -363,6 +430,7 @@ def verify(repo_root: Path) -> tuple[list[Failure], dict[str, int]]:
         "raw_rem_05_rows": source_counts["RAW-REM-05"],
         "closed_rows": closed_rows,
         "closure_03a_closed_rows": len(valid_closure_03a),
+        "closure_03b_closed_rows": len(valid_closure_03b),
         "invalid_closed_rows": len(invalid_closed),
     }
     return failures, counts

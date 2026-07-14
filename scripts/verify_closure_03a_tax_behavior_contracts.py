@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+EXPECTED_03A = 91
+EXPECTED_03B = 45
+EXPECTED_TOTAL_CLOSED = 136
+
+
 @dataclass(frozen=True)
 class Failure:
     code: str
@@ -42,6 +47,7 @@ def verify(root: Path):
         "behavior": root / "specs/runtime/V1_BEHAVIOR_FORMULA_RULE_PARITY_MAP.md",
         "trace": root / "specs/runtime/raw_remediation/closure/CLOSURE_INT_01_RAWLOGIC_TRACEABILITY_INDEX.md",
         "report": root / "specs/runtime/raw_remediation/closure/CLOSURE_03A_TAX_BEHAVIOR_CONTRACTS.md",
+        "report_03b": root / "specs/runtime/raw_remediation/closure/CLOSURE_03B_TAX_FORMULA_RULE_CONTRACTS.md",
         "decisions": root / "specs/runtime/raw_remediation/RAW_REM_03_HIGH_RISK_TAX_FIXATION_INDEXATION_DECISIONS.md",
     }
     failures = []
@@ -55,9 +61,10 @@ def verify(root: Path):
         return failures, {}
 
     decisions = {r[0]: r for r in rows(text["decisions"], 7, "V1LOGIC-") if r[2] == "TAXMAP_NEEDS_BEHAVIOR_CONTRACT"}
-    contracts_text = section(text["behavior"], "## 11A. CLOSURE-03A Tax Behavior Contracts", "## 12. Final Status")
+    contracts_text = section(text["behavior"], "## 11A. CLOSURE-03A Tax Behavior Contracts", "## 11B. CLOSURE-03B Tax Formula/Rule Contracts")
     contracts = rows(contracts_text, 13, "C03A-BEH-")
     reports = rows(text["report"], 9, "V1LOGIC-")
+    reports_03b = rows(text["report_03b"], 10, "V1LOGIC-")
     traces = rows(text["trace"], 11, "V1LOGIC-")
     trace_by_id = {r[0]: r for r in traces}
     contract_by_logic = {r[1]: r for r in contracts}
@@ -66,13 +73,13 @@ def verify(root: Path):
     def fail(code, lid, expected, actual, path="report"):
         failures.append(Failure(code, lid or "n/a", expected, actual, str(paths[path])))
 
-    if len(decisions) != 91:
-        fail("SELECTED_SCOPE_COUNT", "", "91", str(len(decisions)), "decisions")
-    if len(contracts) != 91 or len(contract_by_logic) != 91:
-        fail("BEHAVIOR_CONTRACT_COUNT", "", "91 unique", f"rows={len(contracts)} unique={len(contract_by_logic)}", "behavior")
-    if len(reports) != 91 or len(report_by_logic) != 91:
-        fail("REPORT_ROW_COUNT", "", "91 unique", f"rows={len(reports)} unique={len(report_by_logic)}")
-    expected_contract_ids = [f"C03A-BEH-{i:03d}" for i in range(1, 92)]
+    if len(decisions) != EXPECTED_03A:
+        fail("SELECTED_SCOPE_COUNT", "", str(EXPECTED_03A), str(len(decisions)), "decisions")
+    if len(contracts) != EXPECTED_03A or len(contract_by_logic) != EXPECTED_03A:
+        fail("BEHAVIOR_CONTRACT_COUNT", "", f"{EXPECTED_03A} unique", f"rows={len(contracts)} unique={len(contract_by_logic)}", "behavior")
+    if len(reports) != EXPECTED_03A or len(report_by_logic) != EXPECTED_03A:
+        fail("REPORT_ROW_COUNT", "", f"{EXPECTED_03A} unique", f"rows={len(reports)} unique={len(report_by_logic)}")
+    expected_contract_ids = [f"C03A-BEH-{i:03d}" for i in range(1, EXPECTED_03A + 1)]
     if [r[0] for r in contracts] != expected_contract_ids:
         fail("CONTRACT_ID_SEQUENCE", "", "C03A-BEH-001..091", "sequence mismatch", "behavior")
 
@@ -99,10 +106,50 @@ def verify(root: Path):
         elif "CLOSURE-03A_TAX_BEHAVIOR_CONTRACTS" not in trace[9] or cid not in trace[9]:
             fail("TRACE_EVIDENCE_INVALID", lid, f"03A and {cid}", trace[9], "trace")
 
+    report_03b_by_logic = {row[0]: row for row in reports_03b}
+    if len(reports_03b) != EXPECTED_03B or len(report_03b_by_logic) != EXPECTED_03B:
+        fail(
+            "CLOSURE_03B_REPORT_COUNT",
+            "",
+            f"{EXPECTED_03B} unique",
+            f"rows={len(reports_03b)} unique={len(report_03b_by_logic)}",
+            "report_03b",
+        )
+    valid_03b: set[str] = set()
+    for logic_id, report_03b in report_03b_by_logic.items():
+        trace = trace_by_id.get(logic_id)
+        expected_evidence = report_03b[7]
+        if (
+            not trace
+            or trace[1] != "RAW-REM-03"
+            or trace[3] != "TAXMAP_NEEDS_FORMULA_RULE_CONTRACT"
+            or trace[8] != "CLOSED_BY_FUTURE_PATCH"
+            or trace[9] != expected_evidence
+            or "CLOSURE-03B_TAX_FORMULA_RULE_CONTRACTS" not in trace[9]
+            or report_03b[8] != "CLOSED_BY_CLOSURE_03B_FORMULA_RULE_CONTRACT"
+        ):
+            fail(
+                "LATER_CLOSURE_03B_INVALID",
+                logic_id,
+                f"RAW-REM-03 formula/rule closure / {expected_evidence}",
+                "missing or mismatched" if not trace else f"{trace[1]} / {trace[3]} / {trace[8]} / {trace[9]}",
+                "trace",
+            )
+        else:
+            valid_03b.add(logic_id)
+
     closed = [r for r in traces if r[8] == "CLOSED_BY_FUTURE_PATCH"]
-    extras = [r for r in closed if r[0] not in decisions]
+    allowed_closed = set(decisions) | set(report_03b_by_logic)
+    extras = [r for r in closed if r[0] not in allowed_closed]
     for row in extras:
-        fail("EXTRA_ROW_CLOSED", row[0], "not closed", f"{row[1]} / {row[3]}", "trace")
+        if row[1] in {"RAW-REM-04", "RAW-REM-05"}:
+            fail("NON_TAX_ROW_CLOSED", row[0], "RAW-REM-04/05 not closed", f"{row[1]} / {row[3]}", "trace")
+        else:
+            fail("EXTRA_ROW_CLOSED", row[0], "only valid CLOSURE-03A/03B rows closed", f"{row[1]} / {row[3]}", "trace")
+    if len(valid_03b) != EXPECTED_03B:
+        fail("LATER_CLOSURE_03B_COUNT", "", str(EXPECTED_03B), str(len(valid_03b)), "trace")
+    if len(closed) != EXPECTED_TOTAL_CLOSED:
+        fail("TOTAL_CLOSED_COUNT", "", str(EXPECTED_TOTAL_CLOSED), str(len(closed)), "trace")
 
     forbidden = re.compile(r"(?i)\b(?:assumed|probably|standard tax rule|by law generally|should calculate|implementation ready|runtime parity proven|full planning completeness proven|02M unfrozen)\b")
     added = contracts_text + "\n" + text["report"]
@@ -127,7 +174,9 @@ def verify(root: Path):
     counts = {
         "selected_v1logic_rows": len(decisions),
         "behavior_contract_rows": len(contracts),
-        "traceability_rows_closed": sum(r[0] in decisions and r[8] == "CLOSED_BY_FUTURE_PATCH" for r in traces),
+        "traceability_rows_closed_by_03a": sum(r[0] in decisions and r[8] == "CLOSED_BY_FUTURE_PATCH" for r in traces),
+        "later_valid_closure_03b_rows": len(valid_03b),
+        "total_traceability_closed_rows": len(closed),
         "extra_rows_closed": len(extras),
     }
     return failures, counts

@@ -5,14 +5,19 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+import app.engines.fixation_engine as fixation_engine
+import app.services.fixation_service as fixation_service
 from app.db.base import load_all_models
 from app.db.session import get_db
 from app.main import app
+from app.models.fixation_audit_row import FixationAuditRow
 from app.models.fixation_input_snapshot import FixationInputSnapshot
+from app.schemas.fixation_contracts import FixationInput
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_service import calculate_fixation_payload
 
@@ -44,7 +49,7 @@ def _payload(*, client_id: int = 1) -> dict:
                 "grant_impact_multiplier": 1.35,
             },
             "source_basis": "accepted test evidence",
-            "status": "reviewed",
+            "status": "accepted",
             "accepted_for_use": True,
             "accepted_by": "planner-1",
             "decision_timestamp": "2026-01-01T08:00:00Z",
@@ -110,6 +115,7 @@ def test_parameter_set_is_mandatory_accepted_complete_and_applicable() -> None:
     assert "parameter_set" in _error_paths(missing_set)
 
     unaccepted = _payload()
+    unaccepted["parameter_set"]["status"] = "rejected"
     unaccepted["parameter_set"]["accepted_for_use"] = False
     assert "parameter_set.accepted_for_use" in _error_paths(unaccepted)
 
@@ -127,6 +133,32 @@ def test_parameter_set_is_mandatory_accepted_complete_and_applicable() -> None:
     assert "parameter_set.effective_to" in _error_paths(stale)
 
 
+def test_parameter_status_vocabulary_and_effective_period_consistency() -> None:
+    accepted = _payload()
+    assert _error_paths(accepted) == set()
+
+    no_period = _payload()
+    no_period["parameter_set"]["effective_from"] = None
+    no_period["parameter_set"]["effective_to"] = None
+    assert _error_paths(no_period) == set()
+
+    rejected_as_accepted = _payload()
+    rejected_as_accepted["parameter_set"]["status"] = "rejected"
+    assert "parameter_set" in _error_paths(rejected_as_accepted)
+
+    accepted_as_rejected = _payload()
+    accepted_as_rejected["parameter_set"]["accepted_for_use"] = False
+    assert "parameter_set" in _error_paths(accepted_as_rejected)
+
+    uncontrolled_status = _payload()
+    uncontrolled_status["parameter_set"]["status"] = "reviewed"
+    assert "parameter_set.status" in _error_paths(uncontrolled_status)
+
+    future = _payload()
+    future["parameter_set"]["effective_from"] = "2026-01-02"
+    assert "parameter_set.effective_from" in _error_paths(future)
+
+
 def test_only_admitted_values_reach_engine_and_result_is_deterministic() -> None:
     payload = _payload()
     before = copy.deepcopy(payload)
@@ -141,6 +173,103 @@ def test_only_admitted_values_reach_engine_and_result_is_deterministic() -> None
     assert first.future_grant_impact == 675.0
 
 
+def _plain_formula_input(*, with_idf: bool = False) -> FixationInput:
+    idf = None
+    if with_idf:
+        idf = {
+            "idf_id": "idf-direct",
+            "reduction_amount": 1000.0,
+            "original_commutation_percent": 25.0,
+            "current_commutation_percent": 20.0,
+            "commutation_date": "2025-01-01",
+            "promoter_age_date": "2027-01-01",
+        }
+    return FixationInput(
+        calculation_id="direct",
+        calculation_version="test",
+        eligibility_date="2026-01-01",
+        eligibility_year=2026,
+        monthly_cap=1000.0,
+        exemption_percentage=0.5,
+        capital_multiplier=180.0,
+        grant_impact_multiplier=1.35,
+        grants=[],
+        future_grant_reserved=0.0,
+        actual_capitalizations=[],
+        idf=idf,
+    )
+
+
+def test_public_engine_rejects_plain_and_idf_inputs_and_has_no_payload_entrypoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    formula_called = False
+
+    def fail_if_called(_input_data):
+        nonlocal formula_called
+        formula_called = True
+        raise AssertionError("formula must not run")
+
+    monkeypatch.setattr(fixation_engine, "_calculate_formula_non_authoritative", fail_if_called)
+
+    with pytest.raises(TypeError, match="AdmittedFixationInput"):
+        fixation_engine.calculate_fixation(_plain_formula_input())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="AdmittedFixationInput"):
+        fixation_engine.calculate_fixation(_plain_formula_input(with_idf=True))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="cannot be admitted"):
+        fixation_engine._admit_fixation_input(_plain_formula_input(with_idf=True))
+
+    assert not hasattr(fixation_engine, "calculate_fixation_from_payload")
+    assert formula_called is False
+
+
+def test_legacy_payload_cannot_reach_application_formula(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    formula_called = False
+
+    def fail_if_called(_input_data):
+        nonlocal formula_called
+        formula_called = True
+        raise AssertionError("formula must not run")
+
+    monkeypatch.setattr(fixation_engine, "_calculate_formula_non_authoritative", fail_if_called)
+    legacy_payload = _plain_formula_input().model_dump(mode="json")
+
+    result = calculate_fixation_payload(legacy_payload)
+
+    assert result.status == "validation_failed"
+    assert formula_called is False
+
+
+@pytest.mark.parametrize(
+    "mutate_payload",
+    [
+        lambda payload: payload.pop("parameter_set"),
+        lambda payload: payload["upstream_context"].update(state="blocked"),
+        lambda payload: payload["grants"][0].update(accepted_for_use=False),
+        lambda payload: payload["actual_capitalizations"][0].update(accepted_for_use=False),
+        lambda payload: payload["future_grant_reservation"].update(accepted_for_use=False),
+    ],
+    ids=["parameter-set", "m07-state", "grant", "capitalization", "future-reserve"],
+)
+def test_missing_admissibility_evidence_cannot_reach_formula(
+    monkeypatch: pytest.MonkeyPatch,
+    mutate_payload,
+) -> None:
+    payload = _payload()
+    mutate_payload(payload)
+
+    def fail_if_called(_input_data):
+        raise AssertionError("formula must not run")
+
+    monkeypatch.setattr(fixation_service, "calculate_fixation_engine", fail_if_called)
+
+    result = calculate_fixation_payload(payload)
+
+    assert result.status == "validation_failed"
+
+
 def test_reviewed_zero_and_preserved_exclusion_decisions() -> None:
     payload = _payload()
     payload["grants"][0]["inclusion_decision"] = "exclude"
@@ -152,8 +281,10 @@ def test_reviewed_zero_and_preserved_exclusion_decisions() -> None:
 
     assert errors == []
     assert context is not None and context.grants[0].inclusion_decision == "exclude"
-    assert engine_input is not None and engine_input.grants == []
-    assert engine_input.actual_capitalizations == []
+    assert engine_input is not None
+    engine_result = fixation_engine.calculate_fixation(engine_input)
+    assert engine_result.grant_results == []
+    assert engine_result.actual_capitalization_results == []
     assert result.status == "success"
     assert result.total_impact == 0.0
 
@@ -168,7 +299,36 @@ def test_conflict_decision_is_used_without_system_source_ranking() -> None:
 
     assert errors == []
     assert context is not None and context.grants[0].conflict_indicator is True
-    assert engine_input is not None and engine_input.grants[0].indexed_amount == 1234.0
+    assert engine_input is not None
+    engine_result = fixation_engine.calculate_fixation(engine_input)
+    assert engine_result.grant_results[0].indexed_amount == 1234.0
+
+
+def _warning_reviewed_payload() -> dict:
+    payload = _payload()
+    payload["upstream_context"] = {
+        "profile_id": "m07-warning-1",
+        "client_id": 1,
+        "state": "warning_reviewed",
+        "warnings": [{"code": "M07-W-1", "message": "review required"}],
+        "review_reason": "planner reviewed the recorded warning",
+        "reviewed_by": "planner-1",
+        "review_timestamp": "2026-01-01T07:59:00Z",
+        "qualification_trace_id": "trace-m07-1",
+    }
+    return payload
+
+
+@pytest.mark.parametrize("missing_field", ["warnings", "review_reason", "reviewed_by", "review_timestamp"])
+def test_warning_reviewed_requires_complete_review_evidence(missing_field: str) -> None:
+    payload = _warning_reviewed_payload()
+    del payload["upstream_context"][missing_field]
+
+    assert "upstream_context" in _error_paths(payload)
+
+
+def test_qualified_context_does_not_require_warning_review_evidence() -> None:
+    assert _error_paths(_payload()) == set()
 
 
 def test_acceptance_evidence_unsupported_inputs_idf_and_m07_gate_block_engine() -> None:
@@ -291,6 +451,32 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
         ).json()
         assert idf_detail["run"]["status"] == "requires_special_handling"
         assert idf_detail["result"] is None
+        assert idf_detail["audit_rows"] == []
+
+        idf_calculated = client.post(
+            f"/api/clients/{owner}/fixation/calculate",
+            json=idf_payload,
+        )
+        assert idf_calculated.status_code == 200
+        assert idf_calculated.json()["status"] == "requires_special_handling"
+
+        warning_payload = _warning_reviewed_payload()
+        warning_payload["upstream_context"]["client_id"] = owner
+        warning_payload["parameter_set"]["client_id"] = owner
+        expected_warning_context = copy.deepcopy(warning_payload["upstream_context"])
+        warning_saved = client.post(
+            "/api/fixation/save",
+            json={"client_id": owner, "input_data": warning_payload},
+        )
+        assert warning_saved.status_code == 200
+        assert warning_saved.json()["status"] == "success"
+        warning_run_id = warning_saved.json()["run_id"]
+
+        warning_payload["upstream_context"]["review_reason"] = "mutated after save"
+        warning_detail = client.get(
+            f"/api/clients/{owner}/fixation/runs/{warning_run_id}"
+        ).json()
+        assert warning_detail["input_snapshot"]["upstream_context"] == expected_warning_context
 
         with session_local() as session:
             snapshot = session.scalar(
@@ -298,6 +484,12 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
             )
             assert snapshot is not None
             assert snapshot.input_payload["parameter_set"]["parameter_set_id"] == "params-2026-accepted"
+            idf_audit_rows = session.scalars(
+                select(FixationAuditRow).where(
+                    FixationAuditRow.fixation_run_id == idf_saved.json()["run_id"]
+                )
+            ).all()
+            assert idf_audit_rows == []
 
         mismatched = _payload(client_id=other)
         rejected = client.post(

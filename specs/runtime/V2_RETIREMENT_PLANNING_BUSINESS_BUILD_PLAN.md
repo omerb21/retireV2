@@ -168,10 +168,17 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | Status item | Current value |
 |---|---|
 | Business-module build plan | CREATED |
+| Current planning checkpoint | M01-M08 READY_FOR_BUILD_PLANNING |
+| M08 build-planning boundary | CLOSED after M08A, M08B, M08C, M08D, and M08F readiness; M08E remains the settled first-stage formal-output exclusion |
+| Deferred modules | M09-M14 BLOCKED_FOR_LOGIC_DETAIL and excluded from the immediate implementation package |
+| Immediate next workstream | Prepare a separately scoped and authorized first implementation package and working architecture; do not reopen M01-M08 planning |
+| READY_FOR_IMPLEMENTATION | NO for every module |
 | Raw V1 source logic coverage | FAIL |
 | Full planning completeness under prior parity definition | NOT_PROVEN |
 | New planning target | MODULE_LEVEL_BUSINESS_LOGIC_BUILD_PLAN |
 | Execution authorized | NO |
 | 02M | FROZEN |
+
+Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.
 
 V2_RETIREMENT_PLANNING_BUSINESS_BUILD_PLAN_CREATED

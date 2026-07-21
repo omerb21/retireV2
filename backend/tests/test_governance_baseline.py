@@ -72,6 +72,23 @@ APPROVED_PKG_001_PATHS = {
     "frontend/src/pages/CalculationResultScreen.test.tsx",
     "frontend/src/pages/RunDetailScreen.tsx",
 }
+APPROVED_PKG_002_PATHS = {
+    "backend/alembic/versions/c2f8a4d1e706_pkg002_cbs_failure_statuses.py",
+    "backend/app/models/fixation_run.py",
+    "backend/app/schemas/cbs_indexation.py",
+    "backend/app/schemas/fixation_admissibility.py",
+    "backend/app/schemas/fixation_contracts.py",
+    "backend/app/services/cbs_indexation_adapter.py",
+    "backend/app/services/fixation_admission_service.py",
+    "backend/app/services/fixation_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_migration_safety.py",
+    "backend/tests/test_phase10_api_behavior.py",
+    "backend/tests/test_phase8_service.py",
+    "backend/tests/test_phase9_api.py",
+    "backend/tests/test_pkg001_admissible_foundation.py",
+    "backend/tests/test_pkg002_cbs_indexation.py",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -101,6 +118,7 @@ def _allowed_untracked_paths() -> set[str]:
         "backend/app/services/fixation_admission_service.py",
         "backend/tests/test_pkg001_admissible_foundation.py",
         "backend/alembic/versions/b7e4c2d9a105_pkg001_fixation_run_statuses.py",
+        *APPROVED_PKG_002_PATHS,
     }
 
 
@@ -119,6 +137,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PACKAGE_1_PATHS,
         *APPROVED_PACKAGE_2_PATHS,
         *APPROVED_PKG_001_PATHS,
+        *APPROVED_PKG_002_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",

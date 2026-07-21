@@ -115,7 +115,9 @@ def _fixation_input(
         "grants": [
             {
                 "grant_id": "G1",
+                "client_id": client_id,
                 "item_type": "severance_grant",
+                "indexation_mode": "asserted_indexed_amount",
                 "indexed_amount": 10000.0,
                 "grant_date": "2020-01-01",
                 "work_start_date": "2010-01-01",
@@ -661,8 +663,22 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
         detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert detail_resp.status_code == 200
         detail = detail_resp.json()
+        expected_snapshot = AdmissibleFixationInput(**input_payload).model_dump(mode="json")
+        expected_snapshot["grants"][0].update(
+            {
+                "asserted_indexed_amount": 10000.0,
+                "selected_calculation_amount": 10000.0,
+                "resolved_base_date": "2020-01-01",
+                "base_date_source": "grant_date",
+                "target_date": "2025-01-01",
+                "indexation_warnings": [
+                    "Asserted indexed amount accepted for use; not a CBS system-calculated result"
+                ],
+                "indexation_calculation_status": "asserted",
+            }
+        )
         assert detail["planner_review_context"] == review_context
-        assert detail["input_snapshot"] == AdmissibleFixationInput(**input_payload).model_dump(mode="json")
+        assert detail["input_snapshot"] == expected_snapshot
         assert FixationResult(**detail["result"]).status == "success"
 
         with session_local() as db:
@@ -671,7 +687,7 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
             )
             assert snapshot is not None
             assert snapshot.planner_review_context == review_context
-            assert snapshot.input_payload == AdmissibleFixationInput(**input_payload).model_dump(mode="json")
+            assert snapshot.input_payload == expected_snapshot
     finally:
         app.dependency_overrides.clear()
 

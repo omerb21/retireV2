@@ -173,13 +173,16 @@ def parse_and_admit_fixation_payload(
 
 
 def validation_failed_result(
-    payload: dict[str, Any], errors: list[ValidationError]
+    payload: dict[str, Any],
+    errors: list[ValidationError],
+    *,
+    status: str = "validation_failed",
 ) -> FixationResult:
     calculation_id = payload.get("calculation_id")
     calculation_version = payload.get("calculation_version")
     return FixationResult(
         calculation_id=calculation_id if isinstance(calculation_id, str) else None,
         calculation_version=calculation_version if isinstance(calculation_version, str) else None,
-        status="validation_failed",
+        status=status,
         validation_errors=errors,
     )

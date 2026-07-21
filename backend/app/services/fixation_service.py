@@ -64,13 +64,14 @@ def calculate_fixation_payload(
         client_id=client_id,
     )
     if errors:
-        return validation_failed_result(input_payload, errors)
+        status = "requires_special_handling" if any(error.path == "idf" for error in errors) else "validation_failed"
+        return validation_failed_result(input_payload, errors, status=status)
     assert engine_input is not None
     return calculate_fixation_engine(engine_input)
 
 
 def _is_success_result(result: FixationResult | list[ValidationError]) -> bool:
-    return isinstance(result, FixationResult)
+    return isinstance(result, FixationResult) and result.status == "success"
 
 
 def create_client_source_data(
@@ -241,7 +242,16 @@ def run_fixation(
             else raw_payload
         )
         if admission_errors:
-            result = admission_errors
+            admission_status = (
+                "requires_special_handling"
+                if any(error.path == "idf" for error in admission_errors)
+                else "validation_failed"
+            )
+            result = validation_failed_result(
+                raw_payload,
+                admission_errors,
+                status=admission_status,
+            )
         else:
             assert engine_input is not None
             result = calculate_fixation_engine(engine_input)
@@ -261,7 +271,7 @@ def run_fixation(
             fixation_run_id=run_trace_id,
             client_id=client_key,
             calculation_version=run_calculation_version,
-            status="success" if _is_success_result(result) else "validation_failed",
+            status=result.status if isinstance(result, FixationResult) else "validation_failed",
             source_data_version_label=((snapshot_payload.get("metadata", {}) or {})).get(
                 "source_data_version_label"
             ),
@@ -327,7 +337,8 @@ def run_fixation(
                 )
 
         if not _is_success_result(result):
-            for idx, err in enumerate(result, start=1):
+            validation_errors = result.validation_errors if isinstance(result, FixationResult) else result
+            for idx, err in enumerate(validation_errors, start=1):
                 db_session.add(
                     FixationValidationError(
                         fixation_validation_error_id=_new_id("valerr"),

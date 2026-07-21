@@ -725,7 +725,7 @@ class FixationValidationErrors(RootModel[list[ValidationError]]):
 class FixationResult(BaseModel):
     calculation_id: str | None = None
     calculation_version: str | None = None
-    status: Literal["success", "validation_failed"]
+    status: Literal["success", "validation_failed", "unsupported", "requires_special_handling"]
     validation_errors: list[ValidationError]
     eligibility_date: date | None = None
     eligibility_year: int | None = None
@@ -751,7 +751,7 @@ class FixationResult(BaseModel):
     @model_serializer(mode="wrap")
     def serialize_result(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         serialized = handler(self)
-        if self.status == "validation_failed":
+        if self.status != "success":
             allowed_fields = {"calculation_id", "calculation_version", "status", "validation_errors"}
             return {
                 key: value
@@ -762,9 +762,9 @@ class FixationResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_status_behavior(self) -> "FixationResult":
-        if self.status == "validation_failed":
+        if self.status != "success":
             if not self.validation_errors:
-                raise ValueError("validation_errors must be present when status is validation_failed")
+                raise ValueError("validation_errors must be present when status is not success")
 
             forbidden_failure_fields = (
                 "initial_exempt_capital",
@@ -784,7 +784,7 @@ class FixationResult(BaseModel):
             )
             for field_name in forbidden_failure_fields:
                 if getattr(self, field_name) is not None:
-                    raise ValueError(f"{field_name} must be omitted when status is validation_failed")
+                    raise ValueError(f"{field_name} must be omitted when status is not success")
             return self
 
         if self.validation_errors:

@@ -206,7 +206,7 @@ def test_acceptance_evidence_unsupported_inputs_idf_and_m07_gate_block_engine() 
         "promoter_age_date": "2027-01-01",
     }
     result = calculate_fixation_payload(idf)
-    assert result.status == "validation_failed"
+    assert result.status == "requires_special_handling"
     assert result.validation_errors[0].path == "idf"
 
 
@@ -270,6 +270,27 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
         assert {
             error["path"] for error in cross_client_calculation.json()["validation_errors"]
         } == {"upstream_context.client_id", "parameter_set.client_id"}
+
+        idf_payload = _payload(client_id=owner)
+        idf_payload["idf"] = {
+            "idf_id": "idf-save",
+            "reduction_amount": 1000.0,
+            "original_commutation_percent": 25.0,
+            "current_commutation_percent": 20.0,
+            "commutation_date": "2025-01-01",
+            "promoter_age_date": "2027-01-01",
+        }
+        idf_saved = client.post(
+            "/api/fixation/save",
+            json={"client_id": owner, "input_data": idf_payload},
+        )
+        assert idf_saved.status_code == 200
+        assert idf_saved.json()["status"] == "requires_special_handling"
+        idf_detail = client.get(
+            f"/api/clients/{owner}/fixation/runs/{idf_saved.json()['run_id']}"
+        ).json()
+        assert idf_detail["run"]["status"] == "requires_special_handling"
+        assert idf_detail["result"] is None
 
         with session_local() as session:
             snapshot = session.scalar(

@@ -49,8 +49,10 @@ APPROVED_PACKAGE_2_PATHS = {
     "frontend/src/pages/FixationInputScreen.test.tsx",
 }
 APPROVED_PKG_001_PATHS = {
+    "backend/alembic/versions/b7e4c2d9a105_pkg001_fixation_run_statuses.py",
     "backend/app/api/fixation_routes.py",
     "backend/app/engines/fixation_engine.py",
+    "backend/app/models/fixation_run.py",
     "backend/app/schemas/fixation_admissibility.py",
     "backend/app/schemas/fixation_contracts.py",
     "backend/app/schemas/fixation_review.py",
@@ -98,6 +100,7 @@ def _allowed_untracked_paths() -> set[str]:
         "backend/app/schemas/fixation_admissibility.py",
         "backend/app/services/fixation_admission_service.py",
         "backend/tests/test_pkg001_admissible_foundation.py",
+        "backend/alembic/versions/b7e4c2d9a105_pkg001_fixation_run_statuses.py",
     }
 
 

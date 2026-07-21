@@ -178,6 +178,9 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | New planning target | MODULE_LEVEL_BUSINESS_LOGIC_BUILD_PLAN |
 | Execution authorized | NO |
 | 02M | FROZEN |
+| PKG-001 execution status | ACCEPTED_WITH_FOLLOW_UP at implementation commit `9ef78a4`; see `specs/runtime/PKG_001_acceptance_record.md` |
+| PKG-001 remaining follow-up evidence | Independent GPT Work backend execution was unavailable; full admissibility-envelope UI, standalone parameter catalog, and correction/supersession workflow remain outside accepted PKG-001 scope |
+| Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.
 

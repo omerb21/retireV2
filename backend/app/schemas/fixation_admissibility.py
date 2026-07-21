@@ -48,12 +48,12 @@ class AcceptedParameterSet(BaseModel):
     effective_to: date | None = None
     values: AcceptedParameterValues
     source_basis: str
-    status: str
+    status: Literal["accepted", "rejected"]
     accepted_for_use: bool
     accepted_by: str
     decision_timestamp: datetime
 
-    @field_validator("parameter_set_id", "source_basis", "status", "accepted_by")
+    @field_validator("parameter_set_id", "source_basis", "accepted_by")
     @classmethod
     def validate_text(cls, value: str, info) -> str:
         return _non_empty(value, str(info.field_name))
@@ -62,10 +62,26 @@ class AcceptedParameterSet(BaseModel):
     def validate_effective_period(self) -> "AcceptedParameterSet":
         if self.effective_from and self.effective_to and self.effective_from > self.effective_to:
             raise ValueError("effective_from must not be after effective_to")
+        if self.status == "accepted" and not self.accepted_for_use:
+            raise ValueError("accepted status requires accepted_for_use=true")
+        if self.status == "rejected" and self.accepted_for_use:
+            raise ValueError("rejected status requires accepted_for_use=false")
         return self
 
 
 M07ProfileState = Literal["draft", "qualified", "warning_reviewed", "blocked", "superseded"]
+
+
+class M07QualificationWarning(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+
+    @field_validator("code", "message")
+    @classmethod
+    def validate_text(cls, value: str, info) -> str:
+        return _non_empty(value, str(info.field_name))
 
 
 class M07EntryContext(BaseModel):
@@ -74,11 +90,31 @@ class M07EntryContext(BaseModel):
     profile_id: str
     client_id: int
     state: M07ProfileState
+    warnings: list[M07QualificationWarning] | None = None
+    review_reason: str | None = None
+    reviewed_by: str | None = None
+    review_timestamp: datetime | None = None
+    qualification_trace_id: str | None = None
 
-    @field_validator("profile_id")
+    @field_validator("profile_id", "review_reason", "reviewed_by", "qualification_trace_id")
     @classmethod
-    def validate_profile_id(cls, value: str) -> str:
-        return _non_empty(value, "profile_id")
+    def validate_text(cls, value: str | None, info) -> str | None:
+        if value is None:
+            return None
+        return _non_empty(value, str(info.field_name))
+
+    @model_validator(mode="after")
+    def validate_warning_review_evidence(self) -> "M07EntryContext":
+        if self.state == "warning_reviewed":
+            if not self.warnings:
+                raise ValueError("warning_reviewed requires at least one structured warning")
+            if self.review_reason is None:
+                raise ValueError("warning_reviewed requires review_reason")
+            if self.reviewed_by is None:
+                raise ValueError("warning_reviewed requires reviewed_by")
+            if self.review_timestamp is None:
+                raise ValueError("warning_reviewed requires review_timestamp")
+        return self
 
 
 SupportStatus = Literal["supported", "unsupported", "requires_special_handling"]

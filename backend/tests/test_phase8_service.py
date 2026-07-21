@@ -141,7 +141,7 @@ def _admissible_payload(client_id: int, input_model: FixationInput) -> dict:
                 "grant_impact_multiplier": input_model.grant_impact_multiplier,
             },
             "source_basis": "accepted service fixture",
-            "status": "reviewed",
+            "status": "accepted",
             "accepted_for_use": True,
             "accepted_by": "test-planner",
             "decision_timestamp": "2025-01-01T00:00:00Z",

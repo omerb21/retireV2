@@ -123,7 +123,7 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
                 "grant_impact_multiplier": 1.35,
             },
             "source_basis": "accepted regression fixture",
-            "status": "reviewed",
+            "status": "accepted",
             "accepted_for_use": True,
             "accepted_by": "test-planner",
             "decision_timestamp": "2025-01-01T00:00:00Z",

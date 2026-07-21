@@ -115,3 +115,48 @@ def test_clean_db_downgrade_upgrade_path_works(tmp_path: Path) -> None:
     assert result.returncode == 0
     result = _run_alembic(db_path, "upgrade", "head")
     assert result.returncode == 0
+
+
+def test_pkg002_status_migration_preserves_existing_runs_and_supports_new_statuses(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "pkg002_statuses.db"
+    _run_alembic(db_path, "upgrade", "b7e4c2d9a105")
+
+    with Session(create_engine(f"sqlite:///{db_path.as_posix()}")) as session:
+        session.execute(
+            text(
+                "INSERT INTO clients (client_id, display_name, id_number) "
+                "VALUES (1, 'Migration Client', 'migration-client')"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO fixation_runs "
+                "(id, fixation_run_id, client_id, calculation_version, status, is_latest) "
+                "VALUES (1, 'existing-run', 1, 'v1', 'validation_failed', 1)"
+            )
+        )
+        session.commit()
+
+    _run_alembic(db_path, "upgrade", "head")
+
+    with Session(create_engine(f"sqlite:///{db_path.as_posix()}")) as session:
+        assert session.execute(
+            text("SELECT status FROM fixation_runs WHERE id = 1")
+        ).scalar_one() == "validation_failed"
+        session.execute(
+            text(
+                "INSERT INTO fixation_runs "
+                "(fixation_run_id, client_id, calculation_version, status, is_latest) "
+                "VALUES ('failed-run', 1, 'v2', 'calculation_failed', 0), "
+                "('unsupported-run', 1, 'v2', 'unsupported_calculation', 0)"
+            )
+        )
+        session.commit()
+
+    downgrade = _run_alembic(db_path, "downgrade", "b7e4c2d9a105", check=False)
+    assert downgrade.returncode != 0
+    assert "Cannot downgrade while PKG-002 calculation failure statuses are present" in (
+        downgrade.stdout + downgrade.stderr
+    )

@@ -12,7 +12,8 @@ class FixationRun(Base):
     __tablename__ = "fixation_runs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('success', 'validation_failed', 'unsupported', 'requires_special_handling')",
+            "status IN ('success', 'validation_failed', 'unsupported', 'requires_special_handling', "
+            "'calculation_failed', 'unsupported_calculation')",
             name="ck_fixation_runs_status",
         ),
     )

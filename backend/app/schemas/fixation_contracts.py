@@ -40,6 +40,8 @@ ValidationCode = Literal[
     "INVALID_NESTED_ITEM",
     "INVALID_GLOBAL_INPUT",
     "UNSUPPORTED_OR_UNAPPROVED_VALUE",
+    "CBS_CALCULATION_FAILED",
+    "CBS_UNSUPPORTED_CALCULATION",
 ]
 
 GLOBAL_INPUT_PATH = "fixation_input"
@@ -725,7 +727,14 @@ class FixationValidationErrors(RootModel[list[ValidationError]]):
 class FixationResult(BaseModel):
     calculation_id: str | None = None
     calculation_version: str | None = None
-    status: Literal["success", "validation_failed", "unsupported", "requires_special_handling"]
+    status: Literal[
+        "success",
+        "validation_failed",
+        "unsupported",
+        "requires_special_handling",
+        "calculation_failed",
+        "unsupported_calculation",
+    ]
     validation_errors: list[ValidationError]
     eligibility_date: date | None = None
     eligibility_year: int | None = None

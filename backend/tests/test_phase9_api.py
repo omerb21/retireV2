@@ -132,7 +132,9 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
         "grants": [
             {
                 "grant_id": "G1",
+                "client_id": 1,
                 "item_type": "severance_grant",
+                "indexation_mode": "asserted_indexed_amount",
                 "indexed_amount": 10000.0,
                 "grant_date": "2020-01-01",
                 "work_start_date": "2010-01-01",

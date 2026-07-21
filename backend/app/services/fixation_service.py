@@ -58,13 +58,15 @@ def calculate_fixation_payload(
     input_payload: dict,
     *,
     client_id: int | None = None,
+    cbs_calculator=None,
 ) -> FixationResult:
     _, engine_input, errors = parse_and_admit_fixation_payload(
         input_payload,
         client_id=client_id,
+        cbs_calculator=cbs_calculator,
     )
     if errors:
-        status = "requires_special_handling" if any(error.path == "idf" for error in errors) else "validation_failed"
+        status = _failure_status(errors)
         return validation_failed_result(input_payload, errors, status=status)
     assert engine_input is not None
     return calculate_fixation_engine(engine_input)
@@ -72,6 +74,16 @@ def calculate_fixation_payload(
 
 def _is_success_result(result: FixationResult | list[ValidationError]) -> bool:
     return isinstance(result, FixationResult) and result.status == "success"
+
+
+def _failure_status(errors: list[ValidationError]) -> str:
+    if any(error.code == "CBS_CALCULATION_FAILED" for error in errors):
+        return "calculation_failed"
+    if any(error.code == "CBS_UNSUPPORTED_CALCULATION" for error in errors):
+        return "unsupported_calculation"
+    if any(error.path == "idf" for error in errors):
+        return "requires_special_handling"
+    return "validation_failed"
 
 
 def create_client_source_data(
@@ -216,6 +228,7 @@ def run_fixation(
     input_data: dict | FixationInput,
     db_session: Session,
     planner_review_context: PlannerReviewContextEnvelope | None = None,
+    cbs_calculator=None,
 ) -> int:
     client_key = int(client_id)
 
@@ -235,6 +248,7 @@ def run_fixation(
         admitted_context, engine_input, admission_errors = parse_and_admit_fixation_payload(
             raw_payload,
             client_id=client_key,
+            cbs_calculator=cbs_calculator,
         )
         snapshot_payload = (
             admitted_context.model_dump(mode="json")
@@ -242,11 +256,7 @@ def run_fixation(
             else raw_payload
         )
         if admission_errors:
-            admission_status = (
-                "requires_special_handling"
-                if any(error.path == "idf" for error in admission_errors)
-                else "validation_failed"
-            )
+            admission_status = _failure_status(admission_errors)
             result = validation_failed_result(
                 raw_payload,
                 admission_errors,

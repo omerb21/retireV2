@@ -58,7 +58,9 @@ def _payload(*, client_id: int = 1) -> dict:
         "grants": [
             {
                 "grant_id": "grant-1",
+                "client_id": client_id,
                 "item_type": "severance_grant",
+                "indexation_mode": "asserted_indexed_amount",
                 "indexed_amount": 10000.0,
                 "grant_date": "2020-01-01",
                 "work_start_date": "2010-01-01",

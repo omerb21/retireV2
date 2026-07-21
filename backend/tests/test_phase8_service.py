@@ -150,7 +150,9 @@ def _admissible_payload(client_id: int, input_model: FixationInput) -> dict:
         "grants": [
             {
                 **grant.model_dump(mode="json"),
+                "client_id": client_id,
                 "item_type": "severance_grant",
+                "indexation_mode": "asserted_indexed_amount",
                 "source_basis": "grant fixture",
                 "status": "reviewed",
                 "accepted_for_use": True,

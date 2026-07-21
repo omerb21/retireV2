@@ -3,8 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.cbs_indexation import (
+    CbsIndexationFailureEvidence,
+    CbsIndexationRequestEvidence,
+    CbsIndexationResponseEvidence,
+    IndexationBaseDateSource,
+)
 from app.schemas.fixation_contracts import IDFInput
 
 
@@ -138,10 +144,11 @@ class AcceptedItemEvidence(BaseModel):
 
 class AdmissibleGrantItem(AcceptedItemEvidence):
     grant_id: str
+    client_id: int
     item_type: str
     employer_name: str | None = None
     nominal_amount: float | None = None
-    indexed_amount: float
+    indexed_amount: float | None = None
     grant_date: date
     work_start_date: date
     work_end_date: date
@@ -149,13 +156,39 @@ class AdmissibleGrantItem(AcceptedItemEvidence):
     support_status: SupportStatus
     conflict_indicator: bool
     accepted_value: float | None = None
+    indexation_mode: Literal[
+        "asserted_indexed_amount",
+        "cbs_system_calculation_required",
+        "cbs_system_calculated",
+    ]
+    asserted_indexed_amount: float | None = None
+    system_calculated_amount: float | None = None
+    selected_calculation_amount: float | None = None
+    resolved_base_date: date | None = None
+    base_date_source: IndexationBaseDateSource | None = None
+    target_date: date | None = None
+    cpi_code: Literal["120010"] | None = None
+    cbs_request_evidence: CbsIndexationRequestEvidence | None = None
+    cbs_response_evidence: CbsIndexationResponseEvidence | None = None
+    indexation_warnings: list[str] = Field(default_factory=list)
+    indexation_calculation_status: Literal[
+        "pending", "asserted", "calculated", "failed", "unsupported"
+    ] = "pending"
+    indexation_failure_evidence: CbsIndexationFailureEvidence | None = None
 
     @field_validator("grant_id", "item_type")
     @classmethod
     def validate_required_text(cls, value: str, info) -> str:
         return _non_empty(value, str(info.field_name))
 
-    @field_validator("nominal_amount", "indexed_amount", "accepted_value")
+    @field_validator(
+        "nominal_amount",
+        "indexed_amount",
+        "accepted_value",
+        "asserted_indexed_amount",
+        "system_calculated_amount",
+        "selected_calculation_amount",
+    )
     @classmethod
     def validate_amount(cls, value: float | None) -> float | None:
         if value is not None and value < 0:
@@ -168,6 +201,14 @@ class AdmissibleGrantItem(AcceptedItemEvidence):
             raise ValueError("work_start_date must be before work_end_date")
         if self.conflict_indicator and self.accepted_value is None:
             raise ValueError("accepted_value is required when conflict_indicator is true")
+        if self.indexation_mode == "asserted_indexed_amount" and self.indexed_amount is None:
+            raise ValueError("asserted_indexed_amount requires indexed_amount")
+        if (
+            self.indexation_mode == "cbs_system_calculation_required"
+            and self.nominal_amount is None
+            and not (self.conflict_indicator and self.accepted_value is not None)
+        ):
+            raise ValueError("CBS system calculation requires an accepted grant amount")
         return self
 
 

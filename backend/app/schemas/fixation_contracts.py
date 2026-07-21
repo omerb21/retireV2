@@ -412,6 +412,7 @@ class FixationInputReview(BaseModel):
     monthly_cap: float
     exemption_percentage: float
     capital_multiplier: float
+    grant_impact_multiplier: float
     grants: GrantReviewDomain
     future_grant_reserved: float
     actual_capitalizations: ActualCapitalizationReviewDomain
@@ -451,6 +452,13 @@ class FixationInputReview(BaseModel):
             raise ValueError("capital_multiplier must be > 0")
         return value
 
+    @field_validator("grant_impact_multiplier")
+    @classmethod
+    def validate_grant_impact_multiplier(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("grant_impact_multiplier must be > 0")
+        return value
+
     @field_validator("future_grant_reserved")
     @classmethod
     def validate_future_grant_reserved(cls, value: float) -> float:
@@ -483,6 +491,7 @@ class FixationInput(BaseModel):
     monthly_cap: float
     exemption_percentage: float
     capital_multiplier: float
+    grant_impact_multiplier: float
     grants: list[GrantInput]
     future_grant_reserved: float
     actual_capitalizations: list[ActualCapitalizationInput]
@@ -520,6 +529,13 @@ class FixationInput(BaseModel):
     def validate_capital_multiplier(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("capital_multiplier must be > 0")
+        return value
+
+    @field_validator("grant_impact_multiplier")
+    @classmethod
+    def validate_grant_impact_multiplier(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("grant_impact_multiplier must be > 0")
         return value
 
     @field_validator("future_grant_reserved")

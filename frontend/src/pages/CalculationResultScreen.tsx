@@ -598,7 +598,7 @@ export function CalculationResultScreen() {
           return;
         }
 
-        const detail = await getFixationRunDetail(latestSuccessfulRun.run_id);
+        const detail = await getFixationRunDetail(clientId, latestSuccessfulRun.run_id);
 
         if (!isActive) {
           return;
@@ -770,7 +770,7 @@ export function CalculationResultScreen() {
   }
 
   async function handleCreateInternalPlannerJudgment() {
-    if (internalPlannerJudgmentRunId === null || !canCreateInternalPlannerJudgment) {
+    if (clientId === null || internalPlannerJudgmentRunId === null || !canCreateInternalPlannerJudgment) {
       return;
     }
 
@@ -778,7 +778,7 @@ export function CalculationResultScreen() {
     setJudgmentErrorMessage(null);
 
     try {
-      const createdJudgment = await createInternalPlannerJudgment(internalPlannerJudgmentRunId, {
+      const createdJudgment = await createInternalPlannerJudgment(clientId, internalPlannerJudgmentRunId, {
         handling_status: judgmentHandlingStatus,
         next_internal_action: judgmentNextInternalAction.trim(),
         internal_note: judgmentInternalNote.trim() === "" ? null : judgmentInternalNote.trim(),

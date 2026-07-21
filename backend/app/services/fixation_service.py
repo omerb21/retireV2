@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.engines.fixation_engine import (
     calculate_fixation as calculate_fixation_engine,
-    calculate_fixation_from_payload as calculate_fixation_from_payload_engine,
 )
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.client import Client
@@ -30,6 +29,10 @@ from app.schemas.fixation_contracts import (
     InternalPlannerJudgmentCreateRequest,
     PlannerReviewContextEnvelope,
     ValidationError,
+)
+from app.services.fixation_admission_service import (
+    parse_and_admit_fixation_payload,
+    validation_failed_result,
 )
 
 
@@ -51,23 +54,19 @@ def _as_float(value: Decimal | None) -> float | None:
     return float(value)
 
 
-def calculate_fixation(input_data: FixationInput) -> FixationResult:
-    return calculate_fixation_engine(input_data)
-
-
-def calculate_fixation_payload(input_payload: dict) -> FixationResult:
-    result = calculate_fixation_from_payload_engine(input_payload)
-    if isinstance(result, FixationResult):
-        return result
-
-    calculation_id = input_payload.get("calculation_id")
-    calculation_version = input_payload.get("calculation_version")
-    return FixationResult(
-        calculation_id=calculation_id if isinstance(calculation_id, str) else None,
-        calculation_version=calculation_version if isinstance(calculation_version, str) else None,
-        status="validation_failed",
-        validation_errors=result,
+def calculate_fixation_payload(
+    input_payload: dict,
+    *,
+    client_id: int | None = None,
+) -> FixationResult:
+    _, engine_input, errors = parse_and_admit_fixation_payload(
+        input_payload,
+        client_id=client_id,
     )
+    if errors:
+        return validation_failed_result(input_payload, errors)
+    assert engine_input is not None
+    return calculate_fixation_engine(engine_input)
 
 
 def _is_success_result(result: FixationResult | list[ValidationError]) -> bool:
@@ -180,6 +179,7 @@ def assemble_fixation_input(
         "monthly_cap": explicit_parameters["monthly_cap"],
         "exemption_percentage": explicit_parameters["exemption_percentage"],
         "capital_multiplier": explicit_parameters["capital_multiplier"],
+        "grant_impact_multiplier": explicit_parameters["grant_impact_multiplier"],
         "grants": [
             {
                 "grant_id": grant.grant_id,
@@ -224,22 +224,27 @@ def run_fixation(
     try:
         input_contract_version: str | None = None
 
-        if isinstance(input_data, FixationInput):
-            input_model = input_data
-            snapshot_payload = input_model.model_dump(mode="json")
-            input_contract_version = input_model.calculation_version
-            result = calculate_fixation_engine(input_model)
+        raw_payload = (
+            input_data.model_dump(mode="json")
+            if isinstance(input_data, FixationInput)
+            else dict(input_data)
+        )
+        if "calculation_version" in raw_payload:
+            input_contract_version = str(raw_payload["calculation_version"])
+        admitted_context, engine_input, admission_errors = parse_and_admit_fixation_payload(
+            raw_payload,
+            client_id=client_key,
+        )
+        snapshot_payload = (
+            admitted_context.model_dump(mode="json")
+            if admitted_context is not None
+            else raw_payload
+        )
+        if admission_errors:
+            result = admission_errors
         else:
-            raw_payload = dict(input_data)
-            if "calculation_version" in raw_payload:
-                input_contract_version = str(raw_payload["calculation_version"])
-            result = calculate_fixation_from_payload_engine(raw_payload)
-            if _is_success_result(result):
-                input_model = FixationInput(**raw_payload)
-                snapshot_payload = input_model.model_dump(mode="json")
-                input_contract_version = input_model.calculation_version
-            else:
-                snapshot_payload = raw_payload
+            assert engine_input is not None
+            result = calculate_fixation_engine(engine_input)
 
         run_calculation_version = (
             result.calculation_version
@@ -365,11 +370,16 @@ def get_fixation_history(client_id: int | str, db_session: Session) -> list[Fixa
     return list(db_session.scalars(stmt).all())
 
 
-def get_fixation_run_detail(run_id: int | str, db_session: Session) -> FixationRun | None:
+def get_fixation_run_detail(
+    client_id: int | str,
+    run_id: int | str,
+    db_session: Session,
+) -> FixationRun | None:
+    client_key = int(client_id)
     run_key = int(run_id)
     stmt = (
         select(FixationRun)
-        .where(FixationRun.id == run_key)
+        .where(FixationRun.id == run_key, FixationRun.client_id == client_key)
         .options(
             selectinload(FixationRun.fixation_input_snapshot),
             selectinload(FixationRun.fixation_result),
@@ -382,12 +392,20 @@ def get_fixation_run_detail(run_id: int | str, db_session: Session) -> FixationR
 
 
 def create_internal_planner_judgment(
+    client_id: int | str,
     run_id: int | str,
     judgment_data: InternalPlannerJudgmentCreateRequest,
     db_session: Session,
 ) -> InternalPlannerJudgment:
+    client_key = int(client_id)
     run_key = int(run_id)
-    if db_session.get(FixationRun, run_key) is None:
+    run = db_session.scalar(
+        select(FixationRun).where(
+            FixationRun.id == run_key,
+            FixationRun.client_id == client_key,
+        )
+    )
+    if run is None:
         raise InternalPlannerJudgmentRunNotFoundError(f"Fixation run {run_key} was not found")
 
     existing_judgment = db_session.scalar(

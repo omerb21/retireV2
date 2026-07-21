@@ -114,7 +114,7 @@ export function RunDetailScreen() {
 
       try {
         const [nextDetail, nextHistory] = await Promise.all([
-          getFixationRunDetail(runId),
+          getFixationRunDetail(clientId, runId),
           getFixationHistory(clientId),
         ]);
 

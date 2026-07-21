@@ -55,8 +55,6 @@ def _convert_grants(domain: GrantReviewDomain) -> list[dict]:
         for item in domain.items
         if item.disposition == "include"
     ]
-    if not included:
-        raise FixationReviewConversionError("grants conversion produced no included items")
     return included
 
 
@@ -75,8 +73,6 @@ def _convert_actual_capitalizations(domain: ActualCapitalizationReviewDomain) ->
         for item in domain.items
         if item.disposition == "include"
     ]
-    if not included:
-        raise FixationReviewConversionError("actual_capitalizations conversion produced no included items")
     return included
 
 
@@ -93,6 +89,7 @@ def convert_review_to_fixation_input(review: FixationInputReview) -> FixationInp
         "monthly_cap": review.monthly_cap,
         "exemption_percentage": review.exemption_percentage,
         "capital_multiplier": review.capital_multiplier,
+        "grant_impact_multiplier": review.grant_impact_multiplier,
         "grants": _convert_grants(review.grants),
         "future_grant_reserved": review.future_grant_reserved,
         "actual_capitalizations": _convert_actual_capitalizations(review.actual_capitalizations),

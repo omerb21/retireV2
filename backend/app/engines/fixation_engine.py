@@ -20,7 +20,6 @@ from app.schemas.fixation_contracts import (
 )
 
 
-GRANT_IMPACT_MULTIPLIER = 1.35
 IDF_MONTHLY_CAP_FACTOR = 0.35
 
 
@@ -223,7 +222,9 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
         else:
             work_years_ratio = _compute_grant_ratio(grant, input_data.eligibility_date)
             limited_indexed_amount_raw = grant.indexed_amount * work_years_ratio
-            grant_impact_raw = grant.indexed_amount * GRANT_IMPACT_MULTIPLIER * work_years_ratio
+            grant_impact_raw = (
+                grant.indexed_amount * input_data.grant_impact_multiplier * work_years_ratio
+            )
             exclusion_reason = None
 
         grant_impact_total_raw += grant_impact_raw
@@ -265,7 +266,7 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
             stage3_input = only_included["qualifying_amount"] if only_included is not None else only.indexed_amount
             stage3_details: dict[str, Any] = {
                 "component_type": "historical_grant",
-                "multiplier": GRANT_IMPACT_MULTIPLIER,
+                "multiplier": input_data.grant_impact_multiplier,
                 "post_multiplier_impact": _round2(grant_impact_total_raw),
             }
             if only_included is not None:
@@ -308,7 +309,7 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
                 output_amount=grant_impact_total_raw,
                 impact_amount=grant_impact_total_raw,
                 details={
-                    "multiplier": GRANT_IMPACT_MULTIPLIER,
+                    "multiplier": input_data.grant_impact_multiplier,
                     "grants": [
                         {
                             "source_id": item["source_id"],
@@ -369,7 +370,9 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
                     },
                 )
 
-    future_grant_impact_raw = input_data.future_grant_reserved * GRANT_IMPACT_MULTIPLIER
+    future_grant_impact_raw = (
+        input_data.future_grant_reserved * input_data.grant_impact_multiplier
+    )
     if input_data.future_grant_reserved > 0:
         add_audit_row(
             stage_order=6,
@@ -382,7 +385,7 @@ def calculate_fixation(input_data: FixationInput) -> FixationResult:
             details={
                 "component_type": "future_reserve",
                 "pre_multiplier_amount": _round2(input_data.future_grant_reserved),
-                "multiplier": GRANT_IMPACT_MULTIPLIER,
+                "multiplier": input_data.grant_impact_multiplier,
                 "post_multiplier_impact": _round2(future_grant_impact_raw),
                 "effect_on_remaining_exemption": _round2(future_grant_impact_raw),
             },

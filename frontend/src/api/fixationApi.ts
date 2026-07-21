@@ -203,15 +203,15 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function calculateFixation(payload: FixationInputPayload): Promise<FixationResultResponse> {
-  return requestJson<FixationResultResponse>("/fixation/calculate", {
+export function calculateFixation(clientId: number, payload: FixationInputPayload): Promise<FixationResultResponse> {
+  return requestJson<FixationResultResponse>(`/clients/${clientId}/fixation/calculate`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export function validateFixation(payload: FixationInputPayload): Promise<FixationResultResponse> {
-  return requestJson<FixationResultResponse>("/fixation/validate", {
+export function validateFixation(clientId: number, payload: FixationInputPayload): Promise<FixationResultResponse> {
+  return requestJson<FixationResultResponse>(`/clients/${clientId}/fixation/validate`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -244,17 +244,18 @@ export function getFixationHistory(clientId: number): Promise<FixationHistoryEnt
   });
 }
 
-export function getFixationRunDetail(runId: number): Promise<FixationRunDetailResponse> {
-  return requestJson<FixationRunDetailResponse>(`/fixation/runs/${runId}`, {
+export function getFixationRunDetail(clientId: number, runId: number): Promise<FixationRunDetailResponse> {
+  return requestJson<FixationRunDetailResponse>(`/clients/${clientId}/fixation/runs/${runId}`, {
     method: "GET",
   });
 }
 
 export function createInternalPlannerJudgment(
+  clientId: number,
   runId: number,
   payload: InternalPlannerJudgmentCreatePayload,
 ): Promise<InternalPlannerJudgmentPayload> {
-  return requestJson<InternalPlannerJudgmentPayload>(`/fixation/runs/${runId}/internal-planner-judgment`, {
+  return requestJson<InternalPlannerJudgmentPayload>(`/clients/${clientId}/fixation/runs/${runId}/internal-planner-judgment`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

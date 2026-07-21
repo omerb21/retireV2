@@ -746,7 +746,9 @@ export function FixationInputScreen() {
 
       setReviewValidationErrors([]);
       const convertedPayload = await convertFixationReview(currentReviewPayload);
-      const response = action === "calculate" ? await calculateFixation(convertedPayload) : await validateFixation(convertedPayload);
+      const response = action === "calculate"
+        ? await calculateFixation(clientId, convertedPayload)
+        : await validateFixation(clientId, convertedPayload);
       setResponseData(response);
       setResponseSource(action);
 

@@ -153,14 +153,24 @@ def convert_fixation_review(payload: dict[str, Any]) -> dict[str, Any] | JSONRes
     return converted_payload
 
 
-@router.post("/fixation/validate", response_model=FixationResult)
-def validate_fixation(payload: dict[str, Any]) -> FixationResult:
-    return calculate_fixation_payload(payload)
+@router.post("/clients/{client_id}/fixation/validate", response_model=FixationResult)
+def validate_fixation(
+    client_id: int,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+) -> FixationResult:
+    _require_client(db, client_id)
+    return calculate_fixation_payload(payload, client_id=client_id)
 
 
-@router.post("/fixation/calculate", response_model=FixationResult)
-def calculate_fixation_endpoint(payload: dict[str, Any]) -> FixationResult:
-    return calculate_fixation_payload(payload)
+@router.post("/clients/{client_id}/fixation/calculate", response_model=FixationResult)
+def calculate_fixation_endpoint(
+    client_id: int,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+) -> FixationResult:
+    _require_client(db, client_id)
+    return calculate_fixation_payload(payload, client_id=client_id)
 
 
 @router.post("/fixation/save", response_model=FixationSaveResponse)
@@ -183,16 +193,18 @@ def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -
 
 
 @router.post(
-    "/fixation/runs/{run_id}/internal-planner-judgment",
+    "/clients/{client_id}/fixation/runs/{run_id}/internal-planner-judgment",
     response_model=InternalPlannerJudgmentResponse,
 )
 def create_fixation_run_internal_planner_judgment(
+    client_id: int,
     run_id: int,
     payload: InternalPlannerJudgmentCreateRequest,
     db: Session = Depends(get_db),
 ) -> InternalPlannerJudgmentResponse:
     try:
         judgment = create_internal_planner_judgment(
+            client_id=client_id,
             run_id=run_id,
             judgment_data=payload,
             db_session=db,
@@ -229,9 +241,14 @@ def fixation_history(client_id: int, db: Session = Depends(get_db)) -> list[dict
     ]
 
 
-@router.get("/fixation/runs/{run_id}")
-def fixation_run_detail(run_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
-    detail = get_fixation_run_detail(run_id=run_id, db_session=db)
+@router.get("/clients/{client_id}/fixation/runs/{run_id}")
+def fixation_run_detail(
+    client_id: int,
+    run_id: int,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _require_client(db, client_id)
+    detail = get_fixation_run_detail(client_id=client_id, run_id=run_id, db_session=db)
     if detail is None:
         raise _run_not_found(run_id)
 

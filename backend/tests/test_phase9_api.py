@@ -111,36 +111,69 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
         "calculation_version": "v1",
         "eligibility_date": f"{eligibility_year}-01-01",
         "eligibility_year": eligibility_year,
-        "monthly_cap": 1000.0,
-        "exemption_percentage": 0.5,
-        "capital_multiplier": 180.0,
+        "upstream_context": {"profile_id": "M07-1", "client_id": 1, "state": "qualified"},
+        "parameter_set": {
+            "parameter_set_id": f"PARAMS-{eligibility_year}",
+            "client_id": 1,
+            "tax_year": eligibility_year,
+            "values": {
+                "monthly_cap": 1000.0,
+                "exemption_percentage": 0.5,
+                "capital_multiplier": 180.0,
+                "grant_impact_multiplier": 1.35,
+            },
+            "source_basis": "accepted regression fixture",
+            "status": "reviewed",
+            "accepted_for_use": True,
+            "accepted_by": "test-planner",
+            "decision_timestamp": "2025-01-01T00:00:00Z",
+        },
+        "grants_collection_state": "items_recorded",
         "grants": [
             {
                 "grant_id": "G1",
+                "item_type": "severance_grant",
                 "indexed_amount": 10000.0,
                 "grant_date": "2020-01-01",
                 "work_start_date": "2010-01-01",
                 "work_end_date": "2020-01-01",
+                "source_basis": "grant fixture",
+                "status": "reviewed",
+                "accepted_for_use": True,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "actor": "test-planner",
+                "decision_timestamp": "2025-01-01T00:00:00Z",
             }
         ],
-        "future_grant_reserved": 500.0,
+        "future_grant_reservation": {
+            "amount": 500.0,
+            "source_basis": "reserve fixture",
+            "status": "reviewed",
+            "accepted_for_use": True,
+            "actor": "test-planner",
+            "decision_timestamp": "2025-01-01T00:00:00Z",
+        },
+        "actual_capitalizations_collection_state": "items_recorded",
         "actual_capitalizations": [
             {
                 "capitalization_id": "AC1",
+                "item_type": "actual_capitalization",
                 "amount": 500.0,
                 "capitalization_date": "2023-01-01",
-                "source_label": "manual",
+                "recorded_meaning": "historical actual capitalization",
+                "source_basis": "capitalization fixture",
+                "status": "reviewed",
+                "accepted_for_use": True,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "actor": "test-planner",
+                "decision_timestamp": "2025-01-01T00:00:00Z",
             }
         ],
-        "idf": {
-            "idf_id": "IDF1",
-            "reduction_amount": 1200.0,
-            "original_commutation_percent": 35.0,
-            "current_commutation_percent": 20.0,
-            "commutation_date": "2024-01-01",
-            "promoter_age_date": "2028-01-01",
-            "source_label": "idf_source",
-        },
+        "idf": None,
     }
 
 
@@ -538,7 +571,10 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
 
         # 9. Validate fixation without persistence
         input_payload = _fixation_input(calc_id="calc-validate")
-        validate_resp = client.post("/api/fixation/validate", json=input_payload)
+        validate_resp = client.post(
+            f"/api/clients/{created_client_id}/fixation/validate",
+            json=input_payload,
+        )
         assert validate_resp.status_code == 200
 
         with session_local() as db:
@@ -546,7 +582,10 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
             assert run_count_after_validate == 0
 
         # 10. Calculate fixation without persistence
-        calculate_resp = client.post("/api/fixation/calculate", json=input_payload)
+        calculate_resp = client.post(
+            f"/api/clients/{created_client_id}/fixation/calculate",
+            json=input_payload,
+        )
         assert calculate_resp.status_code == 200
 
         with session_local() as db:
@@ -602,7 +641,9 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert history[1]["run_id"] == success_run_id
 
         # 17. Run detail returns snapshot/result/audit or validation errors
-        success_detail_resp = client.get(f"/api/fixation/runs/{success_run_id}")
+        success_detail_resp = client.get(
+            f"/api/clients/{created_client_id}/fixation/runs/{success_run_id}"
+        )
         assert success_detail_resp.status_code == 200
         success_detail = success_detail_resp.json()
         assert success_detail["input_snapshot"] is not None
@@ -610,7 +651,9 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert len(success_detail["audit_rows"]) > 0
         assert len(success_detail["validation_errors"]) == 0
 
-        failed_detail_resp = client.get(f"/api/fixation/runs/{failed_run_id}")
+        failed_detail_resp = client.get(
+            f"/api/clients/{created_client_id}/fixation/runs/{failed_run_id}"
+        )
         assert failed_detail_resp.status_code == 200
         failed_detail = failed_detail_resp.json()
         assert failed_detail["input_snapshot"] is not None
@@ -621,7 +664,9 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert failed_detail["run"]["run_id"] == failed_run_id
 
         # 18. Missing run returns 404 FIXATION_RUN_NOT_FOUND
-        missing_run_resp = client.get("/api/fixation/runs/999999999")
+        missing_run_resp = client.get(
+            f"/api/clients/{created_client_id}/fixation/runs/999999999"
+        )
         assert missing_run_resp.status_code == 404
         assert missing_run_resp.json()["detail"]["code"] == "FIXATION_RUN_NOT_FOUND"
 

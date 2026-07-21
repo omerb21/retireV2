@@ -2,7 +2,6 @@ from copy import deepcopy
 from datetime import date
 
 from app.engines.fixation_engine import (
-    GRANT_IMPACT_MULTIPLIER,
     _shift_years,
     calculate_fixation,
     calculate_fixation_from_payload,
@@ -19,6 +18,7 @@ def valid_payload() -> dict:
         "monthly_cap": 1000,
         "exemption_percentage": 0.5,
         "capital_multiplier": 180,
+        "grant_impact_multiplier": 1.35,
         "grants": [],
         "future_grant_reserved": 0,
         "actual_capitalizations": [],
@@ -105,7 +105,7 @@ def test_fixation_engine_leap_day_window_start_leap_target_2024() -> None:
 
     result = calculate_fixation(FixationInput(**payload))
 
-    expected_impact = round(100000 * GRANT_IMPACT_MULTIPLIER, 2)
+    expected_impact = round(100000 * payload["grant_impact_multiplier"], 2)
 
     assert result.grant_results is not None
     assert result.grant_results[0].impact_amount == expected_impact
@@ -127,7 +127,7 @@ def test_fixation_engine_leap_day_window_start_leap_target_2020() -> None:
 
     result = calculate_fixation(FixationInput(**payload))
 
-    expected_impact = round(100000 * GRANT_IMPACT_MULTIPLIER, 2)
+    expected_impact = round(100000 * payload["grant_impact_multiplier"], 2)
 
     assert result.grant_results is not None
     assert result.grant_results[0].impact_amount == expected_impact

@@ -48,6 +48,28 @@ APPROVED_PACKAGE_2_PATHS = {
     "frontend/src/pages/FixationInputScreen.tsx",
     "frontend/src/pages/FixationInputScreen.test.tsx",
 }
+APPROVED_PKG_001_PATHS = {
+    "backend/app/api/fixation_routes.py",
+    "backend/app/engines/fixation_engine.py",
+    "backend/app/schemas/fixation_admissibility.py",
+    "backend/app/schemas/fixation_contracts.py",
+    "backend/app/schemas/fixation_review.py",
+    "backend/app/services/fixation_admission_service.py",
+    "backend/app/services/fixation_service.py",
+    "backend/tests/test_fixation_contracts.py",
+    "backend/tests/test_fixation_engine.py",
+    "backend/tests/test_fixation_engine_golden.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_phase10_api_behavior.py",
+    "backend/tests/test_phase7_persistence.py",
+    "backend/tests/test_phase8_service.py",
+    "backend/tests/test_phase9_api.py",
+    "backend/tests/test_pkg001_admissible_foundation.py",
+    "frontend/src/api/fixationApi.ts",
+    "frontend/src/pages/CalculationResultScreen.tsx",
+    "frontend/src/pages/CalculationResultScreen.test.tsx",
+    "frontend/src/pages/RunDetailScreen.tsx",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -73,6 +95,9 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         "backend/app/schemas/fixation_review.py",
+        "backend/app/schemas/fixation_admissibility.py",
+        "backend/app/services/fixation_admission_service.py",
+        "backend/tests/test_pkg001_admissible_foundation.py",
     }
 
 
@@ -90,6 +115,7 @@ def _approved_tracked_change_paths() -> set[str]:
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,
         *APPROVED_PACKAGE_2_PATHS,
+        *APPROVED_PKG_001_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",
@@ -194,19 +220,19 @@ def test_package_2_governance_rejects_unapproved_frontend_changes() -> None:
     approved_screen = " M frontend/src/pages/FixationInputScreen.tsx"
     approved_test = " M frontend/src/pages/FixationInputScreen.test.tsx"
     rejected_api = " M frontend/src/api/otherApi.ts"
-    rejected_screen = " M frontend/src/pages/CalculationResultScreen.tsx"
-    rejected_test = " M frontend/src/pages/CalculationResultScreen.test.tsx"
+    pkg_001_screen = " M frontend/src/pages/CalculationResultScreen.tsx"
+    rejected_test = " M frontend/src/pages/OtherScreen.test.tsx"
 
     assert [
         line
-        for line in _tracked_status_lines([approved_api, approved_screen, approved_test])
+        for line in _tracked_status_lines([approved_api, approved_screen, approved_test, pkg_001_screen])
         if _status_path(line) not in _approved_tracked_change_paths()
     ] == []
     assert [
         line
-        for line in _tracked_status_lines([rejected_api, rejected_screen, rejected_test])
+        for line in _tracked_status_lines([rejected_api, rejected_test])
         if _status_path(line) not in _approved_tracked_change_paths()
-    ] == [rejected_api, rejected_screen, rejected_test]
+    ] == [rejected_api, rejected_test]
 
 
 def test_repository_has_no_staged_files_for_governance_gate() -> None:

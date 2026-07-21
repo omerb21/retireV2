@@ -331,7 +331,7 @@ describe("FixationInputScreen contract payload", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
     expect(fetchMock.mock.calls[2][0]).toBe("/api/fixation/review/validate");
     expect(fetchMock.mock.calls[3][0]).toBe("/api/fixation/review/convert");
-    expect(fetchMock.mock.calls[4][0]).toBe("/api/fixation/calculate");
+    expect(fetchMock.mock.calls[4][0]).toBe("/api/clients/1/fixation/calculate");
     const reviewPayload = requestPayload(fetchMock, 2) as unknown as FixationInputReviewPayload;
     expect(reviewPayload.grants.items.map((item) => item.source_item_id)).toEqual(["GR-1", "GR-2"]);
     expect(reviewPayload.grants.items.map((item) => item.disposition)).toEqual([

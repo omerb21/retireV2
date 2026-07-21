@@ -29,6 +29,7 @@ def valid_fixation_input_payload() -> dict:
         "monthly_cap": 9430,
         "exemption_percentage": 0.57,
         "capital_multiplier": 180,
+        "grant_impact_multiplier": 1.35,
         "grants": [
             {
                 "grant_id": "G1",
@@ -302,12 +303,13 @@ def test_fixation_review_converter_permits_empty_collections_only_for_confirmed_
     assert converted.actual_capitalizations == []
 
 
-def test_fixation_review_converter_refuses_items_recorded_with_no_included_items() -> None:
+def test_fixation_review_converter_treats_all_excluded_items_as_reviewed_zero() -> None:
     payload = valid_fixation_review_payload()
     payload["grants"]["items"][0]["disposition"] = "exclude"
 
-    with pytest.raises(FixationReviewConversionError):
-        convert_review_to_fixation_input(FixationInputReview(**payload))
+    converted = convert_review_to_fixation_input(FixationInputReview(**payload))
+
+    assert converted.grants == []
 
 
 def test_missing_required_calculation_version_fails() -> None:

@@ -162,6 +162,7 @@ def _input_payload(calc_id: str, year: int) -> dict:
         "monthly_cap": 5200.0,
         "exemption_percentage": 0.5,
         "capital_multiplier": 180.0,
+        "grant_impact_multiplier": 1.35,
         "grants": [
             {
                 "grant_id": "G-1",

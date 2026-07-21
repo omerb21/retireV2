@@ -105,6 +105,7 @@ def _explicit_parameters(*, calc_id: str, monthly_cap: float, eligibility_year: 
         "monthly_cap": monthly_cap,
         "exemption_percentage": 0.5,
         "capital_multiplier": 180.0,
+        "grant_impact_multiplier": 1.35,
         "future_grant_reserved": 500.0,
         "idf": {
             "idf_id": "IDF-1",
@@ -115,6 +116,84 @@ def _explicit_parameters(*, calc_id: str, monthly_cap: float, eligibility_year: 
             "promoter_age_date": date(2028, 1, 1),
             "source_label": "idf_source",
         },
+    }
+
+
+def _admissible_payload(client_id: int, input_model: FixationInput) -> dict:
+    return {
+        "calculation_id": input_model.calculation_id,
+        "calculation_version": input_model.calculation_version,
+        "eligibility_date": input_model.eligibility_date,
+        "eligibility_year": input_model.eligibility_year,
+        "upstream_context": {
+            "profile_id": f"M07-{client_id}",
+            "client_id": client_id,
+            "state": "qualified",
+        },
+        "parameter_set": {
+            "parameter_set_id": f"PARAMS-{client_id}-{input_model.eligibility_year}",
+            "client_id": client_id,
+            "tax_year": input_model.eligibility_year,
+            "values": {
+                "monthly_cap": input_model.monthly_cap,
+                "exemption_percentage": input_model.exemption_percentage,
+                "capital_multiplier": input_model.capital_multiplier,
+                "grant_impact_multiplier": input_model.grant_impact_multiplier,
+            },
+            "source_basis": "accepted service fixture",
+            "status": "reviewed",
+            "accepted_for_use": True,
+            "accepted_by": "test-planner",
+            "decision_timestamp": "2025-01-01T00:00:00Z",
+        },
+        "grants_collection_state": "items_recorded" if input_model.grants else "confirmed_none",
+        "grants": [
+            {
+                **grant.model_dump(mode="json"),
+                "item_type": "severance_grant",
+                "source_basis": "grant fixture",
+                "status": "reviewed",
+                "accepted_for_use": True,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "actor": "test-planner",
+                "decision_timestamp": "2025-01-01T00:00:00Z",
+            }
+            for grant in input_model.grants
+        ],
+        "future_grant_reservation": {
+            "amount": input_model.future_grant_reserved,
+            "source_basis": "reserve fixture",
+            "status": "reviewed",
+            "accepted_for_use": True,
+            "actor": "test-planner",
+            "decision_timestamp": "2025-01-01T00:00:00Z",
+        },
+        "actual_capitalizations_collection_state": (
+            "items_recorded" if input_model.actual_capitalizations else "confirmed_none"
+        ),
+        "actual_capitalizations": [
+            {
+                "capitalization_id": cap.capitalization_id,
+                "item_type": "actual_capitalization",
+                "amount": cap.amount,
+                "capitalization_date": cap.capitalization_date,
+                "recorded_meaning": "historical actual capitalization",
+                "source_basis": cap.source_label or "capitalization fixture",
+                "status": "reviewed",
+                "accepted_for_use": True,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "actor": "test-planner",
+                "decision_timestamp": "2025-01-01T00:00:00Z",
+                "notes": cap.notes,
+            }
+            for cap in input_model.actual_capitalizations
+        ],
+        "idf": None,
+        "metadata": input_model.metadata,
     }
 
 
@@ -171,7 +250,11 @@ def test_run_fixation_success_persists_run_snapshot_result_and_audit(tmp_path: P
             explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
         )
 
-        run_id = run_fixation(client_id=client_id, input_data=input_model, db_session=session)
+        run_id = run_fixation(
+            client_id=client_id,
+            input_data=_admissible_payload(client_id, input_model),
+            db_session=session,
+        )
 
         run = session.get(FixationRun, run_id)
         assert run is not None
@@ -226,7 +309,11 @@ def test_multi_run_immutability_keeps_previous_run_unchanged(tmp_path: Path) -> 
             db_session=session,
             explicit_parameters=_explicit_parameters(calc_id="calc-run1", monthly_cap=1000.0),
         )
-        run1_id = run_fixation(client_id=client_id, input_data=run1_input, db_session=session)
+        run1_id = run_fixation(
+            client_id=client_id,
+            input_data=_admissible_payload(client_id, run1_input),
+            db_session=session,
+        )
 
         run1 = session.get(FixationRun, run1_id)
         assert run1 is not None
@@ -264,7 +351,11 @@ def test_multi_run_immutability_keeps_previous_run_unchanged(tmp_path: Path) -> 
             db_session=session,
             explicit_parameters=_explicit_parameters(calc_id="calc-run2", monthly_cap=1200.0),
         )
-        run2_id = run_fixation(client_id=client_id, input_data=run2_input, db_session=session)
+        run2_id = run_fixation(
+            client_id=client_id,
+            input_data=_admissible_payload(client_id, run2_input),
+            db_session=session,
+        )
 
         run1 = session.get(FixationRun, run1_id)
         run2 = session.get(FixationRun, run2_id)
@@ -284,8 +375,8 @@ def test_multi_run_immutability_keeps_previous_run_unchanged(tmp_path: Path) -> 
                 FixationRun.is_latest.is_(True),
             )
         ) == 1
-        assert run1.fixation_input_snapshot.input_payload["monthly_cap"] == 1000.0
-        assert run2.fixation_input_snapshot.input_payload["monthly_cap"] == 1200.0
+        assert run1.fixation_input_snapshot.input_payload["parameter_set"]["values"]["monthly_cap"] == 1000.0
+        assert run2.fixation_input_snapshot.input_payload["parameter_set"]["values"]["monthly_cap"] == 1200.0
         assert run1.fixation_input_snapshot.input_payload == run1_snapshot_before
         assert run1.fixation_result.result_payload == run1_result_before
         assert [
@@ -323,19 +414,25 @@ def test_get_latest_fixation_result_returns_newest_successful_run(tmp_path: Path
 
         run_fixation(
             client_id=client_id,
-            input_data=assemble_fixation_input(
-                client_id=client_id,
-                db_session=session,
-                explicit_parameters=_explicit_parameters(calc_id="calc-old", monthly_cap=1000.0),
+            input_data=_admissible_payload(
+                client_id,
+                assemble_fixation_input(
+                    client_id=client_id,
+                    db_session=session,
+                    explicit_parameters=_explicit_parameters(calc_id="calc-old", monthly_cap=1000.0),
+                ),
             ),
             db_session=session,
         )
         run2_id = run_fixation(
             client_id=client_id,
-            input_data=assemble_fixation_input(
-                client_id=client_id,
-                db_session=session,
-                explicit_parameters=_explicit_parameters(calc_id="calc-new", monthly_cap=1300.0),
+            input_data=_admissible_payload(
+                client_id,
+                assemble_fixation_input(
+                    client_id=client_id,
+                    db_session=session,
+                    explicit_parameters=_explicit_parameters(calc_id="calc-new", monthly_cap=1300.0),
+                ),
             ),
             db_session=session,
         )
@@ -369,10 +466,13 @@ def test_get_fixation_history_returns_all_runs_newest_first(tmp_path: Path) -> N
 
         run_fixation(
             client_id=client_id,
-            input_data=assemble_fixation_input(
-                client_id=client_id,
-                db_session=session,
-                explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
+            input_data=_admissible_payload(
+                client_id,
+                assemble_fixation_input(
+                    client_id=client_id,
+                    db_session=session,
+                    explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
+                ),
             ),
             db_session=session,
         )
@@ -408,17 +508,28 @@ def test_get_fixation_run_detail_returns_full_run_data(tmp_path: Path) -> None:
 
         success_id = run_fixation(
             client_id=client_id,
-            input_data=assemble_fixation_input(
-                client_id=client_id,
-                db_session=session,
-                explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
+            input_data=_admissible_payload(
+                client_id,
+                assemble_fixation_input(
+                    client_id=client_id,
+                    db_session=session,
+                    explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
+                ),
             ),
             db_session=session,
         )
         failed_id = run_fixation(client_id=client_id, input_data=invalid_payload, db_session=session)
 
-        success_detail = get_fixation_run_detail(run_id=success_id, db_session=session)
-        failed_detail = get_fixation_run_detail(run_id=failed_id, db_session=session)
+        success_detail = get_fixation_run_detail(
+            client_id=client_id,
+            run_id=success_id,
+            db_session=session,
+        )
+        failed_detail = get_fixation_run_detail(
+            client_id=client_id,
+            run_id=failed_id,
+            db_session=session,
+        )
 
         assert success_detail is not None
         assert success_detail.fixation_input_snapshot is not None
@@ -452,7 +563,11 @@ def test_run_fixation_rolls_back_on_persistence_failure(tmp_path: Path) -> None:
         session.commit = failing_commit
 
         with pytest.raises(RuntimeError, match="simulated commit failure"):
-            run_fixation(client_id=client_id, input_data=input_model, db_session=session)
+            run_fixation(
+                client_id=client_id,
+                input_data=_admissible_payload(client_id, input_model),
+                db_session=session,
+            )
 
         session.commit = original_commit
 

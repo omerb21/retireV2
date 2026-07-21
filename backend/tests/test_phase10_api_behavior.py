@@ -18,6 +18,7 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.internal_planner_judgment import InternalPlannerJudgment
+from app.schemas.fixation_admissibility import AdmissibleFixationInput
 from app.schemas.fixation_contracts import FixationInput, FixationResult
 
 
@@ -77,52 +78,110 @@ def _create_client(client: TestClient, *, id_number: str) -> int:
     return int(payload["client_id"])
 
 
-def _fixation_input(*, calc_id: str, eligibility_year: int = 2025, monthly_cap: float = 1000.0) -> dict:
+def _fixation_input(
+    *,
+    calc_id: str,
+    eligibility_year: int = 2025,
+    monthly_cap: float = 1000.0,
+    client_id: int = 1,
+) -> dict:
     return {
         "calculation_id": calc_id,
         "calculation_version": "v1",
         "eligibility_date": f"{eligibility_year}-01-01",
         "eligibility_year": eligibility_year,
-        "monthly_cap": monthly_cap,
+        "upstream_context": {
+            "profile_id": f"M07-{client_id}",
+            "client_id": client_id,
+            "state": "qualified",
+        },
+        "parameter_set": {
+            "parameter_set_id": f"PARAMS-{client_id}-{eligibility_year}",
+            "client_id": client_id,
+            "tax_year": eligibility_year,
+            "values": {
+                "monthly_cap": monthly_cap,
+                "exemption_percentage": 0.5,
+                "capital_multiplier": 180.0,
+                "grant_impact_multiplier": 1.35,
+            },
+            "source_basis": "accepted regression fixture",
+            "status": "reviewed",
+            "accepted_for_use": True,
+            "accepted_by": "test-planner",
+            "decision_timestamp": "2025-01-01T00:00:00Z",
+        },
+        "grants_collection_state": "items_recorded",
+        "grants": [
+            {
+                "grant_id": "G1",
+                "item_type": "severance_grant",
+                "indexed_amount": 10000.0,
+                "grant_date": "2020-01-01",
+                "work_start_date": "2010-01-01",
+                "work_end_date": "2020-01-01",
+                "source_basis": "grant fixture",
+                "status": "reviewed",
+                "accepted_for_use": True,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "actor": "test-planner",
+                "decision_timestamp": "2025-01-01T00:00:00Z",
+            }
+        ],
+        "future_grant_reservation": {
+            "amount": 500.0,
+            "source_basis": "reserve fixture",
+            "status": "reviewed",
+            "accepted_for_use": True,
+            "actor": "test-planner",
+            "decision_timestamp": "2025-01-01T00:00:00Z",
+        },
+        "actual_capitalizations_collection_state": "items_recorded",
+        "actual_capitalizations": [
+            {
+                "capitalization_id": "AC1",
+                "item_type": "actual_capitalization",
+                "amount": 500.0,
+                "capitalization_date": "2023-01-01",
+                "recorded_meaning": "historical actual capitalization",
+                "source_basis": "capitalization fixture",
+                "status": "reviewed",
+                "accepted_for_use": True,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "actor": "test-planner",
+                "decision_timestamp": "2025-01-01T00:00:00Z",
+            }
+        ],
+        "idf": None,
+    }
+
+
+def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
+    payload = {
+        "calculation_id": calc_id,
+        "calculation_version": "v1",
+        "eligibility_date": "2025-01-01",
+        "eligibility_year": 2025,
+        "monthly_cap": 1000.0,
         "exemption_percentage": 0.5,
         "capital_multiplier": 180.0,
-        "grants": [
+        "grant_impact_multiplier": 1.35,
+        "future_grant_reserved": 500.0,
+        "idf": None,
+    }
+    payload["grants"] = {
+        "collection_state": "items_recorded",
+        "items": [
             {
                 "grant_id": "G1",
                 "indexed_amount": 10000.0,
                 "grant_date": "2020-01-01",
                 "work_start_date": "2010-01-01",
                 "work_end_date": "2020-01-01",
-            }
-        ],
-        "future_grant_reserved": 500.0,
-        "actual_capitalizations": [
-            {
-                "capitalization_id": "AC1",
-                "amount": 500.0,
-                "capitalization_date": "2023-01-01",
-                "source_label": "manual",
-            }
-        ],
-        "idf": {
-            "idf_id": "IDF1",
-            "reduction_amount": 1200.0,
-            "original_commutation_percent": 35.0,
-            "current_commutation_percent": 20.0,
-            "commutation_date": "2024-01-01",
-            "promoter_age_date": "2028-01-01",
-            "source_label": "idf_source",
-        },
-    }
-
-
-def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
-    payload = _fixation_input(calc_id=calc_id)
-    payload["grants"] = {
-        "collection_state": "items_recorded",
-        "items": [
-            {
-                **payload["grants"][0],
                 "source_item_id": "GR-1",
                 "disposition": "include",
             }
@@ -132,7 +191,11 @@ def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
         "collection_state": "items_recorded",
         "items": [
             {
-                **payload["actual_capitalizations"][0],
+                "capitalization_id": "AC1",
+                "amount": 500.0,
+                "capitalization_date": "2023-01-01",
+                "source_label": "manual",
+                "notes": None,
                 "source_item_id": "AC-1",
                 "source_basis": "capitalization certificate",
                 "planner_assertion": "advisor confirmed amount",
@@ -167,8 +230,8 @@ def _internal_planner_judgment_payload() -> dict:
     }
 
 
-def _invalid_fixation_input(calc_id: str) -> dict:
-    payload = _fixation_input(calc_id=calc_id, eligibility_year=2026)
+def _invalid_fixation_input(calc_id: str, *, client_id: int = 1) -> dict:
+    payload = _fixation_input(calc_id=calc_id, eligibility_year=2026, client_id=client_id)
     payload["eligibility_date"] = "2025-01-01"
     return payload
 
@@ -441,8 +504,8 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
         assert cap_resp.status_code == 200
 
         payload = _fixation_input(calc_id="calc-e2e")
-        validate_resp = client.post("/api/fixation/validate", json=payload)
-        calculate_resp = client.post("/api/fixation/calculate", json=payload)
+        validate_resp = client.post(f"/api/clients/{client_id}/fixation/validate", json=payload)
+        calculate_resp = client.post(f"/api/clients/{client_id}/fixation/calculate", json=payload)
         assert validate_resp.status_code == 200
         assert calculate_resp.status_code == 200
         assert validate_resp.json() == calculate_resp.json()
@@ -475,8 +538,8 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
         history_payload = history_resp.json()
         assert [row["run_id"] for row in history_payload] == [failed_run_id, success_run_id]
 
-        success_detail_resp = client.get(f"/api/fixation/runs/{success_run_id}")
-        failed_detail_resp = client.get(f"/api/fixation/runs/{failed_run_id}")
+        success_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{success_run_id}")
+        failed_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{failed_run_id}")
         assert success_detail_resp.status_code == 200
         assert failed_detail_resp.status_code == 200
 
@@ -497,9 +560,10 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
 def test_phase10_validate_calculate_consistency_without_persistence(tmp_path: Path) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_validate_calculate.db")
     try:
+        client_id = _create_client(client, id_number="phase10-no-persist")
         payload = _fixation_input(calc_id="calc-no-persist")
-        validate_resp = client.post("/api/fixation/validate", json=payload)
-        calculate_resp = client.post("/api/fixation/calculate", json=payload)
+        validate_resp = client.post(f"/api/clients/{client_id}/fixation/validate", json=payload)
+        calculate_resp = client.post(f"/api/clients/{client_id}/fixation/calculate", json=payload)
 
         assert validate_resp.status_code == 200
         assert calculate_resp.status_code == 200
@@ -544,8 +608,8 @@ def test_phase10_save_behavior_persistence_boundaries(tmp_path: Path) -> None:
         assert counts["audit_rows"] > 0
         assert counts["validation_errors"] > 0
 
-        failed_detail_resp = client.get(f"/api/fixation/runs/{failed_run_id}")
-        success_detail_resp = client.get(f"/api/fixation/runs/{success_run_id}")
+        failed_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{failed_run_id}")
+        success_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{success_run_id}")
         assert failed_detail_resp.status_code == 200
         assert success_detail_resp.status_code == 200
         failed_detail = failed_detail_resp.json()
@@ -594,11 +658,11 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
 
-        detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert detail_resp.status_code == 200
         detail = detail_resp.json()
         assert detail["planner_review_context"] == review_context
-        assert detail["input_snapshot"] == FixationInput(**input_payload).model_dump(mode="json")
+        assert detail["input_snapshot"] == AdmissibleFixationInput(**input_payload).model_dump(mode="json")
         assert FixationResult(**detail["result"]).status == "success"
 
         with session_local() as db:
@@ -607,7 +671,7 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
             )
             assert snapshot is not None
             assert snapshot.planner_review_context == review_context
-            assert snapshot.input_payload == FixationInput(**input_payload).model_dump(mode="json")
+            assert snapshot.input_payload == AdmissibleFixationInput(**input_payload).model_dump(mode="json")
     finally:
         app.dependency_overrides.clear()
 
@@ -623,7 +687,9 @@ def test_phase10_save_without_planner_review_context_remains_valid(tmp_path: Pat
         )
         assert save_resp.status_code == 200
 
-        detail_resp = client.get(f"/api/fixation/runs/{save_resp.json()['run_id']}")
+        detail_resp = client.get(
+            f"/api/clients/{client_id}/fixation/runs/{save_resp.json()['run_id']}"
+        )
         assert detail_resp.status_code == 200
         assert detail_resp.json()["planner_review_context"] is None
         assert detail_resp.json()["input_snapshot"] is not None
@@ -652,7 +718,7 @@ def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
 
-        before_detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        before_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert before_detail_resp.status_code == 200
         before_detail = before_detail_resp.json()
         assert before_detail["internal_planner_judgment"] is None
@@ -661,7 +727,7 @@ def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
         before_review_context = copy.deepcopy(before_detail["planner_review_context"])
 
         create_resp = client.post(
-            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            f"/api/clients/{client_id}/fixation/runs/{run_id}/internal-planner-judgment",
             json=_internal_planner_judgment_payload(),
         )
         assert create_resp.status_code == 200
@@ -670,7 +736,7 @@ def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
             **_internal_planner_judgment_payload(),
         }
 
-        detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert detail_resp.status_code == 200
         detail = detail_resp.json()
         assert detail["internal_planner_judgment"] == create_resp.json()
@@ -679,7 +745,7 @@ def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
         assert detail["planner_review_context"] == before_review_context
 
         duplicate_resp = client.post(
-            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            f"/api/clients/{client_id}/fixation/runs/{run_id}/internal-planner-judgment",
             json={
                 "handling_status": "internal_action_identified",
                 "next_internal_action": "Different internal action",
@@ -704,7 +770,7 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
     client, session_local = _build_client(tmp_path, db_name="phase10_internal_judgment_errors.db")
     try:
         missing_resp = client.post(
-            "/api/fixation/runs/999999/internal-planner-judgment",
+            "/api/clients/999999/fixation/runs/999999/internal-planner-judgment",
             json=_internal_planner_judgment_payload(),
         )
         assert missing_resp.status_code == 404
@@ -722,7 +788,7 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
         run_id = save_resp.json()["run_id"]
 
         invalid_status_resp = client.post(
-            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            f"/api/clients/{client_id}/fixation/runs/{run_id}/internal-planner-judgment",
             json={
                 **_internal_planner_judgment_payload(),
                 "handling_status": "ready_for_client_decision",
@@ -731,7 +797,7 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
         assert invalid_status_resp.status_code == 422
 
         extra_field_resp = client.post(
-            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            f"/api/clients/{client_id}/fixation/runs/{run_id}/internal-planner-judgment",
             json={
                 **_internal_planner_judgment_payload(),
                 "saved_run_id": run_id,
@@ -740,7 +806,7 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
         assert extra_field_resp.status_code == 422
 
         blank_action_resp = client.post(
-            f"/api/fixation/runs/{run_id}/internal-planner-judgment",
+            f"/api/clients/{client_id}/fixation/runs/{run_id}/internal-planner-judgment",
             json={
                 "handling_status": "not_used_for_decision",
                 "next_internal_action": " ",
@@ -769,7 +835,7 @@ def test_phase10_immutability_and_snapshot_result_integrity(tmp_path: Path) -> N
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
 
-        before_detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        before_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert before_detail_resp.status_code == 200
         before_detail = before_detail_resp.json()
         before_snapshot = copy.deepcopy(before_detail["input_snapshot"])
@@ -784,14 +850,14 @@ def test_phase10_immutability_and_snapshot_result_integrity(tmp_path: Path) -> N
             },
         )
 
-        after_detail_resp = client.get(f"/api/fixation/runs/{run_id}")
+        after_detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert after_detail_resp.status_code == 200
         after_detail = after_detail_resp.json()
 
         assert after_detail["input_snapshot"] == before_snapshot
         assert after_detail["result"] == before_result
 
-        reconstructed_input = FixationInput(**after_detail["input_snapshot"])
+        reconstructed_input = AdmissibleFixationInput(**after_detail["input_snapshot"])
         reconstructed_result = FixationResult(**after_detail["result"])
         assert reconstructed_input.model_dump(mode="json") == after_detail["input_snapshot"]
         assert reconstructed_result.model_dump(mode="json") == after_detail["result"]
@@ -810,7 +876,10 @@ def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
         client_failed_only = _create_client(client, id_number="5002")
         failed_only_resp = client.post(
             "/api/fixation/save",
-            json={"client_id": client_failed_only, "input_data": _invalid_fixation_input("calc-only-fail")},
+            json={
+                "client_id": client_failed_only,
+                "input_data": _invalid_fixation_input("calc-only-fail", client_id=client_failed_only),
+            },
         )
         assert failed_only_resp.status_code == 200
         latest_failed_only_resp = client.get(f"/api/clients/{client_failed_only}/fixation/latest")
@@ -820,11 +889,17 @@ def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
         client_mixed = _create_client(client, id_number="5003")
         success_resp = client.post(
             "/api/fixation/save",
-            json={"client_id": client_mixed, "input_data": _fixation_input(calc_id="calc-mixed-success")},
+            json={
+                "client_id": client_mixed,
+                "input_data": _fixation_input(calc_id="calc-mixed-success", client_id=client_mixed),
+            },
         )
         failed_resp = client.post(
             "/api/fixation/save",
-            json={"client_id": client_mixed, "input_data": _invalid_fixation_input("calc-mixed-failed")},
+            json={
+                "client_id": client_mixed,
+                "input_data": _invalid_fixation_input("calc-mixed-failed", client_id=client_mixed),
+            },
         )
         assert success_resp.status_code == 200
         assert failed_resp.status_code == 200
@@ -845,13 +920,19 @@ def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
         assert missing_client_resp.status_code == 404
         assert missing_client_resp.json()["detail"]["code"] == "CLIENT_NOT_FOUND"
 
-        missing_run_resp = client.get("/api/fixation/runs/999999")
+        missing_run_resp = client.get(f"/api/clients/{client_mixed}/fixation/runs/999999")
         assert missing_run_resp.status_code == 404
         assert missing_run_resp.json()["detail"]["code"] == "FIXATION_RUN_NOT_FOUND"
 
         invalid_payload = {"calculation_id": "bad"}
-        invalid_validate_payload_resp = client.post("/api/fixation/validate", json=invalid_payload)
-        invalid_calc_payload_resp = client.post("/api/fixation/calculate", json=invalid_payload)
+        invalid_validate_payload_resp = client.post(
+            f"/api/clients/{client_mixed}/fixation/validate",
+            json=invalid_payload,
+        )
+        invalid_calc_payload_resp = client.post(
+            f"/api/clients/{client_mixed}/fixation/calculate",
+            json=invalid_payload,
+        )
         invalid_save_payload_resp = client.post(
             "/api/fixation/save",
             json={"client_id": "not-an-int", "input_data": _fixation_input(calc_id="calc-invalid")},

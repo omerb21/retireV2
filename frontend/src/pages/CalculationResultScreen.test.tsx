@@ -663,7 +663,7 @@ describe("CalculationResultScreen", () => {
     expect(await screen.findByText("פעולה פנימית הבאה: Review withholding internally")).toBeInTheDocument();
     expect(await screen.findByText("הערה פנימית: Internal follow-up note")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith(
-      "/api/fixation/runs/43/internal-planner-judgment",
+      "/api/clients/7/fixation/runs/43/internal-planner-judgment",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({

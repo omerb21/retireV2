@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.engines.fixation_engine import calculate_fixation, calculate_fixation_from_payload
+from app.engines.fixation_engine import (
+    _calculate_formula_non_authoritative as calculate_fixation,
+    _calculate_legacy_payload_non_authoritative as calculate_fixation_from_payload,
+)
 from app.schemas.fixation_contracts import FixationInput, FixationResult, ValidationError
 
 

@@ -107,7 +107,31 @@ def _normalize_validation_errors(
 FixationEngineOutput = FixationResult | list[ValidationError]
 
 
-def calculate_fixation_from_payload(input_payload: dict[str, Any]) -> FixationEngineOutput:
+_ADMISSION_TOKEN = object()
+
+
+class AdmittedFixationInput:
+    """Opaque engine input produced only after PKG-001 admission succeeds."""
+
+    __slots__ = ("_input_data",)
+
+    def __init__(self, input_data: FixationInput, token: object) -> None:
+        if token is not _ADMISSION_TOKEN:
+            raise TypeError("AdmittedFixationInput can only be created by the admission boundary")
+        self._input_data = input_data
+
+
+def _admit_fixation_input(input_data: FixationInput) -> AdmittedFixationInput:
+    """Internal bridge used by the admission service after all gates pass."""
+    if input_data.idf is not None:
+        raise ValueError("IDF/security-forces input cannot be admitted to the formula engine")
+    return AdmittedFixationInput(input_data, _ADMISSION_TOKEN)
+
+
+def _calculate_legacy_payload_non_authoritative(
+    input_payload: dict[str, Any],
+) -> FixationEngineOutput:
+    """Legacy formula-test helper; not an application or authoritative entry point."""
     try:
         parsed_input = FixationInput(**input_payload)
     except PydanticValidationError as exc:
@@ -116,7 +140,7 @@ def calculate_fixation_from_payload(input_payload: dict[str, Any]) -> FixationEn
             input_payload=input_payload,
         )
 
-    return calculate_fixation(parsed_input)
+    return _calculate_formula_non_authoritative(parsed_input)
 
 
 def _is_grant_excluded_15_year_rule(grant_date: date, eligibility_date: date) -> bool:
@@ -143,7 +167,15 @@ def _full_calendar_months(start_date: date, end_date: date) -> int:
     return max(months, 0)
 
 
-def calculate_fixation(input_data: FixationInput) -> FixationResult:
+def calculate_fixation(input_data: AdmittedFixationInput) -> FixationResult:
+    """Run the formula only for an opaque input created by the admission boundary."""
+    if not isinstance(input_data, AdmittedFixationInput):
+        raise TypeError("calculate_fixation requires AdmittedFixationInput")
+    return _calculate_formula_non_authoritative(input_data._input_data)
+
+
+def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationResult:
+    """Pure bounded formula helper retained for regression tests; never call from application code."""
     audit_rows: list[AuditRow] = []
     grant_results: list[GrantResult] = []
     actual_capitalization_results: list[ActualCapitalizationResult] = []

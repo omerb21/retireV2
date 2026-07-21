@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
+from app.engines.fixation_engine import AdmittedFixationInput, _admit_fixation_input
 from app.schemas.fixation_admissibility import AdmissibleFixationInput
 from app.schemas.fixation_contracts import (
     FixationInput,
@@ -27,7 +28,7 @@ def parse_and_admit_fixation_payload(
     payload: dict[str, Any],
     *,
     client_id: int | None = None,
-) -> tuple[AdmissibleFixationInput | None, FixationInput | None, list[ValidationError]]:
+) -> tuple[AdmissibleFixationInput | None, AdmittedFixationInput | None, list[ValidationError]]:
     try:
         context = AdmissibleFixationInput(**payload)
     except PydanticValidationError as exc:
@@ -154,7 +155,7 @@ def parse_and_admit_fixation_payload(
         return context, None, errors
 
     values = parameter_set.values
-    engine_input = FixationInput(
+    formula_input = FixationInput(
         calculation_id=context.calculation_id,
         calculation_version=context.calculation_version,
         eligibility_date=context.eligibility_date,
@@ -169,7 +170,7 @@ def parse_and_admit_fixation_payload(
         idf=None,
         metadata=context.metadata,
     )
-    return context, engine_input, []
+    return context, _admit_fixation_input(formula_input), []
 
 
 def validation_failed_result(

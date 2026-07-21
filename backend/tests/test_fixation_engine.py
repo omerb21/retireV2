@@ -3,8 +3,8 @@ from datetime import date
 
 from app.engines.fixation_engine import (
     _shift_years,
-    calculate_fixation,
-    calculate_fixation_from_payload,
+    _calculate_formula_non_authoritative as calculate_fixation,
+    _calculate_legacy_payload_non_authoritative as calculate_fixation_from_payload,
 )
 from app.schemas.fixation_contracts import FixationInput, FixationResult, ValidationError
 

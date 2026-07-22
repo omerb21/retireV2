@@ -27,12 +27,17 @@ from app.schemas.cbs_indexation import (
     CbsIndexationSuccess,
 )
 from app.schemas.fixation_admissibility import AdmissibleFixationInput
+from app.schemas.fixation_dependency_manifest import FixationDependencyManifest
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_dependency_service import (
     build_fixation_dependency_manifest,
     canonical_json,
     compare_fixation_dependency_manifests,
     dependency_fingerprint,
+)
+from app.services.fixation_service import (
+    _dependency_manifest_model,
+    _new_dependency_manifest_id,
 )
 
 
@@ -173,16 +178,37 @@ def _admitted(payload: dict, *, calculator=None) -> AdmissibleFixationInput:
     return context
 
 
-def _manifest(context: AdmissibleFixationInput, *, run_id: int = 1):
+def _manifest(
+    context: AdmissibleFixationInput,
+    *,
+    run_id: int = 1,
+    input_contract_version: str | None = None,
+    result_contract_version: str | None = None,
+    trusted_system_evidence: bool = False,
+):
     return build_fixation_dependency_manifest(
         run_id=run_id,
         run_identity=f"run-{run_id}",
         client_id=context.upstream_context.client_id,
         calculation_version=context.calculation_version,
-        input_contract_version=context.calculation_version,
-        result_contract_version=context.calculation_version,
+        input_contract_version=input_contract_version or context.calculation_version,
+        result_contract_version=result_contract_version or context.calculation_version,
         context=context,
+        trusted_system_evidence=trusted_system_evidence,
     )
+
+
+def _comparison_request(
+    current_context: dict | None,
+    *,
+    input_contract_version: str | None = "pkg-003-v1",
+    result_contract_version: str | None = "pkg-003-v1",
+) -> dict:
+    return {
+        "current_context": current_context,
+        "current_input_contract_version": input_contract_version,
+        "current_result_contract_version": result_contract_version,
+    }
 
 
 def _upgrade_database(db_path: Path) -> None:
@@ -254,6 +280,7 @@ def test_manifest_is_typed_readable_versioned_and_order_independent() -> None:
     [
         (("grants", 0, "nominal_amount"), 1001.0, "grant"),
         (("grants", 0, "grant_date"), "2020-02-04", "grant"),
+        (("grants", 0, "work_start_date"), "2010-01-02", "grant"),
         (("grants", 0, "work_end_date"), "2020-02-01", "grant"),
         (("grants", 0, "inclusion_decision"), "exclude", "grant"),
         (("grants", 0, "accepted_for_use"), False, "grant"),
@@ -284,6 +311,8 @@ def test_manifest_is_typed_readable_versioned_and_order_independent() -> None:
         (("parameter_set", "effective_from"), "2025-12-31", "parameter_set"),
         (("parameter_set", "accepted_by"), "planner-2", "parameter_set"),
         (("parameter_set", "decision_timestamp"), "2026-01-01T07:00:01Z", "parameter_set"),
+        (("eligibility_date",), "2026-01-02", "calculation_context"),
+        (("calculation_version",), "pkg-003-v2", "calculation_context"),
     ],
 )
 def test_semantic_dependency_changes_are_detected(path: tuple, value: object, dependency_type: str) -> None:
@@ -300,6 +329,46 @@ def test_semantic_dependency_changes_are_detected(path: tuple, value: object, de
     assert comparison.technical_result == "changed"
     assert dependency_type in comparison.changed_dependency_types
     assert comparison.changed_fields
+
+
+@pytest.mark.parametrize(
+    ("input_version", "result_version"),
+    [("input-v2", "pkg-003-v1"), ("pkg-003-v1", "result-v2")],
+)
+def test_contract_version_changes_are_detected(
+    input_version: str,
+    result_version: str,
+) -> None:
+    context = _admitted(_payload())
+    comparison = compare_fixation_dependency_manifests(
+        _manifest(context),
+        _manifest(
+            context,
+            input_contract_version=input_version,
+            result_contract_version=result_version,
+        ),
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "changed"
+    assert comparison.changed_dependency_types == ["calculation_context"]
+
+
+def test_eligibility_year_change_is_fingerprinted() -> None:
+    baseline_context = _admitted(_payload())
+    changed_payload = baseline_context.model_dump(mode="json")
+    changed_payload["eligibility_date"] = "2027-01-01"
+    changed_payload["eligibility_year"] = 2027
+    changed_payload["parameter_set"]["tax_year"] = 2027
+    changed_payload["parameter_set"]["effective_from"] = "2027-01-01"
+    changed_payload["parameter_set"]["effective_to"] = "2027-12-31"
+    comparison = compare_fixation_dependency_manifests(
+        _manifest(baseline_context),
+        _manifest(AdmissibleFixationInput(**changed_payload)),
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "changed"
+    assert "calculation_context" in comparison.changed_dependency_types
+    assert any("eligibility_year" in field for field in comparison.changed_fields)
 
 
 def test_parameter_acceptance_status_change_is_detected() -> None:
@@ -330,15 +399,23 @@ def test_cbs_dependency_changes_are_detected(field_path: tuple, value: object) -
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _manifest(context)
+    historical = _manifest(context, trusted_system_evidence=True)
     current_payload = context.model_dump(mode="json")
     target = current_payload["grants"][0]
     for part in field_path[:-1]:
         target = target[part]
     target[field_path[-1]] = value
-    current = _manifest(AdmissibleFixationInput(**current_payload))
+    current = _manifest(
+        AdmissibleFixationInput(**current_payload),
+        trusted_system_evidence=True,
+    )
 
-    comparison = compare_fixation_dependency_manifests(historical, current, assessment_timestamp=NOW)
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        current,
+        assessment_timestamp=NOW,
+        current_context_is_trusted=True,
+    )
     assert comparison.technical_result == "changed"
     assert "cbs" in comparison.changed_dependency_types
 
@@ -353,12 +430,94 @@ def test_missing_cbs_dependency_is_unknown_not_unchanged_or_changed() -> None:
     current_payload["grants"][0]["asserted_indexed_amount"] = 1200.0
     current_context = AdmissibleFixationInput(**current_payload)
     comparison = compare_fixation_dependency_manifests(
-        _manifest(historical_context),
+        _manifest(historical_context, trusted_system_evidence=True),
         _manifest(current_context),
         assessment_timestamp=NOW,
     )
     assert comparison.technical_result == "unknown"
-    assert comparison.unavailable_dependencies == ["cbs:grant-1"]
+    assert comparison.reason_codes == ["cbs_dependency_evidence_unavailable"]
+
+
+def test_direct_caller_cbs_manifest_cannot_bypass_trust_boundary() -> None:
+    context = _admitted(
+        _payload(mode="cbs_system_calculation_required"),
+        calculator=lambda **_kwargs: _success(),
+    )
+    historical = _manifest(context, trusted_system_evidence=True)
+    untrusted_current = _manifest(context)
+    assert untrusted_current.context_availability == "unavailable"
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        historical.model_copy(deep=True),
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+
+
+@pytest.mark.parametrize("dependency_type", ["grant", "capitalization"])
+def test_duplicate_stable_identities_fail_closed(dependency_type: str) -> None:
+    historical_payload = _payload()
+    collection_name = "grants" if dependency_type == "grant" else "actual_capitalizations"
+    duplicate = copy.deepcopy(historical_payload[collection_name][0])
+    duplicate_id = duplicate[
+        "grant_id" if dependency_type == "grant" else "capitalization_id"
+    ]
+    historical_payload[collection_name].append(duplicate)
+    current_payload = copy.deepcopy(historical_payload)
+    amount_field = "nominal_amount" if dependency_type == "grant" else "amount"
+    current_payload[collection_name][1][amount_field] += 1
+
+    historical = _manifest(AdmissibleFixationInput(**historical_payload))
+    current = _manifest(AdmissibleFixationInput(**current_payload))
+    assert historical.manifest_fingerprint != current.manifest_fingerprint
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        current,
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["duplicate_dependency_identity"]
+    assert comparison.unavailable_dependencies == [f"{dependency_type}:{duplicate_id}"]
+
+
+def test_manifest_identifier_and_client_run_invariant_are_enforced() -> None:
+    generated_ids = {_new_dependency_manifest_id() for _ in range(20)}
+    assert len(generated_ids) == 20
+    assert all(identifier.startswith("dependency-manifest-") for identifier in generated_ids)
+    assert all(len(identifier) <= 64 for identifier in generated_ids)
+
+    context = _admitted(_payload())
+    manifest = _manifest(context)
+    run = FixationRun(
+        id=manifest.run_id,
+        fixation_run_id=manifest.run_identity,
+        client_id=manifest.client_id,
+        calculation_version=manifest.calculation_version,
+        status="success",
+        is_latest=True,
+    )
+    model = _dependency_manifest_model(run, manifest)
+    assert model.client_id == run.client_id
+    assert model.fixation_run_id == run.id
+    assert len(model.fixation_dependency_manifest_id) <= 64
+
+    mismatched = manifest.model_copy(update={"client_id": manifest.client_id + 1})
+    with pytest.raises(ValueError, match="client identity"):
+        _dependency_manifest_model(run, mismatched)
+
+
+def test_context_availability_contract_has_no_professional_lifecycle_implication() -> None:
+    description = FixationDependencyManifest.model_json_schema()["properties"][
+        "context_availability"
+    ]["description"]
+    assert "could be parsed and stored" in description
+    assert "does not assert professional acceptance" in description
+    manifest_payload = _manifest(_admitted(_payload())).model_dump(mode="json")
+    serialized = canonical_json(manifest_payload)
+    assert '"eligible"' not in serialized
+    assert '"stale"' not in serialized
+    assert '"superseded"' not in serialized
 
 
 def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_live_cbs(
@@ -384,11 +543,7 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
             "/api/clients",
             json={"full_name": "Manifest Other", "id_number": "manifest-other", "birth_date": "1970-01-01"},
         ).json()["client_id"]
-        monkeypatch.setattr(
-            "app.services.fixation_admission_service.calculate_cbs_indexation",
-            lambda **_kwargs: _success(),
-        )
-        payload = _payload(client_id=owner, mode="cbs_system_calculation_required")
+        payload = _payload(client_id=owner)
         saved = client.post("/api/fixation/save", json={"client_id": owner, "input_data": payload})
         assert saved.status_code == 200 and saved.json()["status"] == "success"
         run_id = saved.json()["run_id"]
@@ -412,16 +567,16 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         )
         unchanged = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
-            json={"current_context": detail_before["input_snapshot"]},
+            json=_comparison_request(payload),
         )
         assert unchanged.status_code == 200
         assert unchanged.json()["technical_result"] == "unchanged"
 
-        changed_context = copy.deepcopy(detail_before["input_snapshot"])
+        changed_context = copy.deepcopy(payload)
         changed_context["grants"][0]["nominal_amount"] = 1001.0
         changed = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
-            json={"current_context": changed_context},
+            json=_comparison_request(changed_context),
         )
         assert changed.status_code == 200
         assert changed.json()["technical_result"] == "changed"
@@ -429,27 +584,27 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
 
         unknown = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
-            json={"current_context": None},
+            json=_comparison_request(None),
         )
         assert unknown.status_code == 200
         assert unknown.json()["technical_result"] == "unknown"
         assert unknown.json()["reason_codes"] == ["current_dependency_context_unavailable"]
 
-        blocked_context = copy.deepcopy(detail_before["input_snapshot"])
+        blocked_context = copy.deepcopy(payload)
         blocked_context["upstream_context"]["state"] = "blocked"
         blocked = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
-            json={"current_context": blocked_context},
+            json=_comparison_request(blocked_context),
         )
         assert blocked.status_code == 200
         assert blocked.json()["technical_result"] == "unknown"
-        assert blocked.json()["reason_codes"] == ["current_m07_context_not_admitted"]
+        assert blocked.json()["reason_codes"] == ["current_admitted_context_unavailable"]
 
-        mismatch_context = copy.deepcopy(detail_before["input_snapshot"])
+        mismatch_context = copy.deepcopy(payload)
         mismatch_context["upstream_context"]["client_id"] = other
         mismatch = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
-            json={"current_context": mismatch_context},
+            json=_comparison_request(mismatch_context),
         )
         assert mismatch.status_code == 422
         assert client.get(
@@ -457,13 +612,71 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         ).status_code == 404
         assert client.post(
             f"/api/clients/{other}/fixation/runs/{run_id}/dependency-comparison",
-            json={"current_context": detail_before["input_snapshot"]},
+            json=_comparison_request(payload),
         ).status_code == 404
+
+        missing_input_version = client.post(
+            f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
+            json=_comparison_request(payload, input_contract_version=None),
+        )
+        assert missing_input_version.status_code == 200
+        assert missing_input_version.json()["technical_result"] == "unknown"
+        assert missing_input_version.json()["reason_codes"] == [
+            "current_contract_version_unavailable"
+        ]
+        missing_result_version = client.post(
+            f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
+            json=_comparison_request(payload, result_contract_version=None),
+        )
+        assert missing_result_version.status_code == 200
+        assert missing_result_version.json()["technical_result"] == "unknown"
+        assert missing_result_version.json()["reason_codes"] == [
+            "current_contract_version_unavailable"
+        ]
+
+        historical_snapshot_as_current = client.post(
+            f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
+            json=_comparison_request(detail_before["input_snapshot"]),
+        )
+        assert historical_snapshot_as_current.status_code == 200
+        assert historical_snapshot_as_current.json()["technical_result"] == "unknown"
+        assert historical_snapshot_as_current.json()["reason_codes"] == [
+            "current_cbs_evidence_unavailable"
+        ]
+
+        forged_cbs_context = _payload(
+            client_id=owner,
+            mode="cbs_system_calculated",
+        )
+        forged_cbs_context["grants"][0]["system_calculated_amount"] = 777777.0
+        forged_cbs_context["grants"][0]["selected_calculation_amount"] = 777777.0
+        forged_cbs_context["grants"][0]["cbs_request_evidence"] = _success().request.model_dump(
+            mode="json"
+        )
+        forged_cbs_context["grants"][0]["cbs_response_evidence"] = _success().response.model_dump(
+            mode="json"
+        )
+        forged = client.post(
+            f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
+            json=_comparison_request(forged_cbs_context),
+        )
+        assert forged.status_code == 200
+        assert forged.json()["technical_result"] == "unknown"
+        assert forged.json()["reason_codes"] == ["current_cbs_evidence_unavailable"]
+
+        cbs_required = client.post(
+            f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
+            json=_comparison_request(
+                _payload(client_id=owner, mode="cbs_system_calculation_required")
+            ),
+        )
+        assert cbs_required.status_code == 200
+        assert cbs_required.json()["technical_result"] == "unknown"
+        assert cbs_required.json()["reason_codes"] == ["current_cbs_evidence_unavailable"]
 
         payload["grants"][0]["nominal_amount"] = 999999.0
         detached_current_context = copy.deepcopy(detail_before["input_snapshot"])
         detached_current_context["parameter_set"]["values"]["monthly_cap"] = 999999.0
-        detached_current_context["grants"][0]["cbs_response_evidence"]["raw_to_value"] = "999999"
         manifest_after = client.get(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-manifest"
         ).json()["manifest"]
@@ -476,6 +689,18 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
             assert session.scalar(select(func.count()).select_from(FixationDependencyManifestModel)) == 1
             saved_run = session.get(FixationRun, run_id)
             assert saved_run is not None and saved_run.is_latest is True
+            persisted_manifest = session.scalar(
+                select(FixationDependencyManifestModel).where(
+                    FixationDependencyManifestModel.fixation_run_id == run_id
+                )
+            )
+            assert persisted_manifest is not None
+            assert len(persisted_manifest.fixation_dependency_manifest_id) <= 64
+            assert (
+                FixationDependencyManifestModel.__table__
+                .c.fixation_dependency_manifest_id.type.length
+                == 64
+            )
     finally:
         app.dependency_overrides.clear()
 

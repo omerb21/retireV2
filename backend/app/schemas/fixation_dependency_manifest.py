@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,7 +11,7 @@ from app.schemas.cbs_indexation import (
     CbsIndexationResponseEvidence,
     IndexationBaseDateSource,
 )
-from app.schemas.fixation_admissibility import AdmissibleFixationInput, M07QualificationWarning
+from app.schemas.fixation_admissibility import M07QualificationWarning
 
 
 MANIFEST_SCHEMA_VERSION = "pkg003.fixation-dependency-manifest.v1"
@@ -36,6 +36,26 @@ class M07DependencyContent(ManifestContract):
     review_reason: str | None
     reviewed_by: str | None
     review_timestamp: datetime | None
+
+
+class CalculationContextDependencyContent(ManifestContract):
+    eligibility_date: date
+    eligibility_year: int
+    calculation_version: str
+    input_contract_version: str
+    result_contract_version: str | None
+    manifest_schema_version: Literal["pkg003.fixation-dependency-manifest.v1"] = (
+        MANIFEST_SCHEMA_VERSION
+    )
+    fingerprint_algorithm_version: Literal["sha256-canonical-json-v1"] = (
+        FINGERPRINT_ALGORITHM_VERSION
+    )
+    fingerprint_schema_version: Literal["pkg003.dependency-content.v1"] = (
+        FINGERPRINT_SCHEMA_VERSION
+    )
+    comparison_algorithm_version: Literal["pkg003.dependency-comparison.v1"] = (
+        COMPARISON_ALGORITHM_VERSION
+    )
 
 
 class ParameterValuesContent(ManifestContract):
@@ -67,6 +87,7 @@ class GrantDependencyContent(ManifestContract):
     system_calculated_amount: Decimal | None
     selected_calculation_amount: Decimal | None
     grant_date: date
+    work_start_date: date
     work_end_date: date
     inclusion_decision: str
     support_status: str
@@ -141,6 +162,11 @@ class M07DependencyEntry(DependencyEntryBase):
     canonical_content: M07DependencyContent | None
 
 
+class CalculationContextDependencyEntry(DependencyEntryBase):
+    dependency_type: Literal["calculation_context"] = "calculation_context"
+    canonical_content: CalculationContextDependencyContent | None
+
+
 class ParameterDependencyEntry(DependencyEntryBase):
     dependency_type: Literal["parameter_set"] = "parameter_set"
     canonical_content: ParameterDependencyContent | None
@@ -167,7 +193,8 @@ class CbsDependencyEntry(DependencyEntryBase):
 
 
 DependencyEntry = Annotated[
-    M07DependencyEntry
+    CalculationContextDependencyEntry
+    | M07DependencyEntry
     | ParameterDependencyEntry
     | GrantDependencyEntry
     | CapitalizationDependencyEntry
@@ -190,7 +217,12 @@ class FixationDependencyManifest(ManifestContract):
     fingerprint_algorithm_version: Literal["sha256-canonical-json-v1"] = (
         FINGERPRINT_ALGORITHM_VERSION
     )
-    context_availability: Literal["available", "unavailable"]
+    context_availability: Literal["available", "unavailable"] = Field(
+        description=(
+            "Whether dependency content could be parsed and stored; this does not assert "
+            "professional acceptance, downstream eligibility, or lifecycle status."
+        )
+    )
     context_reason_codes: list[str] = Field(default_factory=list)
     dependencies: list[DependencyEntry]
     manifest_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -214,7 +246,9 @@ class DependencyManifestRetrieval(ManifestContract):
 
 
 class DependencyComparisonRequest(ManifestContract):
-    current_context: AdmissibleFixationInput | None = None
+    current_context: dict[str, Any] | None = None
+    current_input_contract_version: str | None = None
+    current_result_contract_version: str | None = None
 
 
 class PerDependencyComparison(ManifestContract):

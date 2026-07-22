@@ -18,6 +18,8 @@ from app.schemas.fixation_dependency_manifest import (
     FINGERPRINT_ALGORITHM_VERSION,
     FINGERPRINT_SCHEMA_VERSION,
     MANIFEST_SCHEMA_VERSION,
+    CalculationContextDependencyContent,
+    CalculationContextDependencyEntry,
     CapitalizationDependencyContent,
     CapitalizationDependencyEntry,
     CbsDependencyContent,
@@ -179,6 +181,7 @@ def build_fixation_dependency_manifest(
     input_contract_version: str,
     result_contract_version: str | None,
     context: AdmissibleFixationInput | None,
+    trusted_system_evidence: bool = False,
 ) -> FixationDependencyManifest:
     if context is None:
         return FixationDependencyManifest(
@@ -192,6 +195,29 @@ def build_fixation_dependency_manifest(
             fingerprint_algorithm_version=FINGERPRINT_ALGORITHM_VERSION,
             context_availability="unavailable",
             context_reason_codes=["admissible_context_unavailable"],
+            dependencies=[],
+            manifest_fingerprint=None,
+        )
+    has_system_cbs_evidence = any(
+        grant.indexation_mode == "cbs_system_calculated"
+        or grant.system_calculated_amount is not None
+        or grant.cbs_request_evidence is not None
+        or grant.cbs_response_evidence is not None
+        or grant.indexation_failure_evidence is not None
+        for grant in context.grants
+    )
+    if has_system_cbs_evidence and not trusted_system_evidence:
+        return FixationDependencyManifest(
+            run_id=run_id,
+            run_identity=run_identity,
+            client_id=client_id,
+            calculation_version=calculation_version,
+            input_contract_version=input_contract_version,
+            result_contract_version=result_contract_version,
+            manifest_schema_version=MANIFEST_SCHEMA_VERSION,
+            fingerprint_algorithm_version=FINGERPRINT_ALGORITHM_VERSION,
+            context_availability="unavailable",
+            context_reason_codes=["current_cbs_evidence_unavailable"],
             dependencies=[],
             manifest_fingerprint=None,
         )
@@ -210,7 +236,22 @@ def build_fixation_dependency_manifest(
         reviewed_by=context.upstream_context.reviewed_by,
         review_timestamp=context.upstream_context.review_timestamp,
     )
+    calculation_context_content = CalculationContextDependencyContent(
+        eligibility_date=context.eligibility_date,
+        eligibility_year=context.eligibility_year,
+        calculation_version=calculation_version,
+        input_contract_version=input_contract_version,
+        result_contract_version=result_contract_version,
+        manifest_schema_version=MANIFEST_SCHEMA_VERSION,
+        fingerprint_algorithm_version=FINGERPRINT_ALGORITHM_VERSION,
+        fingerprint_schema_version=FINGERPRINT_SCHEMA_VERSION,
+        comparison_algorithm_version=COMPARISON_ALGORITHM_VERSION,
+    )
     entries: list[DependencyEntry] = [
+        CalculationContextDependencyEntry(
+            stable_identity=None,
+            **_entry_kwargs(calculation_context_content),
+        ),
         M07DependencyEntry(
             stable_identity=context.upstream_context.profile_id,
             **_entry_kwargs(m07_content),
@@ -253,6 +294,7 @@ def build_fixation_dependency_manifest(
             system_calculated_amount=_decimal(grant.system_calculated_amount),
             selected_calculation_amount=_decimal(grant.selected_calculation_amount),
             grant_date=grant.grant_date,
+            work_start_date=grant.work_start_date,
             work_end_date=grant.work_end_date,
             inclusion_decision=grant.inclusion_decision,
             support_status=grant.support_status,
@@ -363,6 +405,7 @@ def compare_fixation_dependency_manifests(
     current: FixationDependencyManifest,
     *,
     assessment_timestamp: datetime | None = None,
+    current_context_is_trusted: bool = False,
 ) -> DependencyComparisonResponse:
     timestamp = assessment_timestamp or datetime.now(timezone.utc)
     if historical.manifest_schema_version != current.manifest_schema_version:
@@ -381,6 +424,18 @@ def compare_fixation_dependency_manifests(
             unavailable_dependencies=[],
             comparison_algorithm_version=COMPARISON_ALGORITHM_VERSION,
         )
+    if not current_context_is_trusted and any(
+        entry.dependency_type == "cbs" and entry.availability_state == "available"
+        for entry in current.dependencies
+    ):
+        return unavailable_comparison_response(
+            run_id=historical.run_id,
+            client_id=historical.client_id,
+            reason_code="current_cbs_evidence_unavailable",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+            assessment_timestamp=timestamp,
+        )
     if historical.context_availability == "unavailable" or current.context_availability == "unavailable":
         reasons = sorted(set(historical.context_reason_codes + current.context_reason_codes))
         return DependencyComparisonResponse(
@@ -398,6 +453,27 @@ def compare_fixation_dependency_manifests(
             unavailable_dependencies=[],
         )
 
+    duplicate_keys = sorted(
+        _duplicate_dependency_keys(historical.dependencies)
+        | _duplicate_dependency_keys(current.dependencies),
+        key=lambda key: (key[0], key[1] or ""),
+    )
+    if duplicate_keys:
+        response = unavailable_comparison_response(
+            run_id=historical.run_id,
+            client_id=historical.client_id,
+            reason_code="duplicate_dependency_identity",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+            assessment_timestamp=timestamp,
+        )
+        response.current_fingerprint = current.manifest_fingerprint
+        response.unavailable_dependencies = [
+            f"{dependency_type}:{stable_identity or 'content-based'}"
+            for dependency_type, stable_identity in duplicate_keys
+        ]
+        return response
+
     historical_entries = {
         (entry.dependency_type, entry.stable_identity): entry for entry in historical.dependencies
     }
@@ -408,6 +484,7 @@ def compare_fixation_dependency_manifests(
     all_changed_fields: list[str] = []
     changed_types: set[str] = set()
     unavailable: list[str] = []
+    unavailable_reason_codes: set[str] = set()
 
     for dependency_type, stable_identity in sorted(
         set(historical_entries) | set(current_entries),
@@ -429,6 +506,7 @@ def compare_fixation_dependency_manifests(
             result = "unknown"
             reasons = sorted(set(historical_entry.reason_codes + current_entry.reason_codes))
             unavailable.append(identity_label)
+            unavailable_reason_codes.update(reasons)
         elif historical_entry.fingerprint == current_entry.fingerprint:
             result = "unchanged"
         else:
@@ -459,7 +537,7 @@ def compare_fixation_dependency_manifests(
         reason_codes = ["dependency_content_changed"]
     elif unavailable:
         overall = "unknown"
-        reason_codes = ["dependency_unavailable"]
+        reason_codes = sorted(unavailable_reason_codes) or ["dependency_unavailable"]
     else:
         overall = "unchanged"
         reason_codes = []
@@ -478,6 +556,19 @@ def compare_fixation_dependency_manifests(
         reason_codes=reason_codes,
         unavailable_dependencies=sorted(unavailable),
     )
+
+
+def _duplicate_dependency_keys(
+    entries: list[DependencyEntry],
+) -> set[tuple[str, str | None]]:
+    seen: set[tuple[str, str | None]] = set()
+    duplicates: set[tuple[str, str | None]] = set()
+    for entry in entries:
+        key = (entry.dependency_type, entry.stable_identity)
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+    return duplicates
 
 
 def get_run_with_dependency_manifest(

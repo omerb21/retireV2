@@ -223,6 +223,10 @@ def test_request_builder_uses_work_end_fallback_and_rejects_missing_dates() -> N
         (httpx.Response(200, text="not-json"), "malformed_response"),
         (httpx.Response(200, json={}), "missing_answer"),
         (httpx.Response(200, json={"answer": {}}), "missing_to_value"),
+        (
+            httpx.Response(200, json={"answer": {"to_value": "1", "from_index_period": {"bad": "shape"}}}),
+            "malformed_response",
+        ),
         (httpx.Response(503, json={"answer": {"to_value": 1}}), "http_error"),
     ],
 )
@@ -247,6 +251,31 @@ def test_adapter_fails_closed_without_retry_for_response_failures(
         )
     assert isinstance(outcome, CbsIndexationFailure)
     assert outcome.failure.failure_category == category
+    assert calls == 1
+
+
+@pytest.mark.parametrize("raw_value", ["NaN", "Infinity", "-Infinity"])
+def test_adapter_rejects_non_finite_result_without_retry(raw_value: str) -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"answer": {"to_value": raw_value}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        outcome = calculate_cbs_indexation(
+            amount=Decimal("1000"),
+            grant_date=date(2020, 1, 1),
+            work_end_date=date(2020, 1, 1),
+            eligibility_date=date(2026, 1, 1),
+            client=client,
+        )
+
+    assert isinstance(outcome, CbsIndexationFailure)
+    assert outcome.failure.failure_category == "malformed_response"
+    assert outcome.failure.malformed_response is True
+    assert outcome.request is not None
     assert calls == 1
 
 
@@ -340,8 +369,25 @@ def test_non_admissible_grants_never_call_cbs(gate: str) -> None:
         assert errors
 
 
+def test_blocked_m07_never_calls_cbs() -> None:
+    payload = _payload(mode="cbs_system_calculation_required")
+    payload["upstream_context"]["state"] = "blocked"
+    calls = 0
+
+    def calculator(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return _success()
+
+    _, engine_input, errors = parse_and_admit_fixation_payload(payload, cbs_calculator=calculator)
+    assert engine_input is None
+    assert calls == 0
+    assert {error.path for error in errors} == {"upstream_context.state"}
+
+
 def test_asserted_and_cbs_modes_remain_distinct_without_fallback() -> None:
     asserted = _payload()
+    asserted["grants"][0]["asserted_indexed_amount"] = 9999.0
     context, engine_input, errors = parse_and_admit_fixation_payload(asserted)
     assert errors == []
     assert context is not None and engine_input is not None
@@ -419,6 +465,60 @@ def test_system_calculated_input_cannot_bypass_adapter_and_engine_has_no_http_cl
     assert {error.path for error in forged_errors} == {"grants[0].system_calculated_amount"}
 
 
+@pytest.mark.parametrize("gate", ["included", "excluded", "unsupported"])
+def test_caller_calculated_mode_is_rejected_before_grant_branching(gate: str) -> None:
+    payload = _payload(mode="cbs_system_calculated")
+    grant = payload["grants"][0]
+    if gate == "excluded":
+        grant["inclusion_decision"] = "exclude"
+    elif gate == "unsupported":
+        grant["support_status"] = "unsupported"
+
+    context, engine_input, errors = parse_and_admit_fixation_payload(payload)
+
+    assert context is not None
+    assert engine_input is None
+    assert "grants[0].indexation_mode" in {error.path for error in errors}
+    assert context.grants[0].indexation_mode == "cbs_system_calculation_required"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("system_calculated_amount", 777777.0),
+        ("selected_calculation_amount", 777777.0),
+        ("resolved_base_date", "2020-02-03"),
+        ("base_date_source", "grant_date"),
+        ("target_date", "2026-01-01"),
+        ("cpi_code", "120010"),
+        ("cbs_request_evidence", _success().request.model_dump(mode="json")),
+        ("cbs_response_evidence", _success().response.model_dump(mode="json")),
+        ("indexation_failure_evidence", _failure().failure.model_dump(mode="json")),
+        ("indexation_warnings", ["forged system warning"]),
+        ("indexation_calculation_status", "calculated"),
+    ],
+)
+def test_caller_system_evidence_fields_are_rejected_and_scrubbed(
+    field_name: str,
+    field_value: object,
+) -> None:
+    payload = _payload(mode="cbs_system_calculation_required")
+    payload["grants"][0][field_name] = field_value
+
+    context, engine_input, errors = parse_and_admit_fixation_payload(payload)
+
+    assert context is not None
+    assert engine_input is None
+    assert {error.path for error in errors} == {f"grants[0].{field_name}"}
+    snapshot_grant = context.model_dump(mode="json")["grants"][0]
+    if field_name == "indexation_warnings":
+        assert snapshot_grant[field_name] == []
+    elif field_name == "indexation_calculation_status":
+        assert snapshot_grant[field_name] == "pending"
+    else:
+        assert snapshot_grant[field_name] is None
+
+
 def _upgrade_database(db_path: Path) -> None:
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
@@ -455,6 +555,33 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
             "/api/clients",
             json={"full_name": "CBS Other", "id_number": "cbs-other", "birth_date": "1970-01-01"},
         ).json()["client_id"]
+
+        forged = _payload(client_id=owner, mode="cbs_system_calculated")
+        forged_grant = forged["grants"][0]
+        forged_grant["inclusion_decision"] = "exclude"
+        forged_grant["system_calculated_amount"] = 777777.0
+        forged_grant["selected_calculation_amount"] = 777777.0
+        forged_grant["cbs_response_evidence"] = _success(raw="777777").response.model_dump(mode="json")
+        forged_save = client.post(
+            "/api/fixation/save",
+            json={"client_id": owner, "input_data": forged},
+        )
+        assert forged_save.status_code == 200
+        assert forged_save.json()["status"] == "validation_failed"
+        forged_detail = client.get(
+            f"/api/clients/{owner}/fixation/runs/{forged_save.json()['run_id']}"
+        ).json()
+        assert forged_detail["result"] is None
+        assert forged_detail["audit_rows"] == []
+        persisted_forged_grant = forged_detail["input_snapshot"]["grants"][0]
+        assert persisted_forged_grant["indexation_mode"] == "cbs_system_calculation_required"
+        assert persisted_forged_grant["system_calculated_amount"] is None
+        assert persisted_forged_grant["selected_calculation_amount"] is None
+        assert persisted_forged_grant["cbs_response_evidence"] is None
+        assert all(
+            run["status"] != "success"
+            for run in client.get(f"/api/clients/{owner}/fixation/history").json()
+        )
 
         monkeypatch.setattr(
             "app.services.fixation_admission_service.calculate_cbs_indexation",
@@ -510,6 +637,46 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
         assert client.get(f"/api/clients/{other}/fixation/latest").json() == {"result": None}
         owner_history = client.get(f"/api/clients/{owner}/fixation/history").json()
         assert any(run["status"] == "calculation_failed" for run in owner_history)
+
+        for non_finite_value in ("NaN", "Infinity", "-Infinity"):
+            calls = 0
+
+            def handler(_request: httpx.Request, *, value=non_finite_value) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                return httpx.Response(200, json={"answer": {"to_value": value}})
+
+            with httpx.Client(transport=httpx.MockTransport(handler)) as cbs_client:
+                monkeypatch.setattr(
+                    "app.services.fixation_admission_service.calculate_cbs_indexation",
+                    lambda *, _client=cbs_client, **kwargs: calculate_cbs_indexation(
+                        client=_client,
+                        **kwargs,
+                    ),
+                )
+                non_finite = client.post(
+                    "/api/fixation/save",
+                    json={
+                        "client_id": owner,
+                        "input_data": _payload(
+                            client_id=owner,
+                            mode="cbs_system_calculation_required",
+                        ),
+                    },
+                )
+
+            assert non_finite.status_code == 200
+            assert non_finite.json()["status"] == "calculation_failed"
+            assert calls == 1
+            non_finite_detail = client.get(
+                f"/api/clients/{owner}/fixation/runs/{non_finite.json()['run_id']}"
+            ).json()
+            assert non_finite_detail["result"] is None
+            assert non_finite_detail["audit_rows"] == []
+            persisted_failure = non_finite_detail["input_snapshot"]["grants"][0]
+            assert persisted_failure["cbs_response_evidence"] is None
+            assert persisted_failure["indexation_failure_evidence"]["failure_category"] == "malformed_response"
+            assert persisted_failure["indexation_failure_evidence"]["malformed_response"] is True
 
         monkeypatch.setattr(
             "app.services.fixation_admission_service.calculate_cbs_indexation",

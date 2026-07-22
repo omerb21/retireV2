@@ -180,6 +180,8 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | 02M | FROZEN |
 | PKG-001 execution status | ACCEPTED_WITH_FOLLOW_UP at implementation commit `9ef78a4`; see `specs/runtime/PKG_001_acceptance_record.md` |
 | PKG-001 remaining follow-up evidence | Independent GPT Work backend execution was unavailable; full admissibility-envelope UI, standalone parameter catalog, and correction/supersession workflow remain outside accepted PKG-001 scope |
+| PKG-002 execution status | ACCEPTED at implementation commit `09bcd8a`, with migration head `c2f8a4d1e706`; see `specs/runtime/PKG_002_acceptance_record.md` |
+| PKG-002 remaining exclusions | UI, cache/catalog, correction/supersession workflow, historical prior-use behavior, full M08F, M09-M14, formal 161D, 02M, and V1/V2 parity remain outside accepted PKG-002 scope |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

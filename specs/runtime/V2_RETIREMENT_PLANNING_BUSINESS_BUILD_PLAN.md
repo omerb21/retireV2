@@ -182,6 +182,8 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-001 remaining follow-up evidence | Independent GPT Work backend execution was unavailable; full admissibility-envelope UI, standalone parameter catalog, and correction/supersession workflow remain outside accepted PKG-001 scope |
 | PKG-002 execution status | ACCEPTED at implementation commit `09bcd8a`, with migration head `c2f8a4d1e706`; see `specs/runtime/PKG_002_acceptance_record.md` |
 | PKG-002 remaining exclusions | UI, cache/catalog, correction/supersession workflow, historical prior-use behavior, full M08F, M09-M14, formal 161D, 02M, and V1/V2 parity remain outside accepted PKG-002 scope |
+| PKG-003 execution status | ACCEPTED_WITH_FOLLOW_UP at implementation commit `4b89d49`, with migration head `d7a3c9e5f102`; accepted foundation scope is the dependency manifest and technical change-detection boundary documented in `specs/runtime/PKG_003_acceptance_record.md` |
+| PKG-003 remaining limitations and exclusions | Current CBS comparison remains `unknown`; parameter catalog, M07 repository, automatic current resolver, professional stale mapping, prior-fixation runtime fact, rerun/replay/correction, UI, independent application and adapter runtime build identities, full M08F lifecycle, M08E, M09-M14, formal 161D, 02M, V1/V2 parity, and production readiness remain outside accepted PKG-003 scope |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

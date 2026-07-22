@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+from pydantic import ValidationError as PydanticValidationError
 
 from app.schemas.cbs_indexation import (
     CBS_CALCULATOR_ENDPOINT,
@@ -112,7 +113,10 @@ def _optional_decimal(payload: dict[str, Any], aliases: tuple[str, ...]) -> Deci
     value = _first_present(payload, aliases)
     if value is None:
         return None
-    return Decimal(str(value))
+    parsed = Decimal(str(value))
+    if not parsed.is_finite():
+        raise InvalidOperation
+    return parsed
 
 
 def calculate_cbs_indexation(
@@ -227,6 +231,8 @@ def calculate_cbs_indexation(
 
         try:
             raw_to_value = Decimal(str(answer["to_value"]))
+            if not raw_to_value.is_finite():
+                raise InvalidOperation
             optional_values = {
                 "from_index_period": _first_present(answer, _OPTIONAL_RESPONSE_FIELDS["from_index_period"]),
                 "to_index_period": _first_present(answer, _OPTIONAL_RESPONSE_FIELDS["to_index_period"]),
@@ -247,9 +253,8 @@ def calculate_cbs_indexation(
             )
 
         missing_optional = [key for key, value in optional_values.items() if value is None]
-        return CbsIndexationSuccess(
-            request=request,
-            response=CbsIndexationResponseEvidence(
+        try:
+            response_evidence = CbsIndexationResponseEvidence(
                 raw_to_value=raw_to_value,
                 missing_optional_fields=missing_optional,
                 calculation_timestamp=request.calculation_timestamp,
@@ -257,8 +262,17 @@ def calculate_cbs_indexation(
                 cpi_code=CBS_CPI_CODE,
                 endpoint=CBS_CALCULATOR_ENDPOINT,
                 **optional_values,
-            ),
-        )
+            )
+            return CbsIndexationSuccess(request=request, response=response_evidence)
+        except PydanticValidationError:
+            return _failure(
+                category="malformed_response",
+                timestamp=request.calculation_timestamp,
+                message="CBS calculator response failed evidence validation",
+                request=request,
+                http_status=response.status_code,
+                malformed=True,
+            )
     finally:
         if owns_client:
             http_client.close()

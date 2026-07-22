@@ -39,10 +39,13 @@ from app.services.fixation_service import (
     get_latest_fixation_result,
     run_fixation,
 )
+from app.services.fixation_admission_service import (
+    caller_supplied_cbs_system_evidence_paths,
+    parse_and_admit_fixation_payload,
+)
 from app.services.fixation_dependency_service import (
     build_fixation_dependency_manifest,
     compare_fixation_dependency_manifests,
-    current_context_admission_unavailable_reasons,
     get_run_with_dependency_manifest,
     parse_persisted_manifest,
     unavailable_comparison_response,
@@ -390,12 +393,57 @@ def compare_fixation_run_dependencies(
             historical_fingerprint=historical.manifest_fingerprint,
             manifest_version=historical.manifest_schema_version,
         )
+    if payload.current_input_contract_version is None or (
+        historical.result_contract_version is not None
+        and payload.current_result_contract_version is None
+    ):
+        return unavailable_comparison_response(
+            run_id=run_id,
+            client_id=client_id,
+            reason_code="current_contract_version_unavailable",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+        )
 
-    current_context = payload.current_context
-    if (
-        current_context.upstream_context.client_id != client_id
-        or current_context.parameter_set.client_id != client_id
-        or any(grant.client_id != client_id for grant in current_context.grants)
+    raw_current_context = payload.current_context
+    if caller_supplied_cbs_system_evidence_paths(raw_current_context):
+        return unavailable_comparison_response(
+            run_id=run_id,
+            client_id=client_id,
+            reason_code="current_cbs_evidence_unavailable",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+        )
+    raw_grants = raw_current_context.get("grants")
+    if isinstance(raw_grants, list) and any(
+        isinstance(grant, dict)
+        and grant.get("inclusion_decision") == "include"
+        and grant.get("indexation_mode") == "cbs_system_calculation_required"
+        for grant in raw_grants
+    ):
+        return unavailable_comparison_response(
+            run_id=run_id,
+            client_id=client_id,
+            reason_code="current_cbs_evidence_unavailable",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+        )
+
+    def comparison_cbs_call_forbidden(**_kwargs):
+        raise AssertionError("dependency comparison must not call the CBS adapter")
+
+    current_context, _, admission_errors = parse_and_admit_fixation_payload(
+        raw_current_context,
+        client_id=client_id,
+        cbs_calculator=comparison_cbs_call_forbidden,
+    )
+    client_mismatch_paths = {
+        "upstream_context.client_id",
+        "parameter_set.client_id",
+    }
+    if any(
+        error.path in client_mismatch_paths or error.path.endswith(".client_id")
+        for error in admission_errors
     ):
         raise HTTPException(
             status_code=422,
@@ -404,28 +452,22 @@ def compare_fixation_run_dependencies(
                 "message": "current dependency context belongs to another client",
             },
         )
-
-    admission_unavailable_reasons = current_context_admission_unavailable_reasons(
-        current_context
-    )
-    if admission_unavailable_reasons:
-        response = unavailable_comparison_response(
+    if current_context is None or admission_errors:
+        return unavailable_comparison_response(
             run_id=run_id,
             client_id=client_id,
-            reason_code=admission_unavailable_reasons[0],
+            reason_code="current_admitted_context_unavailable",
             historical_fingerprint=historical.manifest_fingerprint,
             manifest_version=historical.manifest_schema_version,
         )
-        response.reason_codes = admission_unavailable_reasons
-        return response
 
     current = build_fixation_dependency_manifest(
         run_id=run_id,
         run_identity=historical.run_identity,
         client_id=client_id,
         calculation_version=current_context.calculation_version,
-        input_contract_version=current_context.calculation_version,
-        result_contract_version=historical.result_contract_version,
+        input_contract_version=payload.current_input_contract_version,
+        result_contract_version=payload.current_result_contract_version,
         context=current_context,
     )
     return compare_fixation_dependency_manifests(historical, current)

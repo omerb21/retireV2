@@ -17,6 +17,47 @@ from app.schemas.fixation_contracts import (
 from app.services.cbs_indexation_adapter import calculate_cbs_indexation
 
 
+CBS_SERVER_CONTROLLED_INPUT_FIELDS = (
+    "system_calculated_amount",
+    "selected_calculation_amount",
+    "resolved_base_date",
+    "base_date_source",
+    "target_date",
+    "cpi_code",
+    "cbs_request_evidence",
+    "cbs_response_evidence",
+    "indexation_failure_evidence",
+)
+
+
+def caller_supplied_cbs_system_evidence_fields(raw_item: Any) -> list[str]:
+    if not isinstance(raw_item, dict):
+        return []
+    fields = [
+        field_name
+        for field_name in CBS_SERVER_CONTROLLED_INPUT_FIELDS
+        if raw_item.get(field_name) is not None
+    ]
+    if raw_item.get("indexation_warnings") not in (None, []):
+        fields.append("indexation_warnings")
+    if raw_item.get("indexation_calculation_status") not in (None, "pending"):
+        fields.append("indexation_calculation_status")
+    if raw_item.get("indexation_mode") == "cbs_system_calculated":
+        fields.append("indexation_mode")
+    return fields
+
+
+def caller_supplied_cbs_system_evidence_paths(payload: dict[str, Any]) -> list[str]:
+    raw_grants = payload.get("grants")
+    if not isinstance(raw_grants, list):
+        return []
+    return [
+        f"grants[{index}].{field_name}"
+        for index, raw_item in enumerate(raw_grants)
+        for field_name in caller_supplied_cbs_system_evidence_fields(raw_item)
+    ]
+
+
 def _error(
     path: str,
     message: str,
@@ -88,57 +129,20 @@ def parse_and_admit_fixation_payload(
     for index, item in enumerate(context.grants):
         path = f"grants[{index}]"
         raw_item = payload.get("grants", [])[index]
-        caller_supplied_system_evidence = False
-        if isinstance(raw_item, dict):
-            system_evidence_fields = (
-                "system_calculated_amount",
-                "selected_calculation_amount",
-                "resolved_base_date",
-                "base_date_source",
-                "target_date",
-                "cpi_code",
-                "cbs_request_evidence",
-                "cbs_response_evidence",
-                "indexation_failure_evidence",
-            )
-            for field_name in system_evidence_fields:
-                if raw_item.get(field_name) is not None:
-                    caller_supplied_system_evidence = True
-                    errors.append(
-                        _error(
-                            f"{path}.{field_name}",
-                            "indexation evidence fields are system-produced",
-                            item.grant_id,
-                        )
-                    )
-            if raw_item.get("indexation_warnings") not in (None, []):
-                caller_supplied_system_evidence = True
-                errors.append(
-                    _error(
-                        f"{path}.indexation_warnings",
-                        "indexation warnings are system-produced",
-                        item.grant_id,
-                    )
-                )
-            if raw_item.get("indexation_calculation_status") not in (None, "pending"):
-                caller_supplied_system_evidence = True
-                errors.append(
-                    _error(
-                        f"{path}.indexation_calculation_status",
-                        "indexation status is system-produced",
-                        item.grant_id,
-                    )
-                )
-        if item.indexation_mode == "cbs_system_calculated":
-            caller_supplied_system_evidence = True
+        caller_system_fields = caller_supplied_cbs_system_evidence_fields(raw_item)
+        for field_name in caller_system_fields:
             errors.append(
                 _error(
-                    f"{path}.indexation_mode",
-                    "CBS-calculated evidence cannot be supplied as authoritative input",
+                    f"{path}.{field_name}",
+                    (
+                        "CBS-calculated evidence cannot be supplied as authoritative input"
+                        if field_name == "indexation_mode"
+                        else "indexation evidence fields are system-produced"
+                    ),
                     item.grant_id,
                 )
             )
-        if caller_supplied_system_evidence:
+        if caller_system_fields:
             item.indexation_mode = "cbs_system_calculation_required"
             item.system_calculated_amount = None
             item.selected_calculation_amount = None

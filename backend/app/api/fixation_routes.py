@@ -23,6 +23,7 @@ from app.schemas.fixation_dependency_manifest import (
     DependencyComparisonRequest,
     DependencyComparisonResponse,
     DependencyManifestRetrieval,
+    FixationDependencyManifest,
 )
 from app.schemas.fixation_review import review_readiness_errors
 from app.schemas.fixation_review import (
@@ -407,13 +408,7 @@ def compare_fixation_run_dependencies(
 
     raw_current_context = payload.current_context
     if caller_supplied_cbs_system_evidence_paths(raw_current_context):
-        return unavailable_comparison_response(
-            run_id=run_id,
-            client_id=client_id,
-            reason_code="current_cbs_evidence_unavailable",
-            historical_fingerprint=historical.manifest_fingerprint,
-            manifest_version=historical.manifest_schema_version,
-        )
+        return _current_cbs_comparison_unavailable(historical)
     raw_grants = raw_current_context.get("grants")
     if isinstance(raw_grants, list) and any(
         isinstance(grant, dict)
@@ -421,13 +416,7 @@ def compare_fixation_run_dependencies(
         and grant.get("indexation_mode") == "cbs_system_calculation_required"
         for grant in raw_grants
     ):
-        return unavailable_comparison_response(
-            run_id=run_id,
-            client_id=client_id,
-            reason_code="current_cbs_evidence_unavailable",
-            historical_fingerprint=historical.manifest_fingerprint,
-            manifest_version=historical.manifest_schema_version,
-        )
+        return _current_cbs_comparison_unavailable(historical)
 
     def comparison_cbs_call_forbidden(**_kwargs):
         raise AssertionError("dependency comparison must not call the CBS adapter")
@@ -471,3 +460,21 @@ def compare_fixation_run_dependencies(
         context=current_context,
     )
     return compare_fixation_dependency_manifests(historical, current)
+
+
+def _current_cbs_comparison_unavailable(
+    historical: FixationDependencyManifest,
+) -> DependencyComparisonResponse:
+    response = unavailable_comparison_response(
+        run_id=historical.run_id,
+        client_id=historical.client_id,
+        reason_code="current_cbs_evidence_unavailable",
+        historical_fingerprint=historical.manifest_fingerprint,
+        manifest_version=historical.manifest_schema_version,
+    )
+    response.unavailable_dependencies = sorted(
+        f"cbs:{entry.stable_identity or 'content-based'}"
+        for entry in historical.dependencies
+        if entry.dependency_type == "cbs"
+    )
+    return response

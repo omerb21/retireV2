@@ -39,8 +39,7 @@ from app.services.fixation_admission_service import (
     validation_failed_result,
 )
 from app.services.fixation_dependency_service import (
-    _build_server_admitted_dependency_manifest,
-    _unwrap_server_produced_manifest,
+    _build_dependency_manifest,
 )
 
 
@@ -322,7 +321,7 @@ def run_fixation(
         db_session.flush()
         run_id = int(run.id)
 
-        server_dependency_manifest = _build_server_admitted_dependency_manifest(
+        dependency_manifest = _build_dependency_manifest(
             run_id=run_id,
             run_identity=run_trace_id,
             client_id=client_key,
@@ -331,7 +330,6 @@ def run_fixation(
             result_contract_version=(str(run_calculation_version) if _is_success_result(result) else None),
             context=admitted_context,
         )
-        dependency_manifest = _unwrap_server_produced_manifest(server_dependency_manifest)
         db_session.add(_dependency_manifest_model(run, dependency_manifest))
 
         db_session.add(

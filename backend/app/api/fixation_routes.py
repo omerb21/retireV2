@@ -42,6 +42,7 @@ from app.services.fixation_service import (
 from app.services.fixation_dependency_service import (
     build_fixation_dependency_manifest,
     compare_fixation_dependency_manifests,
+    current_context_admission_unavailable_reasons,
     get_run_with_dependency_manifest,
     parse_persisted_manifest,
     unavailable_comparison_response,
@@ -403,6 +404,20 @@ def compare_fixation_run_dependencies(
                 "message": "current dependency context belongs to another client",
             },
         )
+
+    admission_unavailable_reasons = current_context_admission_unavailable_reasons(
+        current_context
+    )
+    if admission_unavailable_reasons:
+        response = unavailable_comparison_response(
+            run_id=run_id,
+            client_id=client_id,
+            reason_code=admission_unavailable_reasons[0],
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+        )
+        response.reason_codes = admission_unavailable_reasons
+        return response
 
     current = build_fixation_dependency_manifest(
         run_id=run_id,

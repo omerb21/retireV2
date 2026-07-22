@@ -435,6 +435,16 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         assert unknown.json()["technical_result"] == "unknown"
         assert unknown.json()["reason_codes"] == ["current_dependency_context_unavailable"]
 
+        blocked_context = copy.deepcopy(detail_before["input_snapshot"])
+        blocked_context["upstream_context"]["state"] = "blocked"
+        blocked = client.post(
+            f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
+            json={"current_context": blocked_context},
+        )
+        assert blocked.status_code == 200
+        assert blocked.json()["technical_result"] == "unknown"
+        assert blocked.json()["reason_codes"] == ["current_m07_context_not_admitted"]
+
         mismatch_context = copy.deepcopy(detail_before["input_snapshot"])
         mismatch_context["upstream_context"]["client_id"] = other
         mismatch = client.post(

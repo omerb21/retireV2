@@ -527,3 +527,44 @@ def unavailable_comparison_response(
         unavailable_dependencies=[],
         comparison_algorithm_version=COMPARISON_ALGORITHM_VERSION,
     )
+
+
+def current_context_admission_unavailable_reasons(
+    context: AdmissibleFixationInput,
+) -> list[str]:
+    reasons: set[str] = set()
+    if context.upstream_context.state not in {"qualified", "warning_reviewed"}:
+        reasons.add("current_m07_context_not_admitted")
+    parameter_set = context.parameter_set
+    if not parameter_set.accepted_for_use:
+        reasons.add("current_parameter_context_not_admitted")
+    if parameter_set.tax_year != context.eligibility_year:
+        reasons.add("current_parameter_context_not_admitted")
+    if parameter_set.effective_from and context.eligibility_date < parameter_set.effective_from:
+        reasons.add("current_parameter_context_not_admitted")
+    if parameter_set.effective_to and context.eligibility_date > parameter_set.effective_to:
+        reasons.add("current_parameter_context_not_admitted")
+    if context.grants_collection_state in {"unknown", "not_collected"}:
+        reasons.add("current_grant_context_not_admitted")
+    if context.actual_capitalizations_collection_state in {"unknown", "not_collected"}:
+        reasons.add("current_capitalization_context_not_admitted")
+    if any(
+        grant.inclusion_decision == "include"
+        and (not grant.accepted_for_use or grant.support_status != "supported")
+        for grant in context.grants
+    ):
+        reasons.add("current_grant_context_not_admitted")
+    if any(
+        item.inclusion_decision == "include"
+        and (not item.accepted_for_use or item.support_status != "supported")
+        for item in context.actual_capitalizations
+    ):
+        reasons.add("current_capitalization_context_not_admitted")
+    if (
+        context.future_grant_reservation is not None
+        and not context.future_grant_reservation.accepted_for_use
+    ):
+        reasons.add("current_future_reserve_context_not_admitted")
+    if context.idf is not None:
+        reasons.add("current_special_handling_context_not_admitted")
+    return sorted(reasons)

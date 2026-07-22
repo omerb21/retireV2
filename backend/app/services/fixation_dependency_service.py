@@ -40,6 +40,31 @@ from app.schemas.fixation_dependency_manifest import (
 )
 
 
+_SERVER_PROVENANCE_TOKEN = object()
+
+
+class _ServerAdmittedDependencyContext:
+    """Opaque provenance wrapper created only after server-side admission."""
+
+    __slots__ = ("_context",)
+
+    def __init__(self, context: AdmissibleFixationInput | None, token: object) -> None:
+        if token is not _SERVER_PROVENANCE_TOKEN:
+            raise TypeError("server-admitted dependency contexts require internal provenance")
+        self._context = context
+
+
+class _ServerProducedDependencyManifest:
+    """Opaque marker for a manifest built from the server admission path."""
+
+    __slots__ = ("_manifest",)
+
+    def __init__(self, manifest: FixationDependencyManifest, token: object) -> None:
+        if token is not _SERVER_PROVENANCE_TOKEN:
+            raise TypeError("server-produced dependency manifests require internal provenance")
+        self._manifest = manifest
+
+
 def _decimal(value: float | Decimal | None) -> Decimal | None:
     return None if value is None else Decimal(str(value))
 
@@ -181,9 +206,64 @@ def build_fixation_dependency_manifest(
     input_contract_version: str,
     result_contract_version: str | None,
     context: AdmissibleFixationInput | None,
-    trusted_system_evidence: bool = False,
 ) -> FixationDependencyManifest:
-    if context is None:
+    return _build_dependency_manifest(
+        run_id=run_id,
+        run_identity=run_identity,
+        client_id=client_id,
+        calculation_version=calculation_version,
+        input_contract_version=input_contract_version,
+        result_contract_version=result_contract_version,
+        context=context,
+    )
+
+
+def _build_server_admitted_dependency_manifest(
+    *,
+    run_id: int,
+    run_identity: str,
+    client_id: int,
+    calculation_version: str,
+    input_contract_version: str,
+    result_contract_version: str | None,
+    context: AdmissibleFixationInput | None,
+) -> _ServerProducedDependencyManifest:
+    """Internal factory used only after the server admission path has completed."""
+
+    admitted_context = _ServerAdmittedDependencyContext(context, _SERVER_PROVENANCE_TOKEN)
+    manifest = _build_dependency_manifest(
+        run_id=run_id,
+        run_identity=run_identity,
+        client_id=client_id,
+        calculation_version=calculation_version,
+        input_contract_version=input_contract_version,
+        result_contract_version=result_contract_version,
+        context=admitted_context,
+    )
+    return _ServerProducedDependencyManifest(manifest, _SERVER_PROVENANCE_TOKEN)
+
+
+def _unwrap_server_produced_manifest(
+    manifest: _ServerProducedDependencyManifest,
+) -> FixationDependencyManifest:
+    if not isinstance(manifest, _ServerProducedDependencyManifest):
+        raise TypeError("expected a server-produced dependency manifest")
+    return manifest._manifest
+
+
+def _build_dependency_manifest(
+    *,
+    run_id: int,
+    run_identity: str,
+    client_id: int,
+    calculation_version: str,
+    input_contract_version: str,
+    result_contract_version: str | None,
+    context: AdmissibleFixationInput | _ServerAdmittedDependencyContext | None,
+) -> FixationDependencyManifest:
+    server_admitted = isinstance(context, _ServerAdmittedDependencyContext)
+    admitted_context = context._context if server_admitted else context
+    if admitted_context is None:
         return FixationDependencyManifest(
             run_id=run_id,
             run_identity=run_identity,
@@ -204,9 +284,9 @@ def build_fixation_dependency_manifest(
         or grant.cbs_request_evidence is not None
         or grant.cbs_response_evidence is not None
         or grant.indexation_failure_evidence is not None
-        for grant in context.grants
+        for grant in admitted_context.grants
     )
-    if has_system_cbs_evidence and not trusted_system_evidence:
+    if has_system_cbs_evidence and not server_admitted:
         return FixationDependencyManifest(
             run_id=run_id,
             run_identity=run_identity,
@@ -221,6 +301,7 @@ def build_fixation_dependency_manifest(
             dependencies=[],
             manifest_fingerprint=None,
         )
+    context = admitted_context
     warnings = context.upstream_context.warnings
     sorted_warnings = (
         sorted(warnings, key=lambda warning: (warning.code, warning.message))
@@ -402,13 +483,16 @@ def _changed_paths(historical: Any, current: Any, prefix: str = "") -> list[str]
 
 def compare_fixation_dependency_manifests(
     historical: FixationDependencyManifest,
-    current: FixationDependencyManifest,
+    current: FixationDependencyManifest | _ServerProducedDependencyManifest,
     *,
     assessment_timestamp: datetime | None = None,
-    current_context_is_trusted: bool = False,
 ) -> DependencyComparisonResponse:
     timestamp = assessment_timestamp or datetime.now(timezone.utc)
-    if historical.manifest_schema_version != current.manifest_schema_version:
+    current_is_server_produced = isinstance(current, _ServerProducedDependencyManifest)
+    current_manifest = (
+        _unwrap_server_produced_manifest(current) if current_is_server_produced else current
+    )
+    if historical.manifest_schema_version != current_manifest.manifest_schema_version:
         return DependencyComparisonResponse(
             run_id=historical.run_id,
             client_id=historical.client_id,
@@ -419,14 +503,14 @@ def compare_fixation_dependency_manifests(
             changed_dependency_types=[],
             changed_fields=[],
             historical_fingerprint=historical.manifest_fingerprint,
-            current_fingerprint=current.manifest_fingerprint,
+            current_fingerprint=current_manifest.manifest_fingerprint,
             reason_codes=["comparison_schema_incompatible"],
             unavailable_dependencies=[],
             comparison_algorithm_version=COMPARISON_ALGORITHM_VERSION,
         )
-    if not current_context_is_trusted and any(
+    if not current_is_server_produced and any(
         entry.dependency_type == "cbs" and entry.availability_state == "available"
-        for entry in current.dependencies
+        for entry in current_manifest.dependencies
     ):
         return unavailable_comparison_response(
             run_id=historical.run_id,
@@ -436,8 +520,13 @@ def compare_fixation_dependency_manifests(
             manifest_version=historical.manifest_schema_version,
             assessment_timestamp=timestamp,
         )
-    if historical.context_availability == "unavailable" or current.context_availability == "unavailable":
-        reasons = sorted(set(historical.context_reason_codes + current.context_reason_codes))
+    if (
+        historical.context_availability == "unavailable"
+        or current_manifest.context_availability == "unavailable"
+    ):
+        reasons = sorted(
+            set(historical.context_reason_codes + current_manifest.context_reason_codes)
+        )
         return DependencyComparisonResponse(
             run_id=historical.run_id,
             client_id=historical.client_id,
@@ -448,14 +537,14 @@ def compare_fixation_dependency_manifests(
             changed_dependency_types=[],
             changed_fields=[],
             historical_fingerprint=historical.manifest_fingerprint,
-            current_fingerprint=current.manifest_fingerprint,
+            current_fingerprint=current_manifest.manifest_fingerprint,
             reason_codes=reasons or ["dependency_context_unavailable"],
             unavailable_dependencies=[],
         )
 
     duplicate_keys = sorted(
         _duplicate_dependency_keys(historical.dependencies)
-        | _duplicate_dependency_keys(current.dependencies),
+        | _duplicate_dependency_keys(current_manifest.dependencies),
         key=lambda key: (key[0], key[1] or ""),
     )
     if duplicate_keys:
@@ -467,7 +556,7 @@ def compare_fixation_dependency_manifests(
             manifest_version=historical.manifest_schema_version,
             assessment_timestamp=timestamp,
         )
-        response.current_fingerprint = current.manifest_fingerprint
+        response.current_fingerprint = current_manifest.manifest_fingerprint
         response.unavailable_dependencies = [
             f"{dependency_type}:{stable_identity or 'content-based'}"
             for dependency_type, stable_identity in duplicate_keys
@@ -478,8 +567,22 @@ def compare_fixation_dependency_manifests(
         (entry.dependency_type, entry.stable_identity): entry for entry in historical.dependencies
     }
     current_entries = {
-        (entry.dependency_type, entry.stable_identity): entry for entry in current.dependencies
+        (entry.dependency_type, entry.stable_identity): entry
+        for entry in current_manifest.dependencies
     }
+    missing_required = _missing_required_dependencies(historical_entries, current_entries)
+    if missing_required:
+        response = unavailable_comparison_response(
+            run_id=historical.run_id,
+            client_id=historical.client_id,
+            reason_code="mandatory_dependency_missing",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+            assessment_timestamp=timestamp,
+        )
+        response.current_fingerprint = current_manifest.manifest_fingerprint
+        response.unavailable_dependencies = missing_required
+        return response
     per_dependency: list[PerDependencyComparison] = []
     all_changed_fields: list[str] = []
     changed_types: set[str] = set()
@@ -552,7 +655,7 @@ def compare_fixation_dependency_manifests(
         changed_dependency_types=sorted(changed_types),
         changed_fields=sorted(all_changed_fields),
         historical_fingerprint=historical.manifest_fingerprint,
-        current_fingerprint=current.manifest_fingerprint,
+        current_fingerprint=current_manifest.manifest_fingerprint,
         reason_codes=reason_codes,
         unavailable_dependencies=sorted(unavailable),
     )
@@ -569,6 +672,34 @@ def _duplicate_dependency_keys(
             duplicates.add(key)
         seen.add(key)
     return duplicates
+
+
+def _missing_required_dependencies(
+    historical_entries: dict[tuple[str, str | None], DependencyEntry],
+    current_entries: dict[tuple[str, str | None], DependencyEntry],
+) -> list[str]:
+    """Return technical dependencies required to compare the saved run safely."""
+
+    missing: set[str] = set()
+    singleton_types = {"calculation_context", "m07", "parameter_set", "future_reserve"}
+    for dependency_type in singleton_types:
+        if not any(key[0] == dependency_type for key in historical_entries):
+            missing.add(f"historical:{dependency_type}")
+        if not any(key[0] == dependency_type for key in current_entries):
+            missing.add(f"current:{dependency_type}")
+
+    for key, historical_entry in historical_entries.items():
+        dependency_type, stable_identity = key
+        if dependency_type in {"grant", "capitalization"} and key not in current_entries:
+            missing.add(f"current:{dependency_type}:{stable_identity or 'content-based'}")
+        if dependency_type == "cbs" and key not in current_entries:
+            missing.add(f"current:cbs:{stable_identity or 'content-based'}")
+        if dependency_type == "grant" and historical_entry.canonical_content is not None:
+            cbs_identity = historical_entry.canonical_content.cbs_dependency_identity
+            if cbs_identity is not None and ("cbs", cbs_identity) not in current_entries:
+                missing.add(f"current:cbs:{cbs_identity}")
+
+    return sorted(missing)
 
 
 def get_run_with_dependency_manifest(

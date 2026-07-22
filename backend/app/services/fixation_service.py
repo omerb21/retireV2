@@ -33,6 +33,7 @@ from app.schemas.fixation_contracts import (
     PlannerReviewContextEnvelope,
     ValidationError,
 )
+from app.schemas.fixation_dependency_manifest import FixationDependencyManifest
 from app.services.fixation_admission_service import (
     parse_and_admit_fixation_payload,
     validation_failed_result,
@@ -50,6 +51,29 @@ class InternalPlannerJudgmentAlreadyExistsError(ValueError):
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{time_ns()}-{uuid4().hex}"
+
+
+def _new_dependency_manifest_id() -> str:
+    return f"dependency-manifest-{uuid4().hex}"
+
+
+def _dependency_manifest_model(
+    run: FixationRun,
+    manifest: FixationDependencyManifest,
+) -> FixationDependencyManifestModel:
+    if run.id is None or int(run.id) != manifest.run_id:
+        raise ValueError("dependency manifest run identity does not match persisted run")
+    if int(run.client_id) != manifest.client_id:
+        raise ValueError("dependency manifest client identity does not match persisted run")
+    return FixationDependencyManifestModel(
+        fixation_dependency_manifest_id=_new_dependency_manifest_id(),
+        fixation_run_id=int(run.id),
+        client_id=int(run.client_id),
+        manifest_schema_version=manifest.manifest_schema_version,
+        fingerprint_algorithm_version=manifest.fingerprint_algorithm_version,
+        manifest_fingerprint=manifest.manifest_fingerprint,
+        manifest_payload=manifest.model_dump(mode="json"),
+    )
 
 
 def _as_float(value: Decimal | None) -> float | None:
@@ -303,20 +327,9 @@ def run_fixation(
             input_contract_version=str(input_contract_version),
             result_contract_version=(str(run_calculation_version) if _is_success_result(result) else None),
             context=admitted_context,
+            trusted_system_evidence=True,
         )
-        db_session.add(
-            FixationDependencyManifestModel(
-                fixation_dependency_manifest_id=_new_id("dependency-manifest"),
-                fixation_run_id=run_id,
-                client_id=client_key,
-                manifest_schema_version=dependency_manifest.manifest_schema_version,
-                fingerprint_algorithm_version=(
-                    dependency_manifest.fingerprint_algorithm_version
-                ),
-                manifest_fingerprint=dependency_manifest.manifest_fingerprint,
-                manifest_payload=dependency_manifest.model_dump(mode="json"),
-            )
-        )
+        db_session.add(_dependency_manifest_model(run, dependency_manifest))
 
         db_session.add(
             FixationInputSnapshot(

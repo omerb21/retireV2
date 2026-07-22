@@ -88,9 +88,9 @@ def parse_and_admit_fixation_payload(
     for index, item in enumerate(context.grants):
         path = f"grants[{index}]"
         raw_item = payload.get("grants", [])[index]
-        if item.indexation_mode != "cbs_system_calculated" and isinstance(raw_item, dict):
+        caller_supplied_system_evidence = False
+        if isinstance(raw_item, dict):
             system_evidence_fields = (
-                "asserted_indexed_amount",
                 "system_calculated_amount",
                 "selected_calculation_amount",
                 "resolved_base_date",
@@ -103,6 +103,7 @@ def parse_and_admit_fixation_payload(
             )
             for field_name in system_evidence_fields:
                 if raw_item.get(field_name) is not None:
+                    caller_supplied_system_evidence = True
                     errors.append(
                         _error(
                             f"{path}.{field_name}",
@@ -111,6 +112,7 @@ def parse_and_admit_fixation_payload(
                         )
                     )
             if raw_item.get("indexation_warnings") not in (None, []):
+                caller_supplied_system_evidence = True
                 errors.append(
                     _error(
                         f"{path}.indexation_warnings",
@@ -119,6 +121,7 @@ def parse_and_admit_fixation_payload(
                     )
                 )
             if raw_item.get("indexation_calculation_status") not in (None, "pending"):
+                caller_supplied_system_evidence = True
                 errors.append(
                     _error(
                         f"{path}.indexation_calculation_status",
@@ -126,6 +129,28 @@ def parse_and_admit_fixation_payload(
                         item.grant_id,
                     )
                 )
+        if item.indexation_mode == "cbs_system_calculated":
+            caller_supplied_system_evidence = True
+            errors.append(
+                _error(
+                    f"{path}.indexation_mode",
+                    "CBS-calculated evidence cannot be supplied as authoritative input",
+                    item.grant_id,
+                )
+            )
+        if caller_supplied_system_evidence:
+            item.indexation_mode = "cbs_system_calculation_required"
+            item.system_calculated_amount = None
+            item.selected_calculation_amount = None
+            item.resolved_base_date = None
+            item.base_date_source = None
+            item.target_date = None
+            item.cpi_code = None
+            item.cbs_request_evidence = None
+            item.cbs_response_evidence = None
+            item.indexation_warnings = []
+            item.indexation_calculation_status = "pending"
+            item.indexation_failure_evidence = None
         if item.client_id != context.upstream_context.client_id:
             errors.append(
                 _error(f"{path}.client_id", "grant indexation context belongs to another client", item.grant_id)
@@ -139,14 +164,6 @@ def parse_and_admit_fixation_payload(
                 _error(
                     f"{path}.support_status",
                     f"included grant requires '{item.support_status}' handling",
-                    item.grant_id,
-                )
-            )
-        if item.indexation_mode == "cbs_system_calculated":
-            errors.append(
-                _error(
-                    f"{path}.indexation_mode",
-                    "CBS-calculated evidence cannot be supplied as authoritative input",
                     item.grant_id,
                 )
             )

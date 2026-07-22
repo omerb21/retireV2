@@ -17,6 +17,9 @@ from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.employment_record import EmploymentRecord
 from app.models.fixation_audit_row import FixationAuditRow
+from app.models.fixation_dependency_manifest import (
+    FixationDependencyManifest as FixationDependencyManifestModel,
+)
 from app.models.fixation_input_snapshot import FixationInputSnapshot
 from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
@@ -34,6 +37,7 @@ from app.services.fixation_admission_service import (
     parse_and_admit_fixation_payload,
     validation_failed_result,
 )
+from app.services.fixation_dependency_service import build_fixation_dependency_manifest
 
 
 class InternalPlannerJudgmentRunNotFoundError(ValueError):
@@ -290,6 +294,29 @@ def run_fixation(
         db_session.add(run)
         db_session.flush()
         run_id = int(run.id)
+
+        dependency_manifest = build_fixation_dependency_manifest(
+            run_id=run_id,
+            run_identity=run_trace_id,
+            client_id=client_key,
+            calculation_version=str(run_calculation_version),
+            input_contract_version=str(input_contract_version),
+            result_contract_version=(str(run_calculation_version) if _is_success_result(result) else None),
+            context=admitted_context,
+        )
+        db_session.add(
+            FixationDependencyManifestModel(
+                fixation_dependency_manifest_id=_new_id("dependency-manifest"),
+                fixation_run_id=run_id,
+                client_id=client_key,
+                manifest_schema_version=dependency_manifest.manifest_schema_version,
+                fingerprint_algorithm_version=(
+                    dependency_manifest.fingerprint_algorithm_version
+                ),
+                manifest_fingerprint=dependency_manifest.manifest_fingerprint,
+                manifest_payload=dependency_manifest.model_dump(mode="json"),
+            )
+        )
 
         db_session.add(
             FixationInputSnapshot(

@@ -49,3 +49,6 @@ class FixationRun(Base):
     internal_planner_judgment: Mapped["InternalPlannerJudgment | None"] = relationship(
         "InternalPlannerJudgment", back_populates="fixation_run", uselist=False
     )
+    fixation_dependency_manifest: Mapped["FixationDependencyManifest | None"] = relationship(
+        "FixationDependencyManifest", back_populates="fixation_run", uselist=False
+    )

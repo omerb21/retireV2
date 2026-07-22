@@ -19,6 +19,11 @@ from app.schemas.fixation_contracts import (
     ValidationError,
     map_contract_validation_errors,
 )
+from app.schemas.fixation_dependency_manifest import (
+    DependencyComparisonRequest,
+    DependencyComparisonResponse,
+    DependencyManifestRetrieval,
+)
 from app.schemas.fixation_review import review_readiness_errors
 from app.schemas.fixation_review import (
     FixationReviewConversionError,
@@ -33,6 +38,13 @@ from app.services.fixation_service import (
     get_fixation_run_detail,
     get_latest_fixation_result,
     run_fixation,
+)
+from app.services.fixation_dependency_service import (
+    build_fixation_dependency_manifest,
+    compare_fixation_dependency_manifests,
+    get_run_with_dependency_manifest,
+    parse_persisted_manifest,
+    unavailable_comparison_response,
 )
 
 router = APIRouter(prefix="/api", tags=["fixation"])
@@ -297,3 +309,108 @@ def fixation_run_detail(
             for err in detail.fixation_validation_errors
         ],
     }
+
+
+@router.get(
+    "/clients/{client_id}/fixation/runs/{run_id}/dependency-manifest",
+    response_model=DependencyManifestRetrieval,
+)
+def fixation_run_dependency_manifest(
+    client_id: int,
+    run_id: int,
+    db: Session = Depends(get_db),
+) -> DependencyManifestRetrieval:
+    _require_client(db, client_id)
+    run = get_run_with_dependency_manifest(
+        client_id=client_id,
+        run_id=run_id,
+        db_session=db,
+    )
+    if run is None:
+        raise _run_not_found(run_id)
+    manifest = parse_persisted_manifest(run)
+    if manifest is None:
+        reason = (
+            "manifest_unavailable_for_legacy_run"
+            if run.fixation_dependency_manifest is None
+            else "manifest_schema_incompatible"
+        )
+        return DependencyManifestRetrieval(
+            run_id=run_id,
+            client_id=client_id,
+            availability="unavailable",
+            reason_codes=[reason],
+            manifest=None,
+        )
+    return DependencyManifestRetrieval(
+        run_id=run_id,
+        client_id=client_id,
+        availability="available",
+        reason_codes=[],
+        manifest=manifest,
+    )
+
+
+@router.post(
+    "/clients/{client_id}/fixation/runs/{run_id}/dependency-comparison",
+    response_model=DependencyComparisonResponse,
+)
+def compare_fixation_run_dependencies(
+    client_id: int,
+    run_id: int,
+    payload: DependencyComparisonRequest,
+    db: Session = Depends(get_db),
+) -> DependencyComparisonResponse:
+    _require_client(db, client_id)
+    run = get_run_with_dependency_manifest(
+        client_id=client_id,
+        run_id=run_id,
+        db_session=db,
+    )
+    if run is None:
+        raise _run_not_found(run_id)
+    historical = parse_persisted_manifest(run)
+    if historical is None:
+        reason = (
+            "manifest_unavailable_for_legacy_run"
+            if run.fixation_dependency_manifest is None
+            else "manifest_schema_incompatible"
+        )
+        return unavailable_comparison_response(
+            run_id=run_id,
+            client_id=client_id,
+            reason_code=reason,
+        )
+    if payload.current_context is None:
+        return unavailable_comparison_response(
+            run_id=run_id,
+            client_id=client_id,
+            reason_code="current_dependency_context_unavailable",
+            historical_fingerprint=historical.manifest_fingerprint,
+            manifest_version=historical.manifest_schema_version,
+        )
+
+    current_context = payload.current_context
+    if (
+        current_context.upstream_context.client_id != client_id
+        or current_context.parameter_set.client_id != client_id
+        or any(grant.client_id != client_id for grant in current_context.grants)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "DEPENDENCY_CONTEXT_CLIENT_MISMATCH",
+                "message": "current dependency context belongs to another client",
+            },
+        )
+
+    current = build_fixation_dependency_manifest(
+        run_id=run_id,
+        run_identity=historical.run_identity,
+        client_id=client_id,
+        calculation_version=current_context.calculation_version,
+        input_contract_version=current_context.calculation_version,
+        result_contract_version=historical.result_contract_version,
+        context=current_context,
+    )
+    return compare_fixation_dependency_manifests(historical, current)

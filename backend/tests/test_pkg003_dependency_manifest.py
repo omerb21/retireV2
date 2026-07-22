@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import app.services.fixation_dependency_service as dependency_service
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
@@ -31,10 +32,7 @@ from app.schemas.fixation_admissibility import AdmissibleFixationInput
 from app.schemas.fixation_dependency_manifest import FixationDependencyManifest
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_dependency_service import (
-    _ServerAdmittedDependencyContext,
-    _ServerProducedDependencyManifest,
-    _build_server_admitted_dependency_manifest,
-    _unwrap_server_produced_manifest,
+    _build_dependency_manifest,
     build_fixation_dependency_manifest,
     canonical_json,
     compare_fixation_dependency_manifests,
@@ -201,14 +199,14 @@ def _manifest(
     )
 
 
-def _server_manifest(
+def _persisted_manifest(
     context: AdmissibleFixationInput,
     *,
     run_id: int = 1,
     input_contract_version: str | None = None,
     result_contract_version: str | None = None,
-) -> _ServerProducedDependencyManifest:
-    return _build_server_admitted_dependency_manifest(
+):
+    return _build_dependency_manifest(
         run_id=run_id,
         run_identity=f"run-{run_id}",
         client_id=context.upstream_context.client_id,
@@ -309,7 +307,6 @@ def test_manifest_is_typed_readable_versioned_and_order_independent() -> None:
         (("grants", 0, "indexed_amount"), 1201.0, "grant"),
         (("grants", 0, "source_basis"), "changed basis", "grant"),
         (("grants", 0, "accepted_value"), 1002.0, "grant"),
-        (("grants", 0, "indexation_mode"), "cbs_system_calculation_required", "grant"),
         (("actual_capitalizations", 0, "amount"), 26.0, "capitalization"),
         (("actual_capitalizations", 0, "capitalization_date"), "2025-01-02", "capitalization"),
         (("actual_capitalizations", 0, "recorded_meaning"), "changed meaning", "capitalization"),
@@ -412,29 +409,31 @@ def test_parameter_acceptance_status_change_is_detected() -> None:
         (("cbs_request_evidence", "amount"), "1001"),
         (("cbs_request_evidence", "resolved_base_date"), "2020-02-04"),
         (("system_calculated_amount",), 1235.0),
+        (("selected_calculation_amount",), 1235.0),
         (("cbs_response_evidence", "raw_to_value"), "1235"),
     ],
 )
-def test_cbs_dependency_changes_are_detected(field_path: tuple, value: object) -> None:
+def test_caller_cbs_dependency_changes_remain_unknown(field_path: tuple, value: object) -> None:
     context = _admitted(
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _unwrap_server_produced_manifest(_server_manifest(context))
+    historical = _persisted_manifest(context)
     current_payload = context.model_dump(mode="json")
     target = current_payload["grants"][0]
     for part in field_path[:-1]:
         target = target[part]
     target[field_path[-1]] = value
-    current = _server_manifest(AdmissibleFixationInput(**current_payload))
+    current = _persisted_manifest(AdmissibleFixationInput(**current_payload))
 
     comparison = compare_fixation_dependency_manifests(
         historical,
         current,
         assessment_timestamp=NOW,
     )
-    assert comparison.technical_result == "changed"
-    assert "cbs" in comparison.changed_dependency_types
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+    assert comparison.unavailable_dependencies == ["cbs:grant-1"]
 
 
 def test_missing_cbs_dependency_is_unknown_not_unchanged_or_changed() -> None:
@@ -447,12 +446,13 @@ def test_missing_cbs_dependency_is_unknown_not_unchanged_or_changed() -> None:
     current_payload["grants"][0]["asserted_indexed_amount"] = 1200.0
     current_context = AdmissibleFixationInput(**current_payload)
     comparison = compare_fixation_dependency_manifests(
-        _unwrap_server_produced_manifest(_server_manifest(historical_context)),
+        _persisted_manifest(historical_context),
         _manifest(current_context),
         assessment_timestamp=NOW,
     )
     assert comparison.technical_result == "unknown"
-    assert comparison.reason_codes == ["cbs_dependency_evidence_unavailable"]
+    assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+    assert comparison.unavailable_dependencies == ["cbs:grant-1"]
 
 
 def test_direct_caller_cbs_manifest_cannot_bypass_trust_boundary() -> None:
@@ -460,9 +460,9 @@ def test_direct_caller_cbs_manifest_cannot_bypass_trust_boundary() -> None:
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _unwrap_server_produced_manifest(_server_manifest(context))
-    untrusted_current = _manifest(context)
-    assert untrusted_current.context_availability == "unavailable"
+    historical = _persisted_manifest(context)
+    current = _manifest(context)
+    assert current.context_availability == "unavailable"
     comparison = compare_fixation_dependency_manifests(
         historical,
         historical.model_copy(deep=True),
@@ -470,6 +470,7 @@ def test_direct_caller_cbs_manifest_cannot_bypass_trust_boundary() -> None:
     )
     assert comparison.technical_result == "unknown"
     assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+    assert comparison.unavailable_dependencies == ["cbs:grant-1"]
 
 
 def test_public_dependency_signatures_have_no_caller_controlled_trust_flags() -> None:
@@ -489,10 +490,13 @@ def test_public_dependency_signatures_have_no_caller_controlled_trust_flags() ->
             _manifest(context),
             current_context_is_trusted=True,
         )
-    with pytest.raises(TypeError, match="internal provenance"):
-        _ServerAdmittedDependencyContext(context, object())
-    with pytest.raises(TypeError, match="internal provenance"):
-        _ServerProducedDependencyManifest(_manifest(context), object())
+    removed_symbols = {
+        "_SERVER_PROVENANCE_TOKEN",
+        "_ServerAdmittedDependencyContext",
+        "_ServerProducedDependencyManifest",
+        "_build_server_admitted_dependency_manifest",
+    }
+    assert all(not hasattr(dependency_service, symbol) for symbol in removed_symbols)
 
 
 @pytest.mark.parametrize(
@@ -504,7 +508,7 @@ def test_direct_service_rejects_caller_supplied_cbs_evidence(evidence_field: str
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _unwrap_server_produced_manifest(_server_manifest(server_context))
+    historical = _persisted_manifest(server_context)
     caller_payload = server_context.model_dump(mode="json")
     assert caller_payload["grants"][0][evidence_field] is not None
     caller_context = AdmissibleFixationInput(**caller_payload)
@@ -518,9 +522,10 @@ def test_direct_service_rejects_caller_supplied_cbs_evidence(evidence_field: str
     )
     assert comparison.technical_result == "unknown"
     assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+    assert comparison.unavailable_dependencies == ["cbs:grant-1"]
 
 
-def test_server_produced_cbs_context_compares_without_public_trust_override() -> None:
+def test_saved_cbs_manifest_cannot_be_reused_as_current_and_comparison_makes_no_live_call() -> None:
     calls = 0
 
     def calculator(**_kwargs):
@@ -533,16 +538,17 @@ def test_server_produced_cbs_context_compares_without_public_trust_override() ->
         calculator=calculator,
     )
     assert calls == 1
-    historical = _unwrap_server_produced_manifest(_server_manifest(server_context))
-    current = _server_manifest(server_context)
+    historical = _persisted_manifest(server_context)
+    current = historical.model_copy(deep=True)
     comparison = compare_fixation_dependency_manifests(
         historical,
         current,
         assessment_timestamp=NOW,
     )
     assert calls == 1
-    assert comparison.technical_result == "unchanged"
-    assert comparison.reason_codes == []
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+    assert comparison.unavailable_dependencies == ["cbs:grant-1"]
 
 
 @pytest.mark.parametrize(
@@ -586,7 +592,7 @@ def test_missing_required_cbs_dependency_is_unknown() -> None:
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _unwrap_server_produced_manifest(_server_manifest(server_context))
+    historical = _persisted_manifest(server_context)
     current = _manifest(_admitted(_payload()))
     comparison = compare_fixation_dependency_manifests(
         historical,
@@ -868,6 +874,41 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
             "/api/clients",
             json={"full_name": "Status Owner", "id_number": "status-owner", "birth_date": "1970-01-01"},
         ).json()["client_id"]
+
+        monkeypatch.setattr(
+            "app.services.fixation_admission_service.calculate_cbs_indexation",
+            lambda **_kwargs: _success(),
+        )
+        cbs_success = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": owner,
+                "input_data": _payload(client_id=owner, mode="cbs_system_calculation_required"),
+            },
+        ).json()
+        assert cbs_success["status"] == "success"
+        cbs_manifest_url = (
+            f"/api/clients/{owner}/fixation/runs/{cbs_success['run_id']}/dependency-manifest"
+        )
+        saved_cbs_manifest = client.get(cbs_manifest_url).json()["manifest"]
+        saved_cbs_entry = next(
+            entry
+            for entry in saved_cbs_manifest["dependencies"]
+            if entry["dependency_type"] == "cbs"
+        )
+        assert saved_cbs_entry["canonical_content"]["response_evidence"]["raw_to_value"] == (
+            "1234.5678"
+        )
+        comparison = client.post(
+            f"/api/clients/{owner}/fixation/runs/{cbs_success['run_id']}/dependency-comparison",
+            json=_comparison_request(
+                _payload(client_id=owner, mode="cbs_system_calculation_required")
+            ),
+        ).json()
+        assert comparison["technical_result"] == "unknown"
+        assert comparison["reason_codes"] == ["current_cbs_evidence_unavailable"]
+        assert comparison["unavailable_dependencies"] == ["cbs:grant-1"]
+        assert client.get(cbs_manifest_url).json()["manifest"] == saved_cbs_manifest
 
         structural = _payload(client_id=owner)
         structural.pop("parameter_set")

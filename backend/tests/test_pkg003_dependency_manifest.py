@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import os
 import subprocess
 from datetime import date, datetime, timedelta, timezone
@@ -30,6 +31,10 @@ from app.schemas.fixation_admissibility import AdmissibleFixationInput
 from app.schemas.fixation_dependency_manifest import FixationDependencyManifest
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_dependency_service import (
+    _ServerAdmittedDependencyContext,
+    _ServerProducedDependencyManifest,
+    _build_server_admitted_dependency_manifest,
+    _unwrap_server_produced_manifest,
     build_fixation_dependency_manifest,
     canonical_json,
     compare_fixation_dependency_manifests,
@@ -184,7 +189,6 @@ def _manifest(
     run_id: int = 1,
     input_contract_version: str | None = None,
     result_contract_version: str | None = None,
-    trusted_system_evidence: bool = False,
 ):
     return build_fixation_dependency_manifest(
         run_id=run_id,
@@ -194,7 +198,24 @@ def _manifest(
         input_contract_version=input_contract_version or context.calculation_version,
         result_contract_version=result_contract_version or context.calculation_version,
         context=context,
-        trusted_system_evidence=trusted_system_evidence,
+    )
+
+
+def _server_manifest(
+    context: AdmissibleFixationInput,
+    *,
+    run_id: int = 1,
+    input_contract_version: str | None = None,
+    result_contract_version: str | None = None,
+) -> _ServerProducedDependencyManifest:
+    return _build_server_admitted_dependency_manifest(
+        run_id=run_id,
+        run_identity=f"run-{run_id}",
+        client_id=context.upstream_context.client_id,
+        calculation_version=context.calculation_version,
+        input_contract_version=input_contract_version or context.calculation_version,
+        result_contract_version=result_contract_version or context.calculation_version,
+        context=context,
     )
 
 
@@ -399,22 +420,18 @@ def test_cbs_dependency_changes_are_detected(field_path: tuple, value: object) -
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _manifest(context, trusted_system_evidence=True)
+    historical = _unwrap_server_produced_manifest(_server_manifest(context))
     current_payload = context.model_dump(mode="json")
     target = current_payload["grants"][0]
     for part in field_path[:-1]:
         target = target[part]
     target[field_path[-1]] = value
-    current = _manifest(
-        AdmissibleFixationInput(**current_payload),
-        trusted_system_evidence=True,
-    )
+    current = _server_manifest(AdmissibleFixationInput(**current_payload))
 
     comparison = compare_fixation_dependency_manifests(
         historical,
         current,
         assessment_timestamp=NOW,
-        current_context_is_trusted=True,
     )
     assert comparison.technical_result == "changed"
     assert "cbs" in comparison.changed_dependency_types
@@ -430,7 +447,7 @@ def test_missing_cbs_dependency_is_unknown_not_unchanged_or_changed() -> None:
     current_payload["grants"][0]["asserted_indexed_amount"] = 1200.0
     current_context = AdmissibleFixationInput(**current_payload)
     comparison = compare_fixation_dependency_manifests(
-        _manifest(historical_context, trusted_system_evidence=True),
+        _unwrap_server_produced_manifest(_server_manifest(historical_context)),
         _manifest(current_context),
         assessment_timestamp=NOW,
     )
@@ -443,7 +460,7 @@ def test_direct_caller_cbs_manifest_cannot_bypass_trust_boundary() -> None:
         _payload(mode="cbs_system_calculation_required"),
         calculator=lambda **_kwargs: _success(),
     )
-    historical = _manifest(context, trusted_system_evidence=True)
+    historical = _unwrap_server_produced_manifest(_server_manifest(context))
     untrusted_current = _manifest(context)
     assert untrusted_current.context_availability == "unavailable"
     comparison = compare_fixation_dependency_manifests(
@@ -453,6 +470,133 @@ def test_direct_caller_cbs_manifest_cannot_bypass_trust_boundary() -> None:
     )
     assert comparison.technical_result == "unknown"
     assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+
+
+def test_public_dependency_signatures_have_no_caller_controlled_trust_flags() -> None:
+    build_parameters = inspect.signature(build_fixation_dependency_manifest).parameters
+    compare_parameters = inspect.signature(compare_fixation_dependency_manifests).parameters
+    assert "trusted_system_evidence" not in build_parameters
+    assert "current_context_is_trusted" not in compare_parameters
+    assert not any("trust" in name or "provenance" in name for name in build_parameters)
+    assert not any("trust" in name or "provenance" in name for name in compare_parameters)
+
+    context = _admitted(_payload())
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        _manifest(context, trusted_system_evidence=True)
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        compare_fixation_dependency_manifests(
+            _manifest(context),
+            _manifest(context),
+            current_context_is_trusted=True,
+        )
+    with pytest.raises(TypeError, match="internal provenance"):
+        _ServerAdmittedDependencyContext(context, object())
+    with pytest.raises(TypeError, match="internal provenance"):
+        _ServerProducedDependencyManifest(_manifest(context), object())
+
+
+@pytest.mark.parametrize(
+    "evidence_field",
+    ["cbs_request_evidence", "cbs_response_evidence"],
+)
+def test_direct_service_rejects_caller_supplied_cbs_evidence(evidence_field: str) -> None:
+    server_context = _admitted(
+        _payload(mode="cbs_system_calculation_required"),
+        calculator=lambda **_kwargs: _success(),
+    )
+    historical = _unwrap_server_produced_manifest(_server_manifest(server_context))
+    caller_payload = server_context.model_dump(mode="json")
+    assert caller_payload["grants"][0][evidence_field] is not None
+    caller_context = AdmissibleFixationInput(**caller_payload)
+    current = _manifest(caller_context)
+
+    assert current.context_availability == "unavailable"
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        current,
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["current_cbs_evidence_unavailable"]
+
+
+def test_server_produced_cbs_context_compares_without_public_trust_override() -> None:
+    calls = 0
+
+    def calculator(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return _success()
+
+    server_context = _admitted(
+        _payload(mode="cbs_system_calculation_required"),
+        calculator=calculator,
+    )
+    assert calls == 1
+    historical = _unwrap_server_produced_manifest(_server_manifest(server_context))
+    current = _server_manifest(server_context)
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        current,
+        assessment_timestamp=NOW,
+    )
+    assert calls == 1
+    assert comparison.technical_result == "unchanged"
+    assert comparison.reason_codes == []
+
+
+@pytest.mark.parametrize(
+    ("dependency_type", "missing_label"),
+    [
+        ("calculation_context", "current:calculation_context"),
+        ("m07", "current:m07"),
+        ("parameter_set", "current:parameter_set"),
+        ("grant", "current:grant:grant-1"),
+        ("capitalization", "current:capitalization:cap-1"),
+    ],
+)
+def test_missing_mandatory_dependency_is_unknown(
+    dependency_type: str,
+    missing_label: str,
+) -> None:
+    context = _admitted(_payload())
+    historical = _manifest(context)
+    current = _manifest(context).model_copy(
+        update={
+            "dependencies": [
+                entry
+                for entry in _manifest(context).dependencies
+                if entry.dependency_type != dependency_type
+            ]
+        }
+    )
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        current,
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["mandatory_dependency_missing"]
+    assert missing_label in comparison.unavailable_dependencies
+    assert comparison.changed_dependency_types == []
+
+
+def test_missing_required_cbs_dependency_is_unknown() -> None:
+    server_context = _admitted(
+        _payload(mode="cbs_system_calculation_required"),
+        calculator=lambda **_kwargs: _success(),
+    )
+    historical = _unwrap_server_produced_manifest(_server_manifest(server_context))
+    current = _manifest(_admitted(_payload()))
+    comparison = compare_fixation_dependency_manifests(
+        historical,
+        current,
+        assessment_timestamp=NOW,
+    )
+    assert comparison.technical_result == "unknown"
+    assert comparison.reason_codes == ["mandatory_dependency_missing"]
+    assert comparison.unavailable_dependencies == ["current:cbs:grant-1"]
+    assert comparison.changed_dependency_types == []
 
 
 @pytest.mark.parametrize("dependency_type", ["grant", "capitalization"])

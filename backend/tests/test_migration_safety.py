@@ -160,3 +160,57 @@ def test_pkg002_status_migration_preserves_existing_runs_and_supports_new_status
     assert "Cannot downgrade while PKG-002 calculation failure statuses are present" in (
         downgrade.stdout + downgrade.stderr
     )
+
+
+def test_pkg003_manifest_migration_preserves_legacy_runs_and_refuses_destructive_downgrade(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "pkg003_manifests.db"
+    _run_alembic(db_path, "upgrade", "c2f8a4d1e706")
+
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    with Session(engine) as session:
+        session.execute(
+            text(
+                "INSERT INTO clients (client_id, display_name, id_number) "
+                "VALUES (1, 'Manifest Migration Client', 'manifest-migration-client')"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO fixation_runs "
+                "(id, fixation_run_id, client_id, calculation_version, status, is_latest) "
+                "VALUES (1, 'legacy-run', 1, 'legacy-v1', 'validation_failed', 1)"
+            )
+        )
+        session.commit()
+
+    _run_alembic(db_path, "upgrade", "head")
+    with Session(engine) as session:
+        assert session.execute(
+            text(
+                "SELECT COUNT(*) FROM fixation_dependency_manifests "
+                "WHERE fixation_run_id = 1"
+            )
+        ).scalar_one() == 0
+        session.execute(
+            text(
+                "INSERT INTO fixation_dependency_manifests "
+                "(fixation_dependency_manifest_id, fixation_run_id, client_id, "
+                "manifest_schema_version, fingerprint_algorithm_version, "
+                "manifest_fingerprint, manifest_payload) "
+                "VALUES ('manifest-1', 1, 1, 'manifest-v1', 'sha256-v1', NULL, '{}')"
+            )
+        )
+        session.commit()
+
+    downgrade = _run_alembic(db_path, "downgrade", "c2f8a4d1e706", check=False)
+    assert downgrade.returncode != 0
+    assert "Cannot downgrade while PKG-003 dependency manifests are present" in (
+        downgrade.stdout + downgrade.stderr
+    )
+
+    with Session(engine) as session:
+        assert session.execute(
+            text("SELECT COUNT(*) FROM fixation_dependency_manifests")
+        ).scalar_one() == 1

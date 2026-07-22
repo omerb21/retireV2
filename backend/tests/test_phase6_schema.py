@@ -44,6 +44,7 @@ APPROVED_TABLES = {
 
 ACCEPTED_ADDITIVE_TABLES = {
     "capital_asset",
+    "fixation_dependency_manifests",
     "internal_planner_judgments",
     "pension_analysis_record",
     "pension_holding",

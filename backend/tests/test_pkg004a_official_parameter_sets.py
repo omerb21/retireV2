@@ -15,7 +15,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import Base, load_all_models
 from app.db.session import get_db
 from app.main import app
-from app.models.official_parameter_set import OfficialParameterSet
+from app.models.official_parameter_set import (
+    OfficialParameterEvidenceImmutableError,
+    OfficialParameterSet,
+)
 from app.schemas.fixation_admissibility import AcceptedParameterSet
 from app.schemas.official_parameter_sets import (
     OFFICIAL_PARAMETER_FINGERPRINT_ALGORITHM,
@@ -231,8 +234,8 @@ def test_active_values_and_effective_period_are_immutable(db_session: Session) -
 
     row.monthly_cap = Decimal("1001")
     with pytest.raises(
-        ValueError,
-        match="active official parameter-set content is immutable",
+        OfficialParameterEvidenceImmutableError,
+        match="active official parameter-set evidence is immutable",
     ):
         db_session.flush()
     db_session.rollback()
@@ -243,6 +246,109 @@ def test_active_values_and_effective_period_are_immutable(db_session: Session) -
     with pytest.raises(ValueError, match="create a new revision"):
         db_session.flush()
     db_session.rollback()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "forged_value"),
+    [
+        ("source_evidence_metadata", {"document_id": "forged"}),
+        ("source_title", "Forged title"),
+        ("created_by", "forged-creator"),
+        ("created_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
+        ("verified_by", "forged-verifier"),
+        ("verified_at", datetime(2030, 1, 2, tzinfo=timezone.utc)),
+        ("activated_by", "forged-activator"),
+        ("activated_at", datetime(2030, 1, 3, tzinfo=timezone.utc)),
+    ],
+)
+def test_active_authority_evidence_and_lifecycle_are_immutable(
+    db_session: Session,
+    field_name: str,
+    forged_value: object,
+) -> None:
+    row = _active(db_session)
+    db_session.commit()
+    original_value = getattr(row, field_name)
+
+    setattr(row, field_name, forged_value)
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="evidence is immutable",
+    ):
+        db_session.flush()
+    db_session.rollback()
+
+    persisted = db_session.get(OfficialParameterSet, row.parameter_set_id)
+    assert persisted is not None
+    assert getattr(persisted, field_name) == original_value
+
+
+@pytest.mark.parametrize("status", ["verified", "active", "superseded", "rejected"])
+def test_authority_evidence_records_cannot_be_deleted(
+    db_session: Session,
+    status: str,
+) -> None:
+    row = _draft(db_session)
+    if status == "verified":
+        _verify(db_session, row)
+    elif status in {"active", "superseded"}:
+        _activate(db_session, _verify(db_session, row))
+        if status == "superseded":
+            supersede_official_parameter_set(
+                db_session=db_session,
+                parameter_set_id=row.parameter_set_id,
+                request=OfficialParameterSupersessionRequest(
+                    superseded_by="admin-superseder"
+                ),
+                timestamp=NOW,
+            )
+    else:
+        reject_official_parameter_set(
+            db_session=db_session,
+            parameter_set_id=row.parameter_set_id,
+            request=OfficialParameterRejectionRequest(
+                rejected_by="admin-rejector",
+                rejection_note="invalid evidence",
+            ),
+            timestamp=NOW,
+        )
+    db_session.commit()
+
+    db_session.delete(row)
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="cannot be deleted",
+    ):
+        db_session.flush()
+    db_session.rollback()
+    assert db_session.get(OfficialParameterSet, row.parameter_set_id) is not None
+
+
+def test_active_set_is_corrected_by_separate_revision_and_can_be_superseded(
+    db_session: Session,
+) -> None:
+    active = _active(db_session)
+    revision = _draft(
+        db_session,
+        parameter_set_id="official-2026-r2",
+        version="2026-r2",
+        monthly_cap="1001",
+    )
+    supersede_official_parameter_set(
+        db_session=db_session,
+        parameter_set_id=active.parameter_set_id,
+        request=OfficialParameterSupersessionRequest(
+            superseded_by="admin-superseder"
+        ),
+        timestamp=NOW,
+    )
+    db_session.commit()
+
+    assert active.status == "superseded"
+    assert active.superseded_by == "admin-superseder"
+    assert active.superseded_at is not None
+    assert revision.status == "draft"
+    assert revision.monthly_cap == Decimal("1001")
 
 
 def test_rejected_and_superseded_sets_do_not_resolve(db_session: Session) -> None:
@@ -452,6 +558,74 @@ def test_fingerprint_is_canonical_and_excludes_volatile_timestamps() -> None:
     assert official_parameter_fingerprint(first) != official_parameter_fingerprint(changed)
 
 
+def test_evidence_json_numbers_are_canonical_and_semantic_changes_are_distinct() -> None:
+    first = {"confidence": 0.5, "whole": 1.0, "nested": [{"score": 0.25}]}
+    equivalent = {
+        "nested": [{"score": Decimal("0.2500")}],
+        "whole": 1,
+        "confidence": Decimal("0.500"),
+    }
+    changed = {"confidence": 0.6, "whole": 1, "nested": [{"score": 0.25}]}
+
+    assert canonical_official_parameter_json(first) == canonical_official_parameter_json(
+        equivalent
+    )
+    assert official_parameter_fingerprint(first) == official_parameter_fingerprint(
+        equivalent
+    )
+    assert official_parameter_fingerprint(first) != official_parameter_fingerprint(changed)
+    assert "0.5" in canonical_official_parameter_json(first)
+
+
+def test_schema_accepted_float_metadata_is_persisted_without_runtime_type_error(
+    db_session: Session,
+) -> None:
+    row = _draft(
+        db_session,
+        metadata={
+            "confidence": 0.5,
+            "nested": [{"whole": 1.0, "score": 0.25}],
+        },
+    )
+    db_session.commit()
+
+    canonical_metadata = row.parameter_payload["source"]["source_evidence_metadata"]
+    assert canonical_metadata == {
+        "confidence": "0.5",
+        "nested": [{"score": "0.25", "whole": "1"}],
+    }
+    assert row.content_fingerprint == official_parameter_fingerprint(
+        official_parameter_content(
+            tax_year=row.tax_year,
+            effective_from=row.effective_from,
+            effective_to=row.effective_to,
+            schema_version=row.schema_version,
+            parameter_set_version=row.parameter_set_version,
+            values=_request().values,
+            source_type=row.source_type,
+            source_title=row.source_title,
+            official_source_reference=row.official_source_reference,
+            source_publication_date=row.source_publication_date,
+            source_evidence_metadata={
+                "confidence": Decimal("0.500"),
+                "nested": [{"whole": 1, "score": Decimal("0.2500")}],
+            },
+        )
+    )
+
+
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_evidence_numbers_are_rejected_at_schema_boundary(
+    non_finite: float,
+) -> None:
+    payload = _request().model_dump(mode="python")
+    payload["source_evidence_metadata"] = {
+        "nested": [{"confidence": non_finite}]
+    }
+    with pytest.raises(ValueError, match="must be finite"):
+        OfficialParameterSetCreate(**payload)
+
+
 def test_authority_mapping_is_repository_resolved_not_caller_blessed(
     db_session: Session,
 ) -> None:
@@ -496,6 +670,26 @@ def test_authority_mapping_is_repository_resolved_not_caller_blessed(
     )
     assert context is not None
     assert context.parameter_set_id == "official-2026-r1"
+    assert context.source_type == "official_publication"
+    assert context.source_title == "Official annual parameter publication"
+    assert context.official_source_reference == "official://tax-authority/2026/r1"
+    assert context.source_publication_date == date(2025, 12, 15)
+    assert context.source_recorded_at.replace(tzinfo=timezone.utc) == NOW
+    assert context.source_evidence_metadata == {
+        "document_id": "publication-2026-r1"
+    }
+    assert context.verification_note == "source and values checked"
+    assert context.verified_by == "admin-verifier"
+    assert context.verified_at.replace(tzinfo=timezone.utc) == NOW
+    assert context.activated_by == "admin-activator"
+    assert context.activated_at.replace(tzinfo=timezone.utc) == NOW
+    assert context.content_fingerprint
+    assert (
+        context.fingerprint_algorithm_version
+        == OFFICIAL_PARAMETER_FINGERPRINT_ALGORITHM
+    )
+    assert context.parameter_set_version == "2026-r1"
+    assert context.values == _request().values
     assert not hasattr(context, "client_id")
     assert not hasattr(context, "accepted_for_use")
     assert not hasattr(context, "accepted_by")
@@ -543,6 +737,12 @@ def test_read_only_api_lists_reads_and_resolves_without_write_boundary(
     session_local = sessionmaker(bind=create_engine(f"sqlite:///{db_path.as_posix()}"))
     with session_local() as session:
         _active(session)
+        for index in range(55):
+            _draft(
+                session,
+                parameter_set_id=f"draft-{index:03d}",
+                version=f"draft-{index:03d}",
+            )
         session.commit()
 
     def override_db():
@@ -565,13 +765,63 @@ def test_read_only_api_lists_reads_and_resolves_without_write_boundary(
             params={"tax_year": 2026, "status": "active"},
         )
         assert listed.status_code == 200
-        assert [item["parameter_set_id"] for item in listed.json()] == [
+        assert [item["parameter_set_id"] for item in listed.json()["items"]] == [
             "official-2026-r1"
         ]
+        assert listed.json()["count"] == 1
+        assert listed.json()["offset"] == 0
+        assert listed.json()["limit"] == 50
+        safe_fields = set(listed.json()["items"][0])
+        assert not safe_fields & {
+            "source_evidence_metadata",
+            "verification_note",
+            "created_by",
+            "verified_by",
+            "activated_by",
+            "rejected_by",
+            "superseded_by",
+            "source_recorded_at",
+        }
+
+        default_page = client.get("/api/official-parameter-sets")
+        assert default_page.status_code == 200
+        assert default_page.json()["count"] == 56
+        assert default_page.json()["limit"] == 50
+        assert len(default_page.json()["items"]) == 50
+        first_ids = [
+            item["parameter_set_id"] for item in default_page.json()["items"]
+        ]
+        assert first_ids == sorted(first_ids)
+
+        second_page = client.get(
+            "/api/official-parameter-sets",
+            params={"offset": 50, "limit": 10},
+        )
+        assert second_page.status_code == 200
+        assert second_page.json()["offset"] == 50
+        assert second_page.json()["limit"] == 10
+        assert len(second_page.json()["items"]) == 6
+
+        assert client.get(
+            "/api/official-parameter-sets",
+            params={"limit": 101},
+        ).status_code == 422
+        assert client.get(
+            "/api/official-parameter-sets",
+            params={"limit": -1},
+        ).status_code == 422
+        assert client.get(
+            "/api/official-parameter-sets",
+            params={"offset": -1},
+        ).status_code == 422
+
         read = client.get("/api/official-parameter-sets/official-2026-r1")
         assert read.status_code == 200
         assert read.json()["status"] == "active"
         assert "client_id" not in read.json()
+        assert "source_evidence_metadata" not in read.json()
+        assert "verification_note" not in read.json()
+        assert "activated_by" not in read.json()
 
         assert client.get("/api/official-parameter-sets/missing").status_code == 404
         assert client.post("/api/official-parameter-sets", json={}).status_code == 405

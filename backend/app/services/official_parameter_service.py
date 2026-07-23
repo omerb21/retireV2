@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.official_parameter_set import OfficialParameterSet
@@ -20,7 +20,7 @@ from app.schemas.official_parameter_sets import (
     OfficialParameterRejectionRequest,
     OfficialParameterResolution,
     OfficialParameterSetCreate,
-    OfficialParameterSetResponse,
+    OfficialParameterSetPublicResponse,
     OfficialParameterSupersessionRequest,
     OfficialParameterValues,
     OfficialParameterVerificationRequest,
@@ -62,8 +62,14 @@ def canonicalize_official_parameter_value(value: Any) -> Any:
         }
     if isinstance(value, (list, tuple)):
         return [canonicalize_official_parameter_value(item) for item in value]
+    if isinstance(value, bool):
+        return value
     if isinstance(value, Decimal):
         return _canonical_decimal(value)
+    if isinstance(value, float):
+        return _canonical_decimal(Decimal(str(value)))
+    if isinstance(value, int):
+        return _canonical_decimal(Decimal(value))
     if isinstance(value, datetime):
         if value.tzinfo is None:
             return value.isoformat(timespec="microseconds")
@@ -72,7 +78,7 @@ def canonicalize_official_parameter_value(value: Any) -> Any:
         )
     if isinstance(value, date):
         return value.isoformat()
-    if value is None or isinstance(value, (str, int, bool)):
+    if value is None or isinstance(value, str):
         return value
     raise TypeError(f"unsupported official parameter value: {type(value).__name__}")
 
@@ -223,21 +229,33 @@ def list_official_parameter_sets(
     db_session: Session,
     tax_year: int | None = None,
     status: str | None = None,
-) -> list[OfficialParameterSet]:
+    offset: int = 0,
+    limit: int = 50,
+) -> tuple[list[OfficialParameterSet], int]:
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
     statement = select(OfficialParameterSet)
+    count_statement = select(func.count()).select_from(OfficialParameterSet)
     if tax_year is not None:
         statement = statement.where(OfficialParameterSet.tax_year == tax_year)
+        count_statement = count_statement.where(OfficialParameterSet.tax_year == tax_year)
     if status is not None:
         statement = statement.where(OfficialParameterSet.status == status)
-    return list(
+        count_statement = count_statement.where(OfficialParameterSet.status == status)
+    rows = list(
         db_session.scalars(
             statement.order_by(
                 OfficialParameterSet.tax_year,
                 OfficialParameterSet.effective_from,
                 OfficialParameterSet.parameter_set_id,
             )
+            .offset(offset)
+            .limit(limit)
         ).all()
     )
+    return rows, int(db_session.scalar(count_statement) or 0)
 
 
 def verify_official_parameter_set(
@@ -432,16 +450,29 @@ def resolve_official_parameter_admission_context(
         effective_from=row.effective_from,
         effective_to=row.effective_to,
         values=_row_values(row),
-        source_basis=f"{row.source_type}: {row.official_source_reference}",
+        source_type=row.source_type,
+        source_title=row.source_title,
+        official_source_reference=row.official_source_reference,
+        source_publication_date=row.source_publication_date,
+        source_recorded_at=row.source_recorded_at,
+        source_evidence_metadata=row.source_evidence_metadata,
+        verification_note=row.verification_note,
+        verified_by=row.verified_by,
+        verified_at=row.verified_at,
+        activated_by=row.activated_by,
+        activated_at=row.activated_at,
         schema_version=row.schema_version,
         parameter_set_version=row.parameter_set_version,
         content_fingerprint=row.content_fingerprint,
+        fingerprint_algorithm_version=row.fingerprint_algorithm_version,
         resolver_contract_version=OFFICIAL_PARAMETER_RESOLVER_VERSION,
     )
 
 
-def official_parameter_set_response(row: OfficialParameterSet) -> OfficialParameterSetResponse:
-    return OfficialParameterSetResponse(
+def official_parameter_set_public_response(
+    row: OfficialParameterSet,
+) -> OfficialParameterSetPublicResponse:
+    return OfficialParameterSetPublicResponse(
         parameter_set_id=row.parameter_set_id,
         tax_year=row.tax_year,
         effective_from=row.effective_from,
@@ -454,20 +485,6 @@ def official_parameter_set_response(row: OfficialParameterSet) -> OfficialParame
         source_title=row.source_title,
         official_source_reference=row.official_source_reference,
         source_publication_date=row.source_publication_date,
-        source_recorded_at=row.source_recorded_at,
-        source_evidence_metadata=row.source_evidence_metadata,
-        verification_note=row.verification_note,
         content_fingerprint=row.content_fingerprint,
         fingerprint_algorithm_version=row.fingerprint_algorithm_version,
-        created_at=row.created_at,
-        created_by=row.created_by,
-        verified_at=row.verified_at,
-        verified_by=row.verified_by,
-        activated_at=row.activated_at,
-        activated_by=row.activated_by,
-        rejected_at=row.rejected_at,
-        rejected_by=row.rejected_by,
-        rejection_note=row.rejection_note,
-        superseded_at=row.superseded_at,
-        superseded_by=row.superseded_by,
     )

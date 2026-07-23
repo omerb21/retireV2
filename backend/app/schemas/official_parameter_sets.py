@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+import math
 from typing import Any, Literal
 
 from pydantic import (
@@ -26,6 +27,19 @@ def _non_empty(value: str, field_name: str) -> str:
     value = value.strip()
     if not value:
         raise ValueError(f"{field_name} must be non-empty")
+    return value
+
+
+def _reject_non_finite_json_numbers(value: JsonValue) -> JsonValue:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("source_evidence_metadata numbers must be finite")
+    if isinstance(value, list):
+        return [_reject_non_finite_json_numbers(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _reject_non_finite_json_numbers(item)
+            for key, item in value.items()
+        }
     return value
 
 
@@ -92,6 +106,17 @@ class OfficialParameterSetCreate(BaseModel):
             raise ValueError("effective_to must not be before effective_from")
         return self
 
+    @field_validator("source_evidence_metadata")
+    @classmethod
+    def validate_evidence_numbers(
+        cls,
+        value: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        return {
+            key: _reject_non_finite_json_numbers(item)
+            for key, item in value.items()
+        }
+
 
 class OfficialParameterVerificationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -139,8 +164,10 @@ class OfficialParameterSupersessionRequest(BaseModel):
         return _non_empty(value, "superseded_by")
 
 
-class OfficialParameterSetResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid", from_attributes=True)
+class OfficialParameterSetPublicResponse(BaseModel):
+    """Read-safe inventory/detail projection; internal evidence is intentionally omitted."""
+
+    model_config = ConfigDict(extra="forbid")
 
     parameter_set_id: str
     tax_year: int
@@ -154,22 +181,17 @@ class OfficialParameterSetResponse(BaseModel):
     source_title: str
     official_source_reference: str
     source_publication_date: date | None
-    source_recorded_at: datetime
-    source_evidence_metadata: dict[str, Any]
-    verification_note: str | None
     content_fingerprint: str
     fingerprint_algorithm_version: str
-    created_at: datetime
-    created_by: str
-    verified_at: datetime | None
-    verified_by: str | None
-    activated_at: datetime | None
-    activated_by: str | None
-    rejected_at: datetime | None
-    rejected_by: str | None
-    rejection_note: str | None
-    superseded_at: datetime | None
-    superseded_by: str | None
+
+
+class OfficialParameterSetPublicPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[OfficialParameterSetPublicResponse]
+    count: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1)
 
 
 class OfficialParameterEvidenceSummary(BaseModel):
@@ -213,8 +235,19 @@ class OfficialParameterAdmissionContext(BaseModel):
     effective_from: date
     effective_to: date | None
     values: OfficialParameterValues
-    source_basis: str
+    source_type: str
+    source_title: str
+    official_source_reference: str
+    source_publication_date: date | None
+    source_recorded_at: datetime
+    source_evidence_metadata: dict[str, Any]
+    verification_note: str | None
+    verified_by: str
+    verified_at: datetime
+    activated_by: str
+    activated_at: datetime
     schema_version: str
     parameter_set_version: str
     content_fingerprint: str
+    fingerprint_algorithm_version: str
     resolver_contract_version: str

@@ -8,14 +8,15 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.official_parameter_sets import (
     OfficialParameterResolution,
-    OfficialParameterSetResponse,
+    OfficialParameterSetPublicPage,
+    OfficialParameterSetPublicResponse,
     OfficialParameterStatus,
 )
 from app.services.official_parameter_service import (
     OfficialParameterSetNotFoundError,
     get_official_parameter_set,
     list_official_parameter_sets,
-    official_parameter_set_response,
+    official_parameter_set_public_response,
     resolve_official_parameter_set,
 )
 
@@ -39,27 +40,34 @@ def resolve_official_parameters(
     )
 
 
-@router.get("", response_model=list[OfficialParameterSetResponse])
+@router.get("", response_model=OfficialParameterSetPublicPage)
 def list_official_parameters(
     tax_year: int | None = Query(default=None, ge=1900, le=9999),
     status: OfficialParameterStatus | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
-) -> list[OfficialParameterSetResponse]:
-    return [
-        official_parameter_set_response(row)
-        for row in list_official_parameter_sets(
-            db_session=db,
-            tax_year=tax_year,
-            status=status,
-        )
-    ]
+) -> OfficialParameterSetPublicPage:
+    rows, count = list_official_parameter_sets(
+        db_session=db,
+        tax_year=tax_year,
+        status=status,
+        offset=offset,
+        limit=limit,
+    )
+    return OfficialParameterSetPublicPage(
+        items=[official_parameter_set_public_response(row) for row in rows],
+        count=count,
+        offset=offset,
+        limit=limit,
+    )
 
 
-@router.get("/{parameter_set_id}", response_model=OfficialParameterSetResponse)
+@router.get("/{parameter_set_id}", response_model=OfficialParameterSetPublicResponse)
 def read_official_parameters(
     parameter_set_id: str,
     db: Session = Depends(get_db),
-) -> OfficialParameterSetResponse:
+) -> OfficialParameterSetPublicResponse:
     try:
         row = get_official_parameter_set(
             db_session=db,
@@ -67,4 +75,4 @@ def read_official_parameters(
         )
     except OfficialParameterSetNotFoundError as exc:
         raise HTTPException(status_code=404, detail="official parameter set not found") from exc
-    return official_parameter_set_response(row)
+    return official_parameter_set_public_response(row)

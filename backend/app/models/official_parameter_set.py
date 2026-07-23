@@ -121,27 +121,15 @@ class OfficialParameterSet(Base):
     superseded_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
-_ACTIVE_IMMUTABLE_FIELDS = (
-    "tax_year",
-    "effective_from",
-    "effective_to",
-    "schema_version",
-    "parameter_set_version",
-    "monthly_cap",
-    "exemption_percentage",
-    "capital_multiplier",
-    "grant_impact_multiplier",
-    "source_type",
-    "source_title",
-    "official_source_reference",
-    "source_publication_date",
-    "source_recorded_at",
-    "source_evidence_metadata",
-    "verification_note",
-    "parameter_payload",
-    "content_fingerprint",
-    "fingerprint_algorithm_version",
-)
+class OfficialParameterEvidenceImmutableError(ValueError):
+    """Raised when persisted authority evidence is mutated or deleted."""
+
+
+_SUPERSESSION_TRANSITION_FIELDS = {
+    "status",
+    "superseded_at",
+    "superseded_by",
+}
 
 
 @event.listens_for(OfficialParameterSet, "before_update")
@@ -151,14 +139,32 @@ def _protect_active_official_parameter_set(_mapper, _connection, target: Officia
     previous_status = status_history.deleted[0] if status_history.deleted else target.status
     if previous_status != "active":
         return
-    changed_fields = [
-        field_name
-        for field_name in _ACTIVE_IMMUTABLE_FIELDS
-        if state.attrs[field_name].history.has_changes()
-    ]
-    if changed_fields:
-        raise ValueError(
-            "active official parameter-set content is immutable; create a new revision"
-        )
     if target.status not in {"active", "superseded"}:
-        raise ValueError("active official parameter sets may only remain active or be superseded")
+        raise OfficialParameterEvidenceImmutableError(
+            "active official parameter sets may only remain active or be superseded"
+        )
+
+    changed_fields = {
+        attribute.key
+        for attribute in state.mapper.column_attrs
+        if state.attrs[attribute.key].history.has_changes()
+    }
+    allowed_fields = (
+        _SUPERSESSION_TRANSITION_FIELDS if target.status == "superseded" else set()
+    )
+    if changed_fields - allowed_fields:
+        raise OfficialParameterEvidenceImmutableError(
+            "active official parameter-set evidence is immutable; create a new revision"
+        )
+
+
+@event.listens_for(OfficialParameterSet, "before_delete")
+def _protect_official_parameter_evidence_from_delete(
+    _mapper,
+    _connection,
+    target: OfficialParameterSet,
+) -> None:
+    if target.status in {"verified", "active", "superseded", "rejected"}:
+        raise OfficialParameterEvidenceImmutableError(
+            f"{target.status} official parameter-set evidence cannot be deleted"
+        )

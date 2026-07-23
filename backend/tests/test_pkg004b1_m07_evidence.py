@@ -34,9 +34,12 @@ from app.schemas.official_parameter_sets import (
     OfficialParameterVerificationRequest,
 )
 from app.services.m07_evidence_service import (
+    M07_ASSESSMENT_MANIFESTS,
+    M07DuplicateFactIdentityError,
     M07EvidenceInvariantError,
     M07EvidenceLifecycleError,
     M07EvidenceNotFoundError,
+    M07EvidenceReferenceError,
     abandon_revision,
     append_planner_assertion,
     attach_resolved_parameter_reference,
@@ -46,6 +49,7 @@ from app.services.m07_evidence_service import (
     finalize_revision,
     get_revision,
     list_client_revisions,
+    m07_finding_fingerprint,
     m07_fingerprint,
     run_technical_assessment,
     supersede_revision,
@@ -114,10 +118,8 @@ def recorded_fact(
         structured_value=value,
         collection_state="recorded",
         verification_state="verified",
-        collection_actor="collector-service",
-        verification_actor="verifier-service",
         verification_basis="document match",
-        source_type="document",
+        source_type="external_document",
         source_document_reference="document://source-1",
         source_date=date(2026, 1, 2),
         source_metadata={"page": 1},
@@ -134,10 +136,7 @@ def finalize(
         client_id=revision.client_id,
         revision_id=revision.m07_evidence_revision_id,
         actor="finalizer-service",
-        assessment=AssessmentRun(
-            required_field_codes=required or [],
-            rule_version=RULE_VERSION,
-        ),
+        assessment=AssessmentRun(),
         timestamp=NOW,
     )
 
@@ -148,21 +147,18 @@ def test_command_vocabularies_are_closed_and_state_evidence_is_required() -> Non
             field_code="x",
             collection_state="invented",
             verification_state="unverified",
-            collection_actor="actor",
         )
     with pytest.raises(ValidationError):
         FactEvidenceWrite(
             field_code="x",
             collection_state="recorded",
             verification_state="unverified",
-            collection_actor="actor",
         )
     with pytest.raises(ValidationError):
         FactEvidenceWrite(
             field_code="x",
             collection_state="confirmed_none",
             verification_state="unverified",
-            collection_actor="actor",
         )
     with pytest.raises(ValidationError):
         FactEvidenceWrite(
@@ -170,11 +166,32 @@ def test_command_vocabularies_are_closed_and_state_evidence_is_required() -> Non
             structured_value=1,
             collection_state="recorded",
             verification_state="verified",
-            collection_actor="actor",
         )
 
 
 def test_assertion_actor_is_not_accepted_through_ordinary_assertion_dto() -> None:
+    with pytest.raises(ValidationError):
+        FactEvidenceWrite(
+            field_code="identity.name",
+            structured_value="Ada",
+            collection_state="recorded",
+            verification_state="verified",
+            verification_basis="document",
+            source_type="external_document",
+            source_document_reference="document://source",
+            collection_actor="caller-controlled",
+        )
+    with pytest.raises(ValidationError):
+        FactEvidenceWrite(
+            field_code="identity.name",
+            structured_value="Ada",
+            collection_state="recorded",
+            verification_state="verified",
+            verification_basis="document",
+            source_type="external_document",
+            source_document_reference="document://source",
+            verification_actor="caller-controlled",
+        )
     with pytest.raises(ValidationError):
         PlannerAssertionAppend(
             field_code="identity.name",
@@ -233,6 +250,8 @@ def test_fact_write_persists_provenance_and_material_fingerprint(session: Sessio
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=recorded_fact(),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
         timestamp=NOW,
     )
     assert first.recorded_by == "collector-service"
@@ -244,10 +263,23 @@ def test_fact_write_persists_provenance_and_material_fingerprint(session: Sessio
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=recorded_fact(fact_id=first.fact_evidence_id, value="Grace"),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
         timestamp=NOW,
     )
     assert updated.content_fingerprint != first_fingerprint
     assert updated.structured_value == "Grace"
+    value_fingerprint = updated.content_fingerprint
+    updated = write_fact_evidence(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=recorded_fact(fact_id=first.fact_evidence_id, value="Grace"),
+        recorded_actor="different-collector",
+        verification_actor="verifier-service",
+        timestamp=NOW,
+    )
+    assert updated.content_fingerprint != value_fingerprint
 
 
 def test_fact_and_assertion_references_cannot_cross_client_or_revision(
@@ -273,7 +305,6 @@ def test_fact_and_assertion_references_cannot_cross_client_or_revision(
         structured_value="Ada",
         collection_state="recorded",
         verification_state="planner_asserted",
-        collection_actor="collector-service",
         assertion_id=assertion.assertion_id,
     )
     with pytest.raises(M07EvidenceInvariantError):
@@ -282,6 +313,7 @@ def test_fact_and_assertion_references_cannot_cross_client_or_revision(
             client_id=2,
             revision_id=second.m07_evidence_revision_id,
             request=request,
+            recorded_actor="collector-service",
         )
 
 
@@ -301,8 +333,10 @@ def test_persisted_source_reference_is_validated_in_client_scope(
     own_revision = create_draft(session)
     source_request = recorded_fact().model_copy(
         update={
+            "source_type": "persisted_record",
             "source_record_type": "employment_records",
             "source_record_id": "employment-1",
+            "source_document_reference": None,
         }
     )
     row = write_fact_evidence(
@@ -310,16 +344,21 @@ def test_persisted_source_reference_is_validated_in_client_scope(
         client_id=1,
         revision_id=own_revision.m07_evidence_revision_id,
         request=source_request,
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     assert row.source_record_id == "employment-1"
     other_revision = create_draft(session, client_id=2)
-    with pytest.raises(M07EvidenceNotFoundError):
+    with pytest.raises(M07EvidenceReferenceError) as foreign_source:
         write_fact_evidence(
             db_session=session,
             client_id=2,
             revision_id=other_revision.m07_evidence_revision_id,
             request=source_request,
+            recorded_actor="collector-service",
+            verification_actor="verifier-service",
         )
+    assert foreign_source.value.code == "source_reference_invalid"
 
 
 def test_assertions_are_additive_and_do_not_overwrite_facts(session: Session) -> None:
@@ -329,6 +368,8 @@ def test_assertions_are_additive_and_do_not_overwrite_facts(session: Session) ->
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=recorded_fact(),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     assertion = append_planner_assertion(
         db_session=session,
@@ -358,11 +399,12 @@ def test_assessment_emits_explicit_findings_and_orthogonal_outcomes(
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=FactEvidenceWrite(
-            field_code="conflict.field",
+            field_code="employment_status",
             collection_state="unresolved",
+            collection_basis="sources disagree",
             verification_state="source_conflict",
-            collection_actor="collector-service",
         ),
+        recorded_actor="collector-service",
     )
     write_assessment_finding(
         db_session=session,
@@ -372,7 +414,7 @@ def test_assessment_emits_explicit_findings_and_orthogonal_outcomes(
             finding_kind="technical_warning",
             finding_code="warning-a",
             category="technical",
-            field_references=["conflict.field"],
+            field_references=["employment_status"],
             description="Technical warning.",
         ),
         timestamp=NOW,
@@ -381,13 +423,10 @@ def test_assessment_emits_explicit_findings_and_orthogonal_outcomes(
         db_session=session,
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
-        request=AssessmentRun(
-            required_field_codes=["conflict.field", "missing.field"],
-            rule_version=RULE_VERSION,
-        ),
+        request=AssessmentRun(),
         timestamp=NOW,
     )
-    assert set(outcomes) == {
+    assert set(outcomes.outcomes) == {
         "evidence_incomplete",
         "evidence_conflicting",
         "warning_present",
@@ -416,16 +455,15 @@ def test_technical_blocker_is_a_finding_not_a_professional_decision(
             finding_code="Q014",
             category="fixed_technical_rule",
             description="Fixed technical blocker.",
-            technical_blocking_effect=True,
         ),
     )
     outcomes = run_technical_assessment(
         db_session=session,
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
-        request=AssessmentRun(required_field_codes=[], rule_version=RULE_VERSION),
+        request=AssessmentRun(),
     )
-    assert outcomes == ["technical_blocked"]
+    assert set(outcomes.outcomes) == {"technical_blocked", "evidence_incomplete"}
 
 
 def test_warning_identity_and_fingerprint_are_stable_and_material(
@@ -467,9 +505,7 @@ def test_warning_identity_and_fingerprint_are_stable_and_material(
 
 def test_repeated_assessment_is_deterministic(session: Session) -> None:
     revision = create_draft(session)
-    request = AssessmentRun(
-        required_field_codes=["missing.field"], rule_version=RULE_VERSION
-    )
+    request = AssessmentRun()
     first = run_technical_assessment(
         db_session=session,
         client_id=1,
@@ -506,6 +542,433 @@ def test_repeated_assessment_is_deterministic(session: Session) -> None:
     assert first_findings == second_findings
 
 
+def test_assessment_manifest_is_server_owned_and_empty_revision_is_incomplete(
+    session: Session,
+) -> None:
+    with pytest.raises(ValidationError):
+        AssessmentRun(required_field_codes=[])
+    revision = create_draft(session)
+    result = run_technical_assessment(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=AssessmentRun(),
+        timestamp=NOW,
+    )
+    manifest = M07_ASSESSMENT_MANIFESTS[(SCHEMA_VERSION, RULE_VERSION)]
+    assert result.manifest_version == manifest.manifest_version
+    assert result.outcomes == ("evidence_incomplete",)
+    assert manifest.required_field_codes
+
+
+def test_final_snapshot_contains_manifest_and_manifest_material_changes_fingerprint(
+    session: Session,
+) -> None:
+    finalized = finalize(session, create_draft(session))
+    manifest_payload = finalized.canonical_payload["assessment_manifest"]
+    assert manifest_payload["manifest_version"] == (
+        "pkg004b1.m07-required-evidence.v1"
+    )
+    original = finalized.evidence_fingerprint
+    changed_payload = {
+        **finalized.canonical_payload,
+        "assessment_manifest": {
+            **manifest_payload,
+            "manifest_version": "pkg004b1.m07-required-evidence.v2",
+        },
+    }
+    assert m07_fingerprint(changed_payload) != original
+
+
+def test_duplicate_fact_identity_rejected_but_distinct_sources_are_preserved(
+    session: Session,
+) -> None:
+    revision = create_draft(session)
+    first_request = recorded_fact(field_code="employment_status")
+    write_fact_evidence(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=first_request,
+        recorded_actor="collector",
+        verification_actor="verifier",
+    )
+    with pytest.raises(M07DuplicateFactIdentityError) as duplicate:
+        write_fact_evidence(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=first_request,
+            recorded_actor="collector",
+            verification_actor="verifier",
+        )
+    assert duplicate.value.code == "duplicate_fact_identity"
+    second_request = first_request.model_copy(
+        update={
+            "source_document_reference": "document://source-2",
+            "structured_value": "different-employment-status",
+        }
+    )
+    write_fact_evidence(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=second_request,
+        recorded_actor="collector",
+        verification_actor="verifier",
+    )
+    facts = session.scalars(
+        select(M07FactEvidence).where(
+            M07FactEvidence.m07_evidence_revision_id
+            == revision.m07_evidence_revision_id,
+            M07FactEvidence.field_code == "employment_status",
+        )
+    ).all()
+    assert len(facts) == 2
+    result = run_technical_assessment(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=AssessmentRun(),
+    )
+    assert "evidence_conflicting" in result.outcomes
+
+
+@pytest.mark.parametrize("verification_state", ["superseded", "rejected"])
+def test_non_authoritative_required_fact_remains_incomplete(
+    session: Session, verification_state: str
+) -> None:
+    revision = create_draft(session)
+    write_fact_evidence(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=recorded_fact(field_code="employment_status").model_copy(
+            update={"verification_state": verification_state}
+        ),
+        recorded_actor="collector",
+    )
+    result = run_technical_assessment(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=AssessmentRun(),
+    )
+    assert "evidence_incomplete" in result.outcomes
+    assert session.scalars(
+        select(M07FactEvidence).where(
+            M07FactEvidence.m07_evidence_revision_id
+            == revision.m07_evidence_revision_id
+        )
+    ).all()
+
+
+def test_caller_cannot_control_q014_blocking_effect(session: Session) -> None:
+    with pytest.raises(ValidationError):
+        AssessmentFindingWrite(
+            finding_kind="technical_rule_outcome",
+            finding_code="Q014",
+            category="fixed_technical_rule",
+            description="Fixed blocker.",
+            technical_blocking_effect=False,
+        )
+    revision = create_draft(session)
+    finding = write_assessment_finding(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=AssessmentFindingWrite(
+            finding_kind="technical_rule_outcome",
+            finding_code="Q014",
+            category="fixed_technical_rule",
+            description="Fixed blocker.",
+        ),
+    )
+    assert finding.technical_blocking_effect is True
+    with pytest.raises(M07EvidenceInvariantError):
+        write_assessment_finding(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=AssessmentFindingWrite(
+                finding_kind="technical_rule_outcome",
+                finding_code="UNKNOWN_RULE",
+                category="fixed_technical_rule",
+                description="Unknown blocker.",
+            ),
+        )
+
+
+def test_complete_outcome_requires_every_server_manifest_fact(session: Session) -> None:
+    revision = create_draft(session)
+    manifest = M07_ASSESSMENT_MANIFESTS[(SCHEMA_VERSION, RULE_VERSION)]
+    for position, field_code in enumerate(manifest.required_field_codes):
+        write_fact_evidence(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=recorded_fact(
+                field_code=field_code,
+                value=f"value-{position}",
+            ).model_copy(
+                update={
+                    "source_document_reference": f"document://required-{position}"
+                }
+            ),
+            recorded_actor="collector",
+            verification_actor="verifier",
+        )
+    result = run_technical_assessment(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=AssessmentRun(),
+    )
+    assert result.outcomes == ("evidence_complete",)
+
+
+def test_finding_fact_and_assertion_references_are_revision_and_client_scoped(
+    session: Session,
+) -> None:
+    revision = create_draft(session)
+    with pytest.raises(M07EvidenceReferenceError) as missing:
+        write_assessment_finding(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=AssessmentFindingWrite(
+                finding_kind="technical_warning",
+                finding_code="warning-missing",
+                category="technical",
+                fact_references=["missing-fact"],
+                description="Missing reference.",
+            ),
+        )
+    assert missing.value.code == "source_reference_invalid"
+
+    other_client_revision = create_draft(session, client_id=2)
+    foreign_assertion = append_planner_assertion(
+        db_session=session,
+        client_id=2,
+        revision_id=other_client_revision.m07_evidence_revision_id,
+        request=PlannerAssertionAppend(
+            field_code="employment_status",
+            asserted_value="employed",
+            assertion_basis="basis",
+            assertion_reason="reason",
+        ),
+        actor="planner",
+    )
+    with pytest.raises(M07EvidenceReferenceError) as foreign:
+        write_assessment_finding(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=AssessmentFindingWrite(
+                finding_kind="technical_warning",
+                finding_code="warning-foreign",
+                category="technical",
+                assertion_references=[foreign_assertion.assertion_id],
+                description="Foreign reference.",
+            ),
+        )
+    assert foreign.value.code == "client_mismatch"
+
+    other_revision = create_draft(session)
+    other_assertion = append_planner_assertion(
+        db_session=session,
+        client_id=1,
+        revision_id=other_revision.m07_evidence_revision_id,
+        request=PlannerAssertionAppend(
+            field_code="employment_status",
+            asserted_value="employed",
+            assertion_basis="basis",
+            assertion_reason="reason",
+        ),
+        actor="planner",
+    )
+    with pytest.raises(M07EvidenceReferenceError) as cross_revision:
+        write_assessment_finding(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=AssessmentFindingWrite(
+                finding_kind="technical_warning",
+                finding_code="warning-cross-revision",
+                category="technical",
+                assertion_references=[other_assertion.assertion_id],
+                description="Cross revision.",
+            ),
+        )
+    assert cross_revision.value.code == "cross_revision_reference"
+    with pytest.raises(M07EvidenceReferenceError) as invalid_source:
+        write_assessment_finding(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=AssessmentFindingWrite(
+                finding_kind="technical_warning",
+                finding_code="warning-source",
+                category="technical",
+                source_references=["unsupported:source"],
+                description="Unsupported source.",
+            ),
+        )
+    assert invalid_source.value.code == "source_reference_invalid"
+
+
+def test_recorded_fact_requires_provenance_and_assertion_basis_is_validated(
+    session: Session,
+) -> None:
+    revision = create_draft(session)
+    without_provenance = FactEvidenceWrite(
+        field_code="employment_status",
+        structured_value="employed",
+        collection_state="recorded",
+        verification_state="unverified",
+    )
+    with pytest.raises(M07EvidenceInvariantError):
+        write_fact_evidence(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=without_provenance,
+            recorded_actor="collector",
+        )
+    assertion = append_planner_assertion(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=PlannerAssertionAppend(
+            field_code="employment_status",
+            asserted_value="employed",
+            assertion_basis="planner evidence",
+            assertion_reason="document unavailable",
+        ),
+        actor="planner",
+    )
+    assertion_fact = write_fact_evidence(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=FactEvidenceWrite(
+            field_code="employment_status",
+            structured_value="employed",
+            collection_state="recorded",
+            verification_state="planner_asserted",
+            assertion_id=assertion.assertion_id,
+        ),
+        recorded_actor="collector",
+    )
+    assert assertion_fact.assertion_id == assertion.assertion_id
+    with pytest.raises(M07EvidenceInvariantError):
+        write_fact_evidence(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=FactEvidenceWrite(
+                field_code="retirement_timing",
+                structured_value="known",
+                collection_state="recorded",
+                verification_state="planner_asserted",
+                assertion_id="missing-assertion",
+            ),
+            recorded_actor="collector",
+        )
+
+
+def test_whitespace_and_empty_material_values_are_rejected(session: Session) -> None:
+    with pytest.raises(ValidationError):
+        FactEvidenceWrite(
+            **{
+                **recorded_fact().model_dump(),
+                "field_code": "   ",
+            }
+        )
+    with pytest.raises(ValidationError):
+        PlannerAssertionAppend(
+            field_code="x",
+            asserted_value="value",
+            assertion_basis=" ",
+            assertion_reason="reason",
+        )
+    revision = create_draft(session)
+    with pytest.raises(ValueError):
+        write_fact_evidence(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=recorded_fact(),
+            recorded_actor=" ",
+            verification_actor="verifier",
+        )
+    with pytest.raises(M07EvidenceInvariantError):
+        write_fact_evidence(
+            db_session=session,
+            client_id=1,
+            revision_id=revision.m07_evidence_revision_id,
+            request=recorded_fact(value={}),
+            recorded_actor="collector",
+            verification_actor="verifier",
+        )
+
+
+def test_warning_fingerprint_normalizes_order_and_binds_rule_and_evidence(
+    session: Session,
+) -> None:
+    revision = create_draft(session)
+    first = AssessmentFindingWrite(
+        finding_kind="technical_warning",
+        finding_code="warning-order",
+        category="technical",
+        field_references=["b", "a"],
+        description="Warning.",
+    )
+    second = first.model_copy(update={"field_references": ["a", "b"]})
+    first_row = write_assessment_finding(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=first,
+    )
+    second_row = write_assessment_finding(
+        db_session=session,
+        client_id=1,
+        revision_id=revision.m07_evidence_revision_id,
+        request=second,
+    )
+    assert first_row.content_fingerprint == second_row.content_fingerprint
+    changed_content = first.model_copy(update={"description": "Changed warning."})
+    assert m07_finding_fingerprint(
+        request=first,
+        revision_id=revision.m07_evidence_revision_id,
+        rule_version=RULE_VERSION,
+    ) != m07_finding_fingerprint(
+        request=changed_content,
+        revision_id=revision.m07_evidence_revision_id,
+        rule_version=RULE_VERSION,
+    )
+    assert m07_finding_fingerprint(
+        request=first,
+        revision_id=revision.m07_evidence_revision_id,
+        rule_version=RULE_VERSION,
+    ) != m07_finding_fingerprint(
+        request=first,
+        revision_id=revision.m07_evidence_revision_id,
+        rule_version="different-rule-version",
+    )
+    changed_evidence = first.model_copy(update={"fact_references": ["fact-a"]})
+    assert m07_finding_fingerprint(
+        request=first,
+        revision_id=revision.m07_evidence_revision_id,
+        rule_version=RULE_VERSION,
+    ) != m07_finding_fingerprint(
+        request=changed_evidence,
+        revision_id=revision.m07_evidence_revision_id,
+        rule_version=RULE_VERSION,
+    )
+
+
 def test_incomplete_revision_can_finalize_with_server_payload_and_fingerprints(
     session: Session,
 ) -> None:
@@ -526,6 +989,8 @@ def test_finalized_parent_and_children_are_immutable(session: Session) -> None:
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=recorded_fact(),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     finalized = finalize(session, revision)
     fact_id = fact.fact_evidence_id
@@ -548,6 +1013,8 @@ def test_finalized_child_cannot_be_added_or_deleted(session: Session) -> None:
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=recorded_fact(),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     finalize(session, revision)
     session.commit()
@@ -762,6 +1229,8 @@ def test_finalization_fingerprint_changes_for_material_evidence(session: Session
         client_id=1,
         revision_id=first.m07_evidence_revision_id,
         request=recorded_fact(value="Ada"),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     first = finalize(session, first)
     second = create_draft(session)
@@ -770,6 +1239,8 @@ def test_finalization_fingerprint_changes_for_material_evidence(session: Session
         client_id=1,
         revision_id=second.m07_evidence_revision_id,
         request=recorded_fact(value="Grace"),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     second = finalize(session, second)
     assert first.evidence_fingerprint != second.evidence_fingerprint
@@ -802,6 +1273,8 @@ def test_every_record_declares_evidence_only_authority(session: Session) -> None
         client_id=1,
         revision_id=revision.m07_evidence_revision_id,
         request=recorded_fact(),
+        recorded_actor="collector-service",
+        verification_actor="verifier-service",
     )
     assertion = append_planner_assertion(
         db_session=session,
@@ -869,6 +1342,25 @@ def test_migration_is_additive_unseeded_and_matches_models(tmp_path: Path) -> No
 
     expected["m07_planner_assertions"] = M07PlannerAssertion
     assert set(expected).issubset(inspector.get_table_names())
+    revision_indexes = {
+        index["name"]
+        for index in inspector.get_indexes("m07_evidence_revisions")
+    }
+    assert {
+        "ix_m07_evidence_revisions_client_tax_event_year",
+        "ix_m07_evidence_revisions_client_status",
+        "ix_m07_evidence_revisions_client_event_reference",
+        "ix_m07_evidence_revisions_client_profile",
+    } <= revision_indexes
+    fact_indexes = {
+        index["name"]: index
+        for index in inspector.get_indexes("m07_fact_evidence")
+    }
+    assert fact_indexes["uq_m07_fact_evidence_persisted_source_identity"][
+        "unique"
+    ]
+    assert fact_indexes["uq_m07_fact_evidence_document_identity"]["unique"]
+    assert fact_indexes["uq_m07_fact_evidence_assertion_identity"]["unique"]
     with Session(engine) as db_session:
         for table_name, model in expected.items():
             migrated_columns = {

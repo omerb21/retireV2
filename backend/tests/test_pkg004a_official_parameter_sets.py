@@ -351,6 +351,139 @@ def test_active_set_is_corrected_by_separate_revision_and_can_be_superseded(
     assert revision.monthly_cap == Decimal("1001")
 
 
+def test_active_cannot_be_superseded_outside_lifecycle_service(
+    db_session: Session,
+) -> None:
+    row = _active(db_session)
+    db_session.commit()
+
+    row.status = "superseded"
+    row.superseded_by = "direct-caller"
+    row.superseded_at = NOW
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="only be superseded through the lifecycle service",
+    ):
+        db_session.flush()
+    db_session.rollback()
+
+    persisted = db_session.get(OfficialParameterSet, row.parameter_set_id)
+    assert persisted is not None
+    assert persisted.status == "active"
+    assert persisted.superseded_by is None
+    assert persisted.superseded_at is None
+
+
+def test_active_content_cannot_change_during_attempted_supersession(
+    db_session: Session,
+) -> None:
+    row = _active(db_session)
+    db_session.commit()
+
+    row.status = "superseded"
+    row.superseded_by = "direct-caller"
+    row.superseded_at = NOW
+    row.source_title = "forged"
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="evidence is immutable",
+    ):
+        db_session.flush()
+    db_session.rollback()
+
+    persisted = db_session.get(OfficialParameterSet, row.parameter_set_id)
+    assert persisted is not None
+    assert persisted.status == "active"
+    assert persisted.source_title == "Official annual parameter publication"
+    assert persisted.superseded_by is None
+    assert persisted.superseded_at is None
+
+
+@pytest.mark.parametrize(
+    ("field_name", "forged_value"),
+    [
+        ("source_title", "forged"),
+        ("monthly_cap", Decimal("9999")),
+        ("created_by", "forged-creator"),
+        ("created_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
+        ("verified_by", "forged-verifier"),
+        ("verified_at", datetime(2030, 1, 2, tzinfo=timezone.utc)),
+        ("activated_by", "forged-activator"),
+        ("activated_at", datetime(2030, 1, 3, tzinfo=timezone.utc)),
+        ("superseded_by", "forged-superseder"),
+        ("superseded_at", datetime(2030, 1, 4, tzinfo=timezone.utc)),
+    ],
+)
+def test_superseded_evidence_is_immutable_after_commit_and_reload(
+    db_session: Session,
+    field_name: str,
+    forged_value: object,
+) -> None:
+    row = _active(db_session)
+    supersede_official_parameter_set(
+        db_session=db_session,
+        parameter_set_id=row.parameter_set_id,
+        request=OfficialParameterSupersessionRequest(
+            superseded_by="admin-superseder"
+        ),
+        timestamp=NOW,
+    )
+    db_session.commit()
+    parameter_set_id = row.parameter_set_id
+    db_session.expunge_all()
+    persisted = db_session.get(OfficialParameterSet, parameter_set_id)
+    assert persisted is not None
+    original_values = {
+        column.name: getattr(persisted, column.name)
+        for column in OfficialParameterSet.__table__.columns
+    }
+
+    setattr(persisted, field_name, forged_value)
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="superseded official parameter-set evidence is immutable",
+    ):
+        db_session.flush()
+    db_session.rollback()
+
+    reloaded = db_session.get(OfficialParameterSet, parameter_set_id)
+    assert reloaded is not None
+    assert {
+        column.name: getattr(reloaded, column.name)
+        for column in OfficialParameterSet.__table__.columns
+    } == original_values
+
+
+@pytest.mark.parametrize("forged_status", ["active", "verified", "rejected"])
+def test_superseded_status_cannot_change(
+    db_session: Session,
+    forged_status: str,
+) -> None:
+    row = _active(db_session)
+    supersede_official_parameter_set(
+        db_session=db_session,
+        parameter_set_id=row.parameter_set_id,
+        request=OfficialParameterSupersessionRequest(
+            superseded_by="admin-superseder"
+        ),
+        timestamp=NOW,
+    )
+    db_session.commit()
+    parameter_set_id = row.parameter_set_id
+    db_session.expunge_all()
+    persisted = db_session.get(OfficialParameterSet, parameter_set_id)
+    assert persisted is not None
+
+    persisted.status = forged_status
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="superseded official parameter-set evidence is immutable",
+    ):
+        db_session.flush()
+    db_session.rollback()
+    assert db_session.get(OfficialParameterSet, parameter_set_id).status == "superseded"
+
+
 def test_rejected_and_superseded_sets_do_not_resolve(db_session: Session) -> None:
     rejected = _draft(db_session, parameter_set_id="rejected-r1", version="rejected-r1")
     reject_official_parameter_set(
@@ -768,7 +901,8 @@ def test_read_only_api_lists_reads_and_resolves_without_write_boundary(
         assert [item["parameter_set_id"] for item in listed.json()["items"]] == [
             "official-2026-r1"
         ]
-        assert listed.json()["count"] == 1
+        assert listed.json()["total"] == 1
+        assert "count" not in listed.json()
         assert listed.json()["offset"] == 0
         assert listed.json()["limit"] == 50
         safe_fields = set(listed.json()["items"][0])
@@ -785,7 +919,8 @@ def test_read_only_api_lists_reads_and_resolves_without_write_boundary(
 
         default_page = client.get("/api/official-parameter-sets")
         assert default_page.status_code == 200
-        assert default_page.json()["count"] == 56
+        assert default_page.json()["total"] == 56
+        assert "count" not in default_page.json()
         assert default_page.json()["limit"] == 50
         assert len(default_page.json()["items"]) == 50
         first_ids = [
@@ -800,6 +935,7 @@ def test_read_only_api_lists_reads_and_resolves_without_write_boundary(
         assert second_page.status_code == 200
         assert second_page.json()["offset"] == 50
         assert second_page.json()["limit"] == 10
+        assert second_page.json()["total"] == 56
         assert len(second_page.json()["items"]) == 6
 
         assert client.get(

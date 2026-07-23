@@ -48,7 +48,7 @@ def list_official_parameters(
     limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> OfficialParameterSetPublicPage:
-    rows, count = list_official_parameter_sets(
+    rows, total = list_official_parameter_sets(
         db_session=db,
         tax_year=tax_year,
         status=status,
@@ -57,7 +57,7 @@ def list_official_parameters(
     )
     return OfficialParameterSetPublicPage(
         items=[official_parameter_set_public_response(row) for row in rows],
-        count=count,
+        total=total,
         offset=offset,
         limit=limit,
     )

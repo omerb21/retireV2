@@ -189,7 +189,7 @@ class OfficialParameterSetPublicPage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[OfficialParameterSetPublicResponse]
-    count: int = Field(ge=0)
+    total: int = Field(ge=0)
     offset: int = Field(ge=0)
     limit: int = Field(ge=1)
 

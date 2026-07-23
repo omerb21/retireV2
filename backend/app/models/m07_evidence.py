@@ -110,6 +110,23 @@ class M07EvidenceRevision(Base):
             "profile_id",
             "revision_number",
         ),
+        Index(
+            "ix_m07_evidence_revisions_client_tax_event_year",
+            "client_id",
+            "tax_year",
+            "event_year",
+        ),
+        Index(
+            "ix_m07_evidence_revisions_client_status",
+            "client_id",
+            "status",
+        ),
+        Index(
+            "ix_m07_evidence_revisions_client_event_reference",
+            "client_id",
+            "event_type",
+            "event_id",
+        ),
     )
 
     m07_evidence_revision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -220,6 +237,31 @@ class M07FactEvidence(Base):
             "client_id",
             "m07_evidence_revision_id",
             "field_code",
+        ),
+        Index(
+            "uq_m07_fact_evidence_persisted_source_identity",
+            "client_id",
+            "m07_evidence_revision_id",
+            "field_code",
+            "source_record_type",
+            "source_record_id",
+            unique=True,
+        ),
+        Index(
+            "uq_m07_fact_evidence_document_identity",
+            "client_id",
+            "m07_evidence_revision_id",
+            "field_code",
+            "source_document_reference",
+            unique=True,
+        ),
+        Index(
+            "uq_m07_fact_evidence_assertion_identity",
+            "client_id",
+            "m07_evidence_revision_id",
+            "field_code",
+            "assertion_id",
+            unique=True,
         ),
     )
 

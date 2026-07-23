@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models.official_parameter_set import OfficialParameterSet
@@ -36,6 +36,10 @@ class OfficialParameterLifecycleError(ValueError):
 
 
 class OfficialParameterOverlapError(ValueError):
+    pass
+
+
+class OfficialParameterInvariantError(RuntimeError):
     pass
 
 
@@ -355,14 +359,29 @@ def supersede_official_parameter_set(
     row = get_official_parameter_set(db_session=db_session, parameter_set_id=parameter_set_id)
     if row.status != "active":
         raise OfficialParameterLifecycleError("only active parameter sets may be superseded")
-    row._service_supersession_transition = True
-    try:
-        row.superseded_at = timestamp or _utc_now()
-        row.superseded_by = request.superseded_by
-        row.status = "superseded"
-        db_session.flush()
-    finally:
-        row._service_supersession_transition = False
+    parameter_table = OfficialParameterSet.__table__
+    result = db_session.execute(
+        update(parameter_table)
+        .where(
+            parameter_table.c.parameter_set_id == parameter_set_id,
+            parameter_table.c.status == "active",
+        )
+        .values(
+            status="superseded",
+            superseded_at=timestamp or _utc_now(),
+            superseded_by=request.superseded_by,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount == 0:
+        raise OfficialParameterLifecycleError(
+            "official parameter set is no longer active; supersession conflict"
+        )
+    if result.rowcount != 1:
+        raise OfficialParameterInvariantError(
+            f"supersession updated {result.rowcount} official parameter sets"
+        )
+    db_session.expire(row)
     return row
 
 

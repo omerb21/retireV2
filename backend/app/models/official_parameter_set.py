@@ -129,13 +129,6 @@ class OfficialParameterEvidenceImmutableError(ValueError):
     """Raised when persisted authority evidence is mutated or deleted."""
 
 
-_SUPERSESSION_TRANSITION_FIELDS = {
-    "status",
-    "superseded_at",
-    "superseded_by",
-}
-
-
 @event.listens_for(OfficialParameterSet, "before_update")
 def _protect_active_official_parameter_set(_mapper, _connection, target: OfficialParameterSet) -> None:
     state = inspect(target)
@@ -149,41 +142,12 @@ def _protect_active_official_parameter_set(_mapper, _connection, target: Officia
         if state.attrs[attribute.key].history.has_changes()
     }
 
-    if persisted_status == "superseded":
+    if persisted_status in {"active", "superseded"}:
         if changed_fields:
             raise OfficialParameterEvidenceImmutableError(
-                "superseded official parameter-set evidence is immutable"
+                f"{persisted_status} official parameter-set evidence is immutable"
             )
         return
-
-    if persisted_status != "active":
-        return
-    if target.status not in {"active", "superseded"}:
-        raise OfficialParameterEvidenceImmutableError(
-            "active official parameter sets may only remain active or be superseded"
-        )
-
-    is_service_controlled_supersession = (
-        target.status == "superseded"
-        and getattr(target, "_service_supersession_transition", False) is True
-    )
-    if target.status == "superseded" and not is_service_controlled_supersession:
-        if changed_fields - _SUPERSESSION_TRANSITION_FIELDS:
-            raise OfficialParameterEvidenceImmutableError(
-                "active official parameter-set evidence is immutable; create a new revision"
-            )
-        raise OfficialParameterEvidenceImmutableError(
-            "active official parameter sets may only be superseded through the lifecycle service"
-        )
-    allowed_fields = (
-        _SUPERSESSION_TRANSITION_FIELDS
-        if is_service_controlled_supersession
-        else set()
-    )
-    if changed_fields - allowed_fields:
-        raise OfficialParameterEvidenceImmutableError(
-            "active official parameter-set evidence is immutable; create a new revision"
-        )
 
 
 @event.listens_for(OfficialParameterSet, "before_delete")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -38,6 +39,13 @@ M07_FINDING_CLASSIFICATION = (
 )
 M07_SUPPORTED_SCHEMA_VERSIONS = {"pkg004b1.m07-evidence.v1"}
 M07_SUPPORTED_RULE_VERSIONS = {"pkg004b1.technical-assessment.v1"}
+M07_SOURCE_TYPES = {
+    "persisted_record",
+    "external_document",
+    "official_document",
+    "client_document",
+    "clearinghouse",
+}
 M07_SOURCE_RECORD_KEYS = {
     "employment_records": "employment_record_id",
     "grants": "grant_id",
@@ -51,6 +59,46 @@ M07_SOURCE_RECORD_KEYS = {
 }
 
 
+@dataclass(frozen=True)
+class M07AssessmentManifest:
+    manifest_version: str
+    schema_version: str
+    rule_version: str
+    required_field_codes: tuple[str, ...]
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "manifest_version": self.manifest_version,
+            "schema_version": self.schema_version,
+            "rule_version": self.rule_version,
+            "required_field_codes": list(self.required_field_codes),
+        }
+
+
+M07_ASSESSMENT_MANIFESTS = {
+    (
+        "pkg004b1.m07-evidence.v1",
+        "pkg004b1.technical-assessment.v1",
+    ): M07AssessmentManifest(
+        manifest_version="pkg004b1.m07-required-evidence.v1",
+        schema_version="pkg004b1.m07-evidence.v1",
+        rule_version="pkg004b1.technical-assessment.v1",
+        required_field_codes=(
+            "actual_capitalization_collection_state",
+            "employment_status",
+            "grant_severance_collection_state",
+            "retirement_timing",
+        ),
+    )
+}
+
+
+@dataclass(frozen=True)
+class M07TechnicalAssessmentResult:
+    manifest_version: str
+    outcomes: tuple[str, ...]
+
+
 class M07EvidenceNotFoundError(LookupError):
     pass
 
@@ -61,6 +109,27 @@ class M07EvidenceLifecycleError(ValueError):
 
 class M07EvidenceInvariantError(RuntimeError):
     pass
+
+
+class M07EvidenceReferenceError(M07EvidenceInvariantError):
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
+
+
+class M07DuplicateFactIdentityError(M07EvidenceInvariantError):
+    code = "duplicate_fact_identity"
+
+
+def resolve_assessment_manifest(
+    *, schema_version: str, rule_version: str
+) -> M07AssessmentManifest:
+    manifest = M07_ASSESSMENT_MANIFESTS.get((schema_version, rule_version))
+    if manifest is None:
+        raise M07EvidenceInvariantError(
+            "no supported technical assessment manifest exists for revision versions"
+        )
+    return manifest
 
 
 def _utc_now() -> datetime:
@@ -197,10 +266,10 @@ def create_revision_draft(
 ) -> M07EvidenceRevision:
     if not actor.strip():
         raise ValueError("actor is required")
-    if request.schema_version not in M07_SUPPORTED_SCHEMA_VERSIONS:
-        raise M07EvidenceInvariantError("unsupported M07 evidence schema version")
-    if request.rule_version not in M07_SUPPORTED_RULE_VERSIONS:
-        raise M07EvidenceInvariantError("unsupported M07 technical rule version")
+    resolve_assessment_manifest(
+        schema_version=request.schema_version,
+        rule_version=request.rule_version,
+    )
     if predecessor_revision_id is not None:
         predecessor = get_revision(
             db_session=db_session,
@@ -300,10 +369,84 @@ def _require_draft(row: M07EvidenceRevision) -> None:
 
 
 def _fact_content(request: FactEvidenceWrite) -> dict[str, Any]:
-    return request.model_dump(
-        mode="python",
-        exclude={"fact_evidence_id", "collection_actor", "verification_actor"},
+    return request.model_dump(mode="python", exclude={"fact_evidence_id"})
+
+
+def _non_blank_actor(actor: str | None, field_name: str) -> str:
+    if actor is None or not actor.strip():
+        raise ValueError(f"{field_name} must not be blank")
+    return actor
+
+
+def _fact_identity_from_request(request: FactEvidenceWrite) -> str:
+    if request.verification_state == "planner_asserted":
+        return f"assertion:{request.assertion_id}"
+    if request.source_record_id is not None:
+        return f"record:{request.source_record_type}:{request.source_record_id}"
+    if request.source_document_reference is not None:
+        return (
+            f"document:{request.source_type}:"
+            f"{request.source_document_reference}"
+        )
+    return f"state:{request.collection_state}"
+
+
+def _fact_identity_from_row(row: M07FactEvidence) -> str:
+    if row.verification_state == "planner_asserted":
+        return f"assertion:{row.assertion_id}"
+    if row.source_record_id is not None:
+        return f"record:{row.source_record_type}:{row.source_record_id}"
+    if row.source_document_reference is not None:
+        return f"document:{row.source_type}:{row.source_document_reference}"
+    return f"state:{row.collection_state}"
+
+
+def _validate_fact_basis(request: FactEvidenceWrite) -> None:
+    if request.structured_value == {} or (
+        isinstance(request.structured_value, str)
+        and not request.structured_value.strip()
+    ):
+        raise M07EvidenceInvariantError(
+            "an empty object does not convey material fact evidence"
+        )
+    if request.source_type is not None and request.source_type not in M07_SOURCE_TYPES:
+        raise M07EvidenceInvariantError("unsupported source type")
+    has_record = (
+        request.source_record_type is not None
+        or request.source_record_id is not None
     )
+    has_document = request.source_document_reference is not None
+    if has_record and has_document:
+        raise M07EvidenceInvariantError(
+            "a fact must not combine persisted and documentary source identities"
+        )
+    if has_record and request.source_type != "persisted_record":
+        raise M07EvidenceInvariantError(
+            "persisted source references require source_type persisted_record"
+        )
+    if has_document and request.source_type not in {
+        "external_document",
+        "official_document",
+        "client_document",
+        "clearinghouse",
+    }:
+        raise M07EvidenceInvariantError(
+            "documentary provenance requires a supported documentary source type"
+        )
+    if request.verification_state == "planner_asserted":
+        if has_record or has_document or request.source_type is not None:
+            raise M07EvidenceInvariantError(
+                "assertion-backed facts cannot also claim a source-backed basis"
+            )
+    elif request.collection_state == "recorded":
+        if not (has_record or has_document):
+            raise M07EvidenceInvariantError(
+                "recorded material evidence requires source or assertion provenance"
+            )
+    if request.collection_state != "recorded" and not request.collection_basis:
+        raise M07EvidenceInvariantError(
+            "non-recorded evidence states require a technical collection basis"
+        )
 
 
 def _validate_source_record_scope(
@@ -316,20 +459,25 @@ def _validate_source_record_scope(
     if source_record_type is None and source_record_id is None:
         return
     if source_record_type is None or source_record_id is None:
-        raise M07EvidenceInvariantError(
+        raise M07EvidenceReferenceError(
+            "source_reference_invalid",
             "source record type and ID must be supplied together"
         )
     key_name = M07_SOURCE_RECORD_KEYS.get(source_record_type)
     table = Base.metadata.tables.get(source_record_type)
     if key_name is None or table is None:
-        raise M07EvidenceInvariantError("unsupported source record type")
+        raise M07EvidenceReferenceError(
+            "source_reference_invalid", "unsupported source record type"
+        )
     key_column = table.c[key_name]
     key_value: str | int = source_record_id
     if isinstance(key_column.type, Integer):
         try:
             key_value = int(source_record_id)
         except ValueError as error:
-            raise M07EvidenceInvariantError("invalid numeric source record ID") from error
+            raise M07EvidenceReferenceError(
+                "source_reference_invalid", "invalid numeric source record ID"
+            ) from error
     exists = db_session.scalar(
         select(table.c.client_id).where(
             table.c.client_id == client_id,
@@ -337,7 +485,10 @@ def _validate_source_record_scope(
         )
     )
     if exists is None:
-        raise M07EvidenceNotFoundError("source record was not found in client scope")
+        raise M07EvidenceReferenceError(
+            "source_reference_invalid",
+            "source record was not found in client scope",
+        )
 
 
 def write_fact_evidence(
@@ -346,12 +497,24 @@ def write_fact_evidence(
     client_id: int,
     revision_id: str,
     request: FactEvidenceWrite,
+    recorded_actor: str,
+    verification_actor: str | None = None,
     timestamp: datetime | None = None,
 ) -> M07FactEvidence:
     revision = get_revision(
         db_session=db_session, client_id=client_id, revision_id=revision_id
     )
     _require_draft(revision)
+    recorded_actor = _non_blank_actor(recorded_actor, "recorded_actor")
+    if request.verification_state in {"verified", "partly_verified"}:
+        verification_actor = _non_blank_actor(
+            verification_actor, "verification_actor"
+        )
+    elif verification_actor is not None:
+        raise ValueError(
+            "verification_actor is only valid for verified or partly_verified evidence"
+        )
+    _validate_fact_basis(request)
     _validate_source_record_scope(
         db_session=db_session,
         client_id=client_id,
@@ -368,6 +531,22 @@ def write_fact_evidence(
         )
         if assertion is None:
             raise M07EvidenceInvariantError("assertion reference is outside revision scope")
+    identity = _fact_identity_from_request(request)
+    same_field_rows = db_session.scalars(
+        select(M07FactEvidence).where(
+            M07FactEvidence.client_id == client_id,
+            M07FactEvidence.m07_evidence_revision_id == revision_id,
+            M07FactEvidence.field_code == request.field_code,
+        )
+    ).all()
+    for existing in same_field_rows:
+        if (
+            existing.fact_evidence_id != request.fact_evidence_id
+            and _fact_identity_from_row(existing) == identity
+        ):
+            raise M07DuplicateFactIdentityError(
+                f"duplicate_fact_identity: {request.field_code}/{identity}"
+            )
     row = None
     if request.fact_evidence_id:
         row = db_session.scalar(
@@ -380,6 +559,16 @@ def write_fact_evidence(
         if row is None:
             raise M07EvidenceNotFoundError(request.fact_evidence_id)
     now = timestamp or _utc_now()
+    material_content = {
+        **_fact_content(request),
+        "revision_id": revision_id,
+        "recorded_actor": recorded_actor,
+        "recorded_at": now,
+        "verification_actor": verification_actor,
+        "verified_at": now
+        if request.verification_state in {"verified", "partly_verified"}
+        else None,
+    }
     values = dict(
         field_code=request.field_code,
         structured_value=canonicalize_m07_value(request.structured_value),
@@ -395,14 +584,14 @@ def write_fact_evidence(
         source_excerpt=request.source_excerpt,
         source_metadata=canonicalize_m07_value(request.source_metadata),
         recorded_at=now,
-        recorded_by=request.collection_actor,
+        recorded_by=recorded_actor,
         verified_at=now
         if request.verification_state in {"verified", "partly_verified"}
         else None,
-        verified_by=request.verification_actor,
+        verified_by=verification_actor,
         verification_basis=request.verification_basis,
         assertion_id=request.assertion_id,
-        content_fingerprint=m07_fingerprint(_fact_content(request)),
+        content_fingerprint=m07_fingerprint(material_content),
     )
     if row is None:
         row = M07FactEvidence(
@@ -474,6 +663,89 @@ def append_planner_assertion(
     return row
 
 
+def _validate_child_reference(
+    *,
+    db_session: Session,
+    model,
+    id_column,
+    reference_id: str,
+    client_id: int,
+    revision_id: str,
+) -> None:
+    row = db_session.scalar(select(model).where(id_column == reference_id))
+    if row is None:
+        raise M07EvidenceReferenceError(
+            "source_reference_invalid", "referenced evidence does not exist"
+        )
+    if row.client_id != client_id:
+        raise M07EvidenceReferenceError(
+            "client_mismatch", "referenced evidence is outside client scope"
+        )
+    if row.m07_evidence_revision_id != revision_id:
+        raise M07EvidenceReferenceError(
+            "cross_revision_reference",
+            "referenced evidence is outside revision scope",
+        )
+
+
+def _valid_source_references(
+    *,
+    db_session: Session,
+    client_id: int,
+    revision_id: str,
+) -> set[str]:
+    facts = db_session.scalars(
+        select(M07FactEvidence).where(
+            M07FactEvidence.client_id == client_id,
+            M07FactEvidence.m07_evidence_revision_id == revision_id,
+        )
+    ).all()
+    references: set[str] = set()
+    for fact in facts:
+        if fact.source_record_id is not None:
+            references.add(
+                f"record:{fact.source_record_type}:{fact.source_record_id}"
+            )
+        if fact.source_document_reference is not None:
+            references.add(f"document:{fact.source_document_reference}")
+    return references
+
+
+def _normalize_finding_content(
+    *,
+    request: AssessmentFindingWrite,
+    revision_id: str,
+    rule_version: str,
+) -> dict[str, Any]:
+    return {
+        "revision_id": revision_id,
+        "rule_version": rule_version,
+        "finding_kind": request.finding_kind,
+        "finding_code": request.finding_code,
+        "category": request.category,
+        "field_references": sorted(set(request.field_references)),
+        "fact_references": sorted(set(request.fact_references)),
+        "assertion_references": sorted(set(request.assertion_references)),
+        "source_references": sorted(set(request.source_references)),
+        "description": request.description,
+    }
+
+
+def m07_finding_fingerprint(
+    *,
+    request: AssessmentFindingWrite,
+    revision_id: str,
+    rule_version: str,
+) -> str:
+    return m07_fingerprint(
+        _normalize_finding_content(
+            request=request,
+            revision_id=revision_id,
+            rule_version=rule_version,
+        )
+    )
+
+
 def write_assessment_finding(
     *,
     db_session: Session,
@@ -486,6 +758,52 @@ def write_assessment_finding(
         db_session=db_session, client_id=client_id, revision_id=revision_id
     )
     _require_draft(revision)
+    resolve_assessment_manifest(
+        schema_version=revision.schema_version,
+        rule_version=revision.rule_version,
+    )
+    for fact_reference in request.fact_references:
+        _validate_child_reference(
+            db_session=db_session,
+            model=M07FactEvidence,
+            id_column=M07FactEvidence.fact_evidence_id,
+            reference_id=fact_reference,
+            client_id=client_id,
+            revision_id=revision_id,
+        )
+    for assertion_reference in request.assertion_references:
+        _validate_child_reference(
+            db_session=db_session,
+            model=M07PlannerAssertion,
+            id_column=M07PlannerAssertion.assertion_id,
+            reference_id=assertion_reference,
+            client_id=client_id,
+            revision_id=revision_id,
+        )
+    valid_sources = _valid_source_references(
+        db_session=db_session, client_id=client_id, revision_id=revision_id
+    )
+    for source_reference in request.source_references:
+        if (
+            not source_reference.startswith(("record:", "document:"))
+            or source_reference not in valid_sources
+        ):
+            raise M07EvidenceReferenceError(
+                "source_reference_invalid",
+                "finding source reference is not evidence in this revision",
+            )
+    if request.finding_kind == "technical_rule_outcome":
+        if request.finding_code != "Q014":
+            raise M07EvidenceInvariantError(
+                "unsupported technical blocking rule code"
+            )
+        technical_blocking_effect = True
+    else:
+        if request.finding_code == "Q014":
+            raise M07EvidenceInvariantError(
+                "Q014 must be represented as a technical_rule_outcome"
+            )
+        technical_blocking_effect = False
     row = None
     if request.finding_id:
         row = db_session.scalar(
@@ -495,26 +813,28 @@ def write_assessment_finding(
                 M07AssessmentFinding.finding_id == request.finding_id,
             )
         )
-    content = request.model_dump(mode="python", exclude={"finding_id"})
+    content = _normalize_finding_content(
+        request=request,
+        revision_id=revision_id,
+        rule_version=revision.rule_version,
+    )
     values = dict(
         finding_kind=request.finding_kind,
         finding_code=request.finding_code,
         authority_classification=M07_FINDING_CLASSIFICATION,
         category=request.category,
-        field_references=sorted(set(request.field_references)),
-        fact_references=sorted(set(request.fact_references)),
-        assertion_references=sorted(set(request.assertion_references)),
-        source_references=sorted(set(request.source_references)),
+        field_references=content["field_references"],
+        fact_references=content["fact_references"],
+        assertion_references=content["assertion_references"],
+        source_references=content["source_references"],
         description=request.description,
         rule_version=revision.rule_version,
         assessment_timestamp=timestamp or _utc_now(),
-        technical_blocking_effect=request.technical_blocking_effect,
-        content_fingerprint=m07_fingerprint(
-            {
-                "revision_id": revision_id,
-                "rule_version": revision.rule_version,
-                **content,
-            }
+        technical_blocking_effect=technical_blocking_effect,
+        content_fingerprint=m07_finding_fingerprint(
+            request=request,
+            revision_id=revision_id,
+            rule_version=revision.rule_version,
         ),
     )
     if row is None:
@@ -539,15 +859,15 @@ def run_technical_assessment(
     revision_id: str,
     request: AssessmentRun,
     timestamp: datetime | None = None,
-) -> list[str]:
+) -> M07TechnicalAssessmentResult:
     revision = get_revision(
         db_session=db_session, client_id=client_id, revision_id=revision_id
     )
     _require_draft(revision)
-    if request.rule_version != revision.rule_version:
-        raise M07EvidenceInvariantError("assessment rule version does not match revision")
-    if request.rule_version not in M07_SUPPORTED_RULE_VERSIONS:
-        raise M07EvidenceInvariantError("unsupported M07 technical rule version")
+    manifest = resolve_assessment_manifest(
+        schema_version=revision.schema_version,
+        rule_version=revision.rule_version,
+    )
     now = timestamp or _utc_now()
     facts = list(
         db_session.scalars(
@@ -564,26 +884,72 @@ def run_technical_assessment(
             M07AssessmentFinding.category == "system_required_field_assessment",
         )
     )
-    by_field = {fact.field_code: fact for fact in facts}
+    by_field: dict[str, list[M07FactEvidence]] = {}
+    for fact in facts:
+        by_field.setdefault(fact.field_code, []).append(fact)
     incomplete = False
     conflicting = False
-    for field_code in sorted(request.required_field_codes):
-        fact = by_field.get(field_code)
+    for field_code in manifest.required_field_codes:
+        field_facts = by_field.get(field_code, [])
         kind = None
         code = None
-        if fact is None:
+        if not field_facts:
             kind, code = "missing_required_field", "required_field_missing"
-        elif fact.collection_state in {"unknown", "not_collected"}:
-            kind, code = fact.collection_state, f"required_field_{fact.collection_state}"
-        elif fact.collection_state == "unresolved":
+        elif any(fact.collection_state == "unresolved" for fact in field_facts):
             kind, code = "unresolved", "required_field_unresolved"
             conflicting = True
-        elif fact.verification_state == "source_conflict":
+        elif any(
+            fact.verification_state == "source_conflict" for fact in field_facts
+        ):
             kind, code = "source_conflict", "required_field_source_conflict"
             conflicting = True
-        elif fact.verification_state in {"unverified", "rejected"}:
-            kind = "rejected_evidence" if fact.verification_state == "rejected" else "unknown"
-            code = f"required_field_{fact.verification_state}"
+        else:
+            recorded_values = {
+                canonical_m07_json(fact.structured_value)
+                for fact in field_facts
+                if fact.collection_state == "recorded"
+                and fact.structured_value is not None
+            }
+            if len(recorded_values) > 1:
+                kind, code = "source_conflict", "required_field_source_conflict"
+                conflicting = True
+            else:
+                accepted_fact = any(
+                    fact.collection_state
+                    in {"recorded", "confirmed_none", "not_applicable"}
+                    and fact.verification_state == "verified"
+                    for fact in field_facts
+                )
+                if not accepted_fact:
+                    rejected = any(
+                        fact.verification_state == "rejected"
+                        for fact in field_facts
+                    )
+                    superseded = any(
+                        fact.verification_state == "superseded"
+                        for fact in field_facts
+                    )
+                    not_collected = any(
+                        fact.collection_state == "not_collected"
+                        for fact in field_facts
+                    )
+                    unknown = any(
+                        fact.collection_state == "unknown"
+                        for fact in field_facts
+                    )
+                    if rejected:
+                        kind, code = "rejected_evidence", "required_field_rejected"
+                    elif superseded:
+                        kind, code = "unknown", "required_field_superseded"
+                    elif not_collected:
+                        kind, code = "not_collected", "required_field_not_collected"
+                    else:
+                        kind, code = (
+                            "unknown",
+                            "required_field_unknown"
+                            if unknown
+                            else "required_field_not_verified",
+                        )
         if kind is not None:
             if kind not in {"unresolved", "source_conflict"}:
                 incomplete = True
@@ -592,7 +958,8 @@ def run_technical_assessment(
                     "revision_id": revision_id,
                     "field_code": field_code,
                     "code": code,
-                    "rule_version": request.rule_version,
+                    "rule_version": revision.rule_version,
+                    "manifest_version": manifest.manifest_version,
                 }
             )
             write_assessment_finding(
@@ -605,7 +972,9 @@ def run_technical_assessment(
                     finding_code=code,
                     category="system_required_field_assessment",
                     field_references=[field_code],
-                    fact_references=[] if fact is None else [fact.fact_evidence_id],
+                    fact_references=[
+                        fact.fact_evidence_id for fact in field_facts
+                    ],
                     description=f"Required evidence field {field_code} is {code}.",
                 ),
                 timestamp=now,
@@ -638,7 +1007,10 @@ def run_technical_assessment(
     revision.technical_outcomes = outcomes
     revision.assessment_timestamp = now
     db_session.flush()
-    return outcomes
+    return M07TechnicalAssessmentResult(
+        manifest_version=manifest.manifest_version,
+        outcomes=tuple(outcomes),
+    )
 
 
 def attach_resolved_parameter_reference(
@@ -730,7 +1102,12 @@ def build_canonical_revision_payload(
     *, db_session: Session, revision: M07EvidenceRevision
 ) -> tuple[dict[str, Any], str]:
     facts, assertions, findings = _child_rows(db_session, revision)
+    manifest = resolve_assessment_manifest(
+        schema_version=revision.schema_version,
+        rule_version=revision.rule_version,
+    )
     payload = {
+        "assessment_manifest": manifest.payload(),
         "revision": _material_columns(
             revision,
             {

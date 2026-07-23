@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 CollectionState = Literal[
@@ -51,6 +51,15 @@ class RevisionDraftCreate(M07Command):
     schema_version: str = Field(min_length=1, max_length=64)
     rule_version: str = Field(min_length=1, max_length=64)
 
+    @field_validator(
+        "profile_id", "event_type", "event_id", "schema_version", "rule_version"
+    )
+    @classmethod
+    def reject_blank_identifiers(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("identifier must not be blank")
+        return value
+
 
 class FactEvidenceWrite(M07Command):
     fact_evidence_id: str | None = Field(default=None, max_length=64)
@@ -66,10 +75,25 @@ class FactEvidenceWrite(M07Command):
     source_date: date | None = None
     source_excerpt: str | None = Field(default=None, max_length=2048)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
-    collection_actor: str = Field(min_length=1, max_length=128)
-    verification_actor: str | None = Field(default=None, max_length=128)
     verification_basis: str | None = None
     assertion_id: str | None = Field(default=None, max_length=64)
+
+    @field_validator(
+        "field_code",
+        "source_type",
+        "source_record_type",
+        "source_record_id",
+        "source_document_reference",
+        "source_excerpt",
+        "collection_basis",
+        "verification_basis",
+        "assertion_id",
+    )
+    @classmethod
+    def reject_blank_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("text evidence fields must not be blank")
+        return value
 
     @model_validator(mode="after")
     def validate_evidence_state(self) -> "FactEvidenceWrite":
@@ -78,8 +102,8 @@ class FactEvidenceWrite(M07Command):
         if self.collection_state in {"confirmed_none", "not_applicable"} and not self.collection_basis:
             raise ValueError(f"{self.collection_state} requires a collection basis")
         if self.verification_state in {"verified", "partly_verified"}:
-            if not self.verification_actor or not self.verification_basis:
-                raise ValueError("verified evidence requires actor and basis")
+            if not self.verification_basis:
+                raise ValueError("verified evidence requires a basis")
         if self.verification_state == "planner_asserted" and not self.assertion_id:
             raise ValueError("planner_asserted evidence requires an assertion reference")
         return self
@@ -93,6 +117,26 @@ class PlannerAssertionAppend(M07Command):
     source_note: str | None = Field(default=None, max_length=2048)
     predecessor_assertion_id: str | None = Field(default=None, max_length=64)
 
+    @field_validator(
+        "field_code",
+        "assertion_basis",
+        "assertion_reason",
+        "source_note",
+        "predecessor_assertion_id",
+    )
+    @classmethod
+    def reject_blank_assertion_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("assertion text must not be blank")
+        return value
+
+    @field_validator("asserted_value")
+    @classmethod
+    def reject_empty_asserted_value(cls, value: Any) -> Any:
+        if value == {} or isinstance(value, str) and not value.strip():
+            raise ValueError("asserted value must convey evidence")
+        return value
+
 
 class AssessmentFindingWrite(M07Command):
     finding_id: str | None = Field(default=None, max_length=64)
@@ -104,15 +148,25 @@ class AssessmentFindingWrite(M07Command):
     assertion_references: list[str] = Field(default_factory=list)
     source_references: list[str] = Field(default_factory=list)
     description: str = Field(min_length=1)
-    technical_blocking_effect: bool = False
+    @field_validator("finding_code", "category", "description")
+    @classmethod
+    def reject_blank_finding_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("finding text must not be blank")
+        return value
+
+    @field_validator(
+        "field_references",
+        "fact_references",
+        "assertion_references",
+        "source_references",
+    )
+    @classmethod
+    def reject_blank_references(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("finding references must not be blank")
+        return values
 
 
 class AssessmentRun(M07Command):
-    required_field_codes: list[str] = Field(default_factory=list)
-    rule_version: str = Field(min_length=1, max_length=64)
-
-    @model_validator(mode="after")
-    def unique_required_fields(self) -> "AssessmentRun":
-        if len(self.required_field_codes) != len(set(self.required_field_codes)):
-            raise ValueError("required field codes must be unique")
-        return self
+    """A narrow request to run the server-owned manifest for the revision."""

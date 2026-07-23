@@ -186,6 +186,10 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-003 remaining limitations and exclusions | Current CBS comparison remains `unknown`; parameter catalog, M07 repository, automatic current resolver, professional stale mapping, prior-fixation runtime fact, rerun/replay/correction, UI, independent application and adapter runtime build identities, full M08F lifecycle, M08E, M09-M14, formal 161D, 02M, V1/V2 parity, and production readiness remain outside accepted PKG-003 scope |
 | PKG-004A execution status | ACCEPTED_WITH_FOLLOW_UP at implementation commit `f7a03a0`, with migration head `a8e4f2c6d901`; accepted foundation scope is global, non-client-owned official annual parameter authority selected by exact tax year and effective period, as documented in `specs/runtime/PKG_004A_acceptance_record.md` |
 | PKG-004A remaining follow-up and exclusions | D-406 remains an accepted follow-up because overlap detection is service-level without a database-native concurrent-activation exclusion; inconsistent overlap fails closed as `ambiguous`. Parameter content seed, production administrator authentication, write API, UI, automatic fixation integration, M07/current resolver, correction UI/workflow, full M08F, M08E, M09-M14, formal 161D, 02M, V1/V2 parity, and production readiness remain outside accepted PKG-004A scope |
+| PKG-004B1 package | PKG-004B1 - M07 Source Profile and Assessment Evidence Foundation |
+| PKG-004B1 definition status | DEFINED_PENDING_IMPLEMENTATION; definition document: `specs/runtime/PKG_004B1_FINAL_PACKAGE_DEFINITION.md` |
+| PKG-004B1 implementation | NOT_STARTED; next implementation authorization has not yet been executed |
+| PKG-004B2 | OUTSIDE_SCOPE_AND_BLOCKED_PENDING_PROFESSIONAL_DECISIONS |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

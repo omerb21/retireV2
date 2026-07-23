@@ -121,6 +121,13 @@ class M07DuplicateFactIdentityError(M07EvidenceInvariantError):
     code = "duplicate_fact_identity"
 
 
+class M07MultipleEvidenceBasesError(M07EvidenceInvariantError):
+    code = "multiple_evidence_bases_forbidden"
+
+
+SCOPED_REFERENCE_ERROR_MESSAGE = "referenced evidence is unavailable"
+
+
 def resolve_assessment_manifest(
     *, schema_version: str, rule_version: str
 ) -> M07AssessmentManifest:
@@ -401,6 +408,21 @@ def _fact_identity_from_row(row: M07FactEvidence) -> str:
     return f"state:{row.collection_state}"
 
 
+def _fact_identity_key(
+    *,
+    revision_id: str,
+    field_code: str,
+    basis_identity: str,
+) -> str:
+    return m07_fingerprint(
+        {
+            "revision_id": revision_id,
+            "field_code": field_code,
+            "basis_identity": basis_identity,
+        }
+    )
+
+
 def _validate_fact_basis(request: FactEvidenceWrite) -> None:
     if request.structured_value == {} or (
         isinstance(request.structured_value, str)
@@ -416,9 +438,18 @@ def _validate_fact_basis(request: FactEvidenceWrite) -> None:
         or request.source_record_id is not None
     )
     has_document = request.source_document_reference is not None
+    has_assertion = request.assertion_id is not None
     if has_record and has_document:
-        raise M07EvidenceInvariantError(
+        raise M07MultipleEvidenceBasesError(
             "a fact must not combine persisted and documentary source identities"
+        )
+    if has_assertion and (has_record or has_document or request.source_type is not None):
+        raise M07MultipleEvidenceBasesError(
+            "a fact must not combine source and assertion evidence"
+        )
+    if has_assertion and request.verification_state != "planner_asserted":
+        raise M07MultipleEvidenceBasesError(
+            "assertion identity requires planner_asserted verification state"
         )
     if has_record and request.source_type != "persisted_record":
         raise M07EvidenceInvariantError(
@@ -434,9 +465,9 @@ def _validate_fact_basis(request: FactEvidenceWrite) -> None:
             "documentary provenance requires a supported documentary source type"
         )
     if request.verification_state == "planner_asserted":
-        if has_record or has_document or request.source_type is not None:
+        if not has_assertion:
             raise M07EvidenceInvariantError(
-                "assertion-backed facts cannot also claim a source-backed basis"
+                "planner_asserted evidence requires an assertion identity"
             )
     elif request.collection_state == "recorded":
         if not (has_record or has_document):
@@ -461,13 +492,13 @@ def _validate_source_record_scope(
     if source_record_type is None or source_record_id is None:
         raise M07EvidenceReferenceError(
             "source_reference_invalid",
-            "source record type and ID must be supplied together"
+            SCOPED_REFERENCE_ERROR_MESSAGE,
         )
     key_name = M07_SOURCE_RECORD_KEYS.get(source_record_type)
     table = Base.metadata.tables.get(source_record_type)
     if key_name is None or table is None:
         raise M07EvidenceReferenceError(
-            "source_reference_invalid", "unsupported source record type"
+            "source_reference_invalid", SCOPED_REFERENCE_ERROR_MESSAGE
         )
     key_column = table.c[key_name]
     key_value: str | int = source_record_id
@@ -476,7 +507,7 @@ def _validate_source_record_scope(
             key_value = int(source_record_id)
         except ValueError as error:
             raise M07EvidenceReferenceError(
-                "source_reference_invalid", "invalid numeric source record ID"
+                "source_reference_invalid", SCOPED_REFERENCE_ERROR_MESSAGE
             ) from error
     exists = db_session.scalar(
         select(table.c.client_id).where(
@@ -487,7 +518,7 @@ def _validate_source_record_scope(
     if exists is None:
         raise M07EvidenceReferenceError(
             "source_reference_invalid",
-            "source record was not found in client scope",
+            SCOPED_REFERENCE_ERROR_MESSAGE,
         )
 
 
@@ -530,8 +561,16 @@ def write_fact_evidence(
             )
         )
         if assertion is None:
-            raise M07EvidenceInvariantError("assertion reference is outside revision scope")
+            raise M07EvidenceReferenceError(
+                "source_reference_invalid",
+                SCOPED_REFERENCE_ERROR_MESSAGE,
+            )
     identity = _fact_identity_from_request(request)
+    identity_key = _fact_identity_key(
+        revision_id=revision_id,
+        field_code=request.field_code,
+        basis_identity=identity,
+    )
     same_field_rows = db_session.scalars(
         select(M07FactEvidence).where(
             M07FactEvidence.client_id == client_id,
@@ -591,6 +630,7 @@ def write_fact_evidence(
         verified_by=verification_actor,
         verification_basis=request.verification_basis,
         assertion_id=request.assertion_id,
+        fact_identity_key=identity_key,
         content_fingerprint=m07_fingerprint(material_content),
     )
     if row is None:
@@ -672,19 +712,16 @@ def _validate_child_reference(
     client_id: int,
     revision_id: str,
 ) -> None:
-    row = db_session.scalar(select(model).where(id_column == reference_id))
+    row = db_session.scalar(
+        select(model).where(
+            id_column == reference_id,
+            model.client_id == client_id,
+            model.m07_evidence_revision_id == revision_id,
+        )
+    )
     if row is None:
         raise M07EvidenceReferenceError(
-            "source_reference_invalid", "referenced evidence does not exist"
-        )
-    if row.client_id != client_id:
-        raise M07EvidenceReferenceError(
-            "client_mismatch", "referenced evidence is outside client scope"
-        )
-    if row.m07_evidence_revision_id != revision_id:
-        raise M07EvidenceReferenceError(
-            "cross_revision_reference",
-            "referenced evidence is outside revision scope",
+            "source_reference_invalid", SCOPED_REFERENCE_ERROR_MESSAGE
         )
 
 
@@ -790,7 +827,7 @@ def write_assessment_finding(
         ):
             raise M07EvidenceReferenceError(
                 "source_reference_invalid",
-                "finding source reference is not evidence in this revision",
+                SCOPED_REFERENCE_ERROR_MESSAGE,
             )
     if request.finding_kind == "technical_rule_outcome":
         if request.finding_code != "Q014":

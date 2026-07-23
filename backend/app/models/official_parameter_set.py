@@ -89,7 +89,11 @@ class OfficialParameterSet(Base):
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     parameter_set_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        active_history=True,
+    )
 
     monthly_cap: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     exemption_percentage: Mapped[Decimal] = mapped_column(Numeric(18, 10), nullable=False)
@@ -136,21 +140,45 @@ _SUPERSESSION_TRANSITION_FIELDS = {
 def _protect_active_official_parameter_set(_mapper, _connection, target: OfficialParameterSet) -> None:
     state = inspect(target)
     status_history = state.attrs.status.history
-    previous_status = status_history.deleted[0] if status_history.deleted else target.status
-    if previous_status != "active":
+    persisted_status = (
+        status_history.deleted[0] if status_history.deleted else target.status
+    )
+    changed_fields = {
+        attribute.key
+        for attribute in state.mapper.column_attrs
+        if state.attrs[attribute.key].history.has_changes()
+    }
+
+    if persisted_status == "superseded":
+        if changed_fields:
+            raise OfficialParameterEvidenceImmutableError(
+                "superseded official parameter-set evidence is immutable"
+            )
+        return
+
+    if persisted_status != "active":
         return
     if target.status not in {"active", "superseded"}:
         raise OfficialParameterEvidenceImmutableError(
             "active official parameter sets may only remain active or be superseded"
         )
 
-    changed_fields = {
-        attribute.key
-        for attribute in state.mapper.column_attrs
-        if state.attrs[attribute.key].history.has_changes()
-    }
+    is_service_controlled_supersession = (
+        target.status == "superseded"
+        and getattr(target, "_service_supersession_transition", False) is True
+    )
+    if target.status == "superseded" and not is_service_controlled_supersession:
+        if changed_fields - _SUPERSESSION_TRANSITION_FIELDS:
+            raise OfficialParameterEvidenceImmutableError(
+                "active official parameter-set evidence is immutable; create a new revision"
+            )
+        raise OfficialParameterEvidenceImmutableError(
+            "active official parameter sets may only be superseded through the lifecycle service"
+        )
     allowed_fields = (
-        _SUPERSESSION_TRANSITION_FIELDS if target.status == "superseded" else set()
+        _SUPERSESSION_TRANSITION_FIELDS
+        if is_service_controlled_supersession
+        else set()
     )
     if changed_fields - allowed_fields:
         raise OfficialParameterEvidenceImmutableError(

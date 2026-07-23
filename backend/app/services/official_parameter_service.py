@@ -237,13 +237,13 @@ def list_official_parameter_sets(
     if limit < 1 or limit > 100:
         raise ValueError("limit must be between 1 and 100")
     statement = select(OfficialParameterSet)
-    count_statement = select(func.count()).select_from(OfficialParameterSet)
+    total_statement = select(func.count()).select_from(OfficialParameterSet)
     if tax_year is not None:
         statement = statement.where(OfficialParameterSet.tax_year == tax_year)
-        count_statement = count_statement.where(OfficialParameterSet.tax_year == tax_year)
+        total_statement = total_statement.where(OfficialParameterSet.tax_year == tax_year)
     if status is not None:
         statement = statement.where(OfficialParameterSet.status == status)
-        count_statement = count_statement.where(OfficialParameterSet.status == status)
+        total_statement = total_statement.where(OfficialParameterSet.status == status)
     rows = list(
         db_session.scalars(
             statement.order_by(
@@ -255,7 +255,7 @@ def list_official_parameter_sets(
             .limit(limit)
         ).all()
     )
-    return rows, int(db_session.scalar(count_statement) or 0)
+    return rows, int(db_session.scalar(total_statement) or 0)
 
 
 def verify_official_parameter_set(
@@ -355,10 +355,14 @@ def supersede_official_parameter_set(
     row = get_official_parameter_set(db_session=db_session, parameter_set_id=parameter_set_id)
     if row.status != "active":
         raise OfficialParameterLifecycleError("only active parameter sets may be superseded")
-    row.superseded_at = timestamp or _utc_now()
-    row.superseded_by = request.superseded_by
-    row.status = "superseded"
-    db_session.flush()
+    row._service_supersession_transition = True
+    try:
+        row.superseded_at = timestamp or _utc_now()
+        row.superseded_by = request.superseded_by
+        row.status = "superseded"
+        db_session.flush()
+    finally:
+        row._service_supersession_transition = False
     return row
 
 

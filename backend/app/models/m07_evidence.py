@@ -232,6 +232,12 @@ class M07FactEvidence(Base):
             "verification_state != 'planner_asserted' OR assertion_id IS NOT NULL",
             name="ck_m07_fact_evidence_assertion_link",
         ),
+        UniqueConstraint(
+            "client_id",
+            "m07_evidence_revision_id",
+            "fact_identity_key",
+            name="uq_m07_fact_evidence_identity_key",
+        ),
         Index(
             "ix_m07_fact_evidence_revision_field",
             "client_id",
@@ -271,6 +277,7 @@ class M07FactEvidence(Base):
         Integer, ForeignKey("clients.client_id"), nullable=False
     )
     field_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    fact_identity_key: Mapped[str] = mapped_column(String(64), nullable=False)
     structured_value: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     collection_state: Mapped[str] = mapped_column(String(32), nullable=False)
     collection_basis: Mapped[str | None] = mapped_column(Text, nullable=True)

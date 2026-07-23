@@ -243,7 +243,10 @@ def test_active_values_and_effective_period_are_immutable(db_session: Session) -
     row = db_session.get(OfficialParameterSet, "official-2026-r1")
     assert row is not None
     row.effective_to = date(2027, 1, 1)
-    with pytest.raises(ValueError, match="create a new revision"):
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="active official parameter-set evidence is immutable",
+    ):
         db_session.flush()
     db_session.rollback()
 
@@ -362,7 +365,7 @@ def test_active_cannot_be_superseded_outside_lifecycle_service(
     row.superseded_at = NOW
     with pytest.raises(
         OfficialParameterEvidenceImmutableError,
-        match="only be superseded through the lifecycle service",
+        match="active official parameter-set evidence is immutable",
     ):
         db_session.flush()
     db_session.rollback()
@@ -372,6 +375,43 @@ def test_active_cannot_be_superseded_outside_lifecycle_service(
     assert persisted.status == "active"
     assert persisted.superseded_by is None
     assert persisted.superseded_at is None
+
+
+def test_invented_supersession_marker_has_no_effect(
+    db_session: Session,
+) -> None:
+    row = _active(db_session)
+    db_session.commit()
+
+    row._service_supersession_transition = True
+    row.status = "superseded"
+    row.superseded_by = "direct-caller"
+    row.superseded_at = NOW
+    with pytest.raises(
+        OfficialParameterEvidenceImmutableError,
+        match="active official parameter-set evidence is immutable",
+    ):
+        db_session.flush()
+    db_session.rollback()
+
+    persisted = db_session.get(OfficialParameterSet, row.parameter_set_id)
+    assert persisted is not None
+    assert persisted.status == "active"
+    assert persisted.superseded_by is None
+    assert persisted.superseded_at is None
+
+
+def test_no_supersession_marker_or_capability_exists_in_application_code() -> None:
+    prohibited_symbols = (
+        "_service_supersession_transition",
+        "supersession_token",
+        "transition_capability",
+        "trusted_transition",
+    )
+    application_files = list((_backend_root() / "app").rglob("*.py"))
+    for application_file in application_files:
+        source = application_file.read_text(encoding="utf-8")
+        assert not any(symbol in source for symbol in prohibited_symbols)
 
 
 def test_active_content_cannot_change_during_attempted_supersession(
@@ -397,6 +437,149 @@ def test_active_content_cannot_change_during_attempted_supersession(
     assert persisted.source_title == "Official annual parameter publication"
     assert persisted.superseded_by is None
     assert persisted.superseded_at is None
+
+
+def test_official_supersession_changes_only_three_authorized_columns(
+    db_session: Session,
+) -> None:
+    row = _active(db_session)
+    db_session.commit()
+    before = {
+        column.name: getattr(row, column.name)
+        for column in OfficialParameterSet.__table__.columns
+    }
+
+    supersede_official_parameter_set(
+        db_session=db_session,
+        parameter_set_id=row.parameter_set_id,
+        request=OfficialParameterSupersessionRequest(
+            superseded_by="admin-superseder"
+        ),
+        timestamp=NOW,
+    )
+    after = {
+        column.name: getattr(row, column.name)
+        for column in OfficialParameterSet.__table__.columns
+    }
+
+    changed_fields = {
+        field_name
+        for field_name in before
+        if before[field_name] != after[field_name]
+    }
+    assert changed_fields == {"status", "superseded_by", "superseded_at"}
+    assert after["status"] == "superseded"
+    assert after["superseded_by"] == "admin-superseder"
+    assert after["superseded_at"].replace(tzinfo=timezone.utc) == NOW
+
+
+def test_repeated_official_supersession_is_rejected(
+    db_session: Session,
+) -> None:
+    row = _active(db_session)
+    supersede_official_parameter_set(
+        db_session=db_session,
+        parameter_set_id=row.parameter_set_id,
+        request=OfficialParameterSupersessionRequest(
+            superseded_by="first-superseder"
+        ),
+        timestamp=NOW,
+    )
+
+    with pytest.raises(
+        OfficialParameterLifecycleError,
+        match="only active",
+    ):
+        supersede_official_parameter_set(
+            db_session=db_session,
+            parameter_set_id=row.parameter_set_id,
+            request=OfficialParameterSupersessionRequest(
+                superseded_by="second-superseder"
+            ),
+            timestamp=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        )
+    assert row.status == "superseded"
+    assert row.superseded_by == "first-superseder"
+
+
+@pytest.mark.parametrize("initial_status", ["draft", "verified", "rejected"])
+def test_official_supersession_rejects_wrong_initial_state(
+    db_session: Session,
+    initial_status: str,
+) -> None:
+    row = _draft(db_session)
+    if initial_status == "verified":
+        _verify(db_session, row)
+    elif initial_status == "rejected":
+        reject_official_parameter_set(
+            db_session=db_session,
+            parameter_set_id=row.parameter_set_id,
+            request=OfficialParameterRejectionRequest(
+                rejected_by="admin-rejector",
+                rejection_note="not admissible",
+            ),
+            timestamp=NOW,
+        )
+
+    with pytest.raises(OfficialParameterLifecycleError, match="only active"):
+        supersede_official_parameter_set(
+            db_session=db_session,
+            parameter_set_id=row.parameter_set_id,
+            request=OfficialParameterSupersessionRequest(
+                superseded_by="admin-superseder"
+            ),
+            timestamp=NOW,
+        )
+    assert row.status == initial_status
+
+
+def test_stale_concurrent_supersession_updates_exactly_once(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "pkg004a-stale-supersession.db"
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    Base.metadata.create_all(engine)
+    session_local = sessionmaker(bind=engine, expire_on_commit=False)
+
+    with session_local() as stale_session:
+        stale_row = _active(stale_session)
+        stale_session.commit()
+
+        with session_local() as winning_session:
+            supersede_official_parameter_set(
+                db_session=winning_session,
+                parameter_set_id=stale_row.parameter_set_id,
+                request=OfficialParameterSupersessionRequest(
+                    superseded_by="winning-superseder"
+                ),
+                timestamp=NOW,
+            )
+            winning_session.commit()
+
+        assert stale_row.status == "active"
+        with pytest.raises(
+            OfficialParameterLifecycleError,
+            match="supersession conflict",
+        ):
+            supersede_official_parameter_set(
+                db_session=stale_session,
+                parameter_set_id=stale_row.parameter_set_id,
+                request=OfficialParameterSupersessionRequest(
+                    superseded_by="stale-superseder"
+                ),
+                timestamp=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            )
+        stale_session.rollback()
+
+    with session_local() as verification_session:
+        persisted = verification_session.get(
+            OfficialParameterSet,
+            "official-2026-r1",
+        )
+        assert persisted is not None
+        assert persisted.status == "superseded"
+        assert persisted.superseded_by == "winning-superseder"
+        assert persisted.superseded_at.replace(tzinfo=timezone.utc) == NOW
 
 
 @pytest.mark.parametrize(

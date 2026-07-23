@@ -4,8 +4,10 @@ import os
 import subprocess
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect as sqlalchemy_inspect, text
 from sqlalchemy.orm import Session
+
+from app.models.official_parameter_set import OfficialParameterSet
 
 
 def _backend_root() -> Path:
@@ -213,4 +215,111 @@ def test_pkg003_manifest_migration_preserves_legacy_runs_and_refuses_destructive
     with Session(engine) as session:
         assert session.execute(
             text("SELECT COUNT(*) FROM fixation_dependency_manifests")
+        ).scalar_one() == 1
+
+
+def test_pkg004a_migration_is_additive_global_unseeded_and_preserves_history(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "pkg004a_official_parameters.db"
+    _run_alembic(db_path, "upgrade", "d7a3c9e5f102")
+
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    with Session(engine) as session:
+        session.execute(
+            text(
+                "INSERT INTO clients (client_id, display_name, id_number) "
+                "VALUES (1, 'Historical Client', 'historical-client')"
+            )
+        )
+        session.execute(
+            text(
+                "INSERT INTO fixation_runs "
+                "(id, fixation_run_id, client_id, calculation_version, status, is_latest) "
+                "VALUES (1, 'historical-run', 1, 'historical-v1', 'success', 1)"
+            )
+        )
+        session.commit()
+
+    _run_alembic(db_path, "upgrade", "head")
+
+    with Session(engine) as session:
+        columns = {
+            row[1]
+            for row in session.execute(
+                text("PRAGMA table_info('official_parameter_sets')")
+            ).all()
+        }
+        assert "client_id" not in columns
+        assert session.execute(
+            text("SELECT COUNT(*) FROM official_parameter_sets")
+        ).scalar_one() == 0
+        historical = session.execute(
+            text(
+                "SELECT fixation_run_id, client_id, calculation_version, status, is_latest "
+                "FROM fixation_runs WHERE id = 1"
+            )
+        ).one()
+        assert tuple(historical) == (
+            "historical-run",
+            1,
+            "historical-v1",
+            "success",
+            1,
+        )
+
+    migrated_columns = {
+        column["name"]: column
+        for column in sqlalchemy_inspect(engine).get_columns("official_parameter_sets")
+    }
+    model_columns = {
+        column.name: column for column in OfficialParameterSet.__table__.columns
+    }
+    assert set(migrated_columns) == set(model_columns)
+    assert migrated_columns["parameter_set_id"]["type"].length == 64
+    assert migrated_columns["content_fingerprint"]["type"].length == 64
+    assert migrated_columns["monthly_cap"]["type"].scale == 6
+    assert migrated_columns["exemption_percentage"]["type"].scale == 10
+
+
+def test_pkg004a_migration_refuses_official_evidence_loss(tmp_path: Path) -> None:
+    db_path = tmp_path / "pkg004a_downgrade.db"
+    _run_alembic(db_path, "upgrade", "head")
+
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    with Session(engine) as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO official_parameter_sets (
+                    parameter_set_id, tax_year, effective_from, effective_to,
+                    schema_version, parameter_set_version, status,
+                    monthly_cap, exemption_percentage, capital_multiplier,
+                    grant_impact_multiplier, source_type, source_title,
+                    official_source_reference, source_publication_date,
+                    source_recorded_at, source_evidence_metadata, verification_note,
+                    parameter_payload, content_fingerprint,
+                    fingerprint_algorithm_version, created_at, created_by
+                ) VALUES (
+                    'official-test-r1', 2026, '2026-01-01', '2026-12-31',
+                    'pkg004a.official-parameter-set.v1', 'r1', 'draft',
+                    1000, 0.5, 180, 1.35, 'publication', 'Test publication',
+                    'official://test', NULL, CURRENT_TIMESTAMP, '{}', NULL,
+                    '{}', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'sha256-canonical-json-v1', CURRENT_TIMESTAMP, 'test-creator'
+                )
+                """
+            )
+        )
+        session.commit()
+
+    downgrade = _run_alembic(db_path, "downgrade", "d7a3c9e5f102", check=False)
+    assert downgrade.returncode != 0
+    assert "Cannot downgrade while PKG-004A official parameter sets are present" in (
+        downgrade.stdout + downgrade.stderr
+    )
+
+    with Session(engine) as session:
+        assert session.execute(
+            text("SELECT COUNT(*) FROM official_parameter_sets")
         ).scalar_one() == 1

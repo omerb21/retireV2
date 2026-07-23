@@ -35,6 +35,7 @@ ACCEPTED_ADDITIVE_TABLES = {
     "capital_asset",
     "fixation_dependency_manifests",
     "internal_planner_judgments",
+    "official_parameter_sets",
     "pension_analysis_record",
     "pension_holding",
     "planner_assumption",

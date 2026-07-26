@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Package | `PKG-004B2 — M07 Calculation Input Resolution` |
-| Package type | Deterministic calculation-input resolution |
+| Package type | Deterministic calculation-input resolver |
 | Definition status | `DEFINED_PENDING_IMPLEMENTATION_AUTHORIZATION` |
 | Implementation | `NOT_STARTED` |
 | Base dependency | Accepted PKG-004B1 evidence foundation |
@@ -14,289 +14,278 @@
 This document defines scope and acceptance criteria only. It does not
 authorize implementation.
 
-## 2. Product and Authority Boundary
+## 2. Purpose and Product Boundary
+
+PKG-004B2 resolves one present calculation-input set from:
+
+- calculation scope;
+- a server-owned manifest version;
+- one client-scoped PKG-004B1 evidence revision;
+- narrow user selections between conflicting values, when supplied.
 
 The intended product is a personal or narrowly operated professional
-calculator, not an organizational SaaS approval and authority-management
-system. It calculates when the inputs required by a calculation are present,
-technically valid, and unambiguous.
-
-The package answers only:
+calculator, not an organizational approval or authority-management system.
+The resolver answers only:
 
 1. Are all required calculation inputs present?
-2. Is every required input technically valid?
-3. Is there one unambiguous selected value for every required input?
+2. Is every required input objectively valid for the calculation?
+3. Is there one unambiguous value for every required input?
 
-The system does not assess professional reliability of the data, the authority
-of the person who entered it, qualification, warning review,
-`accepted_for_use`, professional approval, or a reviewer/supervisor workflow.
-A manually entered value, documentary value, or planner assertion is an
-allowed calculation candidate. Its origin is retained for traceability and
-does not establish a reliability rank.
+It does not assess professional reliability, data-entry authority,
+qualification, warning review, `accepted_for_use`, professional approval, or
+reviewer/supervisor workflow.
 
-## 3. Resolution Outcomes
+## 3. Resolver Operation
 
-Only these resolution outcomes are defined:
+The package defines a stateless or narrowly state-assisted operation:
+
+```text
+resolve_calculation_inputs(
+    client_id,
+    calculation_scope,
+    manifest_version,
+    b1_evidence_revision_id,
+    selections?
+)
+```
+
+For every invocation, the resolver loads the specified client-scoped B1
+revision, obtains its candidates, applies the manifest's normalization and
+required-field rules, applies any still-valid user selections, and returns
+the present result. A previously calculated result is not selected as current
+and is not required as an input to the next invocation.
+
+The package requires no resolution-history aggregate, correction workflow, or
+current-record repository.
+
+## 4. Resolution Outcomes
+
+The complete outcome vocabulary is:
 
 | Outcome | Meaning |
 |---|---|
-| `resolved` | All required calculation inputs are present, technically valid, and unambiguous. |
-| `missing_inputs` | One or more required calculation inputs are absent or technically unusable. |
-| `ambiguous_inputs` | One or more required fields have conflicting normalized candidate values and no valid active selection. |
+| `resolved` | All required inputs are present, objectively valid for calculation, and unambiguous. |
+| `missing_inputs` | One or more required inputs are absent, invalid, or cannot be normalized. |
+| `ambiguous_inputs` | One or more required fields have conflicting normalized values and no valid explicit selection. |
 
-PKG-004B2 does not define `qualified`, `warning_reviewed`,
-`accepted_for_use`, technical professional approval, current professional
-authority, or eligibility approval.
+No evidence or no usable candidate produces `missing_inputs` and a missing
+field list. No other resolution outcome is defined.
 
-## 4. Required-Field Manifest
+## 5. Required-Field Manifest
 
 Resolution is governed by a server-owned, versioned calculation-input
-manifest. A manifest identifies:
+manifest. It defines only:
 
-- calculation scope;
-- manifest version;
 - required field codes;
-- technical type for each field;
-- normalization rule for each field;
-- whether null is a technically valid value;
-- whether a field is conditional;
-- the technical condition that makes a conditional field required.
+- technical data types;
+- normalization rules;
+- whether null is valid;
+- conditional technical requirements and their explicit conditions.
 
-The manifest contains calculation-input requirements only. It must not encode
-professional approval rules. An unknown manifest version fails closed and
-cannot produce a calculation-ready payload.
+The manifest is bound to a calculation scope. It contains no professional
+approval, reliability, source-ranking, or user-authority rule. An unknown
+manifest version fails closed and emits no calculation-ready payload.
 
-## 5. Candidate and Selection Model
+## 6. B1 Candidate Boundary
 
-For every required field, resolution distinguishes:
+PKG-004B2 consumes candidate values represented by the specified
+PKG-004B1 evidence revision. B1 evidence may retain persisted-source,
+documentary, planner-asserted, and other accepted B1 provenance.
 
-1. the required calculation field;
-2. its candidate values;
-3. the selected active value, when selection is needed;
-4. source references retained only for traceability;
-5. the technical normalization result;
-6. the resolution fingerprint.
+Direct manual entry is not a separate B2 evidence channel. A manually entered
+value must first be recorded in B1 as evidence or a planner assertion. A
+future UI may create B1 evidence from manual input, but that UI and workflow
+are outside PKG-004B2.
 
-Candidate values may originate from:
+An accepted technical derivation may be a candidate only when an explicit
+calculation rule defines it and its B1 input references remain traceable.
+Candidate origin is traceability information and never establishes ranking.
 
-- persisted source evidence;
-- documentary evidence;
-- planner assertion;
-- direct manual entry;
-- an accepted technical derivation explicitly defined by a calculation rule.
-
-Source type, timestamp, and asserted or documentary origin do not rank
-candidates. A candidate identity must remain distinct from its normalized
-value so that identical values can be coalesced without losing their source
-references.
-
-An explicit selection identifies an available candidate or normalized
-candidate value for a field. It is a user choice for calculation input, not a
-professional approval. The package does not label the user as a reviewer,
-authority, approver, or supervisor.
-
-## 6. Deterministic Resolution Rules
+## 7. Deterministic Resolution Rules
 
 The resolver applies these rules per required field:
 
-1. With no technically usable candidate, the outcome is `missing_inputs`.
-2. With exactly one technically valid candidate value, that value is selected
-   automatically.
+1. No technically usable candidate produces `missing_inputs`.
+2. Exactly one technically valid normalized value is used automatically.
 3. Multiple candidates with the same normalized value are treated as one
-   usable value, while every source reference is retained.
-4. Multiple candidates with different normalized values produce
-   `ambiguous_inputs` unless an explicit user selection identifies an
-   available candidate.
-5. An existing explicit selection that matches an available candidate is
-   used.
-6. A selection is invalidated if its candidate no longer exists or its
-   normalized value materially changed. The result is `ambiguous_inputs` or
-   `missing_inputs`, as applicable.
-7. A new PKG-004B1 evidence revision does not by itself invalidate a selection
-   when the selected normalized value remains available and no conflicting
-   normalized value was introduced.
+   usable value, while all source references are retained.
+4. Multiple different normalized values produce `ambiguous_inputs` unless a
+   valid explicit user selection identifies one available value.
+5. A supplied selection is used only while its selected normalized value or
+   candidate identity remains available.
+6. A stale selection is ignored or invalidated. It cannot support a resolved
+   result; the resolver returns the naturally applicable `missing_inputs` or
+   `ambiguous_inputs` result.
+7. A selection may remain usable across a B1 revision change when its selected
+   normalized value remains available and no new conflicting value exists.
 8. Conflicts are never resolved by latest-wins, source priority, authority
    rank, or timestamp rank.
 
-Rules are evaluated against the manifest version and calculation scope
-recorded by the resolution. Conditional fields participate only when their
-manifest-defined technical condition is met.
+Conditional fields participate only when the manifest's explicit technical
+condition is met.
 
-## 7. Technical Normalization and Validation
+## 8. Narrow User Selection
 
-Normalization is deterministic and manifest-defined. It may reject or treat
-as unusable:
+An explicit selection is only a user choice between conflicting normalized
+values. It is not an approval, review, qualification, or reliability
+decision.
 
-- an invalid date;
-- an invalid number;
-- an unsupported enum;
-- a malformed identifier;
-- a value outside a technically impossible range;
-- a value that cannot be normalized.
+Selections may be supplied with the resolver request. If persistence is
+necessary to remember the user's choice, it is optional and limited to:
 
-Subjective plausibility checks are excluded unless they are explicit
-calculation constraints. Normalization does not judge professional
-sufficiency, authenticity, reliability, or authority.
-
-## 8. Resolution Persistence
-
-The package defines an immutable resolution record, or an equivalent immutable
-representation, containing:
-
-- client ID;
+- field code;
+- selected normalized value or candidate identity;
 - calculation scope;
-- calculation-input manifest version;
-- PKG-004B1 evidence revision ID;
-- selected field and value identities;
-- normalized values;
-- source references;
-- resolution outcome;
-- missing field list;
-- ambiguous field list;
-- canonical payload;
-- deterministic resolution fingerprint;
-- creation timestamp;
-- successor and supersession linkage when correction is required.
+- optional B1 evidence revision reference;
+- timestamp.
 
-Closed resolution records are immutable. Corrections create a successor rather
-than rewriting accepted history. A successor may preserve a prior selection
-across an evidence revision only under rule 7.
+PKG-004B2 does not require persistent resolution results or immutable
+resolution history. Optional selection persistence exists solely to avoid
+asking the user to repeat a still-valid conflict choice.
 
-The canonical payload is server-generated from the recorded scope, manifest
-version, B1 revision, normalized field results, selections, traceability
-references, outcome, and missing or ambiguous field lists. Its deterministic
-fingerprint uses a declared canonicalization and fingerprint algorithm. A
-caller cannot supply either the canonical payload, fingerprint, or resolved
-outcome.
+## 9. Objective Technical Validation
 
-## 9. Current Calculation-Input Selector
+Validation is limited to objective rules needed by the calculation:
 
-The narrow selector may return:
+- parseable date;
+- parseable number;
+- supported enum;
+- required identifier structure;
+- an explicit mathematical or domain constraint required by the calculation
+  and declared by the manifest.
 
-- `resolved`;
-- `missing_inputs`;
-- `ambiguous_inputs`;
-- `unavailable` when no resolution record exists.
+A value that fails an applicable rule is unusable and contributes to
+`missing_inputs`. The resolver does not apply subjective plausibility,
+authenticity, reliability, or professional-sufficiency checks.
 
-There is at most one current unsuperseded resolution per client and
-calculation scope. The selector never chooses between conflicting values. It
-does not use latest-wins as an authority rule. An inconsistent
-multiple-current state fails closed as `ambiguous_inputs` or as an invariant
-violation; it is never ranked into a result.
+## 10. Resolver Result and Fingerprint
 
-The selector determines calculation input only. It does not select current
-professional authority.
-
-## 10. Calculation Handoff
-
-Only a `resolved` resolution emits a calculation-ready payload containing:
+Every resolver result contains:
 
 - client ID;
 - calculation scope;
 - manifest version;
+- B1 evidence revision ID;
 - normalized selected values;
-- source references for audit traceability;
-- PKG-004B1 evidence revision ID;
+- source references for traceability;
+- missing fields;
+- ambiguous fields and their candidate values;
+- outcome;
+- server-generated deterministic fingerprint.
+
+The server may also generate a readable canonical payload as the resolver
+result. Persistent archival storage of that payload or result is not required
+by PKG-004B2.
+
+The caller cannot supply or override the outcome, canonical payload, or
+fingerprint. Repeating resolution with the same material manifest, B1
+evidence, and valid selections produces the same material result and
+fingerprint.
+
+## 11. Calculation Handoff
+
+When the outcome is `resolved`, the resolver emits a calculation-ready payload
+containing:
+
+- client ID;
+- calculation scope;
+- manifest version;
+- B1 evidence revision ID;
+- normalized selected values;
+- source references;
 - resolution fingerprint.
 
-`missing_inputs`, `ambiguous_inputs`, and `unavailable` do not emit a
-calculation-ready payload.
+For `missing_inputs` or `ambiguous_inputs`, the resolver returns diagnostic
+missing or ambiguity data but emits no calculation-ready payload.
 
-## 11. Relationship to PKG-004B1
+## 12. Required Package Shape
+
+Implementation authorization, if separately granted, may require at most:
+
+1. a calculation-input manifest;
+2. a resolver service;
+3. input and output schemas;
+4. optional narrow user-selection persistence, only if necessary;
+5. focused tests.
+
+The package does not require a new immutable resolution aggregate or a
+current-record repository.
+
+## 13. Relationship to PKG-004B1
 
 - PKG-004B1 remains accepted and unchanged.
 - PKG-004B1 stores evidence, provenance, findings, and technical assessment.
-- PKG-004B2 does not alter PKG-004B1 evidence.
+- PKG-004B2 reads but does not alter B1 evidence.
 - PKG-004B2 does not convert evidence into professional authority.
-- PKG-004B2 determines only whether the evidence yields a complete and
-  unambiguous calculation-input set.
+- Manually entered information reaches B2 only after representation in B1.
 
-## 12. Explicit Exclusions
+## 14. Explicit Exclusions
 
-PKG-004B2 explicitly excludes:
+PKG-004B2 excludes:
 
-- qualification;
-- warning review;
-- `accepted_for_use`;
-- professional authorization;
-- source reliability ranking;
-- document authenticity validation;
-- user licence validation;
-- organizational RBAC;
-- supervisor workflow;
+- qualification, warning review, `accepted_for_use`, and professional
+  authorization;
+- source reliability ranking and document-authenticity validation;
+- user licence validation, organizational RBAC, and supervisor workflow;
+- stored current-resolution authority or resolution-record lifecycle;
+- historical resolution backfill;
 - fixation integration;
-- M08E;
-- full M08F;
+- UI implementation;
+- M08E and full M08F;
 - M09-M14;
 - formal 161D;
 - 02M;
-- UI implementation;
-- production readiness.
+- production readiness;
+- V1/V2 parity and full M07-completion claims.
 
-It also excludes historical backfill and does not claim V1/V2 parity or full
-M07 completion.
-
-## 13. Acceptance Criteria
+## 15. Acceptance Criteria
 
 | ID | Acceptance criterion |
 |---|---|
-| AC-B2-001 | A server-owned, versioned required-field manifest deterministically identifies calculation scope, fields, types, normalization, nullability, and conditional requirements. |
-| AC-B2-002 | An unknown manifest version fails closed without a calculation-ready payload. |
-| AC-B2-003 | A required field with no technically usable candidate produces `missing_inputs`. |
-| AC-B2-004 | One technically valid candidate value is selected automatically. |
-| AC-B2-005 | Candidates with the same normalized value are treated as one usable value without losing any source reference. |
-| AC-B2-006 | Different normalized candidate values produce `ambiguous_inputs` when no valid explicit selection exists. |
-| AC-B2-007 | An explicit user selection matching an available candidate resolves that field without creating an approval status. |
-| AC-B2-008 | A selection is invalidated when its candidate disappears or its normalized value materially changes. |
-| AC-B2-009 | A selection remains preservable across a new B1 revision when its normalized value remains available and no conflict is introduced. |
-| AC-B2-010 | Source references remain traceable and do not participate in ranking. |
-| AC-B2-011 | Technical normalization is deterministic and rejects technically invalid or non-normalizable inputs. |
-| AC-B2-012 | The server produces a canonical readable resolution payload. |
-| AC-B2-013 | Repeated resolution of identical material input produces the same deterministic fingerprint. |
-| AC-B2-014 | Resolution, candidates, selections, and reads are client-isolated. |
-| AC-B2-015 | Closed resolution records are immutable. |
-| AC-B2-016 | Correction occurs through a linked successor and supersession operation. |
-| AC-B2-017 | The current selector fails closed for missing records and inconsistent multiple-current state. |
-| AC-B2-018 | A calculation-ready payload is emitted only for `resolved`. |
-| AC-B2-019 | The calculation handoff includes normalized values, traceability references, B1 revision identity, manifest version, scope, client, and resolution fingerprint. |
-| AC-B2-020 | No resolution outcome, actor label, selector, or record represents professional authority or an approval workflow. |
+| AC-B2-001 | A server-owned versioned manifest defines required fields, technical types, normalization, nullability, and conditional technical requirements for a calculation scope. |
+| AC-B2-002 | Missing, invalid, or non-normalizable required inputs produce `missing_inputs` with the missing field list and no calculation-ready payload. |
+| AC-B2-003 | Exactly one technically valid normalized value is used automatically. |
+| AC-B2-004 | Identical normalized values are coalesced without losing source traceability. |
+| AC-B2-005 | Conflicting normalized values produce `ambiguous_inputs` and expose the ambiguous fields and candidate values. |
+| AC-B2-006 | A valid explicit user selection resolves a conflict without creating an approval or authority state. |
+| AC-B2-007 | A stale selection is ignored or invalidated and cannot support a resolved result. |
+| AC-B2-008 | Normalization and objective validation are deterministic and manifest-defined. |
+| AC-B2-009 | Candidate and source references remain client-isolated and traceable to the specified B1 revision. |
+| AC-B2-010 | Identical material resolver inputs produce the same server-generated fingerprint. |
+| AC-B2-011 | The resolver returns exactly one of `resolved`, `missing_inputs`, or `ambiguous_inputs`. |
+| AC-B2-012 | A calculation-ready payload is emitted only for `resolved`; other outcomes return diagnostics only. |
+| AC-B2-013 | The resolver introduces no qualification, approval, reliability, reviewer, supervisor, or current-authority workflow. |
 
-## 14. Negative Acceptance Criteria
+## 16. Negative Acceptance Criteria
 
 | ID | Prohibited behavior |
 |---|---|
-| NAC-B2-001 | Creating or inferring `qualified`. |
-| NAC-B2-002 | Creating or inferring `warning_reviewed`. |
-| NAC-B2-003 | Creating or inferring `accepted_for_use`. |
-| NAC-B2-004 | Ranking candidates by source type, reliability, authority, actor, or timestamp. |
-| NAC-B2-005 | Resolving conflicting values by latest-wins. |
-| NAC-B2-006 | Accepting a caller-supplied `resolved` status. |
-| NAC-B2-007 | Accepting a caller-supplied canonical payload or fingerprint. |
-| NAC-B2-008 | Automatically using one of several conflicting normalized values without a valid explicit selection. |
-| NAC-B2-009 | Claiming professional authority, professional sufficiency, eligibility approval, or professional acceptance. |
-| NAC-B2-010 | Altering PKG-004B1 evidence or its accepted contract. |
-| NAC-B2-011 | Integrating the resolution into fixation. |
-| NAC-B2-012 | Fabricating historical resolution records or backfill. |
-| NAC-B2-013 | Adding or changing UI. |
-| NAC-B2-014 | Claiming production readiness, V1/V2 parity, or full M07 completion. |
-| NAC-B2-015 | Treating documentary, asserted, derived, persisted, or manually entered origin as a reliability rank. |
-| NAC-B2-016 | Emitting a calculation-ready payload for `missing_inputs`, `ambiguous_inputs`, or `unavailable`. |
-| NAC-B2-017 | Selecting a current record from an inconsistent multiple-current state by ordering or ranking. |
-| NAC-B2-018 | Introducing reviewer, supervisor, approver, authority, licence-validation, or organizational RBAC workflow. |
+| NAC-B2-001 | Creating qualification, warning-review, accepted-for-use, professional-approval, or authority states. |
+| NAC-B2-002 | Ranking candidates by source, reliability, actor, authority, or timestamp. |
+| NAC-B2-003 | Resolving conflicts by latest-wins or automatically choosing one conflicting value. |
+| NAC-B2-004 | Accepting caller-supplied outcome, canonical payload, or fingerprint. |
+| NAC-B2-005 | Allowing direct manual entry to bypass PKG-004B1 evidence or planner assertions. |
+| NAC-B2-006 | Requiring a stored current-resolution selector, current-record invariant, immutable resolution history, or correction lifecycle. |
+| NAC-B2-007 | Altering PKG-004B1 evidence or its accepted contract. |
+| NAC-B2-008 | Emitting a calculation-ready payload for `missing_inputs` or `ambiguous_inputs`. |
+| NAC-B2-009 | Adding fixation integration, UI implementation, or historical backfill. |
+| NAC-B2-010 | Expanding into M08E, full M08F, M09-M14, formal 161D, or 02M. |
+| NAC-B2-011 | Claiming production readiness, V1/V2 parity, or full M07 completion. |
 
-## 15. Stop Conditions and Final Gate
+## 17. Stop Conditions and Final Gate
 
 Implementation must stop and return for product direction if it would require:
 
 - a professional reliability or authority decision;
-- a new outcome beyond the defined resolution vocabulary;
+- an outcome outside the three-value vocabulary;
 - source ranking or automatic conflict selection;
-- a calculation scope, required field, normalization rule, technical
-  condition, or derivation rule not supplied by an authorized manifest;
-- fixation, UI, M08E, full M08F, M09-M14, formal 161D, or 02M work;
-- historical backfill or alteration of accepted PKG-004B1 evidence.
+- a calculation field, normalization, conditional rule, or derivation not
+  supplied by an authorized manifest;
+- a resolution-history aggregate or current-record subsystem;
+- a direct B2 manual-entry channel;
+- fixation, UI, M08E, full M08F, M09-M14, formal 161D, or 02M work.
 
-The final definition gate is:
+The definition gate remains:
 
 `PKG_004B2_DEFINED_PENDING_IMPLEMENTATION_AUTHORIZATION`
 

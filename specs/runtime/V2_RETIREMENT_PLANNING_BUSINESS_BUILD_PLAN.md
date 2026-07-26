@@ -188,7 +188,8 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-004A remaining follow-up and exclusions | D-406 remains an accepted follow-up because overlap detection is service-level without a database-native concurrent-activation exclusion; inconsistent overlap fails closed as `ambiguous`. Parameter content seed, production administrator authentication, write API, UI, automatic fixation integration, M07/current resolver, correction UI/workflow, full M08F, M08E, M09-M14, formal 161D, 02M, V1/V2 parity, and production readiness remain outside accepted PKG-004A scope |
 | PKG-004B1 execution status | ACCEPTED at implementation commit `b9e3860eab8948249a27396f06703aca99df1743`; see `specs/runtime/PKG_004B1_acceptance_record.md` |
 | PKG-004B1 definition and migration | Definition document: `specs/runtime/PKG_004B1_FINAL_PACKAGE_DEFINITION.md`; accepted Alembic head: `a9c4e7f2b615` |
-| PKG-004B2 | OUTSIDE_SCOPE_AND_BLOCKED_PENDING_PROFESSIONAL_DECISIONS |
+| PKG-004B2 definition status | `PKG-004B2 — M07 Calculation Input Resolution`: `DEFINED_PENDING_IMPLEMENTATION_AUTHORIZATION`; definition document: `specs/runtime/PKG_004B2_FINAL_PACKAGE_DEFINITION.md` |
+| PKG-004B2 product boundary | Authority, qualification, approval, warning-review, accepted-for-use, reviewer, and supervisor workflow are not required for the intended product; PKG-004B2 resolves only complete, technically valid, and unambiguous calculation input |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

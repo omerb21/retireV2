@@ -60,6 +60,32 @@ M07_SOURCE_RECORD_KEYS = {
 
 
 @dataclass(frozen=True)
+class M07EvidenceFieldContract:
+    field_code: str
+    meaning: str
+    technical_type: str
+    canonical_representation: str
+    normalization_rule: str
+    nullable: bool
+
+
+M07_EVIDENCE_FIELD_CONTRACTS = {
+    "eligibility_date": M07EvidenceFieldContract(
+        field_code="eligibility_date",
+        meaning=(
+            "Date of eligibility supplied for the bounded M08A "
+            "fixation-rights calculation"
+        ),
+        technical_type="date",
+        canonical_representation="YYYY-MM-DD",
+        normalization_rule="strict_iso_calendar_date",
+        nullable=False,
+    )
+}
+M07_DERIVED_ONLY_FIELD_CODES = {"eligibility_year"}
+
+
+@dataclass(frozen=True)
 class M07AssessmentManifest:
     manifest_version: str
     schema_version: str
@@ -185,6 +211,33 @@ def canonicalize_m07_value(value: Any) -> Any:
     if value is None or isinstance(value, str):
         return value
     raise TypeError(f"unsupported M07 evidence value: {type(value).__name__}")
+
+
+def normalize_m07_evidence_field_value(*, field_code: str, value: Any) -> Any:
+    if field_code in M07_DERIVED_ONLY_FIELD_CODES:
+        raise M07EvidenceInvariantError(
+            f"{field_code} is derived and must not be supplied as M07 evidence"
+        )
+    contract = M07_EVIDENCE_FIELD_CONTRACTS.get(field_code)
+    if contract is None:
+        return value
+    if contract.normalization_rule != "strict_iso_calendar_date":
+        raise M07EvidenceInvariantError("unsupported M07 field normalization rule")
+    if not isinstance(value, str) or len(value) != 10:
+        raise M07EvidenceInvariantError(
+            f"{field_code} must be a valid calendar date in exact YYYY-MM-DD format"
+        )
+    try:
+        normalized = date.fromisoformat(value).isoformat()
+    except ValueError as error:
+        raise M07EvidenceInvariantError(
+            f"{field_code} must be a valid calendar date in exact YYYY-MM-DD format"
+        ) from error
+    if normalized != value:
+        raise M07EvidenceInvariantError(
+            f"{field_code} must be a valid calendar date in exact YYYY-MM-DD format"
+        )
+    return normalized
 
 
 def canonical_m07_json(value: Any) -> str:
@@ -536,6 +589,14 @@ def write_fact_evidence(
         db_session=db_session, client_id=client_id, revision_id=revision_id
     )
     _require_draft(revision)
+    request = request.model_copy(
+        update={
+            "structured_value": normalize_m07_evidence_field_value(
+                field_code=request.field_code,
+                value=request.structured_value,
+            )
+        }
+    )
     recorded_actor = _non_blank_actor(recorded_actor, "recorded_actor")
     if request.verification_state in {"verified", "partly_verified"}:
         verification_actor = _non_blank_actor(
@@ -663,6 +724,14 @@ def append_planner_assertion(
     _require_draft(revision)
     if not actor.strip():
         raise ValueError("actor is required")
+    request = request.model_copy(
+        update={
+            "asserted_value": normalize_m07_evidence_field_value(
+                field_code=request.field_code,
+                value=request.asserted_value,
+            )
+        }
+    )
     if request.predecessor_assertion_id:
         predecessor = db_session.scalar(
             select(M07PlannerAssertion).where(

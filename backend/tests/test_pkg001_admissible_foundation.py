@@ -12,20 +12,39 @@ from sqlalchemy.orm import sessionmaker
 
 import app.engines.fixation_engine as fixation_engine
 import app.services.fixation_service as fixation_service
-from app.db.base import load_all_models
+from app.db.base import Base, load_all_models
 from app.db.session import get_db
 from app.main import app
+from app.models.client import Client
 from app.models.fixation_audit_row import FixationAuditRow
 from app.models.fixation_input_snapshot import FixationInputSnapshot
 from app.schemas.fixation_contracts import FixationInput
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_service import calculate_fixation_payload
+from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
 
 
 load_all_models()
+_UNIT_ENGINE = create_engine("sqlite:///:memory:")
+Base.metadata.create_all(_UNIT_ENGINE)
+_UNIT_SESSION = sessionmaker(bind=_UNIT_ENGINE)()
+_UNIT_SESSION.add_all(
+    [
+        Client(client_id=1, display_name="Client 1", id_number="pkg001-client-1"),
+        Client(client_id=2, display_name="Client 2", id_number="pkg001-client-2"),
+    ]
+)
+_UNIT_SESSION.commit()
+_UNIT_REVISIONS = {
+    client_id: seed_eligibility_revision(
+        _UNIT_SESSION,
+        client_id=client_id,
+    )[0]
+    for client_id in (1, 2)
+}
 
 
-def _payload(*, client_id: int = 1) -> dict:
+def _legacy_payload(*, client_id: int = 1) -> dict:
     return {
         "calculation_id": "pkg-001",
         "calculation_version": "pkg-001-v1",
@@ -106,8 +125,20 @@ def _payload(*, client_id: int = 1) -> dict:
     }
 
 
+def _payload(*, client_id: int = 1) -> dict:
+    return resolver_payload(
+        _legacy_payload(client_id=client_id),
+        revision_id=_UNIT_REVISIONS[client_id],
+    )
+
+
 def _error_paths(payload: dict, *, client_id: int | None = None) -> set[str]:
-    _, _, errors = parse_and_admit_fixation_payload(payload, client_id=client_id)
+    _, _, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=client_id
+        or int(payload.get("parameter_set", {}).get("client_id", 1)),
+        db_session=_UNIT_SESSION,
+    )
     return {error.path for error in errors}
 
 
@@ -165,8 +196,12 @@ def test_only_admitted_values_reach_engine_and_result_is_deterministic() -> None
     payload = _payload()
     before = copy.deepcopy(payload)
 
-    first = calculate_fixation_payload(payload)
-    second = calculate_fixation_payload(payload)
+    first = calculate_fixation_payload(
+        payload, client_id=1, db_session=_UNIT_SESSION
+    )
+    second = calculate_fixation_payload(
+        payload, client_id=1, db_session=_UNIT_SESSION
+    )
 
     assert first.status == "success"
     assert first.model_dump() == second.model_dump()
@@ -238,7 +273,11 @@ def test_legacy_payload_cannot_reach_application_formula(
     monkeypatch.setattr(fixation_engine, "_calculate_formula_non_authoritative", fail_if_called)
     legacy_payload = _plain_formula_input().model_dump(mode="json")
 
-    result = calculate_fixation_payload(legacy_payload)
+    result = calculate_fixation_payload(
+        legacy_payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+    )
 
     assert result.status == "validation_failed"
     assert formula_called is False
@@ -248,12 +287,20 @@ def test_legacy_payload_cannot_reach_application_formula(
     "mutate_payload",
     [
         lambda payload: payload.pop("parameter_set"),
-        lambda payload: payload["upstream_context"].update(state="blocked"),
+        lambda payload: payload.update(
+            upstream_context={"state": "blocked"}
+        ),
         lambda payload: payload["grants"][0].update(accepted_for_use=False),
         lambda payload: payload["actual_capitalizations"][0].update(accepted_for_use=False),
         lambda payload: payload["future_grant_reservation"].update(accepted_for_use=False),
     ],
-    ids=["parameter-set", "m07-state", "grant", "capitalization", "future-reserve"],
+    ids=[
+        "parameter-set",
+        "legacy-m07-context",
+        "grant",
+        "capitalization",
+        "future-reserve",
+    ],
 )
 def test_missing_admissibility_evidence_cannot_reach_formula(
     monkeypatch: pytest.MonkeyPatch,
@@ -267,7 +314,9 @@ def test_missing_admissibility_evidence_cannot_reach_formula(
 
     monkeypatch.setattr(fixation_service, "calculate_fixation_engine", fail_if_called)
 
-    result = calculate_fixation_payload(payload)
+    result = calculate_fixation_payload(
+        payload, client_id=1, db_session=_UNIT_SESSION
+    )
 
     assert result.status == "validation_failed"
 
@@ -278,8 +327,14 @@ def test_reviewed_zero_and_preserved_exclusion_decisions() -> None:
     payload["actual_capitalizations"][0]["inclusion_decision"] = "exclude"
     payload["future_grant_reservation"] = None
 
-    context, engine_input, errors = parse_and_admit_fixation_payload(payload, client_id=1)
-    result = calculate_fixation_payload(payload)
+    context, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+    )
+    result = calculate_fixation_payload(
+        payload, client_id=1, db_session=_UNIT_SESSION
+    )
 
     assert errors == []
     assert context is not None and context.grants[0].inclusion_decision == "exclude"
@@ -297,7 +352,11 @@ def test_conflict_decision_is_used_without_system_source_ranking() -> None:
     grant["conflict_indicator"] = True
     grant["accepted_value"] = 1234.0
 
-    context, engine_input, errors = parse_and_admit_fixation_payload(payload)
+    context, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+    )
 
     assert errors == []
     assert context is not None and context.grants[0].conflict_indicator is True
@@ -355,8 +414,8 @@ def test_acceptance_evidence_unsupported_inputs_idf_and_m07_gate_block_engine() 
     assert "actual_capitalizations[0].accepted_for_use" in _error_paths(unaccepted_cap)
 
     blocked_m07 = _payload()
-    blocked_m07["upstream_context"]["state"] = "blocked"
-    assert "upstream_context.state" in _error_paths(blocked_m07)
+    blocked_m07["upstream_context"] = {"state": "blocked"}
+    assert "upstream_context" in _error_paths(blocked_m07)
 
     idf = _payload()
     idf["idf"] = {
@@ -367,7 +426,9 @@ def test_acceptance_evidence_unsupported_inputs_idf_and_m07_gate_block_engine() 
         "commutation_date": "2025-01-01",
         "promoter_age_date": "2027-01-01",
     }
-    result = calculate_fixation_payload(idf)
+    result = calculate_fixation_payload(
+        idf, client_id=1, db_session=_UNIT_SESSION
+    )
     assert result.status == "requires_special_handling"
     assert result.validation_errors[0].path == "idf"
 
@@ -405,8 +466,19 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
             "/api/clients",
             json={"full_name": "Other", "id_number": "pkg-other", "birth_date": "1970-01-01"},
         ).json()["client_id"]
+        with session_local() as session:
+            owner_revision, _ = seed_eligibility_revision(
+                session, client_id=owner
+            )
+            other_revision, _ = seed_eligibility_revision(
+                session, client_id=other
+            )
+            session.commit()
 
-        payload = _payload(client_id=owner)
+        payload = resolver_payload(
+            _legacy_payload(client_id=owner),
+            revision_id=owner_revision,
+        )
         saved = client.post(
             "/api/fixation/save",
             json={"client_id": owner, "input_data": payload},
@@ -425,15 +497,21 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
 
         cross_client_calculation = client.post(
             f"/api/clients/{other}/fixation/calculate",
-            json=_payload(client_id=owner),
+            json=resolver_payload(
+                _legacy_payload(client_id=owner),
+                revision_id=owner_revision,
+            ),
         )
         assert cross_client_calculation.status_code == 200
         assert cross_client_calculation.json()["status"] == "validation_failed"
         assert {
             error["path"] for error in cross_client_calculation.json()["validation_errors"]
-        } == {"upstream_context.client_id", "parameter_set.client_id"}
+        } == {"parameter_set.client_id"}
 
-        idf_payload = _payload(client_id=owner)
+        idf_payload = resolver_payload(
+            _legacy_payload(client_id=owner),
+            revision_id=owner_revision,
+        )
         idf_payload["idf"] = {
             "idf_id": "idf-save",
             "reduction_amount": 1000.0,
@@ -462,23 +540,13 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
         assert idf_calculated.status_code == 200
         assert idf_calculated.json()["status"] == "requires_special_handling"
 
-        warning_payload = _warning_reviewed_payload()
-        warning_payload["upstream_context"]["client_id"] = owner
-        warning_payload["parameter_set"]["client_id"] = owner
-        expected_warning_context = copy.deepcopy(warning_payload["upstream_context"])
-        warning_saved = client.post(
+        legacy_context_payload = _legacy_payload(client_id=owner)
+        legacy_saved = client.post(
             "/api/fixation/save",
-            json={"client_id": owner, "input_data": warning_payload},
+            json={"client_id": owner, "input_data": legacy_context_payload},
         )
-        assert warning_saved.status_code == 200
-        assert warning_saved.json()["status"] == "success"
-        warning_run_id = warning_saved.json()["run_id"]
-
-        warning_payload["upstream_context"]["review_reason"] = "mutated after save"
-        warning_detail = client.get(
-            f"/api/clients/{owner}/fixation/runs/{warning_run_id}"
-        ).json()
-        assert warning_detail["input_snapshot"]["upstream_context"] == expected_warning_context
+        assert legacy_saved.status_code == 200
+        assert legacy_saved.json()["status"] == "validation_failed"
 
         with session_local() as session:
             snapshot = session.scalar(
@@ -493,7 +561,10 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
             ).all()
             assert idf_audit_rows == []
 
-        mismatched = _payload(client_id=other)
+        mismatched = resolver_payload(
+            _legacy_payload(client_id=other),
+            revision_id=other_revision,
+        )
         rejected = client.post(
             "/api/fixation/save",
             json={"client_id": owner, "input_data": mismatched},

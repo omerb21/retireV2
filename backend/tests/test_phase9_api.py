@@ -14,6 +14,7 @@ from app.models.actual_capitalization import ActualCapitalization
 from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.fixation_run import FixationRun
+from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
 
 APPROVED_TABLES = {
     "clients",
@@ -47,6 +48,8 @@ ACCEPTED_ADDITIVE_TABLES = {
     "recurring_income",
     "retirement_timing_work_intention",
 }
+
+_M07_REVISION_ID: str | None = None
 
 
 def _backend_root() -> Path:
@@ -112,7 +115,7 @@ def _create_client(client: TestClient, *, id_number: str = "1001") -> dict:
 
 
 def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
-    return {
+    legacy_payload = {
         "calculation_id": calc_id,
         "calculation_version": "v1",
         "eligibility_date": f"{eligibility_year}-01-01",
@@ -183,9 +186,15 @@ def _fixation_input(*, calc_id: str, eligibility_year: int = 2025) -> dict:
         ],
         "idf": None,
     }
+    assert _M07_REVISION_ID is not None
+    return resolver_payload(
+        legacy_payload,
+        revision_id=_M07_REVISION_ID,
+    )
 
 
 def test_phase9_api_end_to_end(tmp_path: Path) -> None:
+    global _M07_REVISION_ID
     client, session_local, db_path = _build_client(tmp_path)
     try:
         empty_list_resp = client.get("/api/clients")
@@ -201,6 +210,13 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         # 1. Client id_number roundtrip and no status overload
         created = _create_client(client, id_number="001234567")
         created_client_id = created["client_id"]
+        with session_local() as db:
+            _M07_REVISION_ID, _ = seed_eligibility_revision(
+                db,
+                client_id=created_client_id,
+                eligibility_dates=("2025-01-01",),
+            )
+            db.commit()
         assert isinstance(created_client_id, int)
         assert created["full_name"] == "Jane Doe"
         assert created["id_number"] == "001234567"

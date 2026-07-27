@@ -14,11 +14,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.db.base import load_all_models
+from app.db.base import Base, load_all_models
 from app.db.session import get_db
 from app.engines.fixation_engine import calculate_fixation
 import app.engines.fixation_engine as fixation_engine_module
 from app.main import app
+from app.models.client import Client
 from app.schemas.cbs_indexation import (
     CBS_CALCULATOR_ENDPOINT,
     CBS_CPI_CODE,
@@ -35,13 +36,33 @@ from app.services.cbs_indexation_adapter import (
 )
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_service import calculate_fixation_payload
+from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
 
 
 load_all_models()
 NOW = datetime(2026, 1, 1, 8, 0, tzinfo=timezone.utc)
+_UNIT_ENGINE = create_engine("sqlite:///:memory:")
+Base.metadata.create_all(_UNIT_ENGINE)
+_UNIT_SESSION = sessionmaker(bind=_UNIT_ENGINE)()
+_UNIT_SESSION.add_all(
+    [
+        Client(client_id=1, display_name="Client 1", id_number="pkg002-client-1"),
+        Client(client_id=2, display_name="Client 2", id_number="pkg002-client-2"),
+    ]
+)
+_UNIT_SESSION.commit()
+_UNIT_REVISIONS = {
+    client_id: seed_eligibility_revision(
+        _UNIT_SESSION,
+        client_id=client_id,
+    )[0]
+    for client_id in (1, 2)
+}
 
 
-def _payload(*, client_id: int = 1, mode: str = "asserted_indexed_amount") -> dict:
+def _legacy_payload(
+    *, client_id: int = 1, mode: str = "asserted_indexed_amount"
+) -> dict:
     return {
         "calculation_id": "pkg-002",
         "calculation_version": "pkg-002-v1",
@@ -91,6 +112,15 @@ def _payload(*, client_id: int = 1, mode: str = "asserted_indexed_amount") -> di
         "actual_capitalizations": [],
         "idf": None,
     }
+
+
+def _payload(
+    *, client_id: int = 1, mode: str = "asserted_indexed_amount"
+) -> dict:
+    return resolver_payload(
+        _legacy_payload(client_id=client_id, mode=mode),
+        revision_id=_UNIT_REVISIONS[client_id],
+    )
 
 
 def _success(*, raw: str = "1234.5678") -> CbsIndexationSuccess:
@@ -361,7 +391,12 @@ def test_non_admissible_grants_never_call_cbs(gate: str) -> None:
         calls += 1
         return _success()
 
-    _, _, errors = parse_and_admit_fixation_payload(payload, cbs_calculator=calculator)
+    _, _, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=calculator,
+    )
     assert calls == 0
     if gate == "excluded":
         assert errors == []
@@ -371,7 +406,7 @@ def test_non_admissible_grants_never_call_cbs(gate: str) -> None:
 
 def test_blocked_m07_never_calls_cbs() -> None:
     payload = _payload(mode="cbs_system_calculation_required")
-    payload["upstream_context"]["state"] = "blocked"
+    payload["upstream_context"] = {"state": "blocked"}
     calls = 0
 
     def calculator(**_kwargs):
@@ -379,16 +414,25 @@ def test_blocked_m07_never_calls_cbs() -> None:
         calls += 1
         return _success()
 
-    _, engine_input, errors = parse_and_admit_fixation_payload(payload, cbs_calculator=calculator)
+    _, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=calculator,
+    )
     assert engine_input is None
     assert calls == 0
-    assert {error.path for error in errors} == {"upstream_context.state"}
+    assert {error.path for error in errors} == {"upstream_context"}
 
 
 def test_asserted_and_cbs_modes_remain_distinct_without_fallback() -> None:
     asserted = _payload()
     asserted["grants"][0]["asserted_indexed_amount"] = 9999.0
-    context, engine_input, errors = parse_and_admit_fixation_payload(asserted)
+    context, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        asserted,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+    )
     assert errors == []
     assert context is not None and engine_input is not None
     assert context.grants[0].asserted_indexed_amount == 9999.0
@@ -396,8 +440,11 @@ def test_asserted_and_cbs_modes_remain_distinct_without_fallback() -> None:
     assert context.grants[0].indexation_calculation_status == "asserted"
 
     required = _payload(mode="cbs_system_calculation_required")
-    context, engine_input, errors = parse_and_admit_fixation_payload(
-        required, cbs_calculator=lambda **_kwargs: _success()
+    context, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        required,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=lambda **_kwargs: _success(),
     )
     assert errors == []
     assert context is not None and engine_input is not None
@@ -412,7 +459,10 @@ def test_asserted_and_cbs_modes_remain_distinct_without_fallback() -> None:
     assert result.grant_results[0].indexed_amount == 1234.57
 
     failed = calculate_fixation_payload(
-        required, cbs_calculator=lambda **_kwargs: _failure()
+        required,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=lambda **_kwargs: _failure(),
     )
     assert failed.status == "calculation_failed"
     assert failed.grant_results is None
@@ -429,7 +479,12 @@ def test_grant_client_mismatch_fails_before_cbs() -> None:
         calls += 1
         return _success()
 
-    _, _, errors = parse_and_admit_fixation_payload(payload, client_id=1, cbs_calculator=calculator)
+    _, _, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=calculator,
+    )
     assert calls == 0
     assert {error.path for error in errors} == {"grants[0].client_id"}
 
@@ -443,8 +498,11 @@ def test_system_calculated_input_cannot_bypass_adapter_and_engine_has_no_http_cl
         calls += 1
         return _success()
 
-    _, engine_input, errors = parse_and_admit_fixation_payload(
-        payload, cbs_calculator=calculator
+    _, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=calculator,
     )
     assert engine_input is None
     assert calls == 0
@@ -456,8 +514,16 @@ def test_system_calculated_input_cannot_bypass_adapter_and_engine_has_no_http_cl
 
     forged = _payload(mode="cbs_system_calculation_required")
     forged["grants"][0]["system_calculated_amount"] = 777777.0
-    forged_context, forged_engine_input, forged_errors = parse_and_admit_fixation_payload(
-        forged, cbs_calculator=calculator
+    (
+        forged_context,
+        forged_engine_input,
+        forged_errors,
+        _,
+    ) = parse_and_admit_fixation_payload(
+        forged,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+        cbs_calculator=calculator,
     )
     assert forged_context is not None
     assert forged_engine_input is None
@@ -474,7 +540,11 @@ def test_caller_calculated_mode_is_rejected_before_grant_branching(gate: str) ->
     elif gate == "unsupported":
         grant["support_status"] = "unsupported"
 
-    context, engine_input, errors = parse_and_admit_fixation_payload(payload)
+    context, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+    )
 
     assert context is not None
     assert engine_input is None
@@ -505,7 +575,11 @@ def test_caller_system_evidence_fields_are_rejected_and_scrubbed(
     payload = _payload(mode="cbs_system_calculation_required")
     payload["grants"][0][field_name] = field_value
 
-    context, engine_input, errors = parse_and_admit_fixation_payload(payload)
+    context, engine_input, errors, _ = parse_and_admit_fixation_payload(
+        payload,
+        client_id=1,
+        db_session=_UNIT_SESSION,
+    )
 
     assert context is not None
     assert engine_input is None
@@ -555,8 +629,20 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
             "/api/clients",
             json={"full_name": "CBS Other", "id_number": "cbs-other", "birth_date": "1970-01-01"},
         ).json()["client_id"]
+        with session_local() as session:
+            owner_revision, _ = seed_eligibility_revision(
+                session, client_id=owner
+            )
+            seed_eligibility_revision(session, client_id=other)
+            session.commit()
 
-        forged = _payload(client_id=owner, mode="cbs_system_calculated")
+        def owner_payload(mode: str) -> dict:
+            return resolver_payload(
+                _legacy_payload(client_id=owner, mode=mode),
+                revision_id=owner_revision,
+            )
+
+        forged = owner_payload("cbs_system_calculated")
         forged_grant = forged["grants"][0]
         forged_grant["inclusion_decision"] = "exclude"
         forged_grant["system_calculated_amount"] = 777777.0
@@ -587,7 +673,7 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
             "app.services.fixation_admission_service.calculate_cbs_indexation",
             lambda **_kwargs: _success(),
         )
-        payload = _payload(client_id=owner, mode="cbs_system_calculation_required")
+        payload = owner_payload("cbs_system_calculation_required")
         saved = client.post("/api/fixation/save", json={"client_id": owner, "input_data": payload})
         assert saved.status_code == 200 and saved.json()["status"] == "success"
         run_id = saved.json()["run_id"]
@@ -614,13 +700,18 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
         )
         calculated_failure = client.post(
             f"/api/clients/{owner}/fixation/calculate",
-            json=_payload(client_id=owner, mode="cbs_system_calculation_required"),
+            json=owner_payload("cbs_system_calculation_required"),
         )
         assert calculated_failure.status_code == 200
         assert calculated_failure.json()["status"] == "calculation_failed"
         failed = client.post(
             "/api/fixation/save",
-            json={"client_id": owner, "input_data": _payload(client_id=owner, mode="cbs_system_calculation_required")},
+            json={
+                "client_id": owner,
+                "input_data": owner_payload(
+                    "cbs_system_calculation_required"
+                ),
+            },
         )
         assert failed.status_code == 200 and failed.json()["status"] == "calculation_failed"
         failed_detail = client.get(
@@ -658,10 +749,9 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
                     "/api/fixation/save",
                     json={
                         "client_id": owner,
-                        "input_data": _payload(
-                            client_id=owner,
-                            mode="cbs_system_calculation_required",
-                        ),
+                            "input_data": owner_payload(
+                                "cbs_system_calculation_required"
+                            ),
                     },
                 )
 
@@ -684,7 +774,12 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
         )
         unsupported = client.post(
             "/api/fixation/save",
-            json={"client_id": owner, "input_data": _payload(client_id=owner, mode="cbs_system_calculation_required")},
+            json={
+                "client_id": owner,
+                "input_data": owner_payload(
+                    "cbs_system_calculation_required"
+                ),
+            },
         )
         assert unsupported.status_code == 200
         assert unsupported.json()["status"] == "unsupported_calculation"

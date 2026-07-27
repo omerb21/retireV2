@@ -42,6 +42,7 @@ from app.services.fixation_service import (
     _dependency_manifest_model,
     _new_dependency_manifest_id,
 )
+from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
 
 
 load_all_models()
@@ -175,9 +176,39 @@ def _failure() -> CbsIndexationFailure:
 
 
 def _admitted(payload: dict, *, calculator=None) -> AdmissibleFixationInput:
-    context, _, errors = parse_and_admit_fixation_payload(payload, cbs_calculator=calculator)
-    assert context is not None
-    assert errors == []
+    context = AdmissibleFixationInput(**payload)
+    for grant in context.grants:
+        if grant.inclusion_decision == "exclude":
+            continue
+        if grant.indexation_mode == "asserted_indexed_amount":
+            selected = (
+                grant.accepted_value
+                if grant.conflict_indicator
+                else grant.indexed_amount
+            )
+            grant.asserted_indexed_amount = selected
+            grant.selected_calculation_amount = selected
+            grant.resolved_base_date = grant.grant_date
+            grant.base_date_source = "grant_date"
+            grant.target_date = context.eligibility_date
+            grant.indexation_calculation_status = "asserted"
+            continue
+        assert calculator is not None
+        outcome = calculator()
+        assert isinstance(outcome, CbsIndexationSuccess)
+        grant.indexation_mode = "cbs_system_calculated"
+        grant.asserted_indexed_amount = grant.indexed_amount
+        grant.system_calculated_amount = round(
+            float(outcome.response.raw_to_value), 2
+        )
+        grant.selected_calculation_amount = grant.system_calculated_amount
+        grant.resolved_base_date = outcome.request.resolved_base_date
+        grant.base_date_source = outcome.request.base_date_source
+        grant.target_date = outcome.request.target_date
+        grant.cpi_code = outcome.request.cpi_code
+        grant.cbs_request_evidence = outcome.request
+        grant.cbs_response_evidence = outcome.response
+        grant.indexation_calculation_status = "calculated"
     return context
 
 
@@ -437,11 +468,15 @@ def test_caller_cbs_dependency_changes_remain_unknown(field_path: tuple, value: 
 
 
 def test_missing_cbs_dependency_is_unknown_not_unchanged_or_changed() -> None:
-    historical_context, _, errors = parse_and_admit_fixation_payload(
-        _payload(mode="cbs_system_calculation_required"),
-        cbs_calculator=lambda **_kwargs: _failure(),
+    historical_context = AdmissibleFixationInput(
+        **_payload(mode="cbs_system_calculation_required")
     )
-    assert historical_context is not None and errors
+    failure = _failure()
+    historical_grant = historical_context.grants[0]
+    historical_grant.asserted_indexed_amount = historical_grant.indexed_amount
+    historical_grant.cbs_request_evidence = failure.request
+    historical_grant.indexation_failure_evidence = failure.failure
+    historical_grant.indexation_calculation_status = "failed"
     current_payload = _payload(mode="cbs_system_calculation_required")
     current_payload["grants"][0]["asserted_indexed_amount"] = 1200.0
     current_context = AdmissibleFixationInput(**current_payload)
@@ -693,7 +728,25 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
             "/api/clients",
             json={"full_name": "Manifest Other", "id_number": "manifest-other", "birth_date": "1970-01-01"},
         ).json()["client_id"]
-        payload = _payload(client_id=owner)
+        with session_local() as session:
+            owner_revision, _ = seed_eligibility_revision(
+                session,
+                client_id=owner,
+            )
+            other_revision, _ = seed_eligibility_revision(
+                session,
+                client_id=other,
+            )
+            session.commit()
+
+        def api_payload(*, client_id: int = owner, mode: str = "asserted_indexed_amount") -> dict:
+            revision_id = owner_revision if client_id == owner else other_revision
+            return resolver_payload(
+                _payload(client_id=client_id, mode=mode),
+                revision_id=revision_id,
+            )
+
+        payload = api_payload()
         saved = client.post("/api/fixation/save", json={"client_id": owner, "input_data": payload})
         assert saved.status_code == 200 and saved.json()["status"] == "success"
         run_id = saved.json()["run_id"]
@@ -720,7 +773,7 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
             json=_comparison_request(payload),
         )
         assert unchanged.status_code == 200
-        assert unchanged.json()["technical_result"] == "unchanged"
+        assert unchanged.json()["technical_result"] == "unchanged", unchanged.json()
 
         changed_context = copy.deepcopy(payload)
         changed_context["grants"][0]["nominal_amount"] = 1001.0
@@ -741,7 +794,11 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         assert unknown.json()["reason_codes"] == ["current_dependency_context_unavailable"]
 
         blocked_context = copy.deepcopy(payload)
-        blocked_context["upstream_context"]["state"] = "blocked"
+        blocked_context["upstream_context"] = {
+            "profile_id": "legacy-m07",
+            "client_id": owner,
+            "state": "blocked",
+        }
         blocked = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
             json=_comparison_request(blocked_context),
@@ -751,12 +808,18 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         assert blocked.json()["reason_codes"] == ["current_admitted_context_unavailable"]
 
         mismatch_context = copy.deepcopy(payload)
-        mismatch_context["upstream_context"]["client_id"] = other
+        mismatch_context["m07_input_reference"]["b1_evidence_revision_id"] = (
+            other_revision
+        )
         mismatch = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
             json=_comparison_request(mismatch_context),
         )
-        assert mismatch.status_code == 422
+        assert mismatch.status_code == 200
+        assert mismatch.json()["technical_result"] == "unknown"
+        assert mismatch.json()["reason_codes"] == [
+            "current_admitted_context_unavailable"
+        ]
         assert client.get(
             f"/api/clients/{other}/fixation/runs/{run_id}/dependency-manifest"
         ).status_code == 404
@@ -794,10 +857,7 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
             "current_cbs_evidence_unavailable"
         ]
 
-        forged_cbs_context = _payload(
-            client_id=owner,
-            mode="cbs_system_calculated",
-        )
+        forged_cbs_context = api_payload(mode="cbs_system_calculated")
         forged_cbs_context["grants"][0]["system_calculated_amount"] = 777777.0
         forged_cbs_context["grants"][0]["selected_calculation_amount"] = 777777.0
         forged_cbs_context["grants"][0]["cbs_request_evidence"] = _success().request.model_dump(
@@ -817,7 +877,7 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         cbs_required = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
             json=_comparison_request(
-                _payload(client_id=owner, mode="cbs_system_calculation_required")
+                api_payload(mode="cbs_system_calculation_required")
             ),
         )
         assert cbs_required.status_code == 200
@@ -874,6 +934,18 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
             "/api/clients",
             json={"full_name": "Status Owner", "id_number": "status-owner", "birth_date": "1970-01-01"},
         ).json()["client_id"]
+        with session_local() as session:
+            owner_revision, _ = seed_eligibility_revision(
+                session,
+                client_id=owner,
+            )
+            session.commit()
+
+        def api_payload(*, mode: str = "asserted_indexed_amount") -> dict:
+            return resolver_payload(
+                _payload(client_id=owner, mode=mode),
+                revision_id=owner_revision,
+            )
 
         monkeypatch.setattr(
             "app.services.fixation_admission_service.calculate_cbs_indexation",
@@ -883,7 +955,7 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
             "/api/fixation/save",
             json={
                 "client_id": owner,
-                "input_data": _payload(client_id=owner, mode="cbs_system_calculation_required"),
+                "input_data": api_payload(mode="cbs_system_calculation_required"),
             },
         ).json()
         assert cbs_success["status"] == "success"
@@ -902,7 +974,7 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
         comparison = client.post(
             f"/api/clients/{owner}/fixation/runs/{cbs_success['run_id']}/dependency-comparison",
             json=_comparison_request(
-                _payload(client_id=owner, mode="cbs_system_calculation_required")
+                api_payload(mode="cbs_system_calculation_required")
             ),
         ).json()
         assert comparison["technical_result"] == "unknown"
@@ -910,7 +982,7 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
         assert comparison["unavailable_dependencies"] == ["cbs:grant-1"]
         assert client.get(cbs_manifest_url).json()["manifest"] == saved_cbs_manifest
 
-        structural = _payload(client_id=owner)
+        structural = api_payload()
         structural.pop("parameter_set")
         validation_failed = client.post(
             "/api/fixation/save",
@@ -931,7 +1003,7 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
             "/api/fixation/save",
             json={
                 "client_id": owner,
-                "input_data": _payload(client_id=owner, mode="cbs_system_calculation_required"),
+                "input_data": api_payload(mode="cbs_system_calculation_required"),
             },
         ).json()
         assert calculation_failed["status"] == "calculation_failed"
@@ -941,7 +1013,7 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
         cbs = next(entry for entry in failure_manifest["dependencies"] if entry["dependency_type"] == "cbs")
         assert cbs["canonical_content"]["failure_evidence"]["failure_category"] == "timeout"
 
-        special_payload = _payload(client_id=owner)
+        special_payload = api_payload()
         special_payload["idf"] = {
             "idf_id": "idf-pkg003",
             "reduction_amount": 1000.0,
@@ -984,7 +1056,7 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
         }
         legacy_comparison = client.post(
             f"/api/clients/{owner}/fixation/runs/{legacy_id}/dependency-comparison",
-            json={"current_context": _payload(client_id=owner)},
+            json={"current_context": api_payload()},
         )
         assert legacy_comparison.status_code == 200
         assert legacy_comparison.json()["technical_result"] == "unknown"

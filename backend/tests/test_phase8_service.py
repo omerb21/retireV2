@@ -10,6 +10,8 @@ import pytest
 from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
 
+import app.models.pension_analysis_record  # noqa: F401
+from app.db.base import load_all_models
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.client import Client
 from app.models.client_profile import ClientProfile
@@ -28,6 +30,10 @@ from app.services.fixation_service import (
     get_latest_fixation_result,
     run_fixation,
 )
+from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
+
+
+load_all_models()
 
 
 def _backend_root() -> Path:
@@ -119,8 +125,12 @@ def _explicit_parameters(*, calc_id: str, monthly_cap: float, eligibility_year: 
     }
 
 
-def _admissible_payload(client_id: int, input_model: FixationInput) -> dict:
-    return {
+def _admissible_payload(
+    client_id: int,
+    input_model: FixationInput,
+    db_session: Session,
+) -> dict:
+    legacy_payload = {
         "calculation_id": input_model.calculation_id,
         "calculation_version": input_model.calculation_version,
         "eligibility_date": input_model.eligibility_date,
@@ -197,6 +207,15 @@ def _admissible_payload(client_id: int, input_model: FixationInput) -> dict:
         "idf": None,
         "metadata": input_model.metadata,
     }
+    revision_id, _ = seed_eligibility_revision(
+        db_session,
+        client_id=client_id,
+        eligibility_dates=(input_model.eligibility_date.isoformat(),),
+    )
+    return resolver_payload(
+        legacy_payload,
+        revision_id=revision_id,
+    )
 
 
 def test_create_client_source_data_persists_source_entities_only(tmp_path: Path) -> None:
@@ -254,7 +273,7 @@ def test_run_fixation_success_persists_run_snapshot_result_and_audit(tmp_path: P
 
         run_id = run_fixation(
             client_id=client_id,
-            input_data=_admissible_payload(client_id, input_model),
+            input_data=_admissible_payload(client_id, input_model, session),
             db_session=session,
         )
 
@@ -313,7 +332,7 @@ def test_multi_run_immutability_keeps_previous_run_unchanged(tmp_path: Path) -> 
         )
         run1_id = run_fixation(
             client_id=client_id,
-            input_data=_admissible_payload(client_id, run1_input),
+            input_data=_admissible_payload(client_id, run1_input, session),
             db_session=session,
         )
 
@@ -355,7 +374,7 @@ def test_multi_run_immutability_keeps_previous_run_unchanged(tmp_path: Path) -> 
         )
         run2_id = run_fixation(
             client_id=client_id,
-            input_data=_admissible_payload(client_id, run2_input),
+            input_data=_admissible_payload(client_id, run2_input, session),
             db_session=session,
         )
 
@@ -423,6 +442,7 @@ def test_get_latest_fixation_result_returns_newest_successful_run(tmp_path: Path
                     db_session=session,
                     explicit_parameters=_explicit_parameters(calc_id="calc-old", monthly_cap=1000.0),
                 ),
+                session,
             ),
             db_session=session,
         )
@@ -435,6 +455,7 @@ def test_get_latest_fixation_result_returns_newest_successful_run(tmp_path: Path
                     db_session=session,
                     explicit_parameters=_explicit_parameters(calc_id="calc-new", monthly_cap=1300.0),
                 ),
+                session,
             ),
             db_session=session,
         )
@@ -475,6 +496,7 @@ def test_get_fixation_history_returns_all_runs_newest_first(tmp_path: Path) -> N
                     db_session=session,
                     explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
                 ),
+                session,
             ),
             db_session=session,
         )
@@ -517,6 +539,7 @@ def test_get_fixation_run_detail_returns_full_run_data(tmp_path: Path) -> None:
                     db_session=session,
                     explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
                 ),
+                session,
             ),
             db_session=session,
         )
@@ -567,7 +590,7 @@ def test_run_fixation_rolls_back_on_persistence_failure(tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="simulated commit failure"):
             run_fixation(
                 client_id=client_id,
-                input_data=_admissible_payload(client_id, input_model),
+                input_data=_admissible_payload(client_id, input_model, session),
                 db_session=session,
             )
 

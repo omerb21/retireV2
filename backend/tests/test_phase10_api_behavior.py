@@ -18,8 +18,12 @@ from app.models.fixation_result import FixationResult as FixationResultModel
 from app.models.fixation_run import FixationRun
 from app.models.fixation_validation_error import FixationValidationError
 from app.models.internal_planner_judgment import InternalPlannerJudgment
-from app.schemas.fixation_admissibility import AdmissibleFixationInput
+from app.schemas.fixation_admissibility import ResolvedFixationAdmissionInput
 from app.schemas.fixation_contracts import FixationInput, FixationResult
+from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
+
+
+_M07_REVISIONS: dict[int, str] = {}
 
 
 def _backend_root() -> Path:
@@ -63,7 +67,12 @@ def _build_client(
     return client, session_local
 
 
-def _create_client(client: TestClient, *, id_number: str) -> int:
+def _create_client(
+    client: TestClient,
+    session_local: sessionmaker,
+    *,
+    id_number: str,
+) -> int:
     response = client.post(
         "/api/clients",
         json={
@@ -75,7 +84,16 @@ def _create_client(client: TestClient, *, id_number: str) -> int:
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload["client_id"], int)
-    return int(payload["client_id"])
+    client_id = int(payload["client_id"])
+    with session_local() as db:
+        revision_id, _ = seed_eligibility_revision(
+            db,
+            client_id=client_id,
+            eligibility_dates=("2025-01-01",),
+        )
+        db.commit()
+    _M07_REVISIONS[client_id] = revision_id
+    return client_id
 
 
 def _fixation_input(
@@ -85,7 +103,7 @@ def _fixation_input(
     monthly_cap: float = 1000.0,
     client_id: int = 1,
 ) -> dict:
-    return {
+    legacy_payload = {
         "calculation_id": calc_id,
         "calculation_version": "v1",
         "eligibility_date": f"{eligibility_year}-01-01",
@@ -160,6 +178,10 @@ def _fixation_input(
         ],
         "idf": None,
     }
+    return resolver_payload(
+        legacy_payload,
+        revision_id=_M07_REVISIONS[client_id],
+    )
 
 
 def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
@@ -464,7 +486,7 @@ def test_phase10_review_convert_endpoint_rejects_invalid_payload_with_stable_err
 def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_e2e.db")
     try:
-        client_id = _create_client(client, id_number="001234567")
+        client_id = _create_client(client, session_local, id_number="001234567")
 
         employment_resp = client.post(
             f"/api/clients/{client_id}/employment-records",
@@ -562,7 +584,9 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
 def test_phase10_validate_calculate_consistency_without_persistence(tmp_path: Path) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_validate_calculate.db")
     try:
-        client_id = _create_client(client, id_number="phase10-no-persist")
+        client_id = _create_client(
+            client, session_local, id_number="phase10-no-persist"
+        )
         payload = _fixation_input(calc_id="calc-no-persist")
         validate_resp = client.post(f"/api/clients/{client_id}/fixation/validate", json=payload)
         calculate_resp = client.post(f"/api/clients/{client_id}/fixation/calculate", json=payload)
@@ -587,7 +611,7 @@ def test_phase10_validate_calculate_consistency_without_persistence(tmp_path: Pa
 def test_phase10_save_behavior_persistence_boundaries(tmp_path: Path) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_save_behavior.db")
     try:
-        client_id = _create_client(client, id_number="3001")
+        client_id = _create_client(client, session_local, id_number="3001")
 
         success_resp = client.post(
             "/api/fixation/save",
@@ -632,7 +656,7 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
 ) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_review_context.db")
     try:
-        client_id = _create_client(client, id_number="3101")
+        client_id = _create_client(client, session_local, id_number="3101")
         input_payload = _fixation_input(calc_id="calc-review-context")
         review_context = _planner_review_context()
 
@@ -663,20 +687,14 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
         detail_resp = client.get(f"/api/clients/{client_id}/fixation/runs/{run_id}")
         assert detail_resp.status_code == 200
         detail = detail_resp.json()
-        expected_snapshot = AdmissibleFixationInput(**input_payload).model_dump(mode="json")
-        expected_snapshot["grants"][0].update(
-            {
-                "asserted_indexed_amount": 10000.0,
-                "selected_calculation_amount": 10000.0,
-                "resolved_base_date": "2020-01-01",
-                "base_date_source": "grant_date",
-                "target_date": "2025-01-01",
-                "indexation_warnings": [
-                    "Asserted indexed amount accepted for use; not a CBS system-calculated result"
-                ],
-                "indexation_calculation_status": "asserted",
-            }
+        resolved_snapshot = ResolvedFixationAdmissionInput(
+            **detail["input_snapshot"]
         )
+        expected_snapshot = resolved_snapshot.model_dump(mode="json")
+        assert resolved_snapshot.eligibility_date.isoformat() == "2025-01-01"
+        assert resolved_snapshot.eligibility_year == 2025
+        assert resolved_snapshot.grants[0].selected_calculation_amount == 10000.0
+        assert resolved_snapshot.m07_resolution.outcome == "resolved"
         assert detail["planner_review_context"] == review_context
         assert detail["input_snapshot"] == expected_snapshot
         assert FixationResult(**detail["result"]).status == "success"
@@ -693,9 +711,11 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
 
 
 def test_phase10_save_without_planner_review_context_remains_valid(tmp_path: Path) -> None:
-    client, _ = _build_client(tmp_path, db_name="phase10_no_review_context.db")
+    client, session_local = _build_client(
+        tmp_path, db_name="phase10_no_review_context.db"
+    )
     try:
-        client_id = _create_client(client, id_number="3102")
+        client_id = _create_client(client, session_local, id_number="3102")
 
         save_resp = client.post(
             "/api/fixation/save",
@@ -719,7 +739,7 @@ def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
 ) -> None:
     client, session_local = _build_client(tmp_path, db_name="phase10_internal_judgment.db")
     try:
-        client_id = _create_client(client, id_number="3201")
+        client_id = _create_client(client, session_local, id_number="3201")
         input_payload = _fixation_input(calc_id="calc-internal-judgment")
         review_context = _planner_review_context()
 
@@ -792,7 +812,7 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
         assert missing_resp.status_code == 404
         assert missing_resp.json()["detail"]["code"] == "FIXATION_RUN_NOT_FOUND"
 
-        client_id = _create_client(client, id_number="3202")
+        client_id = _create_client(client, session_local, id_number="3202")
         save_resp = client.post(
             "/api/fixation/save",
             json={
@@ -837,9 +857,11 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
 
 
 def test_phase10_immutability_and_snapshot_result_integrity(tmp_path: Path) -> None:
-    client, _ = _build_client(tmp_path, db_name="phase10_immutability.db")
+    client, session_local = _build_client(
+        tmp_path, db_name="phase10_immutability.db"
+    )
     try:
-        client_id = _create_client(client, id_number="4001")
+        client_id = _create_client(client, session_local, id_number="4001")
 
         save_resp = client.post(
             "/api/fixation/save",
@@ -873,7 +895,9 @@ def test_phase10_immutability_and_snapshot_result_integrity(tmp_path: Path) -> N
         assert after_detail["input_snapshot"] == before_snapshot
         assert after_detail["result"] == before_result
 
-        reconstructed_input = AdmissibleFixationInput(**after_detail["input_snapshot"])
+        reconstructed_input = ResolvedFixationAdmissionInput(
+            **after_detail["input_snapshot"]
+        )
         reconstructed_result = FixationResult(**after_detail["result"])
         assert reconstructed_input.model_dump(mode="json") == after_detail["input_snapshot"]
         assert reconstructed_result.model_dump(mode="json") == after_detail["result"]
@@ -882,14 +906,18 @@ def test_phase10_immutability_and_snapshot_result_integrity(tmp_path: Path) -> N
 
 
 def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
-    client, _ = _build_client(tmp_path, db_name="phase10_latest_history_errors.db")
+    client, session_local = _build_client(
+        tmp_path, db_name="phase10_latest_history_errors.db"
+    )
     try:
-        client_no_runs = _create_client(client, id_number="5001")
+        client_no_runs = _create_client(client, session_local, id_number="5001")
         latest_none_resp = client.get(f"/api/clients/{client_no_runs}/fixation/latest")
         assert latest_none_resp.status_code == 200
         assert latest_none_resp.json() == {"result": None}
 
-        client_failed_only = _create_client(client, id_number="5002")
+        client_failed_only = _create_client(
+            client, session_local, id_number="5002"
+        )
         failed_only_resp = client.post(
             "/api/fixation/save",
             json={
@@ -902,7 +930,7 @@ def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
         assert latest_failed_only_resp.status_code == 200
         assert latest_failed_only_resp.json() == {"result": None}
 
-        client_mixed = _create_client(client, id_number="5003")
+        client_mixed = _create_client(client, session_local, id_number="5003")
         success_resp = client.post(
             "/api/fixation/save",
             json={
@@ -980,7 +1008,7 @@ def test_phase10_transaction_safety_rollback_on_save_failure(
         raise_server_exceptions=False,
     )
     try:
-        client_id = _create_client(client, id_number="6001")
+        client_id = _create_client(client, session_local, id_number="6001")
 
         def failing_commit(self: SASession) -> None:
             raise RuntimeError("simulated commit failure")

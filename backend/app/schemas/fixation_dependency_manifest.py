@@ -12,9 +12,20 @@ from app.schemas.cbs_indexation import (
     IndexationBaseDateSource,
 )
 from app.schemas.fixation_admissibility import M07QualificationWarning
+from app.schemas.m07_calculation_input_resolution import (
+    CalculationInputSelection,
+    CalculationInputSourceReference,
+    ResolutionOutcome,
+)
 
 
-MANIFEST_SCHEMA_VERSION = "pkg003.fixation-dependency-manifest.v1"
+LEGACY_MANIFEST_SCHEMA_VERSION = "pkg003.fixation-dependency-manifest.v1"
+RESOLVER_MANIFEST_SCHEMA_VERSION = "pkg004d.fixation-dependency-manifest.v2"
+MANIFEST_SCHEMA_VERSION = LEGACY_MANIFEST_SCHEMA_VERSION
+SupportedManifestSchemaVersion = Literal[
+    "pkg003.fixation-dependency-manifest.v1",
+    "pkg004d.fixation-dependency-manifest.v2",
+]
 FINGERPRINT_ALGORITHM_VERSION = "sha256-canonical-json-v1"
 FINGERPRINT_SCHEMA_VERSION = "pkg003.dependency-content.v1"
 COMPARISON_ALGORITHM_VERSION = "pkg003.dependency-comparison.v1"
@@ -38,13 +49,25 @@ class M07DependencyContent(ManifestContract):
     review_timestamp: datetime | None
 
 
+class M07ResolverDependencyContent(ManifestContract):
+    b1_evidence_revision_id: str
+    calculation_scope: str
+    manifest_version: str
+    resolver_outcome: ResolutionOutcome
+    resolver_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    normalized_eligibility_date: date | None
+    derived_eligibility_year: int | None
+    source_references: list[CalculationInputSourceReference]
+    selections: list[CalculationInputSelection]
+
+
 class CalculationContextDependencyContent(ManifestContract):
     eligibility_date: date
     eligibility_year: int
     calculation_version: str
     input_contract_version: str
     result_contract_version: str | None
-    manifest_schema_version: Literal["pkg003.fixation-dependency-manifest.v1"] = (
+    manifest_schema_version: SupportedManifestSchemaVersion = (
         MANIFEST_SCHEMA_VERSION
     )
     fingerprint_algorithm_version: Literal["sha256-canonical-json-v1"] = (
@@ -162,6 +185,11 @@ class M07DependencyEntry(DependencyEntryBase):
     canonical_content: M07DependencyContent | None
 
 
+class M07ResolverDependencyEntry(DependencyEntryBase):
+    dependency_type: Literal["m07_resolver"] = "m07_resolver"
+    canonical_content: M07ResolverDependencyContent | None
+
+
 class CalculationContextDependencyEntry(DependencyEntryBase):
     dependency_type: Literal["calculation_context"] = "calculation_context"
     canonical_content: CalculationContextDependencyContent | None
@@ -195,6 +223,7 @@ class CbsDependencyEntry(DependencyEntryBase):
 DependencyEntry = Annotated[
     CalculationContextDependencyEntry
     | M07DependencyEntry
+    | M07ResolverDependencyEntry
     | ParameterDependencyEntry
     | GrantDependencyEntry
     | CapitalizationDependencyEntry
@@ -211,7 +240,7 @@ class FixationDependencyManifest(ManifestContract):
     calculation_version: str
     input_contract_version: str
     result_contract_version: str | None
-    manifest_schema_version: Literal["pkg003.fixation-dependency-manifest.v1"] = (
+    manifest_schema_version: SupportedManifestSchemaVersion = (
         MANIFEST_SCHEMA_VERSION
     )
     fingerprint_algorithm_version: Literal["sha256-canonical-json-v1"] = (

@@ -14,6 +14,10 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.m07_calculation_input_resolution import (
+    CalculationInputResolutionResult,
+)
+
 
 def _require_non_empty(value: str, field_name: str) -> str:
     stripped = value.strip()
@@ -736,6 +740,7 @@ class FixationResult(BaseModel):
         "unsupported_calculation",
     ]
     validation_errors: list[ValidationError]
+    m07_resolution: CalculationInputResolutionResult | None = None
     eligibility_date: date | None = None
     eligibility_year: int | None = None
     monthly_cap: float | None = None
@@ -761,12 +766,19 @@ class FixationResult(BaseModel):
     def serialize_result(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         serialized = handler(self)
         if self.status != "success":
-            allowed_fields = {"calculation_id", "calculation_version", "status", "validation_errors"}
+            allowed_fields = {
+                "calculation_id",
+                "calculation_version",
+                "status",
+                "validation_errors",
+                "m07_resolution",
+            }
             return {
                 key: value
                 for key, value in serialized.items()
                 if key in allowed_fields and (value is not None or key in {"status", "validation_errors"})
             }
+        serialized.pop("m07_resolution", None)
         return serialized
 
     @model_validator(mode="after")

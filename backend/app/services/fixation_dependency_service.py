@@ -11,13 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.fixation_run import FixationRun
-from app.schemas.fixation_admissibility import AdmissibleFixationInput
+from app.schemas.fixation_admissibility import (
+    AdmissibleFixationInput,
+    FixationAdmissionRequest,
+    ResolvedFixationAdmissionInput,
+)
 from app.schemas.fixation_dependency_manifest import (
     CBS_ADAPTER_CONTRACT_VERSION,
     COMPARISON_ALGORITHM_VERSION,
     FINGERPRINT_ALGORITHM_VERSION,
     FINGERPRINT_SCHEMA_VERSION,
     MANIFEST_SCHEMA_VERSION,
+    RESOLVER_MANIFEST_SCHEMA_VERSION,
     CalculationContextDependencyContent,
     CalculationContextDependencyEntry,
     CapitalizationDependencyContent,
@@ -33,10 +38,15 @@ from app.schemas.fixation_dependency_manifest import (
     GrantDependencyEntry,
     M07DependencyContent,
     M07DependencyEntry,
+    M07ResolverDependencyContent,
+    M07ResolverDependencyEntry,
     ParameterDependencyContent,
     ParameterDependencyEntry,
     ParameterValuesContent,
     PerDependencyComparison,
+)
+from app.schemas.m07_calculation_input_resolution import (
+    CalculationInputResolutionResult,
 )
 
 
@@ -180,7 +190,7 @@ def build_fixation_dependency_manifest(
     calculation_version: str,
     input_contract_version: str,
     result_contract_version: str | None,
-    context: AdmissibleFixationInput | None,
+    context: AdmissibleFixationInput | ResolvedFixationAdmissionInput | None,
 ) -> FixationDependencyManifest:
     if _has_system_cbs_evidence(context):
         return _unavailable_dependency_manifest(
@@ -212,6 +222,7 @@ def _unavailable_dependency_manifest(
     input_contract_version: str,
     result_contract_version: str | None,
     reason_code: str,
+    manifest_schema_version: str = MANIFEST_SCHEMA_VERSION,
 ) -> FixationDependencyManifest:
     return FixationDependencyManifest(
         run_id=run_id,
@@ -220,7 +231,7 @@ def _unavailable_dependency_manifest(
         calculation_version=calculation_version,
         input_contract_version=input_contract_version,
         result_contract_version=result_contract_version,
-        manifest_schema_version=MANIFEST_SCHEMA_VERSION,
+        manifest_schema_version=manifest_schema_version,
         fingerprint_algorithm_version=FINGERPRINT_ALGORITHM_VERSION,
         context_availability="unavailable",
         context_reason_codes=[reason_code],
@@ -229,7 +240,9 @@ def _unavailable_dependency_manifest(
     )
 
 
-def _has_system_cbs_evidence(context: AdmissibleFixationInput | None) -> bool:
+def _has_system_cbs_evidence(
+    context: AdmissibleFixationInput | ResolvedFixationAdmissionInput | None,
+) -> bool:
     return context is not None and any(
         grant.indexation_mode == "cbs_system_calculated"
         or grant.system_calculated_amount is not None
@@ -249,7 +262,13 @@ def _build_dependency_manifest(
     calculation_version: str,
     input_contract_version: str,
     result_contract_version: str | None,
-    context: AdmissibleFixationInput | None,
+    context: (
+        AdmissibleFixationInput
+        | FixationAdmissionRequest
+        | ResolvedFixationAdmissionInput
+        | None
+    ),
+    resolution: CalculationInputResolutionResult | None = None,
 ) -> FixationDependencyManifest:
     if context is None:
         return _unavailable_dependency_manifest(
@@ -261,28 +280,127 @@ def _build_dependency_manifest(
             result_contract_version=result_contract_version,
             reason_code="admissible_context_unavailable",
         )
-    warnings = context.upstream_context.warnings
-    sorted_warnings = (
-        sorted(warnings, key=lambda warning: (warning.code, warning.message))
-        if warnings is not None
-        else None
-    )
-    m07_content = M07DependencyContent(
-        profile_id=context.upstream_context.profile_id,
-        state=context.upstream_context.state,
-        qualification_trace_id=context.upstream_context.qualification_trace_id,
-        warnings=sorted_warnings,
-        review_reason=context.upstream_context.review_reason,
-        reviewed_by=context.upstream_context.reviewed_by,
-        review_timestamp=context.upstream_context.review_timestamp,
-    )
+    if isinstance(context, ResolvedFixationAdmissionInput):
+        resolution = context.m07_resolution
+        manifest_schema_version = RESOLVER_MANIFEST_SCHEMA_VERSION
+        m07_content = M07ResolverDependencyContent(
+            b1_evidence_revision_id=(
+                context.m07_input_reference.b1_evidence_revision_id
+            ),
+            calculation_scope=resolution.calculation_scope,
+            manifest_version=resolution.manifest_version,
+            resolver_outcome=resolution.outcome,
+            resolver_fingerprint=resolution.fingerprint,
+            normalized_eligibility_date=context.eligibility_date,
+            derived_eligibility_year=context.eligibility_year,
+            source_references=resolution.source_references.get(
+                "eligibility_date", []
+            ),
+            selections=context.m07_input_reference.selections,
+        )
+        m07_entry: DependencyEntry = M07ResolverDependencyEntry(
+            stable_identity=context.m07_input_reference.b1_evidence_revision_id,
+            **_entry_kwargs(m07_content),
+        )
+    elif isinstance(context, FixationAdmissionRequest):
+        if resolution is None:
+            return _unavailable_dependency_manifest(
+                run_id=run_id,
+                run_identity=run_identity,
+                client_id=client_id,
+                calculation_version=calculation_version,
+                input_contract_version=input_contract_version,
+                result_contract_version=result_contract_version,
+                reason_code="m07_resolution_unavailable",
+                manifest_schema_version=RESOLVER_MANIFEST_SCHEMA_VERSION,
+            )
+        source_references = [
+            reference
+            for references in resolution.source_references.values()
+            for reference in references
+        ]
+        source_references.extend(
+            reference
+            for field in resolution.ambiguous_fields
+            for candidate in field.candidates
+            for reference in candidate.source_references
+        )
+        unique_source_references = {
+            (reference.source_kind, reference.source_id): reference
+            for reference in source_references
+        }
+        m07_content = M07ResolverDependencyContent(
+            b1_evidence_revision_id=(
+                context.m07_input_reference.b1_evidence_revision_id
+            ),
+            calculation_scope=resolution.calculation_scope,
+            manifest_version=resolution.manifest_version,
+            resolver_outcome=resolution.outcome,
+            resolver_fingerprint=resolution.fingerprint,
+            normalized_eligibility_date=None,
+            derived_eligibility_year=None,
+            source_references=[
+                unique_source_references[key]
+                for key in sorted(unique_source_references)
+            ],
+            selections=context.m07_input_reference.selections,
+        )
+        m07_entry = M07ResolverDependencyEntry(
+            stable_identity=context.m07_input_reference.b1_evidence_revision_id,
+            **_entry_kwargs(m07_content),
+        )
+        entries = [m07_entry]
+        return FixationDependencyManifest(
+            run_id=run_id,
+            run_identity=run_identity,
+            client_id=client_id,
+            calculation_version=calculation_version,
+            input_contract_version=input_contract_version,
+            result_contract_version=result_contract_version,
+            manifest_schema_version=RESOLVER_MANIFEST_SCHEMA_VERSION,
+            fingerprint_algorithm_version=FINGERPRINT_ALGORITHM_VERSION,
+            context_availability="available",
+            dependencies=entries,
+            manifest_fingerprint=dependency_fingerprint(
+                [
+                    {
+                        "dependency_type": m07_entry.dependency_type,
+                        "stable_identity": m07_entry.stable_identity,
+                        "availability_state": m07_entry.availability_state,
+                        "fingerprint": m07_entry.fingerprint,
+                        "reason_codes": m07_entry.reason_codes,
+                    }
+                ]
+            ),
+        )
+    else:
+        manifest_schema_version = MANIFEST_SCHEMA_VERSION
+        warnings = context.upstream_context.warnings
+        sorted_warnings = (
+            sorted(warnings, key=lambda warning: (warning.code, warning.message))
+            if warnings is not None
+            else None
+        )
+        m07_content = M07DependencyContent(
+            profile_id=context.upstream_context.profile_id,
+            state=context.upstream_context.state,
+            qualification_trace_id=context.upstream_context.qualification_trace_id,
+            warnings=sorted_warnings,
+            review_reason=context.upstream_context.review_reason,
+            reviewed_by=context.upstream_context.reviewed_by,
+            review_timestamp=context.upstream_context.review_timestamp,
+        )
+        m07_entry = M07DependencyEntry(
+            stable_identity=context.upstream_context.profile_id,
+            **_entry_kwargs(m07_content),
+        )
     calculation_context_content = CalculationContextDependencyContent(
         eligibility_date=context.eligibility_date,
         eligibility_year=context.eligibility_year,
         calculation_version=calculation_version,
         input_contract_version=input_contract_version,
         result_contract_version=result_contract_version,
-        manifest_schema_version=MANIFEST_SCHEMA_VERSION,
+        manifest_schema_version=manifest_schema_version,
         fingerprint_algorithm_version=FINGERPRINT_ALGORITHM_VERSION,
         fingerprint_schema_version=FINGERPRINT_SCHEMA_VERSION,
         comparison_algorithm_version=COMPARISON_ALGORITHM_VERSION,
@@ -292,10 +410,7 @@ def _build_dependency_manifest(
             stable_identity=None,
             **_entry_kwargs(calculation_context_content),
         ),
-        M07DependencyEntry(
-            stable_identity=context.upstream_context.profile_id,
-            **_entry_kwargs(m07_content),
-        )
+        m07_entry,
     ]
 
     parameter_set = context.parameter_set
@@ -419,6 +534,7 @@ def _build_dependency_manifest(
         calculation_version=calculation_version,
         input_contract_version=input_contract_version,
         result_contract_version=result_contract_version,
+        manifest_schema_version=manifest_schema_version,
         context_availability="available",
         dependencies=entries,
         manifest_fingerprint=dependency_fingerprint(fingerprint_basis),
@@ -652,7 +768,20 @@ def _missing_required_dependencies(
     """Return technical dependencies required to compare the saved run safely."""
 
     missing: set[str] = set()
-    singleton_types = {"calculation_context", "m07", "parameter_set", "future_reserve"}
+    m07_dependency_type = (
+        "m07_resolver"
+        if any(
+            key[0] == "m07_resolver"
+            for key in historical_entries.keys() | current_entries.keys()
+        )
+        else "m07"
+    )
+    singleton_types = {
+        "calculation_context",
+        m07_dependency_type,
+        "parameter_set",
+        "future_reserve",
+    }
     for dependency_type in singleton_types:
         if not any(key[0] == dependency_type for key in historical_entries):
             missing.add(f"historical:{dependency_type}")

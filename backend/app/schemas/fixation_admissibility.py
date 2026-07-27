@@ -12,6 +12,10 @@ from app.schemas.cbs_indexation import (
     IndexationBaseDateSource,
 )
 from app.schemas.fixation_contracts import IDFInput
+from app.schemas.m07_calculation_input_resolution import (
+    CalculationInputResolutionResult,
+    CalculationInputSelection,
+)
 
 
 def _non_empty(value: str, field_name: str) -> str:
@@ -299,3 +303,66 @@ class AdmissibleFixationInput(BaseModel):
             raise ValueError(f"{state} requires an empty {field_name} array")
         if state == "items_recorded" and not items:
             raise ValueError(f"items_recorded requires one or more {field_name} items")
+
+
+class M07InputReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    b1_evidence_revision_id: str = Field(min_length=1, max_length=64)
+    selections: list[CalculationInputSelection] = Field(default_factory=list)
+
+
+class FixationAdmissionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    calculation_id: str | None = None
+    calculation_version: str
+    m07_input_reference: M07InputReference
+    parameter_set: AcceptedParameterSet
+    grants_collection_state: CollectionState
+    grants: list[AdmissibleGrantItem]
+    future_grant_reservation: FutureGrantReservation | None
+    actual_capitalizations_collection_state: CollectionState
+    actual_capitalizations: list[AdmissibleActualCapitalizationItem]
+    idf: IDFInput | None = None
+    metadata: dict | None = None
+
+    @field_validator("calculation_id")
+    @classmethod
+    def validate_calculation_id(cls, value: str | None) -> str | None:
+        return None if value is None else _non_empty(value, "calculation_id")
+
+    @field_validator("calculation_version")
+    @classmethod
+    def validate_calculation_version(cls, value: str) -> str:
+        return _non_empty(value, "calculation_version")
+
+    @model_validator(mode="after")
+    def validate_collection_shapes(self) -> "FixationAdmissionRequest":
+        AdmissibleFixationInput._validate_collection(
+            self.grants_collection_state, self.grants, "grants"
+        )
+        AdmissibleFixationInput._validate_collection(
+            self.actual_capitalizations_collection_state,
+            self.actual_capitalizations,
+            "actual_capitalizations",
+        )
+        return self
+
+
+class ResolvedFixationAdmissionInput(FixationAdmissionRequest):
+    eligibility_date: date
+    eligibility_year: int
+    m07_resolution: CalculationInputResolutionResult
+
+    @model_validator(mode="after")
+    def validate_resolved_m07_input(self) -> "ResolvedFixationAdmissionInput":
+        if self.eligibility_year != self.eligibility_date.year:
+            raise ValueError("eligibility_year must match eligibility_date year")
+        if self.m07_resolution.outcome != "resolved":
+            raise ValueError("resolved admission requires a resolved M07 outcome")
+        if self.m07_resolution.calculation_payload is None:
+            raise ValueError(
+                "resolved admission requires an M07 calculation-ready payload"
+            )
+        return self

@@ -1,20 +1,39 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy.orm import Session
 
 from app.engines.fixation_engine import AdmittedFixationInput, _admit_fixation_input
 from app.schemas.cbs_indexation import CbsIndexationFailure
-from app.schemas.fixation_admissibility import AdmissibleFixationInput
+from app.schemas.fixation_admissibility import (
+    FixationAdmissionRequest,
+    ResolvedFixationAdmissionInput,
+)
 from app.schemas.fixation_contracts import (
     FixationInput,
     FixationResult,
     ValidationError,
     map_contract_validation_errors,
 )
+from app.schemas.m07_calculation_input_resolution import (
+    CalculationInputResolutionRequest,
+    CalculationInputResolutionResult,
+)
 from app.services.cbs_indexation_adapter import calculate_cbs_indexation
+from app.services.m07_calculation_input_manifest import (
+    M08A_FIXATION_CALCULATION_SCOPE,
+    M08A_FIXATION_MANIFEST_VERSION,
+    M07CalculationInputManifestError,
+)
+from app.services.m07_calculation_input_resolver import (
+    M07CalculationInputReferenceError,
+    M07CalculationInputSelectionError,
+    resolve_calculation_inputs,
+)
 
 
 CBS_SERVER_CONTROLLED_INPUT_FIELDS = (
@@ -77,38 +96,172 @@ def _error(
 def parse_and_admit_fixation_payload(
     payload: dict[str, Any],
     *,
-    client_id: int | None = None,
+    client_id: int,
+    db_session: Session,
     cbs_calculator=None,
-) -> tuple[AdmissibleFixationInput | None, AdmittedFixationInput | None, list[ValidationError]]:
+) -> tuple[
+    FixationAdmissionRequest | ResolvedFixationAdmissionInput | None,
+    AdmittedFixationInput | None,
+    list[ValidationError],
+    CalculationInputResolutionResult | None,
+]:
     try:
-        context = AdmissibleFixationInput(**payload)
+        request_context = FixationAdmissionRequest(**payload)
     except PydanticValidationError as exc:
-        return None, None, map_contract_validation_errors(exc)
+        return None, None, map_contract_validation_errors(exc), None
 
     errors: list[ValidationError] = []
-    parameter_set = context.parameter_set
-
-    if context.upstream_context.client_id != parameter_set.client_id:
-        errors.append(
-            _error(
-                "parameter_set.client_id",
-                "parameter set and upstream context belong to different clients",
-            )
+    parameter_set = request_context.parameter_set
+    if parameter_set.client_id != client_id:
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    "parameter_set.client_id",
+                    "parameter set belongs to another client",
+                )
+            ],
+            None,
         )
 
-    if client_id is not None:
-        if context.upstream_context.client_id != client_id:
-            errors.append(_error("upstream_context.client_id", "upstream context belongs to another client"))
-        if parameter_set.client_id != client_id:
-            errors.append(_error("parameter_set.client_id", "parameter set belongs to another client"))
-
-    if context.upstream_context.state not in {"qualified", "warning_reviewed"}:
-        errors.append(
-            _error(
-                "upstream_context.state",
-                "only qualified or warning_reviewed M07 context may reach M08",
-            )
+    resolution_request = CalculationInputResolutionRequest(
+        calculation_scope=M08A_FIXATION_CALCULATION_SCOPE,
+        manifest_version=M08A_FIXATION_MANIFEST_VERSION,
+        b1_evidence_revision_id=(
+            request_context.m07_input_reference.b1_evidence_revision_id
+        ),
+        selections=request_context.m07_input_reference.selections,
+    )
+    try:
+        resolution = resolve_calculation_inputs(
+            db_session=db_session,
+            client_id=client_id,
+            request=resolution_request,
         )
+    except M07CalculationInputReferenceError as error:
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    "m07_input_reference.b1_evidence_revision_id",
+                    str(error),
+                    code="MISSING_REQUIRED_VALUE",
+                )
+            ],
+            None,
+        )
+    except M07CalculationInputSelectionError as error:
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    "m07_input_reference.selections",
+                    str(error),
+                )
+            ],
+            None,
+        )
+    except M07CalculationInputManifestError as error:
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    "m07_input_reference",
+                    str(error),
+                )
+            ],
+            None,
+        )
+
+    if resolution.outcome == "missing_inputs":
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    f"m07_input_reference.{field_code}",
+                    f"required calculation input '{field_code}' is missing or invalid",
+                    code="MISSING_REQUIRED_VALUE",
+                )
+                for field_code in resolution.missing_fields
+            ],
+            resolution,
+        )
+    if resolution.outcome == "ambiguous_inputs":
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    f"m07_input_reference.{field.field_code}",
+                    (
+                        f"calculation input '{field.field_code}' is ambiguous; "
+                        "an explicit available-candidate selection is required"
+                    ),
+                )
+                for field in resolution.ambiguous_fields
+            ],
+            resolution,
+        )
+
+    calculation_payload = resolution.calculation_payload
+    if (
+        calculation_payload is None
+        or calculation_payload.client_id != client_id
+        or calculation_payload.calculation_scope
+        != M08A_FIXATION_CALCULATION_SCOPE
+        or calculation_payload.manifest_version
+        != M08A_FIXATION_MANIFEST_VERSION
+        or calculation_payload.b1_evidence_revision_id
+        != request_context.m07_input_reference.b1_evidence_revision_id
+        or set(calculation_payload.normalized_selected_values)
+        != {"eligibility_date"}
+        or set(calculation_payload.source_references) != {"eligibility_date"}
+    ):
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    "m07_input_reference",
+                    "resolved calculation input payload does not match M08A admission",
+                )
+            ],
+            resolution,
+        )
+    normalized_date = calculation_payload.normalized_selected_values[
+        "eligibility_date"
+    ]
+    try:
+        if not isinstance(normalized_date, str) or len(normalized_date) != 10:
+            raise ValueError
+        eligibility_date = date.fromisoformat(normalized_date)
+        if eligibility_date.isoformat() != normalized_date:
+            raise ValueError
+    except ValueError:
+        return (
+            request_context,
+            None,
+            [
+                _error(
+                    "m07_input_reference.eligibility_date",
+                    "resolved eligibility_date is not an exact ISO calendar date",
+                    code="INVALID_DATE",
+                )
+            ],
+            resolution,
+        )
+
+    context = ResolvedFixationAdmissionInput(
+        **request_context.model_dump(mode="python", exclude_unset=True),
+        eligibility_date=eligibility_date,
+        eligibility_year=eligibility_date.year,
+        m07_resolution=resolution,
+    )
 
     if not parameter_set.accepted_for_use:
         errors.append(_error("parameter_set.accepted_for_use", "parameter set was not accepted for use"))
@@ -155,7 +308,7 @@ def parse_and_admit_fixation_payload(
             item.indexation_warnings = []
             item.indexation_calculation_status = "pending"
             item.indexation_failure_evidence = None
-        if item.client_id != context.upstream_context.client_id:
+        if item.client_id != client_id:
             errors.append(
                 _error(f"{path}.client_id", "grant indexation context belongs to another client", item.grant_id)
             )
@@ -222,7 +375,7 @@ def parse_and_admit_fixation_payload(
         )
 
     if errors:
-        return context, None, errors
+        return context, None, errors, resolution
 
     admitted_grants: list[dict[str, Any]] = []
     calculator = cbs_calculator or calculate_cbs_indexation
@@ -307,7 +460,7 @@ def parse_and_admit_fixation_payload(
         )
 
     if errors:
-        return context, None, errors
+        return context, None, errors, resolution
 
     values = parameter_set.values
     formula_input = FixationInput(
@@ -325,7 +478,7 @@ def parse_and_admit_fixation_payload(
         idf=None,
         metadata=context.metadata,
     )
-    return context, _admit_fixation_input(formula_input), []
+    return context, _admit_fixation_input(formula_input), [], resolution
 
 
 def validation_failed_result(
@@ -333,6 +486,7 @@ def validation_failed_result(
     errors: list[ValidationError],
     *,
     status: str = "validation_failed",
+    m07_resolution: CalculationInputResolutionResult | None = None,
 ) -> FixationResult:
     calculation_id = payload.get("calculation_id")
     calculation_version = payload.get("calculation_version")
@@ -341,4 +495,5 @@ def validation_failed_result(
         calculation_version=calculation_version if isinstance(calculation_version, str) else None,
         status=status,
         validation_errors=errors,
+        m07_resolution=m07_resolution,
     )

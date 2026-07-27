@@ -177,7 +177,11 @@ def validate_fixation(
     db: Session = Depends(get_db),
 ) -> FixationResult:
     _require_client(db, client_id)
-    return calculate_fixation_payload(payload, client_id=client_id)
+    return calculate_fixation_payload(
+        payload,
+        client_id=client_id,
+        db_session=db,
+    )
 
 
 @router.post("/clients/{client_id}/fixation/calculate", response_model=FixationResult)
@@ -187,7 +191,11 @@ def calculate_fixation_endpoint(
     db: Session = Depends(get_db),
 ) -> FixationResult:
     _require_client(db, client_id)
-    return calculate_fixation_payload(payload, client_id=client_id)
+    return calculate_fixation_payload(
+        payload,
+        client_id=client_id,
+        db_session=db,
+    )
 
 
 @router.post("/fixation/save", response_model=FixationSaveResponse)
@@ -421,13 +429,18 @@ def compare_fixation_run_dependencies(
     def comparison_cbs_call_forbidden(**_kwargs):
         raise AssertionError("dependency comparison must not call the CBS adapter")
 
-    current_context, _, admission_errors = parse_and_admit_fixation_payload(
+    (
+        current_context,
+        _,
+        admission_errors,
+        _,
+    ) = parse_and_admit_fixation_payload(
         raw_current_context,
         client_id=client_id,
+        db_session=db,
         cbs_calculator=comparison_cbs_call_forbidden,
     )
     client_mismatch_paths = {
-        "upstream_context.client_id",
         "parameter_set.client_id",
     }
     if any(

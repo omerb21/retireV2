@@ -6,6 +6,7 @@ from decimal import Decimal
 from time import time_ns
 from uuid import uuid4
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -33,6 +34,7 @@ from app.schemas.fixation_contracts import (
     PlannerReviewContextEnvelope,
     ValidationError,
 )
+from app.schemas.fixation_admissibility import FixationAdmissionRequest
 from app.schemas.fixation_dependency_manifest import FixationDependencyManifest
 from app.services.fixation_admission_service import (
     parse_and_admit_fixation_payload,
@@ -84,20 +86,40 @@ def _as_float(value: Decimal | None) -> float | None:
     return float(value)
 
 
+def _safe_failed_admission_snapshot(raw_payload: dict) -> dict:
+    allowed_non_m07_fields = set(FixationAdmissionRequest.model_fields) - {
+        "m07_input_reference"
+    }
+    return jsonable_encoder(
+        {
+            field_name: raw_payload[field_name]
+            for field_name in sorted(allowed_non_m07_fields)
+            if field_name in raw_payload
+        }
+    )
+
+
 def calculate_fixation_payload(
     input_payload: dict,
     *,
-    client_id: int | None = None,
+    client_id: int,
+    db_session: Session,
     cbs_calculator=None,
 ) -> FixationResult:
-    _, engine_input, errors = parse_and_admit_fixation_payload(
+    _, engine_input, errors, resolution = parse_and_admit_fixation_payload(
         input_payload,
         client_id=client_id,
+        db_session=db_session,
         cbs_calculator=cbs_calculator,
     )
     if errors:
         status = _failure_status(errors)
-        return validation_failed_result(input_payload, errors, status=status)
+        return validation_failed_result(
+            input_payload,
+            errors,
+            status=status,
+            m07_resolution=resolution,
+        )
     assert engine_input is not None
     return calculate_fixation_engine(engine_input)
 
@@ -275,22 +297,33 @@ def run_fixation(
         )
         if "calculation_version" in raw_payload:
             input_contract_version = str(raw_payload["calculation_version"])
-        admitted_context, engine_input, admission_errors = parse_and_admit_fixation_payload(
+        (
+            admitted_context,
+            engine_input,
+            admission_errors,
+            m07_resolution,
+        ) = parse_and_admit_fixation_payload(
             raw_payload,
             client_id=client_key,
+            db_session=db_session,
             cbs_calculator=cbs_calculator,
         )
         snapshot_payload = (
             admitted_context.model_dump(mode="json")
             if admitted_context is not None
-            else raw_payload
+            else _safe_failed_admission_snapshot(raw_payload)
         )
+        if m07_resolution is not None and "m07_resolution" not in snapshot_payload:
+            snapshot_payload["m07_resolution"] = m07_resolution.model_dump(
+                mode="json"
+            )
         if admission_errors:
             admission_status = _failure_status(admission_errors)
             result = validation_failed_result(
                 raw_payload,
                 admission_errors,
                 status=admission_status,
+                m07_resolution=m07_resolution,
             )
         else:
             assert engine_input is not None
@@ -329,6 +362,7 @@ def run_fixation(
             input_contract_version=str(input_contract_version),
             result_contract_version=(str(run_calculation_version) if _is_success_result(result) else None),
             context=admitted_context,
+            resolution=m07_resolution,
         )
         db_session.add(_dependency_manifest_model(run, dependency_manifest))
 

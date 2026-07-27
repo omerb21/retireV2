@@ -170,9 +170,21 @@ class CalculationInputManifestRegistry:
         return manifest
 
 
-# No production manifest is registered yet. Accepted repository contracts fix
-# B1 field identities, but do not fix the structured-value type and
-# normalization rule for every required calculation field (notably
-# retirement_timing). The registry therefore fails closed until those
-# technical manifest decisions are authorized.
-M07_CALCULATION_INPUT_MANIFEST_REGISTRY = CalculationInputManifestRegistry()
+M08A_FIXATION_CALCULATION_SCOPE = "m08a_fixation"
+M08A_FIXATION_MANIFEST_VERSION = "1"
+M08A_FIXATION_CALCULATION_INPUT_MANIFEST = CalculationInputManifest(
+    calculation_scope=M08A_FIXATION_CALCULATION_SCOPE,
+    manifest_version=M08A_FIXATION_MANIFEST_VERSION,
+    fields=(
+        CalculationInputFieldRule(
+            field_code="eligibility_date",
+            technical_type="date",
+            normalization_rule="iso_date",
+            nullable=False,
+        ),
+    ),
+)
+
+M07_CALCULATION_INPUT_MANIFEST_REGISTRY = CalculationInputManifestRegistry(
+    manifests=(M08A_FIXATION_CALCULATION_INPUT_MANIFEST,)
+)

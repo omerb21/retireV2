@@ -191,6 +191,8 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-004B2 execution status | ACCEPTED as `CALCULATION_INPUT_RESOLVER_FRAMEWORK` at implementation commit `f384ecbc72e649d3b6512127740cdfcf35417627`; definition: `specs/runtime/PKG_004B2_FINAL_PACKAGE_DEFINITION.md`; acceptance record: `specs/runtime/PKG_004B2_acceptance_record.md` |
 | PKG-004B2 framework limitation | No production calculation manifest is currently registered; authority, qualification, approval, warning-review, accepted-for-use, reviewer, and supervisor workflow remain outside the intended product boundary |
 | M07 product-direction alignment | Calculator-input model using the accepted PKG-004B1 evidence foundation and PKG-004B2 resolver framework; no qualification or approval workflow; no production calculation manifest is currently registered |
+| PKG-004C definition status | `DEFINED_PENDING_IMPLEMENTATION_AUTHORIZATION`; exact B1 `eligibility_date` evidence contract for future bounded M08A consumption; see `specs/runtime/PKG_004C_FINAL_PACKAGE_DEFINITION.md` |
+| PKG-004C integration boundary | B2-to-M08A integration remains `NOT_STARTED`; no production M08A manifest, fixation-admission change, or implementation is authorized |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

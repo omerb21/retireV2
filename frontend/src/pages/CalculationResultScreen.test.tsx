@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 
 import { CalculationResultScreen } from "./CalculationResultScreen";
 
@@ -100,6 +100,30 @@ function renderSaved() {
   );
 }
 
+function ResultTransitionHarness() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          navigate("/clients/8/fixation/result", {
+            state: {
+              clientId: 7,
+              clientName: "Dana Levi",
+              inputData: acceptedInput,
+              result: successResult,
+            },
+          })
+        }
+      >
+        Switch client
+      </button>
+      <CalculationResultScreen />
+    </>
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -118,12 +142,18 @@ describe("PKG-005 calculation result and saved-run workflow", () => {
   });
 
   it("saves through the real route and exposes direct reopen navigation", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ run_id: 42, status: "success" }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      run_id: 42,
+      status: "success",
+      created_at: "2026-03-01T10:00:00Z",
+    }));
     vi.stubGlobal("fetch", fetchMock);
     renderCurrent();
 
     fireEvent.click(screen.getByRole("button", { name: "Save Result" }));
-    expect(await screen.findByText(/Run saved. Run ID: 42; status: success/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Run saved. Run ID: 42; status: success; saved at: 2026-03-01T10:00:00Z/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Reopen saved run" })).toHaveAttribute(
       "href",
       "/clients/7/fixation/runs/42",
@@ -132,6 +162,70 @@ describe("PKG-005 calculation result and saved-run workflow", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/fixation/save");
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(body).toEqual({ client_id: 7, input_data: acceptedInput });
+  });
+
+  it("clears stale route and save state, then loads the new client through its own route", async () => {
+    const clientEightSnapshot = {
+      ...admittedSnapshot,
+      m07_input_reference: {
+        b1_evidence_revision_id: "m07rev-client-8",
+        selections: [],
+      },
+      eligibility_date: "2027-04-01",
+      eligibility_year: 2027,
+    };
+    const clientEightResult = {
+      ...successResult,
+      eligibility_date: "2027-04-01",
+      eligibility_year: 2027,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        run_id: 42,
+        status: "success",
+        created_at: "2026-03-01T10:00:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse([
+        { run_id: 88, status: "success", calculation_version: "pkg005-v1", created_at: "2027-04-02T10:00:00Z" },
+      ]))
+      .mockResolvedValueOnce(jsonResponse({
+        run: { run_id: 88, client_id: 8, status: "success", created_at: "2027-04-02T10:00:00Z" },
+        input_snapshot: clientEightSnapshot,
+        result: clientEightResult,
+        audit_rows: [],
+        validation_errors: [],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: "/clients/7/fixation/result",
+          state: {
+            clientId: 7,
+            clientName: "Dana Levi",
+            inputData: acceptedInput,
+            result: successResult,
+          },
+        }]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<ResultTransitionHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Result" }));
+    expect(await screen.findByRole("link", { name: "Reopen saved run" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+
+    expect(screen.queryByText("Normalized eligibility date: 2026-02-01")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Reopen saved run" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Normalized eligibility date: 2027-04-01")).toBeInTheDocument();
+    expect(screen.getByText("Selected B1 revision: m07rev-client-8")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/clients/8/fixation/history");
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/clients/8/fixation/runs/88");
   });
 
   it("reopens the latest successful run with resolver provenance and saved date", async () => {

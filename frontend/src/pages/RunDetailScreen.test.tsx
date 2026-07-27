@@ -28,6 +28,23 @@ function buildRunDetail(overrides: Partial<Record<string, unknown>> = {}) {
     input_snapshot: {
       calculation_version: "v1",
       eligibility_date: "2025-01-01",
+      parameter_set: {
+        parameter_set_id: "params-2025",
+        tax_year: 2025,
+        effective_from: "2025-01-01",
+        effective_to: "2025-12-31",
+        values: {
+          monthly_cap: 1000,
+          exemption_percentage: 0.35,
+          capital_multiplier: 180,
+          grant_impact_multiplier: 1.35,
+        },
+        source_basis: "persisted official parameter evidence",
+        status: "accepted",
+        accepted_for_use: true,
+        accepted_by: "planner-7",
+        decision_timestamp: "2025-01-02T08:00:00Z",
+      },
     },
     result: {
       calculation_id: "calc-1",
@@ -63,6 +80,14 @@ function buildRunDetail(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function fieldRow(label: string): HTMLElement {
+  const row = screen.getByText(`${label}:`).closest("li");
+  if (row === null) {
+    throw new Error(`Missing field row: ${label}`);
+  }
+  return row;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -95,10 +120,53 @@ describe("RunDetailScreen", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Fixation Run Detail" })).toBeInTheDocument();
-    expect(await screen.findByText(/Monthly Cap:/)).toBeInTheDocument();
+    expect(await screen.findByText("Monthly Cap:")).toBeInTheDocument();
     expect(await screen.findByText(/Total Impact:/)).toBeInTheDocument();
     expect(await screen.findByText(/Audit Rows/)).toBeInTheDocument();
     expect(screen.getByText(/Base/)).toBeInTheDocument();
+    expect(fieldRow("Parameter Set")).toHaveTextContent("params-2025");
+    expect(fieldRow("Parameter Tax Year")).toHaveTextContent("2025");
+    expect(fieldRow("Parameter Effective From")).toHaveTextContent("2025-01-01");
+    expect(fieldRow("Parameter Effective To")).toHaveTextContent("2025-12-31");
+    expect(fieldRow("Parameter Monthly Cap")).toHaveTextContent("1000");
+    expect(fieldRow("Parameter Exemption Percentage")).toHaveTextContent("0.35");
+    expect(fieldRow("Parameter Capital Multiplier")).toHaveTextContent("180");
+    expect(fieldRow("Parameter Grant Impact Multiplier")).toHaveTextContent("1.35");
+    expect(fieldRow("Parameter Source / Basis")).toHaveTextContent("persisted official parameter evidence");
+    expect(fieldRow("Parameter Status")).toHaveTextContent("accepted");
+    expect(fieldRow("Parameter Accepted For Use")).toHaveTextContent("true");
+    expect(fieldRow("Parameter Decision Actor")).toHaveTextContent("planner-7");
+    expect(fieldRow("Parameter Decision Timestamp")).toHaveTextContent("2025-01-02T08:00:00Z");
+  });
+
+  it("loads persisted parameter values directly and safely omits optional dates", async () => {
+    const detail = buildRunDetail();
+    const snapshot = detail.input_snapshot as Record<string, unknown>;
+    const parameterSet = snapshot.parameter_set as Record<string, unknown>;
+    delete parameterSet.effective_to;
+    delete parameterSet.decision_timestamp;
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(mockJsonResponse(detail))
+        .mockResolvedValueOnce(mockJsonResponse([])),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/clients/7/fixation/runs/11"]}>
+        <Routes>
+          <Route path="/clients/:clientId/fixation/runs/:runId" element={<RunDetailScreen />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Parameter Monthly Cap:");
+    expect(fieldRow("Parameter Monthly Cap")).toHaveTextContent("1000");
+    expect(fieldRow("Parameter Accepted For Use")).toHaveTextContent("true");
+    expect(fieldRow("Parameter Decision Actor")).toHaveTextContent("planner-7");
+    expect(screen.queryByText("Parameter Effective To:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Parameter Decision Timestamp:")).not.toBeInTheDocument();
   });
 
   it("renders validation errors read-only for a validation_failed run", async () => {

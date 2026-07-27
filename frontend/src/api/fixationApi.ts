@@ -246,6 +246,7 @@ export interface SaveFixationPayload {
 export interface SaveFixationResponse {
   run_id: number;
   status: string;
+  created_at: string;
 }
 
 export interface FixationHistoryEntry {

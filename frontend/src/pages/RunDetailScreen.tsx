@@ -83,10 +83,13 @@ export function RunDetailScreen() {
   const routeState = location.state as ClientRouteState | null;
   const clientId = resolveClientId(clientIdParam, routeState);
   const runId = resolveRunId(runIdParam);
-  const clientName = routeState?.clientName ?? null;
+  const routeStateMatchesClient = clientId !== null && routeState?.clientId === clientId;
+  const clientName = routeStateMatchesClient ? routeState?.clientName ?? null : null;
   const navigationState = clientName ? { clientId: clientId ?? undefined, clientName } : { clientId: clientId ?? undefined };
+  const contextKey = clientId !== null && runId !== null ? `${clientId}:${runId}` : null;
 
   const [detail, setDetail] = useState<FixationRunDetailResponse | null>(null);
+  const [loadedContextKey, setLoadedContextKey] = useState<string | null>(null);
   const [latestSuccessfulRunId, setLatestSuccessfulRunId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(clientId !== null && runId !== null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -99,6 +102,7 @@ export function RunDetailScreen() {
       if (clientId === null || runId === null) {
         if (isActive) {
           setDetail(null);
+          setLoadedContextKey(null);
           setLatestSuccessfulRunId(null);
           setClientMismatch(false);
           setIsLoading(false);
@@ -110,6 +114,7 @@ export function RunDetailScreen() {
       setErrorMessage(null);
       setClientMismatch(false);
       setDetail(null);
+      setLoadedContextKey(null);
       setLatestSuccessfulRunId(null);
 
       try {
@@ -127,11 +132,13 @@ export function RunDetailScreen() {
           setClientMismatch(true);
           setDetail(null);
           setLatestSuccessfulRunId(null);
+          setLoadedContextKey(`${clientId}:${runId}`);
           return;
         }
 
         setDetail(nextDetail);
         setLatestSuccessfulRunId(findLatestSuccessfulRunId(nextHistory));
+        setLoadedContextKey(`${clientId}:${runId}`);
       } catch (error) {
         if (!isActive) {
           return;
@@ -139,6 +146,7 @@ export function RunDetailScreen() {
 
         setDetail(null);
         setLatestSuccessfulRunId(null);
+        setLoadedContextKey(`${clientId}:${runId}`);
         setErrorMessage(getErrorMessage(error));
       } finally {
         if (isActive) {
@@ -154,8 +162,9 @@ export function RunDetailScreen() {
     };
   }, [clientId, runId]);
 
-  const result = detail?.result ?? null;
-  const inputSnapshot = detail?.input_snapshot ?? null;
+  const visibleDetail = loadedContextKey === contextKey ? detail : null;
+  const result = visibleDetail?.result ?? null;
+  const inputSnapshot = visibleDetail?.input_snapshot ?? null;
   const m07Reference =
     inputSnapshot && typeof inputSnapshot.m07_input_reference === "object"
       ? (inputSnapshot.m07_input_reference as Record<string, unknown>)
@@ -167,6 +176,10 @@ export function RunDetailScreen() {
   const parameterSet =
     inputSnapshot && typeof inputSnapshot.parameter_set === "object"
       ? (inputSnapshot.parameter_set as Record<string, unknown>)
+      : null;
+  const parameterValues =
+    parameterSet && typeof parameterSet.values === "object"
+      ? (parameterSet.values as Record<string, unknown>)
       : null;
   const isLatestSuccessfulRun = useMemo(
     () => runId !== null && latestSuccessfulRunId !== null && runId === latestSuccessfulRunId,
@@ -209,6 +222,15 @@ export function RunDetailScreen() {
 
   const historyPath = `/clients/${clientId}/fixation/history`;
   const fixationInputPath = `/clients/${clientId}/fixation/input`;
+
+  if (loadedContextKey !== contextKey) {
+    return (
+      <section>
+        <h2>Fixation Run Detail</h2>
+        <p>Loading fixation run detail...</p>
+      </section>
+    );
+  }
 
   if (clientMismatch) {
     return (
@@ -256,15 +278,15 @@ export function RunDetailScreen() {
         </>
       ) : null}
 
-      {detail ? (
+      {visibleDetail ? (
         <>
           {!isLatestSuccessfulRun && latestSuccessfulRunId !== null ? <p>Not latest successful run</p> : null}
           {renderFields("Run Metadata", [
-            { label: "Run ID", value: detail.run.run_id },
-            { label: "Client ID", value: detail.run.client_id },
-            { label: "Status", value: detail.run.status },
-            { label: "Calculation Version", value: detail.run.calculation_version },
-            { label: "Created At", value: detail.run.created_at },
+            { label: "Run ID", value: visibleDetail.run.run_id },
+            { label: "Client ID", value: visibleDetail.run.client_id },
+            { label: "Status", value: visibleDetail.run.status },
+            { label: "Calculation Version", value: visibleDetail.run.calculation_version },
+            { label: "Created At", value: visibleDetail.run.created_at },
           ])}
           {result ? (
             <>
@@ -318,6 +340,50 @@ export function RunDetailScreen() {
                   value: parameterSet?.tax_year,
                 },
                 {
+                  label: "Parameter Effective From",
+                  value: parameterSet?.effective_from,
+                },
+                {
+                  label: "Parameter Effective To",
+                  value: parameterSet?.effective_to,
+                },
+                {
+                  label: "Parameter Monthly Cap",
+                  value: parameterValues?.monthly_cap,
+                },
+                {
+                  label: "Parameter Exemption Percentage",
+                  value: parameterValues?.exemption_percentage,
+                },
+                {
+                  label: "Parameter Capital Multiplier",
+                  value: parameterValues?.capital_multiplier,
+                },
+                {
+                  label: "Parameter Grant Impact Multiplier",
+                  value: parameterValues?.grant_impact_multiplier,
+                },
+                {
+                  label: "Parameter Source / Basis",
+                  value: parameterSet?.source_basis,
+                },
+                {
+                  label: "Parameter Status",
+                  value: parameterSet?.status,
+                },
+                {
+                  label: "Parameter Accepted For Use",
+                  value: parameterSet?.accepted_for_use,
+                },
+                {
+                  label: "Parameter Decision Actor",
+                  value: parameterSet?.accepted_by,
+                },
+                {
+                  label: "Parameter Decision Timestamp",
+                  value: parameterSet?.decision_timestamp,
+                },
+                {
                   label: "Grant Collection State",
                   value: inputSnapshot.grants_collection_state,
                 },
@@ -339,22 +405,22 @@ export function RunDetailScreen() {
               ])}
             </>
           ) : null}
-          {detail.audit_rows.length > 0 ? (
+          {visibleDetail.audit_rows.length > 0 ? (
             <section>
               <h3>Audit Rows</h3>
-              <pre>{stringifyValue(detail.audit_rows)}</pre>
+              <pre>{stringifyValue(visibleDetail.audit_rows)}</pre>
             </section>
           ) : null}
-          {detail.input_snapshot ? (
+          {visibleDetail.input_snapshot ? (
             <section>
               <h3>Input Snapshot</h3>
-              <pre>{stringifyValue(detail.input_snapshot)}</pre>
+              <pre>{stringifyValue(visibleDetail.input_snapshot)}</pre>
             </section>
           ) : null}
-          {detail.validation_errors.length > 0 ? (
+          {visibleDetail.validation_errors.length > 0 ? (
             <section>
               <h3>Validation Errors</h3>
-              <pre>{stringifyValue(detail.validation_errors)}</pre>
+              <pre>{stringifyValue(visibleDetail.validation_errors)}</pre>
             </section>
           ) : null}
         </>

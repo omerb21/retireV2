@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -66,6 +67,7 @@ class FixationSaveRequest(BaseModel):
 class FixationSaveResponse(BaseModel):
     run_id: int
     status: str
+    created_at: datetime
 
 
 class LatestResultResponse(BaseModel):
@@ -214,7 +216,11 @@ def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -
             detail={"code": "UNEXPECTED_ERROR", "message": "Saved run could not be loaded"},
         )
 
-    return FixationSaveResponse(run_id=run_id, status=run.status)
+    return FixationSaveResponse(
+        run_id=run_id,
+        status=run.status,
+        created_at=run.created_at,
+    )
 
 
 @router.post(

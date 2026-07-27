@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -267,15 +267,37 @@ export function FixationInputScreen() {
   const [grantDecisions, setGrantDecisions] = useState<Record<string, ItemDecision>>({});
   const [capitalizationDecisions, setCapitalizationDecisions] = useState<Record<string, ItemDecision>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [loadedClientId, setLoadedClientId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCreatingDate, setIsCreatingDate] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [response, setResponse] = useState<FixationResultResponse | null>(null);
   const [validatedSignature, setValidatedSignature] = useState<string | null>(null);
   const [calculated, setCalculated] = useState<{ input: FixationInputPayload; result: FixationResultResponse } | null>(null);
+  const activeClientIdRef = useRef(clientId);
+  activeClientIdRef.current = clientId;
 
   useEffect(() => {
     let active = true;
+    setForm(initialFormState);
+    setGrants([]);
+    setCapitalizations([]);
+    setRevisions([]);
+    setSelectedRevisionId("");
+    setSelection(null);
+    setGrantCollectionState("unknown");
+    setCapitalizationCollectionState("unknown");
+    setGrantDecisions({});
+    setCapitalizationDecisions({});
+    setIsLoading(clientId !== null);
+    setLoadedClientId(null);
+    setIsSubmitting(false);
+    setIsCreatingDate(false);
+    setMessage(null);
+    setResponse(null);
+    setValidatedSignature(null);
+    setCalculated(null);
+
     async function load() {
       if (clientId === null) {
         setMessage("Fixation flow requires an existing client context.");
@@ -303,8 +325,12 @@ export function FixationInputScreen() {
             ]),
           ),
         );
+        setLoadedClientId(clientId);
       } catch (error) {
-        if (active) setMessage(getErrorMessage(error));
+        if (active) {
+          setLoadedClientId(clientId);
+          setMessage(getErrorMessage(error));
+        }
       } finally {
         if (active) setIsLoading(false);
       }
@@ -515,7 +541,7 @@ export function FixationInputScreen() {
 
   async function handleCreateDate(event: FormEvent) {
     event.preventDefault();
-    if (clientId === null || !exactDate(form.newEligibilityDate)) {
+    if (clientId === null || loadedClientId !== clientId || !exactDate(form.newEligibilityDate)) {
       setMessage("Eligibility date must be an exact valid YYYY-MM-DD date.");
       return;
     }
@@ -524,6 +550,7 @@ export function FixationInputScreen() {
     try {
       const created = await createFixationEligibilityRevision(clientId, form.newEligibilityDate);
       const refreshed = await listFixationEligibilityRevisions(clientId);
+      if (activeClientIdRef.current !== clientId) return;
       setRevisions(refreshed.items);
       setSelectedRevisionId(created.revision_id);
       setSelection(null);
@@ -531,14 +558,14 @@ export function FixationInputScreen() {
       setCalculated(null);
       setMessage(`Finalized B1 revision created and selected: ${created.revision_id}`);
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (activeClientIdRef.current === clientId) setMessage(getErrorMessage(error));
     } finally {
       setIsCreatingDate(false);
     }
   }
 
   async function submit(action: "validate" | "calculate") {
-    if (clientId === null) return;
+    if (clientId === null || loadedClientId !== clientId) return;
     const validationMessage = localError();
     if (validationMessage) {
       setMessage(validationMessage);
@@ -557,6 +584,7 @@ export function FixationInputScreen() {
         action === "validate"
           ? await validateFixation(clientId, payload)
           : await calculateFixation(clientId, payload);
+      if (activeClientIdRef.current !== clientId) return;
       setResponse(result);
       if (action === "validate") {
         setValidatedSignature(result.status === "success" ? signature : null);
@@ -569,9 +597,11 @@ export function FixationInputScreen() {
         setMessage("Calculation failed.");
       }
     } catch (error) {
-      setMessage(getErrorMessage(error));
-      setValidatedSignature(null);
-      setCalculated(null);
+      if (activeClientIdRef.current === clientId) {
+        setMessage(getErrorMessage(error));
+        setValidatedSignature(null);
+        setCalculated(null);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -586,7 +616,12 @@ export function FixationInputScreen() {
   }
 
   function continueToResult() {
-    if (clientId === null || calculated === null || JSON.stringify(calculated.input) !== payloadSignature) return;
+    if (
+      clientId === null ||
+      loadedClientId !== clientId ||
+      calculated === null ||
+      JSON.stringify(calculated.input) !== payloadSignature
+    ) return;
     const fixationInputPath = `/clients/${clientId}/fixation/input`;
     const state: CalculationResultRouteState = {
       clientId,
@@ -600,7 +635,9 @@ export function FixationInputScreen() {
   }
 
   if (clientId === null) return <section><h2>Fixation Parameters</h2><p>BLOCKED: client context is required.</p></section>;
-  if (isLoading) return <section><h2>Fixation Parameters</h2><p>Loading client fixation data...</p></section>;
+  if (isLoading || loadedClientId !== clientId) {
+    return <section><h2>Fixation Parameters</h2><p>Loading client fixation data...</p></section>;
+  }
 
   const selectedRevision = revisions.find((revision) => revision.revision_id === selectedRevisionId);
   return (

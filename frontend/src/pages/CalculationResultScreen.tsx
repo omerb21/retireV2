@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 
 import {
@@ -97,32 +97,61 @@ export function CalculationResultScreen() {
   const routeState = location.state as ResultRouteState | null;
   const rawClientId = clientIdParam !== undefined ? Number(clientIdParam) : routeState?.clientId;
   const clientId = Number.isInteger(rawClientId) && Number(rawClientId) > 0 ? Number(rawClientId) : null;
+  const routeStateMatchesClient = clientId !== null && routeState?.clientId === clientId;
   const [input, setInput] = useState<Record<string, unknown> | null>(
-    routeState?.inputData as unknown as Record<string, unknown> ?? null,
+    routeStateMatchesClient ? routeState?.inputData as unknown as Record<string, unknown> ?? null : null,
   );
   const [result, setResult] = useState<Record<string, unknown> | null>(
-    routeState?.result as unknown as Record<string, unknown> ?? null,
+    routeStateMatchesClient ? routeState?.result as unknown as Record<string, unknown> ?? null : null,
+  );
+  const [stateClientId, setStateClientId] = useState<number | null>(
+    routeStateMatchesClient ? clientId : null,
   );
   const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
   const [loadedRunDate, setLoadedRunDate] = useState<string | null>(null);
   const [savedRunId, setSavedRunId] = useState<number | null>(null);
   const [savedStatus, setSavedStatus] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(clientId !== null && result === null);
+  const [savedRunDate, setSavedRunDate] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(clientId !== null && !routeStateMatchesClient);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const activeClientIdRef = useRef(clientId);
+  activeClientIdRef.current = clientId;
 
   useEffect(() => {
     let active = true;
+    setInput(null);
+    setResult(null);
+    setStateClientId(null);
+    setLoadedRunId(null);
+    setLoadedRunDate(null);
+    setSavedRunId(null);
+    setSavedStatus(null);
+    setSavedRunDate(null);
+    setIsSaving(false);
+    setMessage(null);
+
     async function loadLatest() {
-      if (clientId === null || result !== null) {
+      if (clientId === null) {
         setIsLoading(false);
         return;
       }
+      if (routeStateMatchesClient && routeState?.inputData && routeState.result) {
+        setInput(routeState.inputData as unknown as Record<string, unknown>);
+        setResult(routeState.result as unknown as Record<string, unknown>);
+        setStateClientId(clientId);
+        setIsLoading(false);
+        return;
+      }
+      setIsLoading(true);
       try {
         const history = await getFixationHistory(clientId);
         const latest = history.find((entry) => entry.status === "success");
         if (!latest) {
-          if (active) setMessage("No successful saved run is available for this client.");
+          if (active) {
+            setStateClientId(clientId);
+            setMessage("No successful saved run is available for this client.");
+          }
           return;
         }
         const detail = await getFixationRunDetail(clientId, latest.run_id);
@@ -131,8 +160,12 @@ export function CalculationResultScreen() {
         setResult(detail.result);
         setLoadedRunId(latest.run_id);
         setLoadedRunDate(latest.created_at);
+        setStateClientId(clientId);
       } catch (error) {
-        if (active) setMessage(getErrorMessage(error));
+        if (active) {
+          setStateClientId(clientId);
+          setMessage(getErrorMessage(error));
+        }
       } finally {
         if (active) setIsLoading(false);
       }
@@ -141,10 +174,10 @@ export function CalculationResultScreen() {
     return () => {
       active = false;
     };
-  }, [clientId, result]);
+  }, [clientId, routeStateMatchesClient, routeState?.inputData, routeState?.result]);
 
   async function handleSave() {
-    if (clientId === null || input === null || result?.status !== "success") return;
+    if (clientId === null || stateClientId !== clientId || input === null || result?.status !== "success") return;
     setIsSaving(true);
     setMessage(null);
     try {
@@ -152,24 +185,33 @@ export function CalculationResultScreen() {
         client_id: clientId,
         input_data: input as unknown as FixationInputPayload,
       });
+      if (activeClientIdRef.current !== clientId) return;
       setSavedRunId(saved.run_id);
       setSavedStatus(saved.status);
+      setSavedRunDate(saved.created_at);
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      if (activeClientIdRef.current === clientId) setMessage(getErrorMessage(error));
     } finally {
       setIsSaving(false);
     }
   }
 
   if (clientId === null) return <section><h2>Calculation Result</h2><p>BLOCKED: client context is required.</p></section>;
-  const inputPath = routeState?.fixationInputPath ?? `/clients/${clientId}/fixation/input`;
+  if (stateClientId !== clientId) {
+    return <section><h2>Calculation Result</h2><p>Loading latest successful saved run...</p></section>;
+  }
+  const inputPath = routeStateMatchesClient
+    ? routeState?.fixationInputPath ?? `/clients/${clientId}/fixation/input`
+    : `/clients/${clientId}/fixation/input`;
+  const clientName = routeStateMatchesClient ? routeState?.clientName : undefined;
+  const navigationState = { clientId, clientName };
   return (
     <section>
       <h2>Calculation Result</h2>
       <p>Client ID: {clientId}</p>
-      {routeState?.clientName ? <p>Client Name: {routeState.clientName}</p> : null}
-      <p><Link to={inputPath} state={routeState?.fixationInputState}>Back to Fixation Parameters</Link></p>
-      <p><Link to={`/clients/${clientId}/fixation/history`} state={routeState?.fixationInputState}>Saved run history</Link></p>
+      {clientName ? <p>Client Name: {clientName}</p> : null}
+      <p><Link to={inputPath} state={navigationState}>Back to Fixation Parameters</Link></p>
+      <p><Link to={`/clients/${clientId}/fixation/history`} state={navigationState}>Saved run history</Link></p>
       {isLoading ? <p>Loading latest successful saved run...</p> : null}
       {loadedRunId !== null ? <p>Reopened saved run: {loadedRunId}; saved at: {loadedRunDate ?? "unknown"}.</p> : null}
       {result && input ? <ResultPresentation result={result} input={input} clientId={clientId} /> : null}
@@ -178,8 +220,8 @@ export function CalculationResultScreen() {
       </button>
       {savedRunId !== null ? (
         <section>
-          <p>Run saved. Run ID: {savedRunId}; status: {savedStatus}.</p>
-          <Link to={`/clients/${clientId}/fixation/runs/${savedRunId}`} state={{ clientName: routeState?.clientName }}>
+          <p>Run saved. Run ID: {savedRunId}; status: {savedStatus}; saved at: {savedRunDate}.</p>
+          <Link to={`/clients/${clientId}/fixation/runs/${savedRunId}`} state={navigationState}>
             Reopen saved run
           </Link>
         </section>

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { FixationInputScreen } from "./FixationInputScreen";
 
@@ -28,6 +28,25 @@ function revisionList(items = [resolvedRevision]) {
 function ResultCapture() {
   const location = useLocation();
   return <pre data-testid="route-state">{JSON.stringify(location.state)}</pre>;
+}
+
+function InputTransitionHarness() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          navigate("/clients/2/fixation/input", {
+            state: { clientId: 2, clientName: "Client Two" },
+          })
+        }
+      >
+        Switch client
+      </button>
+      <FixationInputScreen />
+    </>
+  );
 }
 
 function renderScreen(captureResult = false) {
@@ -298,6 +317,104 @@ describe("PKG-005 fixation input workflow", () => {
       candidate_identity: "fact:second",
       b1_evidence_revision_id: "m07rev-ambiguous",
     }]);
+  });
+
+  it("clears all client-bound evidence and actions before loading a different client", async () => {
+    const ambiguousRevision = {
+      ...resolvedRevision,
+      revision_id: "m07rev-client-1",
+      eligibility_outcome: "ambiguous_inputs",
+      eligibility_dates: ["2026-01-01", "2026-02-01"],
+    };
+    const clientTwoRevision = {
+      ...resolvedRevision,
+      revision_id: "m07rev-client-2",
+      eligibility_dates: ["2027-01-01"],
+    };
+    const ambiguous = {
+      status: "validation_failed",
+      validation_errors: [],
+      m07_resolution: {
+        ambiguous_fields: [{
+          field_code: "eligibility_date",
+          candidates: [
+            { normalized_value: "2026-01-01", candidate_identities: ["fact:first"], source_references: [] },
+            { normalized_value: "2026-02-01", candidate_identities: ["fact:second"], source_references: [] },
+          ],
+        }],
+        missing_fields: [],
+      },
+    };
+    const success = {
+      status: "success",
+      validation_errors: [],
+      eligibility_date: "2026-02-01",
+      eligibility_year: 2026,
+      remaining_exempt_capital: 90000,
+      monthly_exempt_pension: 500,
+      grant_impact_total: 0,
+      actual_capitalization_impact: 0,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([ambiguousRevision])))
+      .mockResolvedValueOnce(jsonResponse(ambiguous))
+      .mockResolvedValueOnce(jsonResponse(success))
+      .mockResolvedValueOnce(jsonResponse(success))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([clientTwoRevision])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: "/clients/1/fixation/input",
+          state: { clientId: 1, clientName: "Client One" },
+        }]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/input" element={<InputTransitionHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitForLoaded();
+    fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-client-1" } });
+    fillValidM08Inputs();
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+    await screen.findByText(/Ambiguous input: eligibility_date/);
+    fireEvent.click(screen.getByLabelText(/2026-02-01 \(fact:second\)/));
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+    await screen.findByText(/Server validation passed/);
+    fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+    await screen.findByText(/Calculation succeeded/);
+    expect(screen.getByRole("button", { name: "Continue to Result" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+
+    expect(screen.queryByText(/m07rev-client-1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/fact:second/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Server validation passed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Calculation succeeded/)).not.toBeInTheDocument();
+    await waitForLoaded();
+    expect(screen.getByText("Client ID: 2")).toBeInTheDocument();
+    expect((screen.getByLabelText("Finalized B1 revision") as HTMLSelectElement).value).toBe("");
+    expect(screen.getByRole("option", { name: /m07rev-client-2/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Calculation Version")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Run Calculation" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue to Result" })).toBeDisabled();
+    expect(fetchMock.mock.calls.slice(6, 9).map((call) => call[0])).toEqual([
+      "/api/clients/2/grants",
+      "/api/clients/2/actual-capitalizations",
+      "/api/clients/2/fixation/m07/revisions?limit=100",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+    expect(await screen.findByText("Select an exact finalized B1 revision.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(9);
   });
 
   it("presents an existing M08 blocker without weakening it", async () => {

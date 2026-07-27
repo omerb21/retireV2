@@ -278,11 +278,13 @@ def test_complete_validate_calculate_save_and_reopen_workflow(
     assert calculated.json()["status"] == "success"
     assert saved.status_code == 200
     assert saved.json()["status"] == "success"
+    assert saved.json()["created_at"]
 
     detail = client.get(
         f"/api/clients/1/fixation/runs/{saved.json()['run_id']}"
     )
     assert detail.status_code == 200
+    assert saved.json()["created_at"] == detail.json()["run"]["created_at"]
     snapshot = detail.json()["input_snapshot"]
     assert snapshot["m07_input_reference"] == {
         "b1_evidence_revision_id": revision_id,

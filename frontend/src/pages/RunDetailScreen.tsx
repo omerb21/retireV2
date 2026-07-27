@@ -155,6 +155,19 @@ export function RunDetailScreen() {
   }, [clientId, runId]);
 
   const result = detail?.result ?? null;
+  const inputSnapshot = detail?.input_snapshot ?? null;
+  const m07Reference =
+    inputSnapshot && typeof inputSnapshot.m07_input_reference === "object"
+      ? (inputSnapshot.m07_input_reference as Record<string, unknown>)
+      : null;
+  const m07Resolution =
+    inputSnapshot && typeof inputSnapshot.m07_resolution === "object"
+      ? (inputSnapshot.m07_resolution as Record<string, unknown>)
+      : null;
+  const parameterSet =
+    inputSnapshot && typeof inputSnapshot.parameter_set === "object"
+      ? (inputSnapshot.parameter_set as Record<string, unknown>)
+      : null;
   const isLatestSuccessfulRun = useMemo(
     () => runId !== null && latestSuccessfulRunId !== null && runId === latestSuccessfulRunId,
     [latestSuccessfulRunId, runId],
@@ -257,6 +270,73 @@ export function RunDetailScreen() {
             <>
               {renderFields("Backend Calculation Summary", summaryFields)}
               {renderFields("Backend Impact Values", impactFields)}
+            </>
+          ) : null}
+          {inputSnapshot ? (
+            <>
+              {renderFields("Saved Input and Resolver Provenance", [
+                {
+                  label: "Selected B1 Revision",
+                  value:
+                    m07Reference?.b1_evidence_revision_id ??
+                    m07Resolution?.b1_evidence_revision_id,
+                },
+                {
+                  label: "Explicit Candidate Selection",
+                  value: m07Reference?.selections,
+                },
+                {
+                  label: "Resolver Scope",
+                  value: m07Resolution?.calculation_scope,
+                },
+                {
+                  label: "Resolver Manifest Version",
+                  value: m07Resolution?.manifest_version,
+                },
+                {
+                  label: "Resolver Outcome",
+                  value: m07Resolution?.outcome,
+                },
+                {
+                  label: "Resolver Fingerprint",
+                  value: m07Resolution?.fingerprint,
+                },
+                {
+                  label: "Resolver Source References",
+                  value: m07Resolution?.source_references,
+                },
+                {
+                  label: "Normalized Selected Values",
+                  value: m07Resolution?.normalized_selected_values,
+                },
+                {
+                  label: "Parameter Set",
+                  value: parameterSet?.parameter_set_id,
+                },
+                {
+                  label: "Parameter Tax Year",
+                  value: parameterSet?.tax_year,
+                },
+                {
+                  label: "Grant Collection State",
+                  value: inputSnapshot.grants_collection_state,
+                },
+                {
+                  label: "Capitalization Collection State",
+                  value: inputSnapshot.actual_capitalizations_collection_state,
+                },
+              ])}
+              {renderFields("Saved Material Inputs", [
+                { label: "Grants", value: inputSnapshot.grants },
+                {
+                  label: "Future Grant Reservation",
+                  value: inputSnapshot.future_grant_reservation,
+                },
+                {
+                  label: "Actual Capitalizations",
+                  value: inputSnapshot.actual_capitalizations,
+                },
+              ])}
             </>
           ) : null}
           {detail.audit_rows.length > 0 ? (

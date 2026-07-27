@@ -10,41 +10,20 @@ import {
 } from "../api/clientsApi";
 import {
   ApiTransportError,
-  type FixationActualCapitalizationInputPayload,
-  type FixationActualCapitalizationReviewItemPayload,
-  type FixationGrantInputPayload,
-  type FixationGrantReviewItemPayload,
-  type FixationIdfInputPayload,
+  type AdmissibleActualCapitalizationPayload,
+  type AdmissibleGrantPayload,
+  type FixationCollectionState,
+  type FixationEligibilityRevision,
+  type FixationInclusionDecision,
   type FixationInputPayload,
-  type FixationInputReviewPayload,
-  type FixationReviewCollectionState,
-  type FixationReviewDisposition,
-  type FixationValidationErrorPayload,
   type FixationResultResponse,
+  type FixationSupportStatus,
+  type M07CalculationInputSelection,
   calculateFixation,
-  convertFixationReview,
-  validateFixationReview,
+  createFixationEligibilityRevision,
+  listFixationEligibilityRevisions,
   validateFixation,
 } from "../api/fixationApi";
-
-type FormState = {
-  calculationId: string;
-  calculationVersion: string;
-  eligibilityDate: string;
-  eligibilityYear: string;
-  monthlyCap: string;
-  exemptionPercentage: string;
-  capitalMultiplier: string;
-  futureGrantReserved: string;
-  idfRelevant: boolean;
-  idfId: string;
-  idfReductionAmount: string;
-  idfOriginalCommutationPercent: string;
-  idfCurrentCommutationPercent: string;
-  idfCommutationDate: string;
-  idfPromoterAgeDate: string;
-  idfSourceLabel: string;
-};
 
 type FixationInputRouteState = {
   clientId?: number;
@@ -58,45 +37,80 @@ type CalculationResultRouteState = {
   result: FixationResultResponse;
   fixationInputPath: string;
   fixationInputState?: FixationInputRouteState;
-  activeSessionReviewContext?: ActiveSessionReviewContext;
 };
 
-type ItemDispositionState = Record<string, FixationReviewDisposition | "">;
-
-type ActiveSessionSourceReference = {
-  domain: "grants" | "actual_capitalizations";
-  source_item_id: string;
-  record_id: string;
-  label: string | null;
-  disposition: FixationReviewDisposition;
+type FormState = {
+  calculationId: string;
+  calculationVersion: string;
+  newEligibilityDate: string;
+  parameterSetId: string;
+  parameterTaxYear: string;
+  parameterEffectiveFrom: string;
+  parameterEffectiveTo: string;
+  monthlyCap: string;
+  exemptionPercentage: string;
+  capitalMultiplier: string;
+  grantImpactMultiplier: string;
+  parameterSourceBasis: string;
+  parameterStatus: "" | "accepted" | "rejected";
+  parameterAcceptedForUse: boolean;
+  parameterAcceptedBy: string;
+  parameterDecisionTimestamp: string;
+  futureReservationEnabled: boolean;
+  futureReservationAmount: string;
+  futureReservationSourceBasis: string;
+  futureReservationStatus: string;
+  futureReservationAcceptedForUse: boolean;
+  futureReservationActor: string;
+  futureReservationDecisionTimestamp: string;
+  idfRelevant: boolean;
+  idfId: string;
+  idfReductionAmount: string;
+  idfOriginalCommutationPercent: string;
+  idfCurrentCommutationPercent: string;
+  idfCommutationDate: string;
+  idfPromoterAgeDate: string;
+  idfSourceLabel: string;
 };
 
-type ActiveSessionSourceMetadata = {
-  domain: "actual_capitalizations";
-  source_item_id: string;
-  record_id: string;
-  source_basis: string | null;
-  planner_assertion: string | null;
-  planner_assertion_basis: string | null;
-};
-
-type ActiveSessionReviewContext = {
-  grants_collection_state: FixationReviewCollectionState;
-  actual_capitalizations_collection_state: FixationReviewCollectionState;
-  included_source_references: ActiveSessionSourceReference[];
-  excluded_source_references: ActiveSessionSourceReference[];
-  source_metadata_context: ActiveSessionSourceMetadata[];
+type ItemDecision = {
+  inclusion: "" | FixationInclusionDecision;
+  support: "" | FixationSupportStatus;
+  sourceBasis: string;
+  status: string;
+  acceptedForUse: boolean;
+  actor: string;
+  decisionTimestamp: string;
+  conflict: boolean;
+  acceptedValue: string;
+  indexationMode: "" | "asserted_indexed_amount" | "cbs_system_calculation_required";
+  recordedMeaning: string;
 };
 
 const initialFormState: FormState = {
   calculationId: "",
   calculationVersion: "",
-  eligibilityDate: "",
-  eligibilityYear: "",
+  newEligibilityDate: "",
+  parameterSetId: "",
+  parameterTaxYear: "",
+  parameterEffectiveFrom: "",
+  parameterEffectiveTo: "",
   monthlyCap: "",
   exemptionPercentage: "",
   capitalMultiplier: "",
-  futureGrantReserved: "",
+  grantImpactMultiplier: "",
+  parameterSourceBasis: "",
+  parameterStatus: "",
+  parameterAcceptedForUse: false,
+  parameterAcceptedBy: "",
+  parameterDecisionTimestamp: "",
+  futureReservationEnabled: false,
+  futureReservationAmount: "",
+  futureReservationSourceBasis: "",
+  futureReservationStatus: "",
+  futureReservationAcceptedForUse: false,
+  futureReservationActor: "",
+  futureReservationDecisionTimestamp: "",
   idfRelevant: false,
   idfId: "",
   idfReductionAmount: "",
@@ -107,420 +121,131 @@ const initialFormState: FormState = {
   idfSourceLabel: "",
 };
 
-function stringifyValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return JSON.stringify(value, null, 2);
-}
-
-type ReviewErrorDomain = "grants" | "actual_capitalizations";
-
-function getReviewErrorDomain(error: FixationValidationErrorPayload): ReviewErrorDomain | null {
-  if (error.path === "grants" || error.path.startsWith("grants.")) {
-    return "grants";
-  }
-
-  if (error.path === "actual_capitalizations" || error.path.startsWith("actual_capitalizations.")) {
-    return "actual_capitalizations";
-  }
-
-  return null;
-}
-
-function getReviewErrorActionMessage(error: FixationValidationErrorPayload): string {
-  if (error.path === "grants.collection_state") {
-    return "נדרש לבחור מצב איסוף עבור מענקים.";
-  }
-
-  if (error.path === "actual_capitalizations.collection_state") {
-    return "נדרש לבחור מצב איסוף עבור היווני קצבה.";
-  }
-
-  return error.message || "יש להשלים בחירה או נתון נדרש לפני המשך.";
-}
-
-function getItemReviewErrors(
-  errors: FixationValidationErrorPayload[],
-  domain: ReviewErrorDomain,
-  sourceId: string,
-): FixationValidationErrorPayload[] {
-  return errors.filter((error) => getReviewErrorDomain(error) === domain && error.source_id === sourceId);
-}
-
-function getSectionReviewErrors(
-  errors: FixationValidationErrorPayload[],
-  domain: ReviewErrorDomain,
-  visibleSourceIds: string[],
-): FixationValidationErrorPayload[] {
-  return errors.filter((error) => {
-    if (getReviewErrorDomain(error) !== domain) {
-      return false;
-    }
-
-    return error.source_id === null || !visibleSourceIds.includes(error.source_id);
-  });
-}
-
-function getFallbackReviewErrors(
-  errors: FixationValidationErrorPayload[],
-): FixationValidationErrorPayload[] {
-  return errors.filter((error) => getReviewErrorDomain(error) === null);
-}
-
-function ReviewValidationMessages({
-  errors,
-  label,
-}: {
-  errors: FixationValidationErrorPayload[];
-  label: string;
-}) {
-  if (errors.length === 0) {
-    return null;
-  }
-
-  return (
-    <div>
-      <p>{label}</p>
-      <ul>
-        {errors.map((error) => (
-          <li key={`${error.path}-${error.code}-${error.source_id ?? "none"}`} data-error-code={error.code} data-error-path={error.path}>
-            <span>{getReviewErrorActionMessage(error)}</span>
-            <span> קוד: {error.code}</span>
-            <span> נתיב: {error.path}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError || error instanceof ClientApiTransportError) {
-    return stringifyValue(error.body);
+    return typeof error.body === "string" ? error.body : JSON.stringify(error.body);
   }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Unexpected transport error.";
+  return error instanceof Error ? error.message : "Unexpected transport error.";
 }
 
-function parseNumber(value: number | string | null): number | null {
-  if (value === null) {
+function initialDecision(sourceBasis: string | null, recordedMeaning = ""): ItemDecision {
+  return {
+    inclusion: "",
+    support: "",
+    sourceBasis: sourceBasis ?? "",
+    status: "",
+    acceptedForUse: false,
+    actor: "",
+    decisionTimestamp: "",
+    conflict: false,
+    acceptedValue: "",
+    indexationMode: "",
+    recordedMeaning,
+  };
+}
+
+function finiteNumber(value: string): number | null {
+  if (value.trim() === "") {
     return null;
   }
-
-  const parsedValue = typeof value === "number" ? value : Number(value);
-  return Number.isNaN(parsedValue) ? null : parsedValue;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function isValidDateValue(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
+function exactDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-function getDateYear(value: string): number | null {
-  if (!isValidDateValue(value)) {
-    return null;
+function requiredDecisionError(decision: ItemDecision, label: string): string | null {
+  if (!decision.inclusion || !decision.support) {
+    return `${label} requires explicit inclusion and support decisions.`;
   }
-
-  return Number(value.slice(0, 4));
-}
-
-function mapGrantToPayload(grant: GrantItem): FixationGrantInputPayload {
-  return {
-    grant_id: grant.grant_id,
-    employer_name: grant.employer_name,
-    nominal_amount: parseNumber(grant.nominal_amount),
-    indexed_amount: Number(grant.indexed_amount),
-    grant_date: grant.grant_date,
-    work_start_date: grant.work_start_date,
-    work_end_date: grant.work_end_date,
-  };
-}
-
-function mapGrantToReviewItem(
-  grant: GrantItem,
-  disposition: FixationReviewDisposition,
-): FixationGrantReviewItemPayload {
-  return {
-    ...mapGrantToPayload(grant),
-    source_item_id: grant.grant_id,
-    disposition,
-  };
-}
-
-function mapActualCapitalizationToPayload(
-  capitalization: ActualCapitalizationItem,
-): FixationActualCapitalizationInputPayload {
-  return {
-    capitalization_id: capitalization.capitalization_id,
-    amount: Number(capitalization.amount),
-    capitalization_date: capitalization.capitalization_date,
-    source_label: capitalization.source_label,
-    notes: capitalization.notes,
-  };
-}
-
-function mapActualCapitalizationToReviewItem(
-  capitalization: ActualCapitalizationItem,
-  disposition: FixationReviewDisposition,
-): FixationActualCapitalizationReviewItemPayload {
-  return {
-    ...mapActualCapitalizationToPayload(capitalization),
-    source_item_id: capitalization.capitalization_id,
-    source_basis: capitalization.source_basis,
-    planner_assertion: capitalization.planner_assertion,
-    planner_assertion_basis: capitalization.planner_assertion_basis,
-    disposition,
-  };
-}
-
-function buildIdfPayload(formState: FormState): FixationIdfInputPayload | null {
-  if (!formState.idfRelevant) {
-    return null;
+  if (
+    !decision.sourceBasis.trim() ||
+    !decision.status.trim() ||
+    !decision.actor.trim() ||
+    !decision.decisionTimestamp
+  ) {
+    return `${label} requires source, status, actor and decision timestamp evidence.`;
   }
-
-  return {
-    idf_id: formState.idfId,
-    reduction_amount: Number(formState.idfReductionAmount),
-    original_commutation_percent: Number(formState.idfOriginalCommutationPercent),
-    current_commutation_percent: Number(formState.idfCurrentCommutationPercent),
-    commutation_date: formState.idfCommutationDate,
-    promoter_age_date: formState.idfPromoterAgeDate,
-    source_label: formState.idfSourceLabel.trim() === "" ? null : formState.idfSourceLabel,
-  };
-}
-
-function buildReviewPayload(
-  formState: FormState,
-  grants: GrantItem[],
-  actualCapitalizations: ActualCapitalizationItem[],
-  grantCollectionState: FixationReviewCollectionState,
-  actualCapitalizationCollectionState: FixationReviewCollectionState,
-  grantDispositions: ItemDispositionState,
-  actualCapitalizationDispositions: ItemDispositionState,
-): FixationInputReviewPayload {
-  return {
-    calculation_id: formState.calculationId.trim() === "" ? null : formState.calculationId,
-    calculation_version: formState.calculationVersion,
-    eligibility_date: formState.eligibilityDate,
-    eligibility_year: Number(formState.eligibilityYear),
-    monthly_cap: Number(formState.monthlyCap),
-    exemption_percentage: Number(formState.exemptionPercentage),
-    capital_multiplier: Number(formState.capitalMultiplier),
-    grants: {
-      collection_state: grantCollectionState,
-      items:
-        grantCollectionState === "items_recorded"
-          ? grants.map((grant) => mapGrantToReviewItem(grant, grantDispositions[grant.grant_id] as FixationReviewDisposition))
-          : [],
-    },
-    future_grant_reserved: Number(formState.futureGrantReserved),
-    actual_capitalizations: {
-      collection_state: actualCapitalizationCollectionState,
-      items:
-        actualCapitalizationCollectionState === "items_recorded"
-          ? actualCapitalizations.map((capitalization) =>
-              mapActualCapitalizationToReviewItem(
-                capitalization,
-                actualCapitalizationDispositions[capitalization.capitalization_id] as FixationReviewDisposition,
-              ),
-            )
-          : [],
-    },
-    idf: buildIdfPayload(formState),
-  };
-}
-
-function buildActiveSessionReviewContext(review: FixationInputReviewPayload): ActiveSessionReviewContext {
-  const sourceReferences: ActiveSessionSourceReference[] = [
-    ...review.grants.items.map((grant) => ({
-      domain: "grants" as const,
-      source_item_id: grant.source_item_id,
-      record_id: grant.grant_id,
-      label: grant.employer_name,
-      disposition: grant.disposition,
-    })),
-    ...review.actual_capitalizations.items.map((capitalization) => ({
-      domain: "actual_capitalizations" as const,
-      source_item_id: capitalization.source_item_id,
-      record_id: capitalization.capitalization_id,
-      label: capitalization.source_label,
-      disposition: capitalization.disposition,
-    })),
-  ];
-
-  return {
-    grants_collection_state: review.grants.collection_state,
-    actual_capitalizations_collection_state: review.actual_capitalizations.collection_state,
-    included_source_references: sourceReferences.filter((reference) => reference.disposition === "include"),
-    excluded_source_references: sourceReferences.filter((reference) => reference.disposition === "exclude"),
-    source_metadata_context: review.actual_capitalizations.items
-      .filter(
-        (capitalization) =>
-          capitalization.source_basis !== null ||
-          capitalization.planner_assertion !== null ||
-          capitalization.planner_assertion_basis !== null,
-      )
-      .map((capitalization) => ({
-        domain: "actual_capitalizations" as const,
-        source_item_id: capitalization.source_item_id,
-        record_id: capitalization.capitalization_id,
-        source_basis: capitalization.source_basis,
-        planner_assertion: capitalization.planner_assertion,
-        planner_assertion_basis: capitalization.planner_assertion_basis,
-      })),
-  };
-}
-
-function validateForm(
-  formState: FormState,
-  grants: GrantItem[],
-  actualCapitalizations: ActualCapitalizationItem[],
-  grantCollectionState: FixationReviewCollectionState,
-  actualCapitalizationCollectionState: FixationReviewCollectionState,
-  grantDispositions: ItemDispositionState,
-  actualCapitalizationDispositions: ItemDispositionState,
-): string | null {
-  const requiredFields: Array<[string, string]> = [
-    [formState.calculationVersion, "Calculation version is required."],
-    [formState.eligibilityDate, "Eligibility date is required."],
-    [formState.eligibilityYear, "Eligibility year is required."],
-    [formState.monthlyCap, "Monthly cap is required."],
-    [formState.exemptionPercentage, "Exemption percentage is required."],
-    [formState.capitalMultiplier, "Capital multiplier is required."],
-    [formState.futureGrantReserved, "Future grant reserved is required."],
-  ];
-
-  const missingField = requiredFields.find(([value]) => value.trim() === "");
-  if (missingField) {
-    return missingField[1];
+  if (decision.inclusion === "include" && !decision.acceptedForUse) {
+    return `${label} is included but not accepted for use.`;
   }
-
-  if (!isValidDateValue(formState.eligibilityDate)) {
-    return "Eligibility date must be a valid date.";
+  if (decision.conflict && finiteNumber(decision.acceptedValue) === null) {
+    return `${label} conflict requires an accepted value.`;
   }
-
-  const eligibilityYear = Number(formState.eligibilityYear);
-  const monthlyCap = Number(formState.monthlyCap);
-  const exemptionPercentage = Number(formState.exemptionPercentage);
-  const capitalMultiplier = Number(formState.capitalMultiplier);
-  const futureGrantReserved = Number(formState.futureGrantReserved);
-  const eligibilityDateYear = getDateYear(formState.eligibilityDate);
-
-  if ([eligibilityYear, monthlyCap, exemptionPercentage, capitalMultiplier, futureGrantReserved].some(Number.isNaN)) {
-    return "Numeric fields must contain valid numbers.";
-  }
-
-  if (!Number.isInteger(eligibilityYear)) {
-    return "Eligibility year must be a whole number.";
-  }
-
-  if (eligibilityDateYear !== eligibilityYear) {
-    return "Eligibility year must match the eligibility date year.";
-  }
-
-  if (monthlyCap <= 0) {
-    return "Monthly cap must be greater than zero.";
-  }
-
-  if (exemptionPercentage < 0 || exemptionPercentage > 1) {
-    return "Exemption percentage must be between 0 and 1.";
-  }
-
-  if (capitalMultiplier <= 0) {
-    return "Capital multiplier must be greater than zero.";
-  }
-
-  if (futureGrantReserved < 0) {
-    return "Future grant reserved must be non-negative.";
-  }
-
-  if (grantCollectionState === "items_recorded") {
-    if (grants.length === 0) {
-      return "Grant review marked items recorded but no grant records were loaded.";
-    }
-    if (grants.some((grant) => grantDispositions[grant.grant_id] !== "include" && grantDispositions[grant.grant_id] !== "exclude")) {
-      return "Every loaded grant requires an explicit include or exclude disposition.";
-    }
-  }
-
-  if (actualCapitalizationCollectionState === "items_recorded") {
-    if (actualCapitalizations.length === 0) {
-      return "Actual capitalization review marked items recorded but no actual capitalization records were loaded.";
-    }
-    if (
-      actualCapitalizations.some(
-        (capitalization) =>
-          actualCapitalizationDispositions[capitalization.capitalization_id] !== "include" &&
-          actualCapitalizationDispositions[capitalization.capitalization_id] !== "exclude",
-      )
-    ) {
-      return "Every loaded actual capitalization requires an explicit include or exclude disposition.";
-    }
-  }
-
-  if (!formState.idfRelevant) {
-    return null;
-  }
-
-  const idfRequiredFields: Array<[string, string]> = [
-    [formState.idfId, "IDF ID is required when IDF is enabled."],
-    [formState.idfReductionAmount, "IDF reduction amount is required when IDF is enabled."],
-    [
-      formState.idfOriginalCommutationPercent,
-      "IDF original commutation percent is required when IDF is enabled.",
-    ],
-    [
-      formState.idfCurrentCommutationPercent,
-      "IDF current commutation percent is required when IDF is enabled.",
-    ],
-    [formState.idfCommutationDate, "IDF commutation date is required when IDF is enabled."],
-    [formState.idfPromoterAgeDate, "IDF promoter age date is required when IDF is enabled."],
-  ];
-
-  const missingIdfField = idfRequiredFields.find(([value]) => value.trim() === "");
-  if (missingIdfField) {
-    return missingIdfField[1];
-  }
-
-  if (!isValidDateValue(formState.idfCommutationDate) || !isValidDateValue(formState.idfPromoterAgeDate)) {
-    return "IDF dates must be valid dates.";
-  }
-
-  const idfReductionAmount = Number(formState.idfReductionAmount);
-  const idfOriginalCommutationPercent = Number(formState.idfOriginalCommutationPercent);
-  const idfCurrentCommutationPercent = Number(formState.idfCurrentCommutationPercent);
-
-  if ([idfReductionAmount, idfOriginalCommutationPercent, idfCurrentCommutationPercent].some(Number.isNaN)) {
-    return "IDF numeric fields must contain valid numbers.";
-  }
-
-  if (idfReductionAmount <= 0) {
-    return "IDF reduction amount must be greater than zero.";
-  }
-
-  if (idfOriginalCommutationPercent <= 0 || idfCurrentCommutationPercent <= 0) {
-    return "IDF percent values must be greater than zero.";
-  }
-
-  if (idfOriginalCommutationPercent < 1 || idfCurrentCommutationPercent < 1) {
-    return "IDF percent values must be provided in percent points, not decimal format.";
-  }
-
-  const commutationDate = new Date(formState.idfCommutationDate);
-  const promoterAgeDate = new Date(formState.idfPromoterAgeDate);
-  const eligibilityDate = new Date(formState.eligibilityDate);
-  const laterDate = commutationDate > eligibilityDate ? commutationDate : eligibilityDate;
-
-  if (promoterAgeDate <= laterDate) {
-    return "IDF promoter age date must be after the later of commutation date and eligibility date.";
-  }
-
   return null;
+}
+
+function ResultDiagnostics({
+  result,
+  selectedRevisionId,
+  selection,
+  onSelection,
+}: {
+  result: FixationResultResponse;
+  selectedRevisionId: string;
+  selection: M07CalculationInputSelection | null;
+  onSelection: (selection: M07CalculationInputSelection) => void;
+}) {
+  const ambiguous = result.m07_resolution?.ambiguous_fields ?? [];
+  return (
+    <section aria-label="Fixation response">
+      <h3>Server Response</h3>
+      <p>Calculation status: {result.status}</p>
+      {result.status === "success" ? (
+        <>
+          <p>Normalized eligibility date: {result.eligibility_date}</p>
+          <p>Eligibility year: {result.eligibility_year}</p>
+          <p>Remaining exempt capital: {result.remaining_exempt_capital}</p>
+          <p>Monthly exempt pension: {result.monthly_exempt_pension}</p>
+          <p>Grant impact: {result.grant_impact_total}</p>
+          <p>Capitalization impact: {result.actual_capitalization_impact}</p>
+        </>
+      ) : null}
+      {result.validation_errors.length > 0 ? (
+        <ul aria-label="Validation failures">
+          {result.validation_errors.map((error, index) => (
+            <li key={`${error.path}-${error.code}-${index}`}>
+              {error.path}: {error.message} ({error.code})
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {(result.m07_resolution?.missing_fields ?? []).map((field) => (
+        <p key={field}>Missing input: {field}. Calculation did not run. Add the date below and retry validation.</p>
+      ))}
+      {ambiguous.map((field) => (
+        <fieldset key={field.field_code}>
+          <legend>Ambiguous input: {field.field_code}. Select one candidate; no automatic choice is made.</legend>
+          {field.candidates.map((candidate) => {
+            const candidateIdentity = candidate.candidate_identities[0];
+            return (
+              <label key={candidateIdentity}>
+                <input
+                  type="radio"
+                  name={`candidate-${field.field_code}`}
+                  checked={selection?.candidate_identity === candidateIdentity}
+                  onChange={() =>
+                    onSelection({
+                      field_code: "eligibility_date",
+                      candidate_identity: candidateIdentity,
+                      b1_evidence_revision_id: selectedRevisionId,
+                    })
+                  }
+                />
+                {candidate.normalized_value} ({candidateIdentity})
+              </label>
+            );
+          })}
+        </fieldset>
+      ))}
+    </section>
+  );
 }
 
 export function FixationInputScreen() {
@@ -528,635 +253,505 @@ export function FixationInputScreen() {
   const location = useLocation();
   const navigate = useNavigate();
   const routeState = location.state as FixationInputRouteState | null;
-  const routeStateClientId = routeState?.clientId;
-  const resolvedClientId = clientIdParam !== undefined ? Number(clientIdParam) : routeStateClientId;
+  const resolvedClientId = clientIdParam !== undefined ? Number(clientIdParam) : routeState?.clientId;
   const clientId = Number.isInteger(resolvedClientId) && Number(resolvedClientId) > 0 ? Number(resolvedClientId) : null;
-  const clientName = routeState?.clientName ?? null;
-  const actualCapitalizationsPath = clientId !== null ? `/clients/${clientId}/actual-capitalizations` : "/clients";
-  const fixationInputPath = clientId !== null ? `/clients/${clientId}/fixation/input` : "/fixation/input";
-  const calculationResultPath = clientId !== null ? `/clients/${clientId}/fixation/result` : "/fixation/result";
-  const backState = clientName ? { clientName } : undefined;
-  const fixationInputState = clientName ? { clientId: clientId ?? undefined, clientName } : { clientId: clientId ?? undefined };
-  const [formState, setFormState] = useState<FormState>(initialFormState);
+  const clientName = routeState?.clientName;
+  const [form, setForm] = useState<FormState>(initialFormState);
   const [grants, setGrants] = useState<GrantItem[]>([]);
-  const [actualCapitalizations, setActualCapitalizations] = useState<ActualCapitalizationItem[]>([]);
-  const [grantCollectionState, setGrantCollectionState] = useState<FixationReviewCollectionState>("unknown");
-  const [actualCapitalizationCollectionState, setActualCapitalizationCollectionState] =
-    useState<FixationReviewCollectionState>("unknown");
-  const [grantDispositions, setGrantDispositions] = useState<ItemDispositionState>({});
-  const [actualCapitalizationDispositions, setActualCapitalizationDispositions] = useState<ItemDispositionState>({});
-  const [isSourceLoading, setIsSourceLoading] = useState(true);
-  const [sourceErrorMessage, setSourceErrorMessage] = useState<string | null>(null);
+  const [capitalizations, setCapitalizations] = useState<ActualCapitalizationItem[]>([]);
+  const [revisions, setRevisions] = useState<FixationEligibilityRevision[]>([]);
+  const [selectedRevisionId, setSelectedRevisionId] = useState("");
+  const [selection, setSelection] = useState<M07CalculationInputSelection | null>(null);
+  const [grantCollectionState, setGrantCollectionState] = useState<FixationCollectionState>("unknown");
+  const [capitalizationCollectionState, setCapitalizationCollectionState] = useState<FixationCollectionState>("unknown");
+  const [grantDecisions, setGrantDecisions] = useState<Record<string, ItemDecision>>({});
+  const [capitalizationDecisions, setCapitalizationDecisions] = useState<Record<string, ItemDecision>>({});
+  const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [reviewValidationErrors, setReviewValidationErrors] = useState<FixationValidationErrorPayload[]>([]);
-  const [responseData, setResponseData] = useState<FixationResultResponse | null>(null);
-  const [responseSource, setResponseSource] = useState<"calculate" | "validate" | null>(null);
-  const [calculatedResult, setCalculatedResult] = useState<FixationResultResponse | null>(null);
-  const [calculatedPayload, setCalculatedPayload] = useState<FixationInputPayload | null>(null);
-  const [calculatedPayloadSignature, setCalculatedPayloadSignature] = useState<string | null>(null);
+  const [isCreatingDate, setIsCreatingDate] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [response, setResponse] = useState<FixationResultResponse | null>(null);
+  const [validatedSignature, setValidatedSignature] = useState<string | null>(null);
+  const [calculated, setCalculated] = useState<{ input: FixationInputPayload; result: FixationResultResponse } | null>(null);
 
   useEffect(() => {
-    let isActive = true;
-
-    async function loadClientSourceData() {
+    let active = true;
+    async function load() {
       if (clientId === null) {
-        if (isActive) {
-          setGrants([]);
-          setActualCapitalizations([]);
-          setSourceErrorMessage("Fixation flow requires an existing client context.");
-          setIsSourceLoading(false);
-        }
+        setMessage("Fixation flow requires an existing client context.");
+        setIsLoading(false);
         return;
       }
-
-      setIsSourceLoading(true);
-
       try {
-        const [nextGrants, nextActualCapitalizations] = await Promise.all([
+        const [loadedGrants, loadedCapitalizations, revisionList] = await Promise.all([
           getGrants(clientId),
           getActualCapitalizations(clientId),
+          listFixationEligibilityRevisions(clientId),
         ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        setGrants(nextGrants);
-        setActualCapitalizations(nextActualCapitalizations);
-        setGrantDispositions((current) =>
-          Object.fromEntries(nextGrants.map((grant) => [grant.grant_id, current[grant.grant_id] ?? ""])),
+        if (!active) return;
+        setGrants(loadedGrants);
+        setCapitalizations(loadedCapitalizations);
+        setRevisions(revisionList.items);
+        setGrantDecisions(
+          Object.fromEntries(loadedGrants.map((grant) => [grant.grant_id, initialDecision(grant.notes)])),
         );
-        setActualCapitalizationDispositions((current) =>
+        setCapitalizationDecisions(
           Object.fromEntries(
-            nextActualCapitalizations.map((capitalization) => [
-              capitalization.capitalization_id,
-              current[capitalization.capitalization_id] ?? "",
+            loadedCapitalizations.map((item) => [
+              item.capitalization_id,
+              initialDecision(item.source_basis, item.source_label ?? ""),
             ]),
           ),
         );
-        setSourceErrorMessage(null);
       } catch (error) {
-        if (!isActive) {
-          return;
-        }
-
-        setGrants([]);
-        setActualCapitalizations([]);
-        setSourceErrorMessage(getErrorMessage(error));
+        if (active) setMessage(getErrorMessage(error));
       } finally {
-        if (isActive) {
-          setIsSourceLoading(false);
-        }
+        if (active) setIsLoading(false);
       }
     }
-
-    void loadClientSourceData();
-
+    void load();
     return () => {
-      isActive = false;
+      active = false;
     };
   }, [clientId]);
 
-  const currentReviewPayload = useMemo(
-    () =>
-      buildReviewPayload(
-        formState,
-        grants,
-        actualCapitalizations,
-        grantCollectionState,
-        actualCapitalizationCollectionState,
-        grantDispositions,
-        actualCapitalizationDispositions,
-      ),
-    [
-      actualCapitalizationCollectionState,
-      actualCapitalizationDispositions,
-      actualCapitalizations,
-      formState,
-      grantCollectionState,
-      grantDispositions,
-      grants,
-    ],
-  );
-  const currentReviewPayloadSignature = useMemo(() => JSON.stringify(currentReviewPayload), [currentReviewPayload]);
-  const grantSourceIds = useMemo(() => grants.map((grant) => grant.grant_id), [grants]);
-  const actualCapitalizationSourceIds = useMemo(
-    () => actualCapitalizations.map((capitalization) => capitalization.capitalization_id),
-    [actualCapitalizations],
-  );
-  const grantSectionReviewErrors = useMemo(
-    () => getSectionReviewErrors(reviewValidationErrors, "grants", grantSourceIds),
-    [grantSourceIds, reviewValidationErrors],
-  );
-  const actualCapitalizationSectionReviewErrors = useMemo(
-    () => getSectionReviewErrors(reviewValidationErrors, "actual_capitalizations", actualCapitalizationSourceIds),
-    [actualCapitalizationSourceIds, reviewValidationErrors],
-  );
-  const fallbackReviewErrors = useMemo(() => getFallbackReviewErrors(reviewValidationErrors), [reviewValidationErrors]);
-  const frontendValidationMessage = useMemo(
-    () =>
-      validateForm(
-        formState,
-        grants,
-        actualCapitalizations,
-        grantCollectionState,
-        actualCapitalizationCollectionState,
-        grantDispositions,
-        actualCapitalizationDispositions,
-      ),
-    [
-      actualCapitalizationCollectionState,
-      actualCapitalizationDispositions,
-      actualCapitalizations,
-      formState,
-      grantCollectionState,
-      grantDispositions,
-      grants,
-    ],
-  );
-  const isCalculationStale = calculatedResult !== null && calculatedPayloadSignature !== currentReviewPayloadSignature;
-  const readinessStatus =
-    clientId === null
-      ? "Blocked: client context is required."
-      : isSourceLoading
-        ? "Loading source data."
-        : sourceErrorMessage !== null
-          ? "Blocked: source data could not be loaded."
-          : frontendValidationMessage !== null
-            ? "Not ready: required inputs are still missing or invalid."
-            : "Ready to validate or run calculation.";
-
-  function updateFormState<K extends keyof FormState>(field: K, value: FormState[K]) {
-    setFormState((current) => ({ ...current, [field]: value }));
+  function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function updateGrantDisposition(grantId: string, disposition: FixationReviewDisposition | "") {
-    setGrantDispositions((current) => ({ ...current, [grantId]: disposition }));
+  function updateGrant(grantId: string, patch: Partial<ItemDecision>) {
+    setGrantDecisions((current) => ({
+      ...current,
+      [grantId]: { ...current[grantId], ...patch },
+    }));
   }
 
-  function updateActualCapitalizationDisposition(capitalizationId: string, disposition: FixationReviewDisposition | "") {
-    setActualCapitalizationDispositions((current) => ({ ...current, [capitalizationId]: disposition }));
+  function updateCapitalization(capitalizationId: string, patch: Partial<ItemDecision>) {
+    setCapitalizationDecisions((current) => ({
+      ...current,
+      [capitalizationId]: { ...current[capitalizationId], ...patch },
+    }));
   }
 
-  async function submitForm(action: "calculate" | "validate") {
-    if (clientId === null) {
-      setErrorMessage("Fixation flow requires an existing client context.");
-      setReviewValidationErrors([]);
-      setResponseData(null);
-      setResponseSource(null);
-      return;
-    }
-
-    if (isSourceLoading) {
-      setErrorMessage("Source data is still loading.");
-      setReviewValidationErrors([]);
-      setResponseData(null);
-      setResponseSource(null);
-      return;
-    }
-
-    if (sourceErrorMessage !== null) {
-      setErrorMessage("Fixation source data must load successfully before validation or calculation.");
-      setReviewValidationErrors([]);
-      setResponseData(null);
-      setResponseSource(null);
-      return;
-    }
-
-    if (frontendValidationMessage !== null) {
-      setErrorMessage(frontendValidationMessage);
-      setReviewValidationErrors([]);
-      setResponseData(null);
-      setResponseSource(null);
-      return;
-    }
-
-    setIsSubmitting(true);
-    setErrorMessage(null);
-
-    try {
-      const reviewValidation = await validateFixationReview(currentReviewPayload);
-      if (!reviewValidation.valid) {
-        setReviewValidationErrors(reviewValidation.errors);
-        setResponseData(null);
-        setResponseSource(null);
-        return;
+  function localError(): string | null {
+    if (!selectedRevisionId) return "Select an exact finalized B1 revision.";
+    if (!form.calculationVersion.trim()) return "Calculation version is required.";
+    const parameterText = [
+      form.parameterSetId,
+      form.parameterTaxYear,
+      form.monthlyCap,
+      form.exemptionPercentage,
+      form.capitalMultiplier,
+      form.grantImpactMultiplier,
+      form.parameterSourceBasis,
+      form.parameterStatus,
+      form.parameterAcceptedBy,
+      form.parameterDecisionTimestamp,
+    ];
+    if (parameterText.some((value) => !value.trim())) return "Complete the parameter-set evidence.";
+    const numeric = [
+      form.parameterTaxYear,
+      form.monthlyCap,
+      form.exemptionPercentage,
+      form.capitalMultiplier,
+      form.grantImpactMultiplier,
+    ];
+    if (numeric.some((value) => finiteNumber(value) === null)) return "Parameter values must be valid numbers.";
+    if (grantCollectionState === "items_recorded") {
+      if (grants.length === 0) return "Grant collection says items recorded but no grants were loaded.";
+      for (const grant of grants) {
+        const decision = grantDecisions[grant.grant_id];
+        const error = requiredDecisionError(decision, `Grant ${grant.grant_id}`);
+        if (error) return error;
+        if (!decision.indexationMode) return `Grant ${grant.grant_id} requires an explicit indexation mode.`;
       }
+    }
+    if (capitalizationCollectionState === "items_recorded") {
+      if (capitalizations.length === 0) return "Capitalization collection says items recorded but no items were loaded.";
+      for (const item of capitalizations) {
+        const decision = capitalizationDecisions[item.capitalization_id];
+        const error = requiredDecisionError(decision, `Capitalization ${item.capitalization_id}`);
+        if (error) return error;
+        if (!decision.recordedMeaning.trim()) return `Capitalization ${item.capitalization_id} requires recorded meaning.`;
+      }
+    }
+    if (form.futureReservationEnabled) {
+      const required = [
+        form.futureReservationAmount,
+        form.futureReservationSourceBasis,
+        form.futureReservationStatus,
+        form.futureReservationActor,
+        form.futureReservationDecisionTimestamp,
+      ];
+      if (required.some((value) => !value.trim()) || finiteNumber(form.futureReservationAmount) === null) {
+        return "Complete the future grant reservation evidence.";
+      }
+    }
+    return null;
+  }
 
-      setReviewValidationErrors([]);
-      const convertedPayload = await convertFixationReview(currentReviewPayload);
-      const response = action === "calculate"
-        ? await calculateFixation(clientId, convertedPayload)
-        : await validateFixation(clientId, convertedPayload);
-      setResponseData(response);
-      setResponseSource(action);
+  function buildPayload(): FixationInputPayload {
+    const grantPayloads: AdmissibleGrantPayload[] =
+      grantCollectionState === "items_recorded"
+        ? grants.map((grant) => {
+            const decision = grantDecisions[grant.grant_id];
+            return {
+              grant_id: grant.grant_id,
+              client_id: clientId as number,
+              item_type: "grant",
+              employer_name: grant.employer_name,
+              nominal_amount: grant.nominal_amount === null ? null : Number(grant.nominal_amount),
+              indexed_amount: grant.indexed_amount === null ? null : Number(grant.indexed_amount),
+              grant_date: grant.grant_date,
+              work_start_date: grant.work_start_date,
+              work_end_date: grant.work_end_date,
+              inclusion_decision: decision.inclusion as FixationInclusionDecision,
+              support_status: decision.support as FixationSupportStatus,
+              conflict_indicator: decision.conflict,
+              accepted_value: decision.conflict ? Number(decision.acceptedValue) : null,
+              indexation_mode: decision.indexationMode as AdmissibleGrantPayload["indexation_mode"],
+              source_basis: decision.sourceBasis,
+              status: decision.status,
+              accepted_for_use: decision.acceptedForUse,
+              actor: decision.actor,
+              decision_timestamp: decision.decisionTimestamp,
+            };
+          })
+        : [];
+    const capitalizationPayloads: AdmissibleActualCapitalizationPayload[] =
+      capitalizationCollectionState === "items_recorded"
+        ? capitalizations.map((item) => {
+            const decision = capitalizationDecisions[item.capitalization_id];
+            return {
+              capitalization_id: item.capitalization_id,
+              item_type: "actual_capitalization",
+              amount: Number(item.amount),
+              capitalization_date: item.capitalization_date,
+              recorded_meaning: decision.recordedMeaning,
+              inclusion_decision: decision.inclusion as FixationInclusionDecision,
+              support_status: decision.support as FixationSupportStatus,
+              conflict_indicator: decision.conflict,
+              accepted_value: decision.conflict ? Number(decision.acceptedValue) : null,
+              notes: item.notes,
+              source_basis: decision.sourceBasis,
+              status: decision.status,
+              accepted_for_use: decision.acceptedForUse,
+              actor: decision.actor,
+              decision_timestamp: decision.decisionTimestamp,
+            };
+          })
+        : [];
+    return {
+      calculation_id: form.calculationId.trim() || null,
+      calculation_version: form.calculationVersion,
+      m07_input_reference: {
+        b1_evidence_revision_id: selectedRevisionId,
+        selections: selection ? [selection] : [],
+      },
+      parameter_set: {
+        parameter_set_id: form.parameterSetId,
+        client_id: clientId as number,
+        tax_year: Number(form.parameterTaxYear),
+        effective_from: form.parameterEffectiveFrom || null,
+        effective_to: form.parameterEffectiveTo || null,
+        values: {
+          monthly_cap: Number(form.monthlyCap),
+          exemption_percentage: Number(form.exemptionPercentage),
+          capital_multiplier: Number(form.capitalMultiplier),
+          grant_impact_multiplier: Number(form.grantImpactMultiplier),
+        },
+        source_basis: form.parameterSourceBasis,
+        status: form.parameterStatus as "accepted" | "rejected",
+        accepted_for_use: form.parameterAcceptedForUse,
+        accepted_by: form.parameterAcceptedBy,
+        decision_timestamp: form.parameterDecisionTimestamp,
+      },
+      grants_collection_state: grantCollectionState,
+      grants: grantPayloads,
+      future_grant_reservation: form.futureReservationEnabled
+        ? {
+            amount: Number(form.futureReservationAmount),
+            source_basis: form.futureReservationSourceBasis,
+            status: form.futureReservationStatus,
+            accepted_for_use: form.futureReservationAcceptedForUse,
+            actor: form.futureReservationActor,
+            decision_timestamp: form.futureReservationDecisionTimestamp,
+          }
+        : null,
+      actual_capitalizations_collection_state: capitalizationCollectionState,
+      actual_capitalizations: capitalizationPayloads,
+      idf: form.idfRelevant
+        ? {
+            idf_id: form.idfId,
+            reduction_amount: Number(form.idfReductionAmount),
+            original_commutation_percent: Number(form.idfOriginalCommutationPercent),
+            current_commutation_percent: Number(form.idfCurrentCommutationPercent),
+            commutation_date: form.idfCommutationDate,
+            promoter_age_date: form.idfPromoterAgeDate,
+            source_label: form.idfSourceLabel || null,
+          }
+        : null,
+      metadata: { source_data_version_label: "pkg005-fixation-ui" },
+    };
+  }
 
-      if (action === "calculate") {
-        setCalculatedResult(response);
-        setCalculatedPayload(convertedPayload);
-        setCalculatedPayloadSignature(currentReviewPayloadSignature);
+  const payloadSignature = useMemo(() => {
+    if (clientId === null) return "";
+    return JSON.stringify(buildPayload());
+    // buildPayload is a pure projection of these state values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    clientId,
+    form,
+    selectedRevisionId,
+    selection,
+    grantCollectionState,
+    capitalizationCollectionState,
+    grants,
+    capitalizations,
+    grantDecisions,
+    capitalizationDecisions,
+  ]);
+
+  async function handleCreateDate(event: FormEvent) {
+    event.preventDefault();
+    if (clientId === null || !exactDate(form.newEligibilityDate)) {
+      setMessage("Eligibility date must be an exact valid YYYY-MM-DD date.");
+      return;
+    }
+    setIsCreatingDate(true);
+    setMessage(null);
+    try {
+      const created = await createFixationEligibilityRevision(clientId, form.newEligibilityDate);
+      const refreshed = await listFixationEligibilityRevisions(clientId);
+      setRevisions(refreshed.items);
+      setSelectedRevisionId(created.revision_id);
+      setSelection(null);
+      setValidatedSignature(null);
+      setCalculated(null);
+      setMessage(`Finalized B1 revision created and selected: ${created.revision_id}`);
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setIsCreatingDate(false);
+    }
+  }
+
+  async function submit(action: "validate" | "calculate") {
+    if (clientId === null) return;
+    const validationMessage = localError();
+    if (validationMessage) {
+      setMessage(validationMessage);
+      return;
+    }
+    const payload = buildPayload();
+    const signature = JSON.stringify(payload);
+    if (action === "calculate" && validatedSignature !== signature) {
+      setMessage("Validate the current request successfully before calculation.");
+      return;
+    }
+    setIsSubmitting(true);
+    setMessage(null);
+    try {
+      const result =
+        action === "validate"
+          ? await validateFixation(clientId, payload)
+          : await calculateFixation(clientId, payload);
+      setResponse(result);
+      if (action === "validate") {
+        setValidatedSignature(result.status === "success" ? signature : null);
+        setMessage(result.status === "success" ? "Server validation passed. Calculation is enabled." : "Server validation failed.");
+      } else if (result.status === "success") {
+        setCalculated({ input: payload, result });
+        setMessage("Calculation succeeded. Continue to the result to save it.");
+      } else {
+        setCalculated(null);
+        setMessage("Calculation failed.");
       }
     } catch (error) {
-      setErrorMessage(getErrorMessage(error));
-      setReviewValidationErrors([]);
-      setResponseData(null);
-      setResponseSource(null);
+      setMessage(getErrorMessage(error));
+      setValidatedSignature(null);
+      setCalculated(null);
     } finally {
       setIsSubmitting(false);
     }
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void submitForm("calculate");
+  function selectRevision(revisionId: string) {
+    setSelectedRevisionId(revisionId);
+    setSelection(null);
+    setValidatedSignature(null);
+    setCalculated(null);
+    setResponse(null);
   }
 
-  function handleContinueToResult() {
-    if (clientId === null || calculatedResult === null || calculatedPayload === null || isCalculationStale) {
-      return;
-    }
-
-    const resultRouteState: CalculationResultRouteState = {
+  function continueToResult() {
+    if (clientId === null || calculated === null || JSON.stringify(calculated.input) !== payloadSignature) return;
+    const fixationInputPath = `/clients/${clientId}/fixation/input`;
+    const state: CalculationResultRouteState = {
       clientId,
-      clientName: clientName ?? undefined,
-      inputData: calculatedPayload,
-      result: calculatedResult,
+      clientName,
+      inputData: calculated.input,
+      result: calculated.result,
       fixationInputPath,
-      fixationInputState,
-      activeSessionReviewContext: buildActiveSessionReviewContext(currentReviewPayload),
+      fixationInputState: { clientId, clientName },
     };
-
-    navigate(calculationResultPath, { state: resultRouteState });
+    navigate(`/clients/${clientId}/fixation/result`, { state });
   }
 
-  if (clientId === null) {
-    return (
-      <section>
-        <h2>Fixation Parameters</h2>
-        <p>BLOCKED</p>
-        <p>Fixation flow requires an existing client context.</p>
-      </section>
-    );
-  }
+  if (clientId === null) return <section><h2>Fixation Parameters</h2><p>BLOCKED: client context is required.</p></section>;
+  if (isLoading) return <section><h2>Fixation Parameters</h2><p>Loading client fixation data...</p></section>;
 
-  if (isSourceLoading) {
-    return (
-      <section>
-        <h2>Fixation Parameters</h2>
-        <p>Client ID: {clientId}</p>
-        {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Loading client source data...</p>
-        <p>
-          <Link to={actualCapitalizationsPath} state={backState}>Back to Actual Capitalizations</Link>
-        </p>
-      </section>
-    );
-  }
-
+  const selectedRevision = revisions.find((revision) => revision.revision_id === selectedRevisionId);
   return (
     <section>
       <h2>Fixation Parameters</h2>
       <p>Client ID: {clientId}</p>
       {clientName ? <p>Client Name: {clientName}</p> : null}
-      <p>Grants Summary: {grants.length}</p>
-      <p>Actual Capitalizations Summary: {actualCapitalizations.length}</p>
-      <p>Current Input Readiness Status: {readinessStatus}</p>
-      {sourceErrorMessage ? <p>{sourceErrorMessage}</p> : null}
+      <p><Link to={`/clients/${clientId}/fixation/workspace`} state={{ clientName }}>Back to fixation workspace</Link></p>
+
+      <section>
+        <h3>Eligibility-date B1 evidence</h3>
+        <label>
+          Finalized B1 revision
+          <select value={selectedRevisionId} onChange={(event) => selectRevision(event.target.value)}>
+            <option value="">Select an exact revision</option>
+            {revisions.map((revision) => (
+              <option key={revision.revision_id} value={revision.revision_id}>
+                {revision.revision_id} — {revision.status} — {revision.eligibility_outcome}
+                {revision.eligibility_dates.length ? ` — ${revision.eligibility_dates.join(", ")}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selectedRevision ? (
+          <p>
+            Selected revision: {selectedRevision.revision_id}; status: {selectedRevision.status};
+            eligibility evidence: {selectedRevision.eligibility_dates.join(", ") || "missing"}.
+          </p>
+        ) : <p>No revision is selected. The system does not choose latest or current automatically.</p>}
+        <form onSubmit={handleCreateDate}>
+          <label>
+            יום זכאות
+            <input
+              aria-label="Eligibility Date Evidence"
+              type="date"
+              value={form.newEligibilityDate}
+              onChange={(event) => updateForm("newEligibilityDate", event.target.value)}
+            />
+          </label>
+          <button type="submit" disabled={isCreatingDate}>
+            {isCreatingDate ? "Creating finalized revision..." : "Create finalized B1 revision"}
+          </button>
+        </form>
+        <p>The server records the fixed technical workflow actor; the browser supplies no authoritative actor.</p>
+      </section>
+
+      <section>
+        <h3>M08B accepted parameter set</h3>
+        <label>Calculation ID <input value={form.calculationId} onChange={(event) => updateForm("calculationId", event.target.value)} /></label>
+        <label>Calculation Version <input value={form.calculationVersion} onChange={(event) => updateForm("calculationVersion", event.target.value)} /></label>
+        <label>Parameter Set ID <input value={form.parameterSetId} onChange={(event) => updateForm("parameterSetId", event.target.value)} /></label>
+        <label>Parameter Tax Year <input type="number" value={form.parameterTaxYear} onChange={(event) => updateForm("parameterTaxYear", event.target.value)} /></label>
+        <label>Effective From <input type="date" value={form.parameterEffectiveFrom} onChange={(event) => updateForm("parameterEffectiveFrom", event.target.value)} /></label>
+        <label>Effective To <input type="date" value={form.parameterEffectiveTo} onChange={(event) => updateForm("parameterEffectiveTo", event.target.value)} /></label>
+        <label>Monthly Cap <input type="number" step="any" value={form.monthlyCap} onChange={(event) => updateForm("monthlyCap", event.target.value)} /></label>
+        <label>Exemption Percentage <input type="number" step="any" value={form.exemptionPercentage} onChange={(event) => updateForm("exemptionPercentage", event.target.value)} /></label>
+        <label>Capital Multiplier <input type="number" step="any" value={form.capitalMultiplier} onChange={(event) => updateForm("capitalMultiplier", event.target.value)} /></label>
+        <label>Grant Impact Multiplier <input type="number" step="any" value={form.grantImpactMultiplier} onChange={(event) => updateForm("grantImpactMultiplier", event.target.value)} /></label>
+        <label>Parameter Source Basis <input value={form.parameterSourceBasis} onChange={(event) => updateForm("parameterSourceBasis", event.target.value)} /></label>
+        <label>Parameter Status
+          <select value={form.parameterStatus} onChange={(event) => updateForm("parameterStatus", event.target.value as FormState["parameterStatus"])}>
+            <option value="">Select</option><option value="accepted">accepted</option><option value="rejected">rejected</option>
+          </select>
+        </label>
+        <label><input type="checkbox" checked={form.parameterAcceptedForUse} onChange={(event) => updateForm("parameterAcceptedForUse", event.target.checked)} /> Parameter accepted for use</label>
+        <label>Parameter Accepted By <input value={form.parameterAcceptedBy} onChange={(event) => updateForm("parameterAcceptedBy", event.target.value)} /></label>
+        <label>Parameter Decision Timestamp <input type="datetime-local" value={form.parameterDecisionTimestamp} onChange={(event) => updateForm("parameterDecisionTimestamp", event.target.value)} /></label>
+      </section>
+
+      <section>
+        <h3>M08C grants</h3>
+        <label>Grant Collection State
+          <select value={grantCollectionState} onChange={(event) => setGrantCollectionState(event.target.value as FixationCollectionState)}>
+            <option value="unknown">unknown</option><option value="not_collected">not_collected</option>
+            <option value="confirmed_none">confirmed_none</option><option value="items_recorded">items_recorded</option>
+          </select>
+        </label>
+        {grantCollectionState === "items_recorded" ? grants.map((grant) => {
+          const decision = grantDecisions[grant.grant_id];
+          return <fieldset key={grant.grant_id}><legend>Grant {grant.grant_id}</legend>
+            <p>{grant.employer_name} — indexed amount {grant.indexed_amount}</p>
+            <label>Grant Inclusion <select value={decision.inclusion} onChange={(event) => updateGrant(grant.grant_id, { inclusion: event.target.value as ItemDecision["inclusion"] })}><option value="">Select</option><option value="include">include</option><option value="exclude">exclude</option></select></label>
+            <label>Grant Support <select value={decision.support} onChange={(event) => updateGrant(grant.grant_id, { support: event.target.value as ItemDecision["support"] })}><option value="">Select</option><option value="supported">supported</option><option value="unsupported">unsupported</option><option value="requires_special_handling">requires_special_handling</option></select></label>
+            <label>Indexation Mode <select value={decision.indexationMode} onChange={(event) => updateGrant(grant.grant_id, { indexationMode: event.target.value as ItemDecision["indexationMode"] })}><option value="">Select mode</option><option value="asserted_indexed_amount">asserted indexed amount</option><option value="cbs_system_calculation_required">CBS system calculation required</option></select></label>
+            <label>Source Basis <input value={decision.sourceBasis} onChange={(event) => updateGrant(grant.grant_id, { sourceBasis: event.target.value })} /></label>
+            <label>Evidence Status <input value={decision.status} onChange={(event) => updateGrant(grant.grant_id, { status: event.target.value })} /></label>
+            <label>Decision Actor <input value={decision.actor} onChange={(event) => updateGrant(grant.grant_id, { actor: event.target.value })} /></label>
+            <label>Decision Timestamp <input type="datetime-local" value={decision.decisionTimestamp} onChange={(event) => updateGrant(grant.grant_id, { decisionTimestamp: event.target.value })} /></label>
+            <label><input type="checkbox" checked={decision.acceptedForUse} onChange={(event) => updateGrant(grant.grant_id, { acceptedForUse: event.target.checked })} /> Accepted for use</label>
+            <label><input type="checkbox" checked={decision.conflict} onChange={(event) => updateGrant(grant.grant_id, { conflict: event.target.checked })} /> Conflict</label>
+            {decision.conflict ? <label>Accepted Value <input type="number" step="any" value={decision.acceptedValue} onChange={(event) => updateGrant(grant.grant_id, { acceptedValue: event.target.value })} /></label> : null}
+          </fieldset>;
+        }) : null}
+      </section>
+
+      <section>
+        <h3>M08C actual capitalizations</h3>
+        <label>Actual Capitalization Collection State
+          <select value={capitalizationCollectionState} onChange={(event) => setCapitalizationCollectionState(event.target.value as FixationCollectionState)}>
+            <option value="unknown">unknown</option><option value="not_collected">not_collected</option>
+            <option value="confirmed_none">confirmed_none</option><option value="items_recorded">items_recorded</option>
+          </select>
+        </label>
+        {capitalizationCollectionState === "items_recorded" ? capitalizations.map((item) => {
+          const decision = capitalizationDecisions[item.capitalization_id];
+          return <fieldset key={item.capitalization_id}><legend>Capitalization {item.capitalization_id}</legend>
+            <p>Amount {item.amount} — {item.capitalization_date}</p>
+            <label>Capitalization Inclusion <select value={decision.inclusion} onChange={(event) => updateCapitalization(item.capitalization_id, { inclusion: event.target.value as ItemDecision["inclusion"] })}><option value="">Select</option><option value="include">include</option><option value="exclude">exclude</option></select></label>
+            <label>Capitalization Support <select value={decision.support} onChange={(event) => updateCapitalization(item.capitalization_id, { support: event.target.value as ItemDecision["support"] })}><option value="">Select</option><option value="supported">supported</option><option value="unsupported">unsupported</option><option value="requires_special_handling">requires_special_handling</option></select></label>
+            <label>Recorded Meaning <input value={decision.recordedMeaning} onChange={(event) => updateCapitalization(item.capitalization_id, { recordedMeaning: event.target.value })} /></label>
+            <label>Source Basis <input value={decision.sourceBasis} onChange={(event) => updateCapitalization(item.capitalization_id, { sourceBasis: event.target.value })} /></label>
+            <label>Evidence Status <input value={decision.status} onChange={(event) => updateCapitalization(item.capitalization_id, { status: event.target.value })} /></label>
+            <label>Decision Actor <input value={decision.actor} onChange={(event) => updateCapitalization(item.capitalization_id, { actor: event.target.value })} /></label>
+            <label>Decision Timestamp <input type="datetime-local" value={decision.decisionTimestamp} onChange={(event) => updateCapitalization(item.capitalization_id, { decisionTimestamp: event.target.value })} /></label>
+            <label><input type="checkbox" checked={decision.acceptedForUse} onChange={(event) => updateCapitalization(item.capitalization_id, { acceptedForUse: event.target.checked })} /> Accepted for use</label>
+            <label><input type="checkbox" checked={decision.conflict} onChange={(event) => updateCapitalization(item.capitalization_id, { conflict: event.target.checked })} /> Conflict</label>
+            {decision.conflict ? <label>Accepted Value <input type="number" step="any" value={decision.acceptedValue} onChange={(event) => updateCapitalization(item.capitalization_id, { acceptedValue: event.target.value })} /></label> : null}
+          </fieldset>;
+        }) : null}
+      </section>
+
+      <section>
+        <h3>Future grant reservation</h3>
+        <label><input type="checkbox" checked={form.futureReservationEnabled} onChange={(event) => updateForm("futureReservationEnabled", event.target.checked)} /> Include future grant reservation</label>
+        {form.futureReservationEnabled ? <>
+          <label>Reservation Amount <input type="number" step="any" value={form.futureReservationAmount} onChange={(event) => updateForm("futureReservationAmount", event.target.value)} /></label>
+          <label>Reservation Source Basis <input value={form.futureReservationSourceBasis} onChange={(event) => updateForm("futureReservationSourceBasis", event.target.value)} /></label>
+          <label>Reservation Status <input value={form.futureReservationStatus} onChange={(event) => updateForm("futureReservationStatus", event.target.value)} /></label>
+          <label>Reservation Actor <input value={form.futureReservationActor} onChange={(event) => updateForm("futureReservationActor", event.target.value)} /></label>
+          <label>Reservation Decision Timestamp <input type="datetime-local" value={form.futureReservationDecisionTimestamp} onChange={(event) => updateForm("futureReservationDecisionTimestamp", event.target.value)} /></label>
+          <label><input type="checkbox" checked={form.futureReservationAcceptedForUse} onChange={(event) => updateForm("futureReservationAcceptedForUse", event.target.checked)} /> Reservation accepted for use</label>
+        </> : null}
+      </section>
+
       <p>
-        <Link to={actualCapitalizationsPath} state={backState}>Back to Actual Capitalizations</Link>
+        <button type="button" disabled={isSubmitting} onClick={() => void submit("validate")}>Validate Inputs</button>
+        <button type="button" disabled={isSubmitting || validatedSignature !== payloadSignature} onClick={() => void submit("calculate")}>Run Calculation</button>
+        <button type="button" disabled={calculated === null || JSON.stringify(calculated.input) !== payloadSignature} onClick={continueToResult}>Continue to Result</button>
       </p>
-      <form onSubmit={handleSubmit}>
-        <p>
-          <label htmlFor="grant-collection-state">
-            Grant Collection State
-            <select
-              id="grant-collection-state"
-              value={grantCollectionState}
-              onChange={(event) => setGrantCollectionState(event.target.value as FixationReviewCollectionState)}
-            >
-              <option value="unknown">unknown</option>
-              <option value="not_collected">not_collected</option>
-              <option value="confirmed_none">confirmed_none</option>
-              <option value="items_recorded">items_recorded</option>
-            </select>
-          </label>
-        </p>
-        <ReviewValidationMessages errors={grantSectionReviewErrors} label="פעולה נדרשת עבור מענקים" />
-        {grantCollectionState === "items_recorded" ? (
-          <section>
-            <h3>Grant Review Items</h3>
-            {grants.length === 0 ? <p>No grant source records loaded.</p> : null}
-            <ul>
-              {grants.map((grant) => {
-                const itemErrors = getItemReviewErrors(reviewValidationErrors, "grants", grant.grant_id);
-
-                return (
-                  <li key={grant.grant_id}>
-                    <p>Source Item ID: {grant.grant_id}</p>
-                    <p>Employer: {grant.employer_name ?? "Not provided"}</p>
-                    <p>Indexed Amount: {grant.indexed_amount}</p>
-                    <p>Grant Date: {grant.grant_date}</p>
-                    <label htmlFor={`grant-disposition-${grant.grant_id}`}>
-                      Grant Disposition
-                      <select
-                        id={`grant-disposition-${grant.grant_id}`}
-                        value={grantDispositions[grant.grant_id] ?? ""}
-                        onChange={(event) =>
-                          updateGrantDisposition(grant.grant_id, event.target.value as FixationReviewDisposition | "")
-                        }
-                      >
-                        <option value="">Select disposition</option>
-                        <option value="include">include</option>
-                        <option value="exclude">exclude</option>
-                      </select>
-                    </label>
-                    <ReviewValidationMessages errors={itemErrors} label="פעולה נדרשת עבור מענק זה" />
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ) : null}
-        <p>
-          <label htmlFor="actual-capitalization-collection-state">
-            Actual Capitalization Collection State
-            <select
-              id="actual-capitalization-collection-state"
-              value={actualCapitalizationCollectionState}
-              onChange={(event) => setActualCapitalizationCollectionState(event.target.value as FixationReviewCollectionState)}
-            >
-              <option value="unknown">unknown</option>
-              <option value="not_collected">not_collected</option>
-              <option value="confirmed_none">confirmed_none</option>
-              <option value="items_recorded">items_recorded</option>
-            </select>
-          </label>
-        </p>
-        <ReviewValidationMessages
-          errors={actualCapitalizationSectionReviewErrors}
-          label="פעולה נדרשת עבור היווני קצבה"
+      {message ? <p role="status">{message}</p> : null}
+      {response ? (
+        <ResultDiagnostics
+          result={response}
+          selectedRevisionId={selectedRevisionId}
+          selection={selection}
+          onSelection={(next) => {
+            setSelection(next);
+            setValidatedSignature(null);
+            setCalculated(null);
+          }}
         />
-        {actualCapitalizationCollectionState === "items_recorded" ? (
-          <section>
-            <h3>Actual Capitalization Review Items</h3>
-            {actualCapitalizations.length === 0 ? <p>No actual capitalization source records loaded.</p> : null}
-            <ul>
-              {actualCapitalizations.map((capitalization) => {
-                const itemErrors = getItemReviewErrors(
-                  reviewValidationErrors,
-                  "actual_capitalizations",
-                  capitalization.capitalization_id,
-                );
-
-                return (
-                  <li key={capitalization.capitalization_id}>
-                    <p>Source Item ID: {capitalization.capitalization_id}</p>
-                    <p>Amount: {capitalization.amount}</p>
-                    <p>Capitalization Date: {capitalization.capitalization_date}</p>
-                    {capitalization.source_basis ? <p>Source Basis: {capitalization.source_basis}</p> : null}
-                    {capitalization.planner_assertion ? <p>Planner Assertion: {capitalization.planner_assertion}</p> : null}
-                    {capitalization.planner_assertion_basis ? (
-                      <p>Planner Assertion Basis: {capitalization.planner_assertion_basis}</p>
-                    ) : null}
-                    <label htmlFor={`actual-capitalization-disposition-${capitalization.capitalization_id}`}>
-                      Actual Capitalization Disposition
-                      <select
-                        id={`actual-capitalization-disposition-${capitalization.capitalization_id}`}
-                        value={actualCapitalizationDispositions[capitalization.capitalization_id] ?? ""}
-                        onChange={(event) =>
-                          updateActualCapitalizationDisposition(
-                            capitalization.capitalization_id,
-                            event.target.value as FixationReviewDisposition | "",
-                          )
-                        }
-                      >
-                        <option value="">Select disposition</option>
-                        <option value="include">include</option>
-                        <option value="exclude">exclude</option>
-                      </select>
-                    </label>
-                    <ReviewValidationMessages errors={itemErrors} label="פעולה נדרשת עבור היוון קצבה זה" />
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ) : null}
-        <p>
-          <label htmlFor="calculation-id">
-            Calculation ID
-            <input
-              id="calculation-id"
-              type="text"
-              value={formState.calculationId}
-              onChange={(event) => updateFormState("calculationId", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="calculation-version">
-            Calculation Version
-            <input
-              id="calculation-version"
-              type="text"
-              value={formState.calculationVersion}
-              onChange={(event) => updateFormState("calculationVersion", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="eligibility-date">
-            Eligibility Date
-            <input
-              id="eligibility-date"
-              type="text"
-              inputMode="numeric"
-              placeholder="YYYY-MM-DD"
-              value={formState.eligibilityDate}
-              onChange={(event) => updateFormState("eligibilityDate", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="eligibility-year">
-            Eligibility Year
-            <input
-              id="eligibility-year"
-              type="number"
-              value={formState.eligibilityYear}
-              onChange={(event) => updateFormState("eligibilityYear", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="monthly-cap">
-            Monthly Cap
-            <input
-              id="monthly-cap"
-              type="number"
-              step="any"
-              value={formState.monthlyCap}
-              onChange={(event) => updateFormState("monthlyCap", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="exemption-percentage">
-            Exemption Percentage
-            <input
-              id="exemption-percentage"
-              type="number"
-              step="any"
-              value={formState.exemptionPercentage}
-              onChange={(event) => updateFormState("exemptionPercentage", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="capital-multiplier">
-            Capital Multiplier
-            <input
-              id="capital-multiplier"
-              type="number"
-              step="any"
-              value={formState.capitalMultiplier}
-              onChange={(event) => updateFormState("capitalMultiplier", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="future-grant-reserved">
-            Future Grant Reserved
-            <input
-              id="future-grant-reserved"
-              type="number"
-              step="any"
-              min="0"
-              value={formState.futureGrantReserved}
-              onChange={(event) => updateFormState("futureGrantReserved", event.target.value)}
-            />
-          </label>
-        </p>
-        <p>
-          <label htmlFor="idf-relevant">
-            IDF applicable
-            <input
-              id="idf-relevant"
-              type="checkbox"
-              checked={formState.idfRelevant}
-              onChange={(event) => updateFormState("idfRelevant", event.target.checked)}
-            />
-          </label>
-        </p>
-        {formState.idfRelevant ? (
-          <>
-            <p>
-              <label htmlFor="idf-id">
-                IDF ID
-                <input
-                  id="idf-id"
-                  type="text"
-                  value={formState.idfId}
-                  onChange={(event) => updateFormState("idfId", event.target.value)}
-                />
-              </label>
-            </p>
-            <p>
-              <label htmlFor="idf-reduction-amount">
-                IDF Reduction Amount
-                <input
-                  id="idf-reduction-amount"
-                  type="number"
-                  step="any"
-                  value={formState.idfReductionAmount}
-                  onChange={(event) => updateFormState("idfReductionAmount", event.target.value)}
-                />
-              </label>
-            </p>
-            <p>
-              <label htmlFor="idf-original-commutation-percent">
-                IDF Original Commutation Percent
-                <input
-                  id="idf-original-commutation-percent"
-                  type="number"
-                  step="any"
-                  value={formState.idfOriginalCommutationPercent}
-                  onChange={(event) => updateFormState("idfOriginalCommutationPercent", event.target.value)}
-                />
-              </label>
-            </p>
-            <p>
-              <label htmlFor="idf-current-commutation-percent">
-                IDF Current Commutation Percent
-                <input
-                  id="idf-current-commutation-percent"
-                  type="number"
-                  step="any"
-                  value={formState.idfCurrentCommutationPercent}
-                  onChange={(event) => updateFormState("idfCurrentCommutationPercent", event.target.value)}
-                />
-              </label>
-            </p>
-            <p>
-              <label htmlFor="idf-commutation-date">
-                IDF Commutation Date
-                <input
-                  id="idf-commutation-date"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="YYYY-MM-DD"
-                  value={formState.idfCommutationDate}
-                  onChange={(event) => updateFormState("idfCommutationDate", event.target.value)}
-                />
-              </label>
-            </p>
-            <p>
-              <label htmlFor="idf-promoter-age-date">
-                IDF Promoter Age Date
-                <input
-                  id="idf-promoter-age-date"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="YYYY-MM-DD"
-                  value={formState.idfPromoterAgeDate}
-                  onChange={(event) => updateFormState("idfPromoterAgeDate", event.target.value)}
-                />
-              </label>
-            </p>
-            <p>
-              <label htmlFor="idf-source-label">
-                IDF Source Label
-                <input
-                  id="idf-source-label"
-                  type="text"
-                  value={formState.idfSourceLabel}
-                  onChange={(event) => updateFormState("idfSourceLabel", event.target.value)}
-                />
-              </label>
-            </p>
-          </>
-        ) : null}
-        <p>
-          <button type="button" disabled={isSubmitting || isSourceLoading || sourceErrorMessage !== null} onClick={() => void submitForm("validate")}>
-            {isSubmitting ? "Submitting..." : "Validate Inputs"}
-          </button>
-          <button type="submit" disabled={isSubmitting || isSourceLoading || sourceErrorMessage !== null}>
-            {isSubmitting ? "Submitting..." : "Run Calculation"}
-          </button>
-          <button type="button" disabled={calculatedResult === null || isCalculationStale} onClick={handleContinueToResult}>
-            Continue to Result
-          </button>
-        </p>
-      </form>
-      {errorMessage ? <p>{errorMessage}</p> : null}
-      <ReviewValidationMessages errors={fallbackReviewErrors} label="יש להשלים בחירה או נתון נדרש לפני המשך" />
-      {isCalculationStale ? <p>Calculation result is stale. Run calculation again to continue.</p> : null}
-      {responseData ? (
-        <section>
-          <h3>{responseSource === "validate" ? "Validate Response" : "Calculation Response"}</h3>
-          <pre>{stringifyValue(responseData)}</pre>
-        </section>
       ) : null}
     </section>
   );

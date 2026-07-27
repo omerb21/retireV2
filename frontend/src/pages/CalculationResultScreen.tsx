@@ -1,33 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 
 import {
-  ApiTransportError as ClientApiTransportError,
-  type ActualCapitalizationItem,
-  type GrantItem,
-  getActualCapitalizations,
-  getGrants,
-} from "../api/clientsApi";
-import {
   ApiTransportError,
-  type FixationActualCapitalizationInputPayload,
-  type FixationGrantInputPayload,
   type FixationInputPayload,
   type FixationResultResponse,
-  type FixationReviewCollectionState,
-  type InternalPlannerHandlingStatus,
-  type InternalPlannerJudgmentPayload,
-  type PlannerReviewContextPayload,
-  createInternalPlannerJudgment,
   getFixationHistory,
   getFixationRunDetail,
   saveFixation,
 } from "../api/fixationApi";
-
-type FixationInputRouteState = {
-  clientId?: number;
-  clientName?: string;
-};
 
 type ResultRouteState = {
   clientId?: number;
@@ -35,433 +16,78 @@ type ResultRouteState = {
   inputData?: FixationInputPayload;
   result?: FixationResultResponse;
   fixationInputPath?: string;
-  fixationInputState?: FixationInputRouteState;
-  activeSessionReviewContext?: ActiveSessionReviewContext;
+  fixationInputState?: { clientId?: number; clientName?: string };
 };
-
-type DisplayField = {
-  label: string;
-  value: unknown;
-};
-
-type SavedCalculationRecordIdentifiers = {
-  runId: number;
-  createdAt: string | null;
-};
-
-type ActiveSessionSourceReference = {
-  domain: "grants" | "actual_capitalizations";
-  source_item_id: string;
-  record_id: string;
-  label: string | null;
-  disposition: "include" | "exclude";
-};
-
-type ActiveSessionSourceMetadata = {
-  domain: "actual_capitalizations";
-  source_item_id: string;
-  record_id: string;
-  source_basis: string | null;
-  planner_assertion: string | null;
-  planner_assertion_basis: string | null;
-};
-
-type ActiveSessionReviewContext = {
-  grants_collection_state: FixationReviewCollectionState;
-  actual_capitalizations_collection_state: FixationReviewCollectionState;
-  included_source_references: ActiveSessionSourceReference[];
-  excluded_source_references: ActiveSessionSourceReference[];
-  source_metadata_context: ActiveSessionSourceMetadata[];
-};
-
-function stringifyValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return JSON.stringify(value, null, 2);
-}
-
-function parseNumber(value: number | string | null): number | null {
-  if (value === null) {
-    return null;
-  }
-
-  const parsedValue = typeof value === "number" ? value : Number(value);
-  return Number.isNaN(parsedValue) ? null : parsedValue;
-}
 
 function getErrorMessage(error: unknown): string {
-  if (error instanceof ApiTransportError || error instanceof ClientApiTransportError) {
-    return stringifyValue(error.body);
+  if (error instanceof ApiTransportError) {
+    return typeof error.body === "string" ? error.body : JSON.stringify(error.body);
   }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Unexpected transport error.";
+  return error instanceof Error ? error.message : "Unexpected transport error.";
 }
 
-function mapGrantToPayload(grant: GrantItem): FixationGrantInputPayload {
-  return {
-    grant_id: grant.grant_id,
-    employer_name: grant.employer_name,
-    nominal_amount: parseNumber(grant.nominal_amount),
-    indexed_amount: Number(grant.indexed_amount),
-    grant_date: grant.grant_date,
-    work_start_date: grant.work_start_date,
-    work_end_date: grant.work_end_date,
-  };
+function valueAt(record: Record<string, unknown> | null, key: string): unknown {
+  return record?.[key];
 }
 
-function mapActualCapitalizationToPayload(
-  capitalization: ActualCapitalizationItem,
-): FixationActualCapitalizationInputPayload {
-  return {
-    capitalization_id: capitalization.capitalization_id,
-    amount: Number(capitalization.amount),
-    capitalization_date: capitalization.capitalization_date,
-    source_label: capitalization.source_label,
-    notes: capitalization.notes,
-  };
-}
-
-function normalizeFixationInput(payload: FixationInputPayload): Record<string, unknown> {
-  return {
-    calculation_id: payload.calculation_id ?? null,
-    calculation_version: payload.calculation_version,
-    eligibility_date: payload.eligibility_date,
-    eligibility_year: payload.eligibility_year,
-    monthly_cap: payload.monthly_cap,
-    exemption_percentage: payload.exemption_percentage,
-    capital_multiplier: payload.capital_multiplier,
-    grants: payload.grants.map((grant) => ({
-      grant_id: grant.grant_id,
-      employer_name: grant.employer_name,
-      nominal_amount: grant.nominal_amount,
-      indexed_amount: grant.indexed_amount,
-      grant_date: grant.grant_date,
-      work_start_date: grant.work_start_date,
-      work_end_date: grant.work_end_date,
-    })),
-    future_grant_reserved: payload.future_grant_reserved,
-    actual_capitalizations: payload.actual_capitalizations.map((capitalization) => ({
-      capitalization_id: capitalization.capitalization_id,
-      amount: capitalization.amount,
-      capitalization_date: capitalization.capitalization_date,
-      source_label: capitalization.source_label,
-      notes: capitalization.notes,
-    })),
-    idf:
-      payload.idf === null
-        ? null
-        : {
-            idf_id: payload.idf.idf_id,
-            reduction_amount: payload.idf.reduction_amount,
-            original_commutation_percent: payload.idf.original_commutation_percent,
-            current_commutation_percent: payload.idf.current_commutation_percent,
-            commutation_date: payload.idf.commutation_date,
-            promoter_age_date: payload.idf.promoter_age_date,
-            source_label: payload.idf.source_label,
-          },
-  };
-}
-
-function renderFields(title: string, fields: DisplayField[]) {
-  const visibleFields = fields.filter((field) => field.value !== undefined && field.value !== null);
-
-  if (visibleFields.length === 0) {
-    return null;
-  }
-
+function ResultPresentation({
+  result,
+  input,
+  clientId,
+}: {
+  result: Record<string, unknown>;
+  input: Record<string, unknown>;
+  clientId: number;
+}) {
+  const reference = valueAt(input, "m07_input_reference") as Record<string, unknown> | undefined;
+  const resolution = valueAt(input, "m07_resolution") as Record<string, unknown> | undefined;
+  const parameterSet = valueAt(input, "parameter_set") as Record<string, unknown> | undefined;
+  const selections = Array.isArray(reference?.selections) ? reference.selections : [];
+  const warnings = [
+    ...(Array.isArray(valueAt(result, "validation_errors")) ? valueAt(result, "validation_errors") as unknown[] : []),
+    ...(Array.isArray(valueAt(result, "audit_rows"))
+      ? (valueAt(result, "audit_rows") as Array<Record<string, unknown>>)
+          .filter((row) => String(row.label ?? "").toLowerCase().includes("warning"))
+      : []),
+  ];
   return (
-    <section>
-      <h3>{title}</h3>
-      <ul>
-        {visibleFields.map((field) => (
-          <li key={field.label}>
-            <strong>{field.label}:</strong> {stringifyValue(field.value)}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function renderConvertedInputSummary(inputData: FixationInputPayload | null) {
-  if (inputData === null) {
-    return null;
-  }
-
-  return (
-    <section>
-      <h3>Converted Input Used For Calculation</h3>
-      <p>This summary is based only on the converted calculation input used for this calculation.</p>
-      <ul>
-        <li>Calculation Version: {inputData.calculation_version}</li>
-        <li>Eligibility Date: {inputData.eligibility_date}</li>
-        <li>Eligibility Year: {inputData.eligibility_year}</li>
-        <li>Monthly Cap: {inputData.monthly_cap}</li>
-        <li>Future Grant Reserved: {inputData.future_grant_reserved}</li>
-        <li>Grant Inputs: {inputData.grants.length}</li>
-        <li>Actual Capitalization Inputs: {inputData.actual_capitalizations.length}</li>
-        <li>IDF Input: {inputData.idf === null ? "none" : "provided"}</li>
-      </ul>
-    </section>
-  );
-}
-
-function formatSavedInputValue(value: unknown): string {
-  if (value === undefined || value === null || value === "") {
-    return "not provided";
-  }
-
-  return stringifyValue(value);
-}
-
-function renderSavedInputBasis(inputData: FixationInputPayload | null) {
-  if (inputData === null) {
-    return null;
-  }
-
-  return (
-    <section>
-      <h3>Saved Input Basis</h3>
-      <p>This read-only section uses only the input snapshot saved with this calculation run.</p>
-
+    <>
       <section>
-        <h4>Calculation Parameters</h4>
+        <h3>Calculation summary</h3>
         <ul>
-          <li>Calculation ID: {formatSavedInputValue(inputData.calculation_id)}</li>
-          <li>Calculation Version: {inputData.calculation_version}</li>
-          <li>Eligibility Date: {inputData.eligibility_date}</li>
-          <li>Eligibility Year: {inputData.eligibility_year}</li>
-          <li>Monthly Cap: {inputData.monthly_cap}</li>
-          <li>Exemption Percentage: {inputData.exemption_percentage}</li>
-          <li>Capital Multiplier: {inputData.capital_multiplier}</li>
-          <li>Future Grant Reserved: {inputData.future_grant_reserved}</li>
+          <li>Client ID: {clientId}</li>
+          <li>Status: {String(valueAt(result, "status") ?? "unknown")}</li>
+          <li>Calculation ID: {String(valueAt(result, "calculation_id") ?? "not provided")}</li>
+          <li>Calculation version: {String(valueAt(result, "calculation_version") ?? "not provided")}</li>
+          <li>Normalized eligibility date: {String(valueAt(result, "eligibility_date") ?? valueAt(input, "eligibility_date") ?? "unavailable")}</li>
+          <li>Eligibility year: {String(valueAt(result, "eligibility_year") ?? valueAt(input, "eligibility_year") ?? "unavailable")}</li>
+          <li>Selected B1 revision: {String(reference?.b1_evidence_revision_id ?? resolution?.b1_evidence_revision_id ?? "unavailable")}</li>
+          <li>Resolver scope/version: {String(resolution?.calculation_scope ?? "m08a_fixation")} / {String(resolution?.manifest_version ?? "1")}</li>
+          <li>Resolver fingerprint: {String(resolution?.fingerprint ?? "available after saved-run reopen")}</li>
+          <li>Parameter set: {String(parameterSet?.parameter_set_id ?? "unavailable")}</li>
         </ul>
       </section>
-
       <section>
-        <h4>Saved Grant Inputs</h4>
-        {inputData.grants.length === 0 ? (
-          <p>No saved grant inputs.</p>
-        ) : (
-          <ul>
-            {inputData.grants.map((grant) => (
-              <li key={grant.grant_id}>
-                <strong>{grant.grant_id}</strong>
-                <ul>
-                  <li>Employer Name: {formatSavedInputValue(grant.employer_name)}</li>
-                  <li>Nominal Amount: {formatSavedInputValue(grant.nominal_amount)}</li>
-                  <li>Indexed Amount: {grant.indexed_amount}</li>
-                  <li>Grant Date: {grant.grant_date}</li>
-                  <li>Work Start Date: {grant.work_start_date}</li>
-                  <li>Work End Date: {grant.work_end_date}</li>
-                </ul>
-              </li>
-            ))}
-          </ul>
-        )}
+        <h3>Material result</h3>
+        <ul>
+          <li>Initial exempt capital: {String(valueAt(result, "initial_exempt_capital") ?? "unavailable")}</li>
+          <li>Grant impact: {String(valueAt(result, "grant_impact_total") ?? "unavailable")}</li>
+          <li>Future grant impact: {String(valueAt(result, "future_grant_impact") ?? "unavailable")}</li>
+          <li>Capitalization impact: {String(valueAt(result, "actual_capitalization_impact") ?? "unavailable")}</li>
+          <li>Total impact: {String(valueAt(result, "total_impact") ?? "unavailable")}</li>
+          <li>Remaining exempt capital: {String(valueAt(result, "remaining_exempt_capital") ?? "unavailable")}</li>
+          <li>Monthly exempt pension: {String(valueAt(result, "monthly_exempt_pension") ?? "unavailable")}</li>
+        </ul>
       </section>
-
       <section>
-        <h4>Saved Actual Capitalization Inputs</h4>
-        {inputData.actual_capitalizations.length === 0 ? (
-          <p>No saved actual capitalization inputs.</p>
-        ) : (
-          <ul>
-            {inputData.actual_capitalizations.map((capitalization) => (
-              <li key={capitalization.capitalization_id}>
-                <strong>{capitalization.capitalization_id}</strong>
-                <ul>
-                  <li>Amount: {capitalization.amount}</li>
-                  <li>Capitalization Date: {capitalization.capitalization_date}</li>
-                  <li>Source Label: {formatSavedInputValue(capitalization.source_label)}</li>
-                  <li>Notes: {formatSavedInputValue(capitalization.notes)}</li>
-                </ul>
-              </li>
-            ))}
-          </ul>
-        )}
+        <h3>Selection, effects and audit</h3>
+        <p>Explicit eligibility selection: {selections.length ? JSON.stringify(selections) : "not required"}</p>
+        <p>Grant effects: {JSON.stringify(valueAt(result, "grant_results") ?? [])}</p>
+        <p>Capitalization effects: {JSON.stringify(valueAt(result, "actual_capitalization_results") ?? [])}</p>
+        <p>Warnings/failures: {warnings.length ? JSON.stringify(warnings) : "none"}</p>
+        <p>Audit evidence: {JSON.stringify(valueAt(result, "audit_rows") ?? [])}</p>
       </section>
-
-      <section>
-        <h4>Saved IDF Input</h4>
-        {inputData.idf === null ? (
-          <p>No saved IDF input.</p>
-        ) : (
-          <ul>
-            <li>IDF ID: {inputData.idf.idf_id}</li>
-            <li>Reduction Amount: {inputData.idf.reduction_amount}</li>
-            <li>Original Commutation Percent: {inputData.idf.original_commutation_percent}</li>
-            <li>Current Commutation Percent: {inputData.idf.current_commutation_percent}</li>
-            <li>Commutation Date: {inputData.idf.commutation_date}</li>
-            <li>Promoter Age Date: {inputData.idf.promoter_age_date}</li>
-            <li>Source Label: {formatSavedInputValue(inputData.idf.source_label)}</li>
-          </ul>
-        )}
-      </section>
-    </section>
-  );
-}
-
-function renderSourceReferences(title: string, references: ActiveSessionSourceReference[]) {
-  if (references.length === 0) {
-    return null;
-  }
-
-  return (
-    <section>
-      <h4>{title}</h4>
-      <ul>
-        {references.map((reference) => (
-          <li key={`${reference.domain}-${reference.source_item_id}-${reference.disposition}`}>
-            <strong>{reference.source_item_id}</strong> ({reference.domain}, record {reference.record_id})
-            {reference.label ? ` - ${reference.label}` : ""}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function renderSourceMetadataContext(metadata: ActiveSessionSourceMetadata[]) {
-  if (metadata.length === 0) {
-    return null;
-  }
-
-  return (
-    <section>
-      <h4>Source And Planner Context</h4>
-      <ul>
-        {metadata.map((entry) => (
-          <li key={`${entry.domain}-${entry.source_item_id}`}>
-            <p>Source Item ID: {entry.source_item_id}</p>
-            {entry.source_basis ? <p>Source Basis: {entry.source_basis}</p> : null}
-            {entry.planner_assertion ? <p>Planner Assertion: {entry.planner_assertion}</p> : null}
-            {entry.planner_assertion_basis ? <p>Planner Assertion Basis: {entry.planner_assertion_basis}</p> : null}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function renderActiveSessionReviewContext(context: ActiveSessionReviewContext | undefined) {
-  if (context === undefined) {
-    return null;
-  }
-
-  return (
-    <section>
-      <h3>Current Workflow Review Context</h3>
-      <p>This context is available only in the current active workflow.</p>
-      <ul>
-        <li>Grants Collection State: {context.grants_collection_state}</li>
-        <li>Actual Capitalizations Collection State: {context.actual_capitalizations_collection_state}</li>
-      </ul>
-      {renderSourceReferences("Included Records", context.included_source_references)}
-      {renderSourceReferences("Excluded Records", context.excluded_source_references)}
-      {renderSourceMetadataContext(context.source_metadata_context)}
-    </section>
-  );
-}
-
-function buildSavedPlannerReviewContext(
-  context: ActiveSessionReviewContext | undefined,
-): PlannerReviewContextPayload | undefined {
-  if (context === undefined) {
-    return undefined;
-  }
-
-  return {
-    grants: {
-      collection_state: context.grants_collection_state,
-      included_source_reference_ids: context.included_source_references
-        .filter((reference) => reference.domain === "grants")
-        .map((reference) => reference.source_item_id),
-      excluded_source_reference_ids: context.excluded_source_references
-        .filter((reference) => reference.domain === "grants")
-        .map((reference) => reference.source_item_id),
-    },
-    actual_capitalizations: {
-      collection_state: context.actual_capitalizations_collection_state,
-      included_source_reference_ids: context.included_source_references
-        .filter((reference) => reference.domain === "actual_capitalizations")
-        .map((reference) => reference.source_item_id),
-      excluded_source_reference_ids: context.excluded_source_references
-        .filter((reference) => reference.domain === "actual_capitalizations")
-        .map((reference) => reference.source_item_id),
-    },
-  };
-}
-
-function renderReferenceIds(ids: string[]) {
-  if (ids.length === 0) {
-    return "none";
-  }
-
-  return ids.join(", ");
-}
-
-function renderSavedPlannerReviewContext(context: PlannerReviewContextPayload | null) {
-  if (context === null) {
-    return <p>לא נשמר הקשר בדיקה עבור רשומת חישוב זו.</p>;
-  }
-
-  return (
-    <section>
-      <h3>הקשר בדיקה שנשמר עם רשומת החישוב</h3>
-      <p>מידע זה מוצג כהקשר בדיקה בלבד</p>
-      <h4>מצב איסוף נתונים בעת השמירה</h4>
-      <ul>
-        <li>grants: {context.grants.collection_state}</li>
-        <li>actual_capitalizations: {context.actual_capitalizations.collection_state}</li>
-      </ul>
-      <h4>רשומות שסומנו לכלילה</h4>
-      <ul>
-        <li>grants: {renderReferenceIds(context.grants.included_source_reference_ids)}</li>
-        <li>actual_capitalizations: {renderReferenceIds(context.actual_capitalizations.included_source_reference_ids)}</li>
-      </ul>
-      <h4>רשומות שסומנו להחרגה</h4>
-      <ul>
-        <li>grants: {renderReferenceIds(context.grants.excluded_source_reference_ids)}</li>
-        <li>actual_capitalizations: {renderReferenceIds(context.actual_capitalizations.excluded_source_reference_ids)}</li>
-      </ul>
-    </section>
-  );
-}
-
-function renderSavedCalculationRecordIdentifiers(identifiers: SavedCalculationRecordIdentifiers | null) {
-  if (identifiers === null) {
-    return null;
-  }
-
-  return (
-    <section>
-      <h3>רשומת חישוב שמורה</h3>
-      <ul>
-        <li>מזהה רשומה: {identifiers.runId}</li>
-        {identifiers.createdAt ? <li>נוצרה בתאריך: {identifiers.createdAt}</li> : null}
-      </ul>
-    </section>
-  );
-}
-
-function renderInternalPlannerJudgment(judgment: InternalPlannerJudgmentPayload | null) {
-  if (judgment === null) {
-    return <p>לא נשמר שיפוט פנימי עבור רשומת חישוב זו.</p>;
-  }
-
-  return (
-    <ul>
-      <li>מצב טיפול פנימי: {judgment.handling_status}</li>
-      <li>פעולה פנימית הבאה: {judgment.next_internal_action}</li>
-      {judgment.internal_note ? <li>הערה פנימית: {judgment.internal_note}</li> : null}
-    </ul>
+    </>
   );
 }
 
@@ -469,485 +95,96 @@ export function CalculationResultScreen() {
   const { clientId: clientIdParam } = useParams<{ clientId: string }>();
   const location = useLocation();
   const routeState = location.state as ResultRouteState | null;
-  const routeClientId = routeState?.clientId;
-  const resolvedClientId = clientIdParam !== undefined ? Number(clientIdParam) : routeClientId;
-  const clientId = Number.isInteger(resolvedClientId) && Number(resolvedClientId) > 0 ? Number(resolvedClientId) : null;
-  const clientName = routeState?.clientName ?? routeState?.fixationInputState?.clientName ?? null;
-  const fixationInputPath =
-    routeState?.fixationInputPath ?? (clientId !== null ? `/clients/${clientId}/fixation/input` : "/fixation/input");
-  const fixationInputState =
-    routeState?.fixationInputState ??
-    (clientName ? { clientId: clientId ?? undefined, clientName } : { clientId: clientId ?? undefined });
-  const activeSessionReviewContext = routeState?.activeSessionReviewContext;
-  const hasCurrentCalculation = routeState?.result !== undefined && routeState?.inputData !== undefined;
-  const [grants, setGrants] = useState<GrantItem[]>([]);
-  const [actualCapitalizations, setActualCapitalizations] = useState<ActualCapitalizationItem[]>([]);
-  const [isSourceLoading, setIsSourceLoading] = useState(clientId !== null);
-  const [sourceErrorMessage, setSourceErrorMessage] = useState<string | null>(null);
-  const [isResultLoading, setIsResultLoading] = useState(clientId !== null && !hasCurrentCalculation);
-  const [resultErrorMessage, setResultErrorMessage] = useState<string | null>(null);
-  const [resultMessage, setResultMessage] = useState<string | null>(null);
-  const [resultSource, setResultSource] = useState<"current" | "latest" | null>(hasCurrentCalculation ? "current" : null);
-  const [resolvedInputData, setResolvedInputData] = useState<FixationInputPayload | null>(routeState?.inputData ?? null);
-  const [resolvedResult, setResolvedResult] = useState<FixationResultResponse | null>(routeState?.result ?? null);
-  const [savedInputSnapshot, setSavedInputSnapshot] = useState<FixationInputPayload | null>(null);
-  const [savedValidationErrors, setSavedValidationErrors] = useState<Array<Record<string, unknown>>>([]);
-  const [savedPlannerReviewContext, setSavedPlannerReviewContext] = useState<PlannerReviewContextPayload | null>(null);
-  const [savedInternalPlannerJudgment, setSavedInternalPlannerJudgment] =
-    useState<InternalPlannerJudgmentPayload | null>(null);
-  const [savedCalculationRecordIdentifiers, setSavedCalculationRecordIdentifiers] =
-    useState<SavedCalculationRecordIdentifiers | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+  const rawClientId = clientIdParam !== undefined ? Number(clientIdParam) : routeState?.clientId;
+  const clientId = Number.isInteger(rawClientId) && Number(rawClientId) > 0 ? Number(rawClientId) : null;
+  const [input, setInput] = useState<Record<string, unknown> | null>(
+    routeState?.inputData as unknown as Record<string, unknown> ?? null,
+  );
+  const [result, setResult] = useState<Record<string, unknown> | null>(
+    routeState?.result as unknown as Record<string, unknown> ?? null,
+  );
+  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
+  const [loadedRunDate, setLoadedRunDate] = useState<string | null>(null);
   const [savedRunId, setSavedRunId] = useState<number | null>(null);
-  const [judgmentHandlingStatus, setJudgmentHandlingStatus] =
-    useState<InternalPlannerHandlingStatus>("not_used_for_decision");
-  const [judgmentNextInternalAction, setJudgmentNextInternalAction] = useState("");
-  const [judgmentInternalNote, setJudgmentInternalNote] = useState("");
-  const [isCreatingJudgment, setIsCreatingJudgment] = useState(false);
-  const [judgmentErrorMessage, setJudgmentErrorMessage] = useState<string | null>(null);
+  const [savedStatus, setSavedStatus] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(clientId !== null && result === null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    let isActive = true;
-
-    async function loadCurrentSourceData() {
-      if (clientId === null) {
-        if (isActive) {
-          setGrants([]);
-          setActualCapitalizations([]);
-          setSourceErrorMessage("Calculation Result requires an existing client context.");
-          setIsSourceLoading(false);
-        }
+    let active = true;
+    async function loadLatest() {
+      if (clientId === null || result !== null) {
+        setIsLoading(false);
         return;
       }
-
-      setIsSourceLoading(true);
-
-      try {
-        const [nextGrants, nextActualCapitalizations] = await Promise.all([
-          getGrants(clientId),
-          getActualCapitalizations(clientId),
-        ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        setGrants(nextGrants);
-        setActualCapitalizations(nextActualCapitalizations);
-        setSourceErrorMessage(null);
-      } catch (error) {
-        if (!isActive) {
-          return;
-        }
-
-        setGrants([]);
-        setActualCapitalizations([]);
-        setSourceErrorMessage(getErrorMessage(error));
-      } finally {
-        if (isActive) {
-          setIsSourceLoading(false);
-        }
-      }
-    }
-
-    void loadCurrentSourceData();
-
-    return () => {
-      isActive = false;
-    };
-  }, [clientId]);
-
-  useEffect(() => {
-    let isActive = true;
-
-    async function loadLatestSuccessfulResult() {
-      if (clientId === null || hasCurrentCalculation) {
-        if (isActive) {
-          setIsResultLoading(false);
-        }
-        return;
-      }
-
-      setIsResultLoading(true);
-      setResultErrorMessage(null);
-      setResultMessage(null);
-
       try {
         const history = await getFixationHistory(clientId);
-        const latestSuccessfulRun = history.find((entry) => entry.status === "success");
-
-        if (!isActive) {
+        const latest = history.find((entry) => entry.status === "success");
+        if (!latest) {
+          if (active) setMessage("No successful saved run is available for this client.");
           return;
         }
-
-        if (latestSuccessfulRun === undefined) {
-          setResolvedResult(null);
-          setResolvedInputData(null);
-          setSavedInputSnapshot(null);
-          setSavedValidationErrors([]);
-          setSavedPlannerReviewContext(null);
-          setSavedInternalPlannerJudgment(null);
-          setSavedCalculationRecordIdentifiers(null);
-          setResultSource(null);
-          setResultMessage(
-            history.length === 0
-              ? "No successful calculation result is available for this client."
-              : "No successful calculation result is available. Latest saved calculation did not succeed.",
-          );
-          return;
-        }
-
-        const detail = await getFixationRunDetail(clientId, latestSuccessfulRun.run_id);
-
-        if (!isActive) {
-          return;
-        }
-
-        if (detail.result === null || detail.input_snapshot === null) {
-          setResolvedResult(null);
-          setResolvedInputData(null);
-          setSavedInputSnapshot(null);
-          setSavedValidationErrors([]);
-          setSavedPlannerReviewContext(null);
-          setSavedInternalPlannerJudgment(null);
-          setSavedCalculationRecordIdentifiers(null);
-          setResultSource(null);
-          setResultMessage("Latest successful calculation result could not be loaded.");
-          return;
-        }
-
-        setResolvedResult(detail.result as FixationResultResponse);
-        setResolvedInputData(detail.input_snapshot as unknown as FixationInputPayload);
-        setSavedInputSnapshot(detail.input_snapshot as unknown as FixationInputPayload);
-        setSavedValidationErrors(
-          Array.isArray(detail.validation_errors)
-            ? (detail.validation_errors as Array<Record<string, unknown>>)
-            : [],
-        );
-        setSavedPlannerReviewContext(detail.planner_review_context ?? null);
-        setSavedInternalPlannerJudgment(detail.internal_planner_judgment ?? null);
-        setSavedCalculationRecordIdentifiers({
-          runId: Number(detail.run.run_id),
-          createdAt: typeof detail.run.created_at === "string" ? detail.run.created_at : null,
-        });
-        setResultSource("latest");
-        setResultMessage(null);
+        const detail = await getFixationRunDetail(clientId, latest.run_id);
+        if (!active) return;
+        setInput(detail.input_snapshot);
+        setResult(detail.result);
+        setLoadedRunId(latest.run_id);
+        setLoadedRunDate(latest.created_at);
       } catch (error) {
-        if (!isActive) {
-          return;
-        }
-
-        setResolvedResult(null);
-        setResolvedInputData(null);
-        setSavedInputSnapshot(null);
-        setSavedValidationErrors([]);
-        setSavedPlannerReviewContext(null);
-        setSavedInternalPlannerJudgment(null);
-        setSavedCalculationRecordIdentifiers(null);
-        setResultSource(null);
-        setResultErrorMessage(getErrorMessage(error));
+        if (active) setMessage(getErrorMessage(error));
       } finally {
-        if (isActive) {
-          setIsResultLoading(false);
-        }
+        if (active) setIsLoading(false);
       }
     }
-
-    void loadLatestSuccessfulResult();
-
+    void loadLatest();
     return () => {
-      isActive = false;
+      active = false;
     };
-  }, [clientId, hasCurrentCalculation]);
+  }, [clientId, result]);
 
-  const sourceDataChanged = useMemo(() => {
-    if (resolvedInputData === null) {
-      return false;
-    }
-
-    const snapshotSignature = JSON.stringify(normalizeFixationInput(resolvedInputData));
-    const currentSignature = JSON.stringify(
-      normalizeFixationInput({
-        ...resolvedInputData,
-        grants: grants.map(mapGrantToPayload),
-        actual_capitalizations: actualCapitalizations.map(mapActualCapitalizationToPayload),
-      }),
-    );
-
-    return snapshotSignature !== currentSignature;
-  }, [actualCapitalizations, grants, resolvedInputData]);
-
-  const trustedResultStatus =
-    resolvedResult === null
-      ? null
-      : isSourceLoading
-        ? "Verifying current source data before trusting this result."
-        : sourceErrorMessage !== null
-          ? "Unable to verify because current source data could not be loaded."
-          : sourceDataChanged
-            ? "Blocked until rerun."
-            : "Current source data matches the calculation input snapshot.";
-  const canSaveCurrentResult =
-    resultSource === "current" &&
-    resolvedInputData !== null &&
-    resolvedResult?.status === "success" &&
-    !isSourceLoading &&
-    sourceErrorMessage === null &&
-    !sourceDataChanged;
-  const summaryFields: DisplayField[] = [
-    { label: "Calculation ID", value: resolvedResult?.calculation_id },
-    { label: "Calculation Version", value: resolvedResult?.calculation_version },
-    { label: "Status", value: resolvedResult?.status },
-    { label: "Eligibility Date", value: resolvedResult?.eligibility_date },
-    { label: "Eligibility Year", value: resolvedResult?.eligibility_year },
-    { label: "Monthly Cap", value: resolvedResult?.monthly_cap },
-    { label: "Exemption Percentage", value: resolvedResult?.exemption_percentage },
-    { label: "Capital Multiplier", value: resolvedResult?.capital_multiplier },
-  ];
-  const impactFields: DisplayField[] = [
-    { label: "Initial Exempt Capital", value: resolvedResult?.initial_exempt_capital },
-    { label: "Grant Impact Total", value: resolvedResult?.grant_impact_total },
-    { label: "Future Grant Reserved", value: resolvedResult?.future_grant_reserved },
-    { label: "Future Grant Impact", value: resolvedResult?.future_grant_impact },
-    { label: "Actual Capitalization Impact", value: resolvedResult?.actual_capitalization_impact },
-    { label: "IDF Impact", value: resolvedResult?.idf_impact },
-    { label: "Total Impact", value: resolvedResult?.total_impact },
-    { label: "Remaining Exempt Capital", value: resolvedResult?.remaining_exempt_capital },
-    { label: "Monthly Exempt Pension", value: resolvedResult?.monthly_exempt_pension },
-    { label: "Capital Exemption Percentage", value: resolvedResult?.capital_exemption_percentage },
-    { label: "Pension Exemption Percentage", value: resolvedResult?.pension_exemption_percentage },
-  ];
-  const validationErrors = Array.isArray(resolvedResult?.validation_errors)
-    ? (resolvedResult.validation_errors as unknown[])
-    : [];
-  const grantResults = Array.isArray(resolvedResult?.grant_results)
-    ? (resolvedResult.grant_results as Array<Record<string, unknown>>)
-    : null;
-  const actualCapitalizationResults = Array.isArray(resolvedResult?.actual_capitalization_results)
-    ? (resolvedResult.actual_capitalization_results as Array<Record<string, unknown>>)
-    : null;
-  const auditRows = Array.isArray(resolvedResult?.audit_rows)
-    ? (resolvedResult.audit_rows as Array<Record<string, unknown>>)
-    : null;
-  const idfResult =
-    resolvedResult !== null && typeof resolvedResult.idf_result === "object" && resolvedResult.idf_result !== null
-      ? (resolvedResult.idf_result as Record<string, unknown>)
-      : null;
-  const savedRunValidationPassed =
-    resultSource === "latest" && resolvedResult?.status === "success" && savedValidationErrors.length === 0;
-  const internalPlannerJudgmentRunId = savedCalculationRecordIdentifiers?.runId ?? savedRunId;
-  const canCreateInternalPlannerJudgment =
-    internalPlannerJudgmentRunId !== null &&
-    savedInternalPlannerJudgment === null &&
-    judgmentNextInternalAction.trim().length > 0 &&
-    !isCreatingJudgment;
-
-  async function handleSaveResult() {
-    if (clientId === null || resolvedInputData === null || !canSaveCurrentResult) {
-      return;
-    }
-
+  async function handleSave() {
+    if (clientId === null || input === null || result?.status !== "success") return;
     setIsSaving(true);
-    setSaveErrorMessage(null);
-    setSavedRunId(null);
-    setSavedInternalPlannerJudgment(null);
-    setJudgmentErrorMessage(null);
-
+    setMessage(null);
     try {
-      const plannerReviewContext = buildSavedPlannerReviewContext(activeSessionReviewContext);
-      const response = await saveFixation({
+      const saved = await saveFixation({
         client_id: clientId,
-        input_data: resolvedInputData as unknown as Record<string, unknown>,
-        ...(plannerReviewContext === undefined ? {} : { planner_review_context: plannerReviewContext }),
+        input_data: input as unknown as FixationInputPayload,
       });
-      setSavedRunId(response.run_id);
+      setSavedRunId(saved.run_id);
+      setSavedStatus(saved.status);
     } catch (error) {
-      setSaveErrorMessage(getErrorMessage(error));
+      setMessage(getErrorMessage(error));
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function handleCreateInternalPlannerJudgment() {
-    if (clientId === null || internalPlannerJudgmentRunId === null || !canCreateInternalPlannerJudgment) {
-      return;
-    }
-
-    setIsCreatingJudgment(true);
-    setJudgmentErrorMessage(null);
-
-    try {
-      const createdJudgment = await createInternalPlannerJudgment(clientId, internalPlannerJudgmentRunId, {
-        handling_status: judgmentHandlingStatus,
-        next_internal_action: judgmentNextInternalAction.trim(),
-        internal_note: judgmentInternalNote.trim() === "" ? null : judgmentInternalNote.trim(),
-      });
-      setSavedInternalPlannerJudgment(createdJudgment);
-      setJudgmentNextInternalAction("");
-      setJudgmentInternalNote("");
-    } catch (error) {
-      setJudgmentErrorMessage(getErrorMessage(error));
-    } finally {
-      setIsCreatingJudgment(false);
-    }
-  }
-
-  if (clientId === null) {
-    return (
-      <section>
-        <h2>Calculation Result</h2>
-        <p>BLOCKED</p>
-        <p>Calculation Result requires an existing client context.</p>
-      </section>
-    );
-  }
-
+  if (clientId === null) return <section><h2>Calculation Result</h2><p>BLOCKED: client context is required.</p></section>;
+  const inputPath = routeState?.fixationInputPath ?? `/clients/${clientId}/fixation/input`;
   return (
     <section>
       <h2>Calculation Result</h2>
       <p>Client ID: {clientId}</p>
-      {clientName ? <p>Client Name: {clientName}</p> : null}
-      <p>
-        <Link to={fixationInputPath} state={fixationInputState}>
-          Back to Fixation Parameters
-        </Link>
-      </p>
-      <p>
-        <Link to={fixationInputPath} state={fixationInputState}>
-          Rerun from Fixation Parameters
-        </Link>
-      </p>
-      <p>
-        <Link to={`/clients/${clientId}/fixation/history`} state={fixationInputState}>
-          פתח רשומת חישוב שמורה
-        </Link>
-      </p>
-      <p>
-        <button type="button" disabled={!canSaveCurrentResult || isSaving} onClick={() => void handleSaveResult()}>
-          {isSaving ? "Saving Result..." : "Save Result"}
-        </button>
-      </p>
+      {routeState?.clientName ? <p>Client Name: {routeState.clientName}</p> : null}
+      <p><Link to={inputPath} state={routeState?.fixationInputState}>Back to Fixation Parameters</Link></p>
+      <p><Link to={`/clients/${clientId}/fixation/history`} state={routeState?.fixationInputState}>Saved run history</Link></p>
+      {isLoading ? <p>Loading latest successful saved run...</p> : null}
+      {loadedRunId !== null ? <p>Reopened saved run: {loadedRunId}; saved at: {loadedRunDate ?? "unknown"}.</p> : null}
+      {result && input ? <ResultPresentation result={result} input={input} clientId={clientId} /> : null}
+      <button type="button" disabled={isSaving || result?.status !== "success" || loadedRunId !== null} onClick={() => void handleSave()}>
+        {isSaving ? "Saving Result..." : "Save Result"}
+      </button>
       {savedRunId !== null ? (
-        <>
-          <p>Result saved successfully. Run ID: {savedRunId}</p>
-          <p>
-            <Link to={`/clients/${clientId}/fixation/history`} state={fixationInputState}>
-              פתח רשומת חישוב שמורה
-            </Link>
-          </p>
-        </>
+        <section>
+          <p>Run saved. Run ID: {savedRunId}; status: {savedStatus}.</p>
+          <Link to={`/clients/${clientId}/fixation/runs/${savedRunId}`} state={{ clientName: routeState?.clientName }}>
+            Reopen saved run
+          </Link>
+        </section>
       ) : null}
-      {saveErrorMessage ? (
-        <>
-          <p>Unable to save the current calculation result.</p>
-          <p>{saveErrorMessage}</p>
-        </>
-      ) : null}
-      {isResultLoading ? <p>Loading latest successful calculation result...</p> : null}
-      {resultErrorMessage ? (
-        <>
-          <p>Unable to load the latest successful calculation result.</p>
-          <p>{resultErrorMessage}</p>
-        </>
-      ) : null}
-      {resultMessage ? <p>{resultMessage}</p> : null}
-      {resolvedResult ? (
-        <>
-          <h3>Calculation Outcome</h3>
-          <p>
-            Result Source: {resultSource === "current" ? "Current backend calculation response" : "תוצאת החישוב השמורה"}
-          </p>
-          {renderSavedCalculationRecordIdentifiers(savedCalculationRecordIdentifiers)}
-          {savedRunValidationPassed ? <p>החישוב השמור הושלם לאחר בדיקת תקינות הקלט.</p> : null}
-          {trustedResultStatus ? <p>Trusted Result Status: {trustedResultStatus}</p> : null}
-          {sourceDataChanged ? <p>Current grants or actual capitalizations differ from the calculation input snapshot. Rerun is required.</p> : null}
-          {sourceErrorMessage ? <p>{sourceErrorMessage}</p> : null}
-          {renderFields("Backend Calculation Summary", summaryFields)}
-          {renderFields("Backend Impact Values", impactFields)}
-          {resultSource === "latest" ? renderSavedInputBasis(savedInputSnapshot) : renderConvertedInputSummary(resolvedInputData)}
-          {resultSource === "latest" ? renderSavedPlannerReviewContext(savedPlannerReviewContext) : null}
-          {renderActiveSessionReviewContext(activeSessionReviewContext)}
-          {internalPlannerJudgmentRunId !== null ? (
-            <section>
-              <h3>שיפוט פנימי של המתכנן</h3>
-              {renderInternalPlannerJudgment(savedInternalPlannerJudgment)}
-              {savedInternalPlannerJudgment === null ? (
-                <>
-                  <p>
-                    <label htmlFor="internal-planner-handling-status">מצב טיפול פנימי</label>
-                    <select
-                      id="internal-planner-handling-status"
-                      value={judgmentHandlingStatus}
-                      onChange={(event) =>
-                        setJudgmentHandlingStatus(event.target.value as InternalPlannerHandlingStatus)
-                      }
-                    >
-                      <option value="not_used_for_decision">not_used_for_decision</option>
-                      <option value="continue_internal_review">continue_internal_review</option>
-                      <option value="internal_action_identified">internal_action_identified</option>
-                    </select>
-                  </p>
-                  <p>
-                    <label htmlFor="internal-planner-next-action">פעולה פנימית הבאה</label>
-                    <input
-                      id="internal-planner-next-action"
-                      value={judgmentNextInternalAction}
-                      onChange={(event) => setJudgmentNextInternalAction(event.target.value)}
-                    />
-                  </p>
-                  <p>
-                    <label htmlFor="internal-planner-note">הערה פנימית</label>
-                    <textarea
-                      id="internal-planner-note"
-                      value={judgmentInternalNote}
-                      onChange={(event) => setJudgmentInternalNote(event.target.value)}
-                    />
-                  </p>
-                  <button
-                    type="button"
-                    disabled={!canCreateInternalPlannerJudgment}
-                    onClick={() => void handleCreateInternalPlannerJudgment()}
-                  >
-                    שיפוט פנימי של המתכנן
-                  </button>
-                  {judgmentErrorMessage ? <p>{judgmentErrorMessage}</p> : null}
-                </>
-              ) : null}
-            </section>
-          ) : null}
-          {grantResults ? (
-            <section>
-              <h3>Grant Results</h3>
-              <pre>{stringifyValue(grantResults)}</pre>
-            </section>
-          ) : null}
-          {actualCapitalizationResults ? (
-            <section>
-              <h3>Actual Capitalization Results</h3>
-              <pre>{stringifyValue(actualCapitalizationResults)}</pre>
-            </section>
-          ) : null}
-          {idfResult ? (
-            <section>
-              <h3>IDF Result</h3>
-              <pre>{stringifyValue(idfResult)}</pre>
-            </section>
-          ) : null}
-          {validationErrors.length > 0 ? (
-            <section>
-              <h3>Validation Errors</h3>
-              <pre>{stringifyValue(validationErrors)}</pre>
-            </section>
-          ) : null}
-          {auditRows ? (
-            <section>
-              <h3>Audit Rows</h3>
-              <pre>{stringifyValue(auditRows)}</pre>
-            </section>
-          ) : null}
-        </>
-      ) : null}
+      {message ? <p role="status">{message}</p> : null}
     </section>
   );
 }

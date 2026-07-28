@@ -1,0 +1,349 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { M02Intake } from "../api/m02IntakeApi";
+import { M02PensionIntakeScreen } from "./M02PensionIntakeScreen";
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? "OK" : "Error",
+    headers: { get: () => "application/json" },
+    json: async () => body,
+    text: async () => JSON.stringify(body)
+  } as unknown as Response;
+}
+
+function clientResponse(clientId: number, name: string): Response {
+  return jsonResponse({
+    client_id: clientId,
+    full_name: name,
+    id_number: `ID-${clientId}`,
+    birth_date: "1980-01-01",
+    file_status: "file_created",
+    professional_identification_status: "identification_incomplete"
+  });
+}
+
+function intake(
+  clientId: number,
+  id: string,
+  overrides: Partial<M02Intake> = {}
+): M02Intake {
+  return {
+    intake_id: id,
+    client_id: clientId,
+    declared_provider_name: null,
+    product_name: "Declared Fund",
+    product_identifier: null,
+    declared_account_reference: null,
+    manual_technical_reference: `M02-MANUAL-${id}`,
+    manual_technical_reference_is_account: false,
+    declared_total_balance_amount: "100.00",
+    declared_monthly_pension_amount: null,
+    declared_component_values: null,
+    declared_statement_date: "2026-01-01",
+    declared_start_date: "2000-01-01",
+    declared_product_type: "declared product",
+    source_type: "manual",
+    declared_basis: null,
+    notes: null,
+    lifecycle_status: "metadata_review",
+    preservation_status: "not_applicable",
+    preservation_failure_code: null,
+    duplicate_candidate: false,
+    duplicate_of_intake_id: null,
+    superseding_candidate: false,
+    superseding_intake_id: null,
+    allowed_lifecycle_targets: ["accepted_for_review", "rejected"],
+    diagnostics: ["M02_PROVIDER_MISSING", "M02_DECLARED_ACCOUNT_MISSING"],
+    source: null,
+    created_by_actor: "system:m02-intake:M02 intake workflow",
+    updated_by_actor: "system:m02-intake:M02 intake workflow",
+    actor_is_authentication: false,
+    created_at: "2026-07-28T00:00:00Z",
+    updated_at: "2026-07-28T00:00:00Z",
+    ...overrides
+  };
+}
+
+function NavigationHarness() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button type="button" onClick={() => navigate("/clients/1/pension-intake")}>Go A</button>
+      <button type="button" onClick={() => navigate("/clients/2/pension-intake")}>Go B</button>
+      <Routes>
+        <Route path="/clients/:clientId/pension-intake" element={<M02PensionIntakeScreen />} />
+      </Routes>
+    </>
+  );
+}
+
+function renderHarness(initialClient = 1) {
+  render(
+    <MemoryRouter initialEntries={[`/clients/${initialClient}/pension-intake`]}>
+      <NavigationHarness />
+    </MemoryRouter>
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("PKG-007 M02 controlled pension intake", () => {
+  it("renders retained state, authority boundaries, lifecycle, and no delete or preview", async () => {
+    const existing = intake(1, "I-1", {
+      source: {
+        source_id: "S-1",
+        original_filename: "opaque.dat",
+        normalized_extension: ".dat",
+        declared_mime_type: "application/octet-stream",
+        validated_media_type: "text/plain",
+        detected_text_encoding: "windows-1255",
+        sha256_checksum: "a".repeat(64),
+        byte_size: 42,
+        uploaded_at: "2026-07-28T00:00:00Z"
+      },
+      manual_technical_reference: null,
+      lifecycle_status: "uploaded",
+      preservation_status: "preserved",
+      duplicate_candidate: true,
+      duplicate_of_intake_id: "I-0",
+      superseding_candidate: true,
+      superseding_intake_id: "I-0",
+      allowed_lifecycle_targets: ["metadata_review", "rejected"]
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/1/m02/intakes") return Promise.resolve(jsonResponse([existing]));
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderHarness();
+
+    expect(await screen.findByText("Active client: Client A (#1)")).toBeInTheDocument();
+    expect(screen.getByText(/does not parse, classify, approve/)).toBeInTheDocument();
+    expect(screen.getByText(/opaque.dat; 42 bytes/)).toBeInTheDocument();
+    expect(screen.getByText(`SHA-256: ${"a".repeat(64)}`)).toBeInTheDocument();
+    expect(screen.getByText(/Duplicate candidate only/)).toBeInTheDocument();
+    expect(screen.getByText(/Superseding candidate only/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Move to metadata_review" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to M01 client case" })).toHaveAttribute(
+      "href",
+      "/clients/1"
+    );
+  });
+
+  it("explicitly selects and submits DAT in a multi-file opaque batch", async () => {
+    const uploadedDat = intake(1, "I-DAT", {
+      manual_technical_reference: null,
+      lifecycle_status: "uploaded",
+      preservation_status: "preserved"
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/1/m02/intakes" && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url === "/api/clients/1/m02/intakes/upload" && init?.method === "POST") {
+        const body = init.body as FormData;
+        const files = body.getAll("files") as File[];
+        expect(files.map((file) => file.name)).toEqual(["source.dat", "statement.pdf"]);
+        expect(body.has("checksum")).toBe(false);
+        expect(body.has("actor")).toBe(false);
+        return Promise.resolve(jsonResponse({
+          results: [
+            {
+              selection_index: 0,
+              original_filename: "source.dat",
+              status: "preserved",
+              intake: uploadedDat,
+              error_code: null,
+              error_message: null
+            },
+            {
+              selection_index: 1,
+              original_filename: "statement.pdf",
+              status: "failed",
+              intake: null,
+              error_code: "M02_SIGNATURE_MISMATCH",
+              error_message: "Invalid PDF"
+            }
+          ],
+          request_error: null
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    const chooser = screen.getByLabelText("Opaque source files");
+    expect(chooser).toHaveAttribute("accept", ".pdf,.xml,.dat,.csv,.xlsx");
+    const dat = new File(["opaque"], "source.dat", { type: "application/octet-stream" });
+    const pdf = new File(["bad"], "statement.pdf", { type: "application/pdf" });
+    fireEvent.change(chooser, { target: { files: [dat, pdf] } });
+    expect(screen.getByText(/source.dat — 6 bytes/)).toBeInTheDocument();
+    expect(screen.getByText(/statement.pdf — 3 bytes/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Source type"), {
+      target: { value: "clearinghouse" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
+
+    expect(await screen.findByText("source.dat: preserved")).toBeInTheDocument();
+    expect(screen.getByText(/statement.pdf: failed — M02_SIGNATURE_MISMATCH/)).toBeInTheDocument();
+    expect(screen.getByText(/No content is parsed in M02/)).toBeInTheDocument();
+  });
+
+  it("creates manual declared facts without a human identity or account claim", async () => {
+    const created = intake(1, "I-MANUAL");
+    let listCount = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/1/m02/intakes" && (init?.method ?? "GET") === "GET") {
+        listCount += 1;
+        return Promise.resolve(jsonResponse(listCount === 1 ? [] : [created]));
+      }
+      if (url === "/api/clients/1/m02/intakes/manual" && init?.method === "POST") {
+        expect(String(init.body)).toContain('"declared_start_date":"2000-01-01"');
+        expect(String(init.body)).toContain('"declared_product_type":"declared product"');
+        expect(String(init.body)).not.toContain("created_by_actor");
+        return Promise.resolve(jsonResponse(created, 201));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    fireEvent.change(screen.getByLabelText("Source type"), { target: { value: "manual" } });
+    fireEvent.change(screen.getByLabelText("Product/fund name"), { target: { value: "Declared Fund" } });
+    fireEvent.change(screen.getByLabelText("Declared start date"), { target: { value: "2000-01-01" } });
+    fireEvent.change(screen.getByLabelText("Declared product-type text"), { target: { value: "declared product" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save manual intake" }));
+
+    expect(await screen.findByText("Manual intake saved.")).toBeInTheDocument();
+    expect(screen.getByText(/Operational technical reference \(not an account\)/)).toBeInTheDocument();
+  });
+
+  it("resets A immediately and ignores stale A load after switching to B", async () => {
+    const oldAHistory = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/1/m02/intakes") return oldAHistory.promise;
+      if (url === "/api/clients/2") return Promise.resolve(clientResponse(2, "Client B"));
+      if (url === "/api/clients/2/m02/intakes") return Promise.resolve(jsonResponse([]));
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+    expect(screen.getByText("Loading M02 intake history...")).toBeInTheDocument();
+    expect(await screen.findByText("Active client: Client B (#2)")).toBeInTheDocument();
+    oldAHistory.resolve(jsonResponse([intake(1, "STALE-A")]));
+
+    await waitFor(() => expect(screen.queryByText(/STALE-A/)).not.toBeInTheDocument());
+    expect(screen.getByText("Active client: Client B (#2)")).toBeInTheDocument();
+  });
+
+  it("ignores stale DAT batch success, error, and finally after A-to-B-to-A", async () => {
+    const oldUpload = deferred<Response>();
+    const newUpload = deferred<Response>();
+    let uploadCount = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/clients/1" || url === "/api/clients/2") {
+        const id = url.endsWith("/1") ? 1 : 2;
+        return Promise.resolve(clientResponse(id, id === 1 ? "Client A" : "Client B"));
+      }
+      if (url.endsWith("/m02/intakes") && (init?.method ?? "GET") === "GET") {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url === "/api/clients/1/m02/intakes/upload") {
+        uploadCount += 1;
+        return uploadCount === 1 ? oldUpload.promise : newUpload.promise;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    const firstDat = new File(["old"], "old.dat", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText("Opaque source files"), {
+      target: { files: [firstDat] }
+    });
+    fireEvent.change(screen.getByLabelText("Source type"), { target: { value: "manual" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
+    expect(screen.getByRole("button", { name: "Preserving files..." })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+    await screen.findByText("Active client: Client B (#2)");
+    fireEvent.click(screen.getByRole("button", { name: "Go A" }));
+    await screen.findByText("Active client: Client A (#1)");
+
+    const newDat = new File(["new"], "new.dat", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText("Opaque source files"), {
+      target: { files: [newDat] }
+    });
+    fireEvent.change(screen.getByLabelText("Source type"), { target: { value: "manual" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
+    expect(screen.getByRole("button", { name: "Preserving files..." })).toBeDisabled();
+
+    oldUpload.resolve(jsonResponse({
+      results: [{
+        selection_index: 0,
+        original_filename: "STALE-old.dat",
+        status: "preserved",
+        intake: intake(1, "STALE-I"),
+        error_code: null,
+        error_message: null
+      }],
+      request_error: { code: "STALE_ERROR", message: "old request" }
+    }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Preserving files..." })).toBeDisabled();
+      expect(screen.queryByText(/STALE-old|STALE_ERROR|STALE-I/)).not.toBeInTheDocument();
+    });
+
+    newUpload.resolve(jsonResponse({
+      results: [{
+        selection_index: 0,
+        original_filename: "new.dat",
+        status: "failed",
+        intake: null,
+        error_code: "M02_UNSUPPORTED_BINARY_TEXT",
+        error_message: "not text"
+      }],
+      request_error: null
+    }));
+    expect(await screen.findByText(/new.dat: failed — M02_UNSUPPORTED_BINARY_TEXT/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preserve selected files" })).toBeEnabled();
+  });
+});

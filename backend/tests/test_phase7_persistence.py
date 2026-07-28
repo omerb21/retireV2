@@ -55,6 +55,9 @@ ACCEPTED_ADDITIVE_TABLES = {
     "recurring_expense",
     "recurring_income",
     "retirement_timing_work_intention",
+    "m02_intake_records",
+    "m02_preserved_blobs",
+    "m02_preserved_sources",
 }
 
 

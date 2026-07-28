@@ -180,7 +180,13 @@ class M02PreservedBlob(Base):
             "AND sha256_checksum = lower(sha256_checksum) "
             "AND sha256_checksum NOT GLOB '*[^0-9a-f]*'",
             name="ck_m02_preserved_blobs_sha256",
-        ),
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            "length(sha256_checksum) = 64 "
+            "AND sha256_checksum = lower(sha256_checksum) "
+            "AND sha256_checksum ~ '^[0-9a-f]{64}$'",
+            name="ck_m02_preserved_blobs_sha256",
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint(
             "byte_size > 0 AND byte_size <= 26214400",
             name="ck_m02_preserved_blobs_byte_size",

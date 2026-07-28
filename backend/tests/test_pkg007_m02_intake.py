@@ -14,7 +14,9 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.schema import CreateTable
 
 from app.db.base import Base, load_all_models
 from app.db.session import get_db
@@ -748,6 +750,19 @@ def test_pkg007_migration_compiles_portable_postgresql_ddl() -> None:
     module.op = Operations(context)
     module.upgrade()
     sql = output.getvalue()
+    assert "GLOB" not in sql
+    assert "instr(" not in sql
+    assert "char(92)" not in sql
+    assert "sha256_checksum ~ '^[0-9a-f]{64}$'" in sql
+    assert "storage_key NOT LIKE" in sql
+
+
+def test_pkg007_model_compiles_portable_postgresql_ddl() -> None:
+    sql = str(
+        CreateTable(M02PreservedBlob.__table__).compile(
+            dialect=postgresql.dialect()
+        )
+    )
     assert "GLOB" not in sql
     assert "instr(" not in sql
     assert "char(92)" not in sql

@@ -8,6 +8,7 @@ import re
 import stat
 import zipfile
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
 from uuid import uuid4
@@ -49,14 +50,17 @@ class M02StorageCleanupError(RuntimeError):
         *,
         primary_error: BaseException | None = None,
         cleanup_errors: tuple[BaseException, ...] = (),
+        operational_diagnostics: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.primary_error = primary_error
         self.cleanup_errors = cleanup_errors
+        self.operational_diagnostics = operational_diagnostics
         self.diagnostic_codes = tuple(
             code
             for code in (
                 getattr(primary_error, "code", None),
+                *operational_diagnostics,
                 self.code,
             )
             if code is not None
@@ -100,7 +104,7 @@ class M02OwnedReader:
 class _WindowsDirectoryApiProtocol(Protocol):
     def open_directory(self, path: Path) -> tuple[int, int, tuple[int, int]]: ...
 
-    def close(self, handle: int) -> None: ...
+    def close_handle(self, handle: int) -> None: ...
 
 
 class _WindowsDirectoryApi:
@@ -173,23 +177,62 @@ class _WindowsDirectoryApi:
         if not self._kernel32.GetFileInformationByHandle(
             handle, self._ctypes.byref(info)
         ):
-            self.close(int(handle))
-            raise OSError(
+            primary_error = OSError(
                 self._ctypes.get_last_error(),
                 "Unable to identify managed directory",
             )
+            _close_windows_handle_preserving_error(
+                self, int(handle), primary_error
+            )
+            raise primary_error
         identity = (
             info.dwVolumeSerialNumber,
             (info.nFileIndexHigh << 32) | info.nFileIndexLow,
         )
         return int(handle), info.dwFileAttributes, identity
 
-    def close(self, handle: int) -> None:
-        self._kernel32.CloseHandle(handle)
+    def close_handle(self, handle: int) -> None:
+        if not self._kernel32.CloseHandle(handle):
+            raise OSError(
+                self._ctypes.get_last_error(),
+                "Unable to close managed directory handle",
+            )
 
 
 def _windows_directory_api() -> _WindowsDirectoryApiProtocol:
     return _WindowsDirectoryApi()
+
+
+def _record_secondary_close_failure(
+    primary_error: BaseException, close_error: BaseException
+) -> None:
+    logging.getLogger(__name__).error(
+        "M02 managed-directory handle cleanup failed",
+        exc_info=close_error,
+        extra={
+            "event_code": M02StorageCleanupError.code,
+            "primary_error_code": getattr(primary_error, "code", None),
+        },
+    )
+    primary_error.add_note(
+        f"Secondary managed-directory close failure: {type(close_error).__name__}"
+    )
+
+
+def _close_windows_handle_preserving_error(
+    api: _WindowsDirectoryApiProtocol,
+    handle: int,
+    primary_error: BaseException,
+) -> None:
+    try:
+        api.close_handle(handle)
+    except BaseException as close_error:
+        _record_secondary_close_failure(primary_error, close_error)
+
+
+class _DirectoryHandleKind(str, Enum):
+    WINDOWS = "windows"
+    POSIX = "posix"
 
 
 class _TrustedDirectory:
@@ -201,11 +244,17 @@ class _TrustedDirectory:
         handle: int,
         identity: tuple[int, int],
         windows_api: _WindowsDirectoryApiProtocol | None = None,
+        handle_kind: _DirectoryHandleKind | None = None,
     ):
         self.path = path
         self._handle = handle
         self.identity = identity
         self._windows_api = windows_api
+        self.handle_kind = handle_kind or (
+            _DirectoryHandleKind.WINDOWS
+            if windows_api is not None
+            else _DirectoryHandleKind.POSIX
+        )
         self._closed = False
 
     @classmethod
@@ -225,7 +274,12 @@ class _TrustedDirectory:
                 raise M02StorageConfigurationError(
                     "Managed directory is not a directory"
                 )
-            return cls(path, descriptor, (opened.st_dev, opened.st_ino))
+            return cls(
+                path,
+                descriptor,
+                (opened.st_dev, opened.st_ino),
+                handle_kind=_DirectoryHandleKind.POSIX,
+            )
         except M02StorageConfigurationError:
             raise
         except OSError as error:
@@ -250,14 +304,20 @@ class _TrustedDirectory:
                 raise M02StorageConfigurationError(
                     "Managed directory must not be a reparse point"
                 )
-            return cls(path, handle, identity, windows_api=api)
-        except M02StorageConfigurationError:
+            return cls(
+                path,
+                handle,
+                identity,
+                windows_api=api,
+                handle_kind=_DirectoryHandleKind.WINDOWS,
+            )
+        except M02StorageConfigurationError as error:
             if handle is not None:
-                api.close(handle)
+                _close_windows_handle_preserving_error(api, handle, error)
             raise
         except OSError as error:
             if handle is not None:
-                api.close(handle)
+                _close_windows_handle_preserving_error(api, handle, error)
             raise M02StorageConfigurationError(
                 "Managed directory is unavailable"
             ) from error
@@ -285,13 +345,22 @@ class _TrustedDirectory:
 
     def _verify_windows_path_identity(self) -> None:
         pinned = _TrustedDirectory._open_windows(self.path)
+        primary_error: BaseException | None = None
         try:
             if pinned.identity != self.identity:
                 raise M02StorageConfigurationError(
                     "Managed directory identity changed"
                 )
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            pinned.close()
+            try:
+                pinned.close()
+            except BaseException as close_error:
+                if primary_error is None:
+                    raise
+                _record_secondary_close_failure(primary_error, close_error)
 
     def open_child(self, name: str, *, create: bool = False) -> "_TrustedDirectory":
         try:
@@ -323,6 +392,7 @@ class _TrustedDirectory:
                     self.path / name,
                     descriptor,
                     (opened.st_dev, opened.st_ino),
+                    handle_kind=_DirectoryHandleKind.POSIX,
                 )
                 try:
                     self._verify_path_identity()
@@ -450,11 +520,11 @@ class _TrustedDirectory:
         if self._closed:
             return
         self._closed = True
-        if os.name == "nt":
-            assert self._windows_api is not None
-            self._windows_api.close(self._handle)
-        else:
+        if self.handle_kind == _DirectoryHandleKind.POSIX:
             os.close(self._handle)
+            return
+        assert self._windows_api is not None
+        self._windows_api.close_handle(self._handle)
 
     def __del__(self) -> None:
         try:
@@ -474,6 +544,40 @@ def _validate_relative_name(name: str) -> None:
         raise M02StorageConfigurationError("Managed operation requires a relative name")
 
 
+class StagedResourceState(str, Enum):
+    STAGED_ONLY = "staged-only"
+    FINAL_CREATED_UNCOMMITTED = "final-created-uncommitted"
+    COMMITTED = "committed"
+    SHARED_EXISTING = "shared-existing"
+    CLEANUP_PENDING = "cleanup-pending"
+    CLEANED = "cleaned"
+    CLEANUP_FAILED = "cleanup-failed"
+
+
+_ALLOWED_RESOURCE_TRANSITIONS = {
+    StagedResourceState.STAGED_ONLY: {
+        StagedResourceState.FINAL_CREATED_UNCOMMITTED,
+        StagedResourceState.SHARED_EXISTING,
+        StagedResourceState.CLEANUP_PENDING,
+    },
+    StagedResourceState.FINAL_CREATED_UNCOMMITTED: {
+        StagedResourceState.COMMITTED,
+        StagedResourceState.CLEANUP_PENDING,
+    },
+    StagedResourceState.SHARED_EXISTING: {
+        StagedResourceState.COMMITTED,
+        StagedResourceState.CLEANUP_PENDING,
+    },
+    StagedResourceState.COMMITTED: {StagedResourceState.CLEANUP_PENDING},
+    StagedResourceState.CLEANUP_PENDING: {
+        StagedResourceState.CLEANED,
+        StagedResourceState.CLEANUP_FAILED,
+    },
+    StagedResourceState.CLEANUP_FAILED: {StagedResourceState.CLEANUP_PENDING},
+    StagedResourceState.CLEANED: set(),
+}
+
+
 @dataclass
 class StagedUpload:
     storage: "ManagedLocalStorage"
@@ -488,9 +592,9 @@ class StagedUpload:
     final_storage_key: str | None = None
     final_directory: _TrustedDirectory | None = None
     final_object_name: str | None = None
-    committed: bool = False
     cleaned: bool = False
-    cleanup_failed: bool = False
+    _resource_state: StagedResourceState = StagedResourceState.STAGED_ONLY
+    _cleanup_origin_state: StagedResourceState | None = None
 
     @property
     def temporary_path(self) -> Path:
@@ -504,15 +608,22 @@ class StagedUpload:
 
     @property
     def resource_state(self) -> str:
-        if self.cleanup_failed:
-            return "cleanup-failed"
-        if self.cleaned:
-            return "cleaned"
-        if self.committed:
-            return "committed"
-        if self.final_storage_key is not None:
-            return "final-created-uncommitted"
-        return "staged-only"
+        return self._resource_state.value
+
+    @property
+    def committed(self) -> bool:
+        return (
+            self._resource_state == StagedResourceState.COMMITTED
+            or self._cleanup_origin_state == StagedResourceState.COMMITTED
+        )
+
+    def _transition(self, target: StagedResourceState) -> None:
+        if target not in _ALLOWED_RESOURCE_TRANSITIONS[self._resource_state]:
+            raise M02StorageConfigurationError(
+                f"Invalid staged-resource transition: "
+                f"{self._resource_state.value} -> {target.value}"
+            )
+        self._resource_state = target
 
     def mark_final(
         self,
@@ -520,24 +631,40 @@ class StagedUpload:
         directory: _TrustedDirectory,
         object_name: str,
     ) -> None:
+        self._transition(StagedResourceState.FINAL_CREATED_UNCOMMITTED)
         self.final_storage_key = storage_key
         self.final_directory = directory
         self.final_object_name = object_name
 
+    def mark_shared_existing(self) -> None:
+        self._transition(StagedResourceState.SHARED_EXISTING)
+
     def mark_committed(self) -> None:
-        self.committed = True
+        if self._resource_state == StagedResourceState.STAGED_ONLY:
+            self.mark_shared_existing()
+        self._transition(StagedResourceState.COMMITTED)
 
     def cleanup(self, *, primary_error: BaseException | None = None) -> None:
         if self.cleaned:
             return
+        if self._resource_state == StagedResourceState.CLEANUP_FAILED:
+            self._transition(StagedResourceState.CLEANUP_PENDING)
+        else:
+            self._cleanup_origin_state = self._resource_state
+            self._transition(StagedResourceState.CLEANUP_PENDING)
         failures: list[BaseException] = []
         try:
             self.storage._temporary_directory.unlink(self.temporary_name)
         except BaseException as error:
             failures.append(error)
+        owns_uncommitted_final = (
+            self._cleanup_origin_state
+            == StagedResourceState.FINAL_CREATED_UNCOMMITTED
+        )
         if (
-            self.final_storage_key is not None
-            and not self.committed
+            not failures
+            and self.final_storage_key is not None
+            and owns_uncommitted_final
             and self.final_directory is not None
             and self.final_object_name is not None
         ):
@@ -548,11 +675,15 @@ class StagedUpload:
             else:
                 self.final_directory.close()
                 self.final_directory = None
-        elif self.final_directory is not None:
+        elif (
+            not failures
+            and self.final_directory is not None
+            and self._cleanup_origin_state == StagedResourceState.COMMITTED
+        ):
             self.final_directory.close()
             self.final_directory = None
         if failures:
-            self.cleanup_failed = True
+            self._transition(StagedResourceState.CLEANUP_FAILED)
             logging.getLogger(__name__).error(
                 "M02 staged-resource cleanup failed",
                 extra={
@@ -564,8 +695,13 @@ class StagedUpload:
                 "A staged M02 resource could not be cleaned up",
                 primary_error=primary_error,
                 cleanup_errors=tuple(failures),
+                operational_diagnostics=(
+                    ("M02_FINAL_PLACEMENT_SUCCEEDED",)
+                    if owns_uncommitted_final
+                    else ()
+                ),
             )
-        self.cleanup_failed = False
+        self._transition(StagedResourceState.CLEANED)
         self.cleaned = True
 
 

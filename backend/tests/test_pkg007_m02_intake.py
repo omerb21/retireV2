@@ -36,7 +36,9 @@ from app.services.m02_storage import (
     M02StorageCleanupError,
     M02OwnedReader,
     ManagedLocalStorage,
+    StagedResourceState,
     StagedUpload,
+    _DirectoryHandleKind,
     _TrustedDirectory,
     _WindowsDirectoryApi,
     _validate_text,
@@ -728,9 +730,11 @@ class _FakeWindowsDirectoryApi:
     def __init__(
         self,
         openings: list[tuple[int, int, tuple[int, int]] | BaseException],
+        close_error: BaseException | None = None,
     ) -> None:
         self.openings = list(openings)
         self.closed: list[int] = []
+        self.close_error = close_error
 
     def open_directory(self, _path: Path) -> tuple[int, int, tuple[int, int]]:
         value = self.openings.pop(0)
@@ -738,11 +742,19 @@ class _FakeWindowsDirectoryApi:
             raise value
         return value
 
-    def close(self, handle: int) -> None:
+    def close_handle(self, handle: int) -> None:
         self.closed.append(handle)
+        if self.close_error is not None:
+            raise self.close_error
 
 
-def test_windows_directory_contract_uses_pinned_non_reparse_handle() -> None:
+def test_windows_directory_contract_uses_pinned_non_reparse_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    posix_closes: list[int] = []
+    monkeypatch.setattr(storage_module.os, "close", posix_closes.append)
     arguments = _WindowsDirectoryApi.create_file_arguments(Path("managed"))
     assert arguments[1] == _WindowsDirectoryApi.GENERIC_READ
     assert arguments[2] == _WindowsDirectoryApi.SHARE_READ_WRITE
@@ -760,7 +772,9 @@ def test_windows_directory_contract_uses_pinned_non_reparse_handle() -> None:
     assert directory._handle == 77
     assert directory.identity == (4, 9)
     directory.close()
+    directory.close()
     assert api.closed == [77]
+    assert posix_closes == []
 
 
 def test_windows_directory_rejects_reparse_and_closes_handle() -> None:
@@ -800,12 +814,55 @@ def test_windows_directory_identity_mismatch_is_typed_and_closes_probe(
     assert pinned_api.closed == [70]
 
 
+def test_windows_identity_mismatch_preserves_primary_when_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    directory = _TrustedDirectory(
+        Path("managed"),
+        70,
+        (5, 11),
+        windows_api=_FakeWindowsDirectoryApi([]),
+    )
+    probe_api = _FakeWindowsDirectoryApi(
+        [(71, _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY, (5, 12))],
+        close_error=OSError("injected close failure"),
+    )
+    monkeypatch.setattr(storage_module, "_windows_directory_api", lambda: probe_api)
+    with pytest.raises(M02StorageConfigurationError, match="identity changed") as error:
+        directory._verify_windows_path_identity()
+    assert probe_api.closed == [71]
+    assert any("Secondary managed-directory close failure" in note for note in error.value.__notes__)
+
+
 def test_windows_directory_api_failure_is_typed_without_path_disclosure() -> None:
     api = _FakeWindowsDirectoryApi([PermissionError("C:/private/managed")])
     with pytest.raises(M02StorageConfigurationError) as error:
         _TrustedDirectory._open_windows(Path("C:/private/managed"), api=api)
     assert isinstance(error.value.__cause__, PermissionError)
     assert "C:/private/managed" not in str(error.value)
+
+
+def test_posix_directory_close_uses_descriptor_backend_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    posix_closes: list[int] = []
+    windows_api = _FakeWindowsDirectoryApi([])
+    monkeypatch.setattr(storage_module.os, "close", posix_closes.append)
+    directory = _TrustedDirectory(
+        Path("managed"),
+        41,
+        (2, 3),
+        windows_api=windows_api,
+        handle_kind=_DirectoryHandleKind.POSIX,
+    )
+    directory.close()
+    directory.close()
+    assert posix_closes == [41]
+    assert windows_api.closed == []
 
 
 def test_blob_identity_is_immutable(api) -> None:
@@ -1188,7 +1245,12 @@ def test_staged_directory_replacement_race_never_writes_attacker_directory(
         path for path in attacker_directory.rglob("*") if path.is_file()
     ]
     if approved_moved.exists():
-        assert response.status_code == 400
+        assert response.status_code == 503
+        assert response.json()["detail"] == {
+            "code": "M02_STORAGE_UNAVAILABLE",
+            "message": "Managed source storage is unavailable",
+        }
+        assert str(storage_root) not in response.text
         with session_local() as session:
             assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
     else:
@@ -1231,7 +1293,15 @@ def test_final_directory_replacement_race_never_writes_attacker_directory(
             path for path in attacker_directory.rglob("*") if path.is_file()
         ]
     if swapped and approved_moved is not None and approved_moved.exists():
-        assert response.status_code == 400
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert detail["code"] == "M02_STORAGE_CLEANUP_FAILED"
+        assert detail["diagnostic_chain"] == [
+            "M02_STORAGE_CONFIGURATION_BLOCKED",
+            "M02_FINAL_PLACEMENT_SUCCEEDED",
+            "M02_STORAGE_CLEANUP_FAILED",
+        ]
+        assert str(storage_root) not in response.text
         assert not [path for path in approved_moved.rglob("*") if path.is_file()]
         with session_local() as session:
             assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
@@ -1270,6 +1340,179 @@ def test_final_link_transfers_owner_before_post_link_verification(
     assert staged.resource_state == "cleaned"
     assert not [path for path in root.rglob("*") if path.is_file()]
     storage.close()
+
+
+def test_staged_resource_state_model_allows_only_declared_transitions(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "managed"
+    root.mkdir()
+    storage = ManagedLocalStorage(root)
+
+    shared = storage.new_staged_upload(
+        original_filename="shared.pdf",
+        extension=".pdf",
+        declared_mime_type="application/pdf",
+        validated_media_type="application/pdf",
+    )
+    assert shared.resource_state == "staged-only"
+    shared.mark_shared_existing()
+    assert shared.resource_state == "shared-existing"
+    shared.mark_committed()
+    assert shared.resource_state == "committed"
+    shared.cleanup()
+    assert shared.resource_state == "cleaned"
+
+    invalid = storage.new_staged_upload(
+        original_filename="invalid.pdf",
+        extension=".pdf",
+        declared_mime_type="application/pdf",
+        validated_media_type="application/pdf",
+    )
+    invalid.cleanup()
+    assert invalid.resource_state == "cleaned"
+    with pytest.raises(M02StorageConfigurationError, match="Invalid staged-resource"):
+        invalid.mark_shared_existing()
+    storage.close()
+
+
+def test_staged_resource_transition_matrix_is_closed() -> None:
+    allowed = {
+        ("staged-only", "final-created-uncommitted"),
+        ("staged-only", "shared-existing"),
+        ("staged-only", "cleanup-pending"),
+        ("final-created-uncommitted", "committed"),
+        ("final-created-uncommitted", "cleanup-pending"),
+        ("shared-existing", "committed"),
+        ("shared-existing", "cleanup-pending"),
+        ("committed", "cleanup-pending"),
+        ("cleanup-pending", "cleaned"),
+        ("cleanup-pending", "cleanup-failed"),
+        ("cleanup-failed", "cleanup-pending"),
+    }
+    states = list(StagedResourceState)
+    for source in states:
+        for target in states:
+            staged = StagedUpload(
+                storage=object(),  # type: ignore[arg-type]
+                temporary_name="state.upload",
+                original_filename="state.pdf",
+                extension=".pdf",
+                declared_mime_type="application/pdf",
+                validated_media_type="application/pdf",
+                _resource_state=source,
+            )
+            if (source.value, target.value) in allowed:
+                staged._transition(target)
+                assert staged.resource_state == target.value
+            else:
+                with pytest.raises(
+                    M02StorageConfigurationError,
+                    match="Invalid staged-resource transition",
+                ):
+                    staged._transition(target)
+
+
+def test_staged_unlink_failure_after_final_link_keeps_owner_for_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "managed"
+    root.mkdir()
+    storage = ManagedLocalStorage(root)
+    staged = storage.new_staged_upload(
+        original_filename="unlink.pdf",
+        extension=".pdf",
+        declared_mime_type="application/pdf",
+        validated_media_type="application/pdf",
+    )
+    with staged.open_write() as target:
+        target.write(b"%PDF-unlink")
+    storage_key = storage.place(staged)
+    final_path = storage.resolve_key(storage_key)
+    final_identity = staged.final_directory.identity
+    original_unlink = storage._temporary_directory.unlink
+    failures_remaining = 2
+
+    def fail_staged_unlink(name, *, missing_ok=True):
+        nonlocal failures_remaining
+        if name == staged.temporary_name and failures_remaining:
+            failures_remaining -= 1
+            raise PermissionError("injected staged-source unlink failure")
+        return original_unlink(name, missing_ok=missing_ok)
+
+    monkeypatch.setattr(storage._temporary_directory, "unlink", fail_staged_unlink)
+    with pytest.raises(M02StorageCleanupError) as error:
+        staged.cleanup()
+    assert error.value.diagnostic_codes == (
+        "M02_FINAL_PLACEMENT_SUCCEEDED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    )
+    assert staged.resource_state == "cleanup-failed"
+    assert staged.final_storage_key == storage_key
+    assert staged.final_directory is not None
+    assert staged.final_directory.identity == final_identity
+    assert final_path.read_bytes() == b"%PDF-unlink"
+    assert staged.temporary_path.exists()
+
+    with pytest.raises(M02StorageCleanupError):
+        staged.cleanup()
+    assert staged.resource_state == "cleanup-failed"
+    assert staged.final_directory is not None
+    assert staged.final_directory.identity == final_identity
+
+    staged.cleanup()
+    assert staged.resource_state == "cleaned"
+    assert not final_path.exists()
+    assert not staged.temporary_path.exists()
+    staged.cleanup()
+    storage.close()
+
+
+def test_batch_reports_staged_unlink_failure_after_final_link_without_rows(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, storage_root = api
+    original_commit = Session.commit
+    original_unlink = _TrustedDirectory.unlink
+    failed_once = False
+
+    def fail_m02_commit(session):
+        if any(
+            isinstance(item, (M02IntakeRecord, M02PreservedBlob, M02PreservedSource))
+            for item in session.new
+        ):
+            raise SQLAlchemyError("injected DB commit failure")
+        return original_commit(session)
+
+    def fail_staged_unlink(directory, name, *, missing_ok=True):
+        nonlocal failed_once
+        if (
+            directory.path.name == ".temporary"
+            and name.endswith(".upload")
+            and not failed_once
+        ):
+            failed_once = True
+            raise PermissionError("injected staged-source unlink failure")
+        return original_unlink(directory, name, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Session, "commit", fail_m02_commit)
+    monkeypatch.setattr(_TrustedDirectory, "unlink", fail_staged_unlink)
+    response = _upload(
+        client, 1, [("unlink.pdf", b"%PDF-unlink", "application/pdf")]
+    )
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    assert detail["diagnostic_chain"] == [
+        "M02_PERSISTENCE_FAILED",
+        "M02_FINAL_PLACEMENT_SUCCEEDED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    ]
+    assert str(storage_root) not in response.text
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 0
 
 
 def test_database_commit_failure_cleans_final_object_without_orphan(

@@ -400,20 +400,46 @@ The implementation must:
 - reject a foreign client ID or a nested record/run belonging to another client
   without returning the foreign record's facts;
 - clear client-specific case state immediately when the route client changes;
-- use an instance/request-generation token in addition to client ID so that
-  A→B→A cannot accept a response from the first A visit;
+- increment a monotonic route-context generation whenever the route client
+  context changes and capture both `clientId` and that generation for every
+  asynchronous read or mutation;
 - abort in-flight reads where practical and, regardless of abort support,
-  discard every response whose generation and route client do not match the
-  current case;
+  discard every success, rejection, and `finally` effect unless both its
+  captured `clientId` and generation match the current case;
 - apply the same generation check to reads, saves, validation failures, and
   lifecycle mutation responses;
+- prevent a stale `finally` from clearing or modifying the current context's
+  loading or mutation-in-progress state;
+- prevent a stale success or rejection from overwriting current facts, mutation
+  results, errors, completeness, lifecycle targets, validation messages,
+  navigation, or client-workspace state;
 - avoid retaining missing fields, conflicts, form drafts, transition choices,
   errors, or loading state from the previous client; and
 - construct all module links from the active route client, not from stale route
   state or a previously loaded record.
 
-Tests must cover both A→B and A→B→A with deliberately reordered responses.
-Comparing only `client_id` is insufficient for A→B→A.
+Tests must use deferred or otherwise deterministically controlled promises;
+timing-only tests are insufficient. They must exercise both A→B and A→B→A with
+deliberately reordered outcomes and prove at least:
+
+1. a stale successful read cannot overwrite the current client's data;
+2. a stale rejected read cannot display its old error;
+3. a stale read `finally` cannot clear or modify the current loading state;
+4. a stale successful mutation cannot change current mutation status, overwrite
+   a newer mutation result, or restore stale completeness, lifecycle targets,
+   validation messages, navigation, or workspace state;
+5. a stale rejected mutation cannot display its error or change current
+   mutation status;
+6. a stale mutation `finally` cannot clear or modify the current mutation state;
+   and
+7. a new request in the revisited A context still succeeds normally after the
+   first A context's stale outcomes settle.
+
+Each acceptance check must validate both the captured `clientId` and the
+monotonic route-context generation. A `clientId`-only guard is explicitly
+insufficient for A→B→A. This strengthens the deterministic test contract for
+the accepted generation-token design; it does not introduce another
+concurrency architecture.
 
 ## 12. Navigation and PKG-005 preservation
 
@@ -540,7 +566,14 @@ Implementation acceptance must include:
 - client-isolation and safe foreign-ID non-disclosure tests;
 - frontend case-workspace rendering, editing, validation, completeness,
   lifecycle, archived, and navigation tests;
-- reordered-response A→B and A→B→A tests covering reads and mutations;
+- deferred-promise A→B and A→B→A tests covering stale successful and rejected
+  reads, stale read `finally`, stale successful and rejected mutations, stale
+  mutation `finally`, and a successful new request in the revisited A context;
+- assertions in every stale-path test that both captured `clientId` and
+  monotonic route-context generation gate all data, error, loading, mutation,
+  completeness, lifecycle-target, validation-message, navigation, and
+  client-workspace state updates; a `clientId`-only guard and timing-only tests
+  are insufficient;
 - PKG-005 fixation entry, calculate, save, history, reopen, isolation, and
   stale-response regression tests;
 - full backend test suite;

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -24,6 +24,7 @@ import {
   listFixationEligibilityRevisions,
   validateFixation,
 } from "../api/fixationApi";
+import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
 
 type FixationInputRouteState = {
   clientId?: number;
@@ -274,11 +275,12 @@ export function FixationInputScreen() {
   const [response, setResponse] = useState<FixationResultResponse | null>(null);
   const [validatedSignature, setValidatedSignature] = useState<string | null>(null);
   const [calculated, setCalculated] = useState<{ input: FixationInputPayload; result: FixationResultResponse } | null>(null);
-  const activeClientIdRef = useRef(clientId);
-  activeClientIdRef.current = clientId;
+  const { captureClientContext, isCurrentClientContext } =
+    useClientContextGeneration(clientId, location.key);
 
   useEffect(() => {
     let active = true;
+    const clientContext = captureClientContext();
     setForm(initialFormState);
     setGrants([]);
     setCapitalizations([]);
@@ -310,7 +312,7 @@ export function FixationInputScreen() {
           getActualCapitalizations(clientId),
           listFixationEligibilityRevisions(clientId),
         ]);
-        if (!active) return;
+        if (!active || !isCurrentClientContext(clientContext)) return;
         setGrants(loadedGrants);
         setCapitalizations(loadedCapitalizations);
         setRevisions(revisionList.items);
@@ -327,19 +329,19 @@ export function FixationInputScreen() {
         );
         setLoadedClientId(clientId);
       } catch (error) {
-        if (active) {
+        if (active && isCurrentClientContext(clientContext)) {
           setLoadedClientId(clientId);
           setMessage(getErrorMessage(error));
         }
       } finally {
-        if (active) setIsLoading(false);
+        if (active && isCurrentClientContext(clientContext)) setIsLoading(false);
       }
     }
     void load();
     return () => {
       active = false;
     };
-  }, [clientId]);
+  }, [captureClientContext, clientId, isCurrentClientContext, location.key]);
 
   function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -547,10 +549,12 @@ export function FixationInputScreen() {
     }
     setIsCreatingDate(true);
     setMessage(null);
+    const clientContext = captureClientContext();
     try {
       const created = await createFixationEligibilityRevision(clientId, form.newEligibilityDate);
+      if (!isCurrentClientContext(clientContext)) return;
       const refreshed = await listFixationEligibilityRevisions(clientId);
-      if (activeClientIdRef.current !== clientId) return;
+      if (!isCurrentClientContext(clientContext)) return;
       setRevisions(refreshed.items);
       setSelectedRevisionId(created.revision_id);
       setSelection(null);
@@ -558,9 +562,9 @@ export function FixationInputScreen() {
       setCalculated(null);
       setMessage(`Finalized B1 revision created and selected: ${created.revision_id}`);
     } catch (error) {
-      if (activeClientIdRef.current === clientId) setMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) setMessage(getErrorMessage(error));
     } finally {
-      setIsCreatingDate(false);
+      if (isCurrentClientContext(clientContext)) setIsCreatingDate(false);
     }
   }
 
@@ -579,12 +583,13 @@ export function FixationInputScreen() {
     }
     setIsSubmitting(true);
     setMessage(null);
+    const clientContext = captureClientContext();
     try {
       const result =
         action === "validate"
           ? await validateFixation(clientId, payload)
           : await calculateFixation(clientId, payload);
-      if (activeClientIdRef.current !== clientId) return;
+      if (!isCurrentClientContext(clientContext)) return;
       setResponse(result);
       if (action === "validate") {
         setValidatedSignature(result.status === "success" ? signature : null);
@@ -597,13 +602,13 @@ export function FixationInputScreen() {
         setMessage("Calculation failed.");
       }
     } catch (error) {
-      if (activeClientIdRef.current === clientId) {
+      if (isCurrentClientContext(clientContext)) {
         setMessage(getErrorMessage(error));
         setValidatedSignature(null);
         setCalculated(null);
       }
     } finally {
-      setIsSubmitting(false);
+      if (isCurrentClientContext(clientContext)) setIsSubmitting(false);
     }
   }
 

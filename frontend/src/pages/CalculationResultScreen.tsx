@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 
 import {
@@ -9,6 +9,7 @@ import {
   getFixationRunDetail,
   saveFixation,
 } from "../api/fixationApi";
+import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
 
 type ResultRouteState = {
   clientId?: number;
@@ -115,11 +116,12 @@ export function CalculationResultScreen() {
   const [isLoading, setIsLoading] = useState(clientId !== null && !routeStateMatchesClient);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const activeClientIdRef = useRef(clientId);
-  activeClientIdRef.current = clientId;
+  const { captureClientContext, isCurrentClientContext } =
+    useClientContextGeneration(clientId, location.key);
 
   useEffect(() => {
     let active = true;
+    const clientContext = captureClientContext();
     setInput(null);
     setResult(null);
     setStateClientId(null);
@@ -146,53 +148,63 @@ export function CalculationResultScreen() {
       setIsLoading(true);
       try {
         const history = await getFixationHistory(clientId);
+        if (!active || !isCurrentClientContext(clientContext)) return;
         const latest = history.find((entry) => entry.status === "success");
         if (!latest) {
-          if (active) {
+          if (active && isCurrentClientContext(clientContext)) {
             setStateClientId(clientId);
             setMessage("No successful saved run is available for this client.");
           }
           return;
         }
         const detail = await getFixationRunDetail(clientId, latest.run_id);
-        if (!active) return;
+        if (!active || !isCurrentClientContext(clientContext)) return;
         setInput(detail.input_snapshot);
         setResult(detail.result);
         setLoadedRunId(latest.run_id);
         setLoadedRunDate(latest.created_at);
         setStateClientId(clientId);
       } catch (error) {
-        if (active) {
+        if (active && isCurrentClientContext(clientContext)) {
           setStateClientId(clientId);
           setMessage(getErrorMessage(error));
         }
       } finally {
-        if (active) setIsLoading(false);
+        if (active && isCurrentClientContext(clientContext)) setIsLoading(false);
       }
     }
     void loadLatest();
     return () => {
       active = false;
     };
-  }, [clientId, routeStateMatchesClient, routeState?.inputData, routeState?.result]);
+  }, [
+    captureClientContext,
+    clientId,
+    isCurrentClientContext,
+    location.key,
+    routeStateMatchesClient,
+    routeState?.inputData,
+    routeState?.result,
+  ]);
 
   async function handleSave() {
     if (clientId === null || stateClientId !== clientId || input === null || result?.status !== "success") return;
     setIsSaving(true);
     setMessage(null);
+    const clientContext = captureClientContext();
     try {
       const saved = await saveFixation({
         client_id: clientId,
         input_data: input as unknown as FixationInputPayload,
       });
-      if (activeClientIdRef.current !== clientId) return;
+      if (!isCurrentClientContext(clientContext)) return;
       setSavedRunId(saved.run_id);
       setSavedStatus(saved.status);
       setSavedRunDate(saved.created_at);
     } catch (error) {
-      if (activeClientIdRef.current === clientId) setMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) setMessage(getErrorMessage(error));
     } finally {
-      setIsSaving(false);
+      if (isCurrentClientContext(clientContext)) setIsSaving(false);
     }
   }
 

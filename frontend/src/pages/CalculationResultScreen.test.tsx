@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 
@@ -9,6 +9,14 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 const acceptedInput = {
@@ -119,6 +127,21 @@ function ResultTransitionHarness() {
       >
         Switch client
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          navigate("/clients/7/fixation/result", {
+            state: {
+              clientId: 7,
+              clientName: "Dana Levi",
+              inputData: acceptedInput,
+              result: successResult,
+            },
+          })
+        }
+      >
+        Return to client A
+      </button>
       <CalculationResultScreen />
     </>
   );
@@ -226,6 +249,65 @@ describe("PKG-005 calculation result and saved-run workflow", () => {
     expect(screen.getByText("Selected B1 revision: m07rev-client-8")).toBeInTheDocument();
     expect(fetchMock.mock.calls[1][0]).toBe("/api/clients/8/fixation/history");
     expect(fetchMock.mock.calls[2][0]).toBe("/api/clients/8/fixation/runs/88");
+  });
+
+  it("rejects an old A save response after A to B to A and permits a new save", async () => {
+    const pendingSave = deferredResponse();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => pendingSave.promise)
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({
+        run_id: 77,
+        status: "success",
+        created_at: "2026-04-01T12:00:00Z",
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: "/clients/7/fixation/result",
+          state: {
+            clientId: 7,
+            clientName: "Dana Levi",
+            inputData: acceptedInput,
+            result: successResult,
+          },
+        }]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/result" element={<ResultTransitionHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Result" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+    expect(await screen.findByText("No successful saved run is available for this client.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to client A" }));
+    expect(await screen.findByText("Normalized eligibility date: 2026-02-01")).toBeInTheDocument();
+
+    await act(async () => {
+      pendingSave.resolve(jsonResponse({
+        run_id: 42,
+        status: "success",
+        created_at: "2026-03-01T10:00:00Z",
+      }));
+      await pendingSave.promise;
+    });
+
+    expect(screen.queryByText(/Run saved. Run ID: 42/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2026-03-01T10:00:00Z/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Reopen saved run" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Result" }));
+    expect(
+      await screen.findByText(/Run saved. Run ID: 77; status: success; saved at: 2026-04-01T12:00:00Z/),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("reopens the latest successful run with resolver provenance and saved date", async () => {

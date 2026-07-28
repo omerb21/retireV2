@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
@@ -25,6 +25,14 @@ function revisionList(items = [resolvedRevision]) {
   return { items, offset: 0, limit: 100, total: items.length };
 }
 
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function ResultCapture() {
   const location = useLocation();
   return <pre data-testid="route-state">{JSON.stringify(location.state)}</pre>;
@@ -43,6 +51,16 @@ function InputTransitionHarness() {
         }
       >
         Switch client
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          navigate("/clients/1/fixation/input", {
+            state: { clientId: 1, clientName: "Client One" },
+          })
+        }
+      >
+        Return to client A
       </button>
       <FixationInputScreen />
     </>
@@ -415,6 +433,132 @@ describe("PKG-005 fixation input workflow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
     expect(await screen.findByText("Select an exact finalized B1 revision.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(9);
+  });
+
+  it("rejects an old A validation response after A to B to A and allows a new A validation", async () => {
+    const pendingValidation = deferredResponse();
+    const returnedRevision = {
+      ...resolvedRevision,
+      revision_id: "m07rev-returned-a",
+    };
+    const staleSuccess = {
+      status: "success",
+      validation_errors: [],
+      eligibility_date: "2026-01-01",
+      eligibility_year: 2026,
+    };
+    const newSuccess = {
+      ...staleSuccess,
+      eligibility_date: "2027-01-01",
+      eligibility_year: 2027,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList()))
+      .mockImplementationOnce(() => pendingValidation.promise)
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([])))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([returnedRevision])))
+      .mockResolvedValueOnce(jsonResponse(newSuccess));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: "/clients/1/fixation/input",
+          state: { clientId: 1, clientName: "Client One" },
+        }]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/input" element={<InputTransitionHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitForLoaded();
+    fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-resolved" } });
+    fillValidM08Inputs();
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+    expect(await screen.findByText("Client ID: 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to client A" }));
+    expect(await screen.findByText("Client ID: 1")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /m07rev-returned-a/ })).toBeInTheDocument();
+
+    await act(async () => {
+      pendingValidation.resolve(jsonResponse(staleSuccess));
+      await pendingValidation.promise;
+    });
+
+    expect(screen.queryByText(/Server validation passed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Server Response" })).not.toBeInTheDocument();
+    expect((screen.getByLabelText("Finalized B1 revision") as HTMLSelectElement).value).toBe("");
+    expect(screen.getByRole("button", { name: "Run Calculation" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-returned-a" } });
+    fillValidM08Inputs();
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+    expect(await screen.findByText(/Server validation passed/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+  });
+
+  it("rejects an old A client load after A to B to A", async () => {
+    const pendingOldRevisionLoad = deferredResponse();
+    const oldRevision = {
+      ...resolvedRevision,
+      revision_id: "m07rev-old-a-load",
+    };
+    const returnedRevision = {
+      ...resolvedRevision,
+      revision_id: "m07rev-new-a-load",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockImplementationOnce(() => pendingOldRevisionLoad.promise)
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([])))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([returnedRevision])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: "/clients/1/fixation/input",
+          state: { clientId: 1, clientName: "Client One" },
+        }]}
+      >
+        <Routes>
+          <Route path="/clients/:clientId/fixation/input" element={<InputTransitionHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+    expect(await screen.findByText("Client ID: 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to client A" }));
+    expect(await screen.findByText("Client ID: 1")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /m07rev-new-a-load/ })).toBeInTheDocument();
+
+    await act(async () => {
+      pendingOldRevisionLoad.resolve(jsonResponse(revisionList([oldRevision])));
+      await pendingOldRevisionLoad.promise;
+    });
+
+    expect(screen.queryByRole("option", { name: /m07rev-old-a-load/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /m07rev-new-a-load/ })).toBeInTheDocument();
+    expect((screen.getByLabelText("Finalized B1 revision") as HTMLSelectElement).value).toBe("");
   });
 
   it("presents an existing M08 blocker without weakening it", async () => {

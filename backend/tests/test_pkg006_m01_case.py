@@ -235,6 +235,162 @@ def test_planned_retirement_conflict_rejects_atomically_and_atomic_switch_succee
     assert switched.json()["planned_retirement_date"] == "2047-01-01"
 
 
+def test_profile_birth_date_update_preserves_planned_retirement_invariant_atomically(
+    api: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_local = api
+    initial = client.put(
+        "/api/clients/1/case",
+        json=_complete_payload(planned_age=None, planned_date="2022-01-01"),
+    )
+    assert initial.status_code == 200
+
+    rejected = client.put(
+        "/api/clients/1/profile",
+        json={
+            "birth_date": "2023-01-01",
+            "gender": "male",
+            "contact_method": "phone",
+            "contact_details": "changed",
+            "notes": "must roll back",
+        },
+    )
+
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == {
+        "code": "PLANNED_RETIREMENT_DATE_NOT_AFTER_BIRTH",
+        "message": "planned_retirement_date must be later than birth_date",
+        "conflicting_field_ids": ["birth_date", "planned_retirement_date"],
+    }
+    with session_local() as session:
+        persisted = session.get(Client, 1)
+        profile = session.scalar(
+            text("SELECT gender FROM client_profiles WHERE client_id = 1")
+        )
+        assert persisted is not None
+        assert persisted.birth_date == date(1980, 1, 1)
+        assert persisted.planned_retirement_date == date(2022, 1, 1)
+        assert persisted.status is None
+        assert profile == "female"
+
+    unchanged = client.get("/api/clients/1")
+    assert unchanged.status_code == 200
+    assert unchanged.json()["m01_case"]["completeness"] == {
+        "status": "complete",
+        "missing_field_ids": [],
+        "conflicting_field_ids": [],
+    }
+
+
+def test_atomic_birth_and_planned_retirement_target_is_validated_before_write(
+    api: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_local = api
+    _complete_client(client)
+
+    valid = _complete_payload(planned_age=None, planned_date="2025-01-01")
+    valid["birth_date"] = "1990-01-01"
+    accepted = client.put("/api/clients/1/case", json=valid)
+    assert accepted.status_code == 200
+
+    invalid = _complete_payload(planned_age=None, planned_date="2025-01-01")
+    invalid["birth_date"] = "2025-01-01"
+    rejected = client.put("/api/clients/1/case", json=invalid)
+
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["conflicting_field_ids"] == [
+        "birth_date",
+        "planned_retirement_date",
+    ]
+    with session_local() as session:
+        persisted = session.get(Client, 1)
+        assert persisted is not None
+        assert persisted.birth_date == date(1990, 1, 1)
+        assert persisted.planned_retirement_date == date(2025, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("persisted_update", "expected_conflicts"),
+    [
+        (
+            {
+                "birth_date": "2050-01-01",
+                "planned_retirement_age": None,
+                "planned_retirement_date": "2049-01-01",
+            },
+            ["birth_date", "planned_retirement_date"],
+        ),
+        (
+            {
+                "planned_retirement_age": 121,
+                "planned_retirement_date": None,
+            },
+            ["planned_retirement_age"],
+        ),
+        (
+            {
+                "planned_retirement_age": 67,
+                "planned_retirement_date": "2050-01-01",
+            },
+            ["planned_retirement_age", "planned_retirement_date"],
+        ),
+        (
+            {
+                "employment_status": "legacy_free_text",
+            },
+            ["employment_status"],
+        ),
+    ],
+)
+def test_persisted_invalid_minimum_facts_fail_closed_without_rewrite(
+    api: tuple[TestClient, sessionmaker[Session]],
+    persisted_update: dict,
+    expected_conflicts: list[str],
+) -> None:
+    client, session_local = api
+    _complete_client(client)
+    assignments = ", ".join(f"{column} = :{column}" for column in persisted_update)
+    with session_local() as session:
+        session.execute(text("PRAGMA ignore_check_constraints = ON"))
+        session.execute(
+            text(f"UPDATE clients SET {assignments} WHERE client_id = 1"),
+            persisted_update,
+        )
+        session.commit()
+        session.execute(text("PRAGMA ignore_check_constraints = OFF"))
+
+    overview = client.get("/api/clients/1")
+
+    assert overview.status_code == 200
+    case = overview.json()["m01_case"]
+    assert case["completeness"]["status"] == "incomplete"
+    assert case["completeness"]["conflicting_field_ids"] == expected_conflicts
+    assert case["allowed_lifecycle_targets"] == []
+
+    blocked = client.post(
+        "/api/clients/1/case/lifecycle",
+        json={"target_status": "intake"},
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "case_has_conflicting_fields"
+    assert blocked.json()["detail"]["conflicting_field_ids"] == expected_conflicts
+
+    with session_local() as session:
+        stored = session.execute(
+            text(
+                """
+                SELECT birth_date, employment_status, planned_retirement_date,
+                       planned_retirement_age, status
+                FROM clients WHERE client_id = 1
+                """
+            )
+        ).mappings().one()
+        for field, expected in persisted_update.items():
+            actual = stored[field]
+            assert str(actual) == str(expected) if expected is not None else actual is None
+        assert stored["status"] is None
+
+
 def test_duplicate_identifier_is_safe_and_has_no_partial_write(
     api: tuple[TestClient, sessionmaker[Session]],
 ) -> None:

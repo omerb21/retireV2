@@ -120,6 +120,24 @@ def effective_lifecycle_status(stored_status: str | None) -> str:
     )
 
 
+def validate_birth_date_and_planned_retirement(
+    *,
+    birth_date: date | None,
+    planned_retirement_date: date | None,
+) -> None:
+    if (
+        birth_date is not None
+        and planned_retirement_date is not None
+        and planned_retirement_date <= birth_date
+    ):
+        raise M01CaseError(
+            status_code=422,
+            code="PLANNED_RETIREMENT_DATE_NOT_AFTER_BIRTH",
+            message="planned_retirement_date must be later than birth_date",
+            conflicting_field_ids=("birth_date", "planned_retirement_date"),
+        )
+
+
 def derive_completeness(client: Client, profile: ClientProfile | None) -> M01Completeness:
     missing: list[str] = []
     conflicts: list[str] = []
@@ -134,6 +152,11 @@ def derive_completeness(client: Client, profile: ClientProfile | None) -> M01Com
         missing.append("gender")
     if client.employment_status not in COMPLETE_EMPLOYMENT_STATUSES:
         missing.append("employment_status")
+    if (
+        client.employment_status is not None
+        and client.employment_status not in EMPLOYMENT_STATUSES
+    ):
+        conflicts.append("employment_status")
 
     has_age = client.planned_retirement_age is not None
     has_date = client.planned_retirement_date is not None
@@ -141,11 +164,19 @@ def derive_completeness(client: Client, profile: ClientProfile | None) -> M01Com
         missing.append("planned_retirement")
     elif has_age and has_date:
         conflicts.extend(("planned_retirement_age", "planned_retirement_date"))
+    if has_age and not 18 <= client.planned_retirement_age <= 120:
+        conflicts.append("planned_retirement_age")
+    if (
+        has_date
+        and client.birth_date is not None
+        and client.planned_retirement_date <= client.birth_date
+    ):
+        conflicts.extend(("birth_date", "planned_retirement_date"))
 
     return M01Completeness(
         status="complete" if not missing and not conflicts else "incomplete",
         missing_field_ids=tuple(field_id for field_id in MISSING_FIELD_ORDER if field_id in missing),
-        conflicting_field_ids=tuple(conflicts),
+        conflicting_field_ids=tuple(dict.fromkeys(conflicts)),
     )
 
 
@@ -222,16 +253,10 @@ def update_minimum_facts(
             message="planned_retirement_age and planned_retirement_date are mutually exclusive",
             conflicting_field_ids=("planned_retirement_age", "planned_retirement_date"),
         )
-    if (
-        payload.planned_retirement_date is not None
-        and payload.birth_date is not None
-        and payload.planned_retirement_date <= payload.birth_date
-    ):
-        raise M01CaseError(
-            status_code=422,
-            code="PLANNED_RETIREMENT_DATE_NOT_AFTER_BIRTH",
-            message="planned_retirement_date must be later than birth_date",
-        )
+    validate_birth_date_and_planned_retirement(
+        birth_date=payload.birth_date,
+        planned_retirement_date=payload.planned_retirement_date,
+    )
 
     profile = get_client_profile(db, client.client_id)
     if profile is None:

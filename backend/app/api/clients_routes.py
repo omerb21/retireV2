@@ -59,12 +59,14 @@ from app.schemas.m01_case import (
     M01LifecycleTransitionRequest,
 )
 from app.services.m01_case_service import (
+    EMPLOYMENT_STATUSES,
     M01CaseError,
     M01CaseSnapshot,
     build_case_snapshot,
     ensure_m01_editable,
     transition_lifecycle,
     update_minimum_facts,
+    validate_birth_date_and_planned_retirement,
 )
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
@@ -986,7 +988,11 @@ def _m01_case_to_response(snapshot: M01CaseSnapshot) -> M01CaseResponse:
         id_number=snapshot.client.id_number,
         birth_date=snapshot.client.birth_date,
         gender=snapshot.profile.gender if snapshot.profile is not None else None,
-        employment_status=snapshot.client.employment_status,
+        employment_status=(
+            snapshot.client.employment_status
+            if snapshot.client.employment_status in EMPLOYMENT_STATUSES
+            else None
+        ),
         planned_retirement_date=snapshot.client.planned_retirement_date,
         planned_retirement_age=snapshot.client.planned_retirement_age,
         lifecycle_status=snapshot.lifecycle_status,
@@ -1667,9 +1673,31 @@ def put_client_profile(
     client = _require_client(db, client_id)
     try:
         ensure_m01_editable(client)
+        target_birth_date = (
+            payload.birth_date
+            if "birth_date" in payload.model_fields_set
+            else client.birth_date
+        )
+        validate_birth_date_and_planned_retirement(
+            birth_date=target_birth_date,
+            planned_retirement_date=client.planned_retirement_date,
+        )
     except M01CaseError as error:
         raise _m01_error_to_http(error) from error
     client_key = client_id
+
+    if (
+        "birth_date" in payload.model_fields_set
+        and payload.birth_date is not None
+        and payload.birth_date > date.today()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "BIRTH_DATE_IN_FUTURE",
+                "message": "Birth Date must not be in the future",
+            },
+        )
 
     profile = db.scalar(select(ClientProfile).where(ClientProfile.client_id == client_key))
     if profile is None:
@@ -1697,14 +1725,6 @@ def put_client_profile(
             )
         client.id_number = payload.id_number.strip()
     if "birth_date" in payload.model_fields_set:
-        if payload.birth_date is not None and payload.birth_date > date.today():
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "BIRTH_DATE_IN_FUTURE",
-                    "message": "Birth Date must not be in the future",
-                },
-            )
         client.birth_date = payload.birth_date
 
     try:

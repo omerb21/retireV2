@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import importlib.util
 import os
@@ -15,6 +16,7 @@ from alembic.operations import Operations
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.schema import CreateTable
 
@@ -31,7 +33,11 @@ from app.services.m02_storage import (
     MAX_FILE_BYTES,
     M02FileError,
     M02StorageConfigurationError,
+    M02StorageCleanupError,
+    M02OwnedReader,
     ManagedLocalStorage,
+    StagedUpload,
+    _TrustedDirectory,
     _validate_text,
 )
 
@@ -497,20 +503,19 @@ def test_cleanup_failure_is_reported_and_never_returns_file_success(
     api, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, session_local, _ = api
-    from app.services.m02_storage import (
-        M02StorageCleanupError,
-        ManagedLocalStorage,
-    )
+    def fail_cleanup(self, *, primary_error=None):
+        raise M02StorageCleanupError(
+            "injected cleanup failure",
+            primary_error=primary_error,
+            cleanup_errors=(OSError("injected OS cleanup failure"),),
+        )
 
-    def fail_cleanup(_self, _temporary_path):
-        raise M02StorageCleanupError("injected cleanup failure")
-
-    monkeypatch.setattr(ManagedLocalStorage, "cleanup_temporary", fail_cleanup)
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_cleanup)
     response = _upload(
         client, 1, [("cleanup.pdf", b"%PDF-cleanup", "application/pdf")]
     )
-    assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "M02_BATCH_CLEANUP_FAILED"
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "M02_STORAGE_CLEANUP_FAILED"
     with session_local() as session:
         assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 1
         assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 1
@@ -985,3 +990,375 @@ def test_download_stream_uses_open_descriptor_without_path_reopen(
     )
     assert response.status_code == 200
     assert response.content == b"%PDF-descriptor"
+
+
+def test_open_descriptor_serves_original_inode_after_path_replacement(api) -> None:
+    client, session_local, storage_root = api
+    original_content = b"%PDF-original-inode"
+    _upload(
+        client, 1, [("inode.pdf", original_content, "application/pdf")]
+    )
+    with session_local() as session:
+        storage_key = session.scalar(select(M02PreservedBlob.storage_key))
+    storage = ManagedLocalStorage(storage_root)
+    reader = storage.open_key(storage_key)
+    path = storage.resolve_key(storage_key)
+    moved = path.with_name(f"{path.name}-opened")
+    replaced = False
+    try:
+        path.rename(moved)
+        path.write_bytes(b"%PDF-replacement")
+        replaced = True
+    except OSError:
+        pass
+    finally:
+        storage.close()
+    assert reader.read() == original_content
+    reader.close()
+    reader.close()
+    assert reader.close_count == 1
+    if replaced:
+        assert path.read_bytes() == b"%PDF-replacement"
+
+
+def test_staged_directory_replacement_race_never_writes_attacker_directory(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, storage_root = api
+    original = _TrustedDirectory.create_file
+    attempted = False
+    attacker_directory = storage_root / ".temporary"
+    approved_moved = storage_root / ".temporary-approved"
+
+    def swap_before_create(directory, name):
+        nonlocal attempted
+        if directory.path.name == ".temporary" and name.endswith(".upload") and not attempted:
+            attempted = True
+            try:
+                directory.path.rename(approved_moved)
+                attacker_directory.mkdir()
+            except OSError:
+                pass
+        return original(directory, name)
+
+    monkeypatch.setattr(_TrustedDirectory, "create_file", swap_before_create)
+    response = _upload(
+        client, 1, [("race.pdf", b"%PDF-staged-race", "application/pdf")]
+    )
+    assert attempted is True
+    assert not [
+        path for path in attacker_directory.rglob("*") if path.is_file()
+    ]
+    if approved_moved.exists():
+        assert response.status_code == 400
+        with session_local() as session:
+            assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+    else:
+        assert response.status_code == 200
+        assert response.json()["results"][0]["status"] == "preserved"
+
+
+def test_final_directory_replacement_race_never_writes_attacker_directory(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, storage_root = api
+    original = _TrustedDirectory.link_from
+    attempted = False
+    attacker_directory: Path | None = None
+    approved_moved: Path | None = None
+    swapped = False
+
+    def swap_before_link(directory, source, source_name, destination_name):
+        nonlocal attempted, attacker_directory, approved_moved, swapped
+        if directory.path.parent.name == "objects" and not attempted:
+            attempted = True
+            attacker_directory = directory.path
+            approved_moved = directory.path.with_name(f"{directory.path.name}-approved")
+            try:
+                directory.path.rename(approved_moved)
+                attacker_directory.mkdir()
+                swapped = True
+            except OSError:
+                pass
+        return original(directory, source, source_name, destination_name)
+
+    monkeypatch.setattr(_TrustedDirectory, "link_from", swap_before_link)
+    response = _upload(
+        client, 1, [("race.pdf", b"%PDF-final-race", "application/pdf")]
+    )
+    assert attempted is True
+    assert attacker_directory is not None
+    if swapped:
+        assert not [
+            path for path in attacker_directory.rglob("*") if path.is_file()
+        ]
+    if swapped and approved_moved is not None and approved_moved.exists():
+        assert response.status_code == 400
+        assert not [path for path in approved_moved.rglob("*") if path.is_file()]
+        with session_local() as session:
+            assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+            assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 0
+    else:
+        assert response.status_code == 200
+        assert response.json()["results"][0]["status"] == "preserved"
+
+
+def test_validation_cleanup_failure_preserves_primary_diagnostic(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, _ = api
+
+    def fail_cleanup(self, *, primary_error=None):
+        raise M02StorageCleanupError(
+            "injected validation cleanup failure",
+            primary_error=primary_error,
+            cleanup_errors=(OSError("injected cleanup failure"),),
+        )
+
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_cleanup)
+    response = _upload(
+        client, 1, [("invalid.pdf", b"not-a-pdf", "application/pdf")]
+    )
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    assert detail["diagnostic_chain"] == [
+        "M02_SIGNATURE_MISMATCH",
+        "M02_STORAGE_CLEANUP_FAILED",
+    ]
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+
+
+def test_checksum_cleanup_failure_preserves_both_diagnostics(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, _ = api
+    import app.services.m02_storage as storage_module
+
+    class FailingDigest:
+        def update(self, _chunk):
+            raise M02FileError("M02_CHECKSUM_FAILED", "Injected checksum failure")
+
+        def hexdigest(self):
+            return "0" * 64
+
+    def fail_cleanup(self, *, primary_error=None):
+        raise M02StorageCleanupError(
+            "injected checksum cleanup failure",
+            primary_error=primary_error,
+            cleanup_errors=(OSError("injected cleanup failure"),),
+        )
+
+    monkeypatch.setattr(storage_module.hashlib, "sha256", lambda: FailingDigest())
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_cleanup)
+    response = _upload(
+        client, 1, [("checksum.pdf", b"%PDF-checksum", "application/pdf")]
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"]["diagnostic_chain"] == [
+        "M02_CHECKSUM_FAILED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    ]
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 0
+
+
+def test_database_cleanup_failure_rolls_back_rows_and_preserves_diagnostic_chain(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, _ = api
+    original_commit = Session.commit
+
+    def fail_m02_commit(session):
+        if any(
+            isinstance(item, (M02IntakeRecord, M02PreservedBlob, M02PreservedSource))
+            for item in session.new
+        ):
+            raise SQLAlchemyError("injected DB commit failure")
+        return original_commit(session)
+
+    def fail_cleanup(self, *, primary_error=None):
+        raise M02StorageCleanupError(
+            "injected DB cleanup failure",
+            primary_error=primary_error,
+            cleanup_errors=(OSError("injected cleanup failure"),),
+        )
+
+    monkeypatch.setattr(Session, "commit", fail_m02_commit)
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_cleanup)
+    response = _upload(
+        client, 1, [("database.pdf", b"%PDF-database", "application/pdf")]
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"]["diagnostic_chain"] == [
+        "M02_PERSISTENCE_FAILED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    ]
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 0
+
+
+def test_request_failure_cleanup_failure_is_not_generic_only(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, _ = api
+    import app.api.m02_intake_routes as routes
+
+    def fail_request(*_args, **_kwargs):
+        raise RuntimeError("injected request failure")
+
+    def fail_cleanup(self, *, primary_error=None):
+        raise M02StorageCleanupError(
+            "injected request cleanup failure",
+            primary_error=primary_error,
+            cleanup_errors=(OSError("injected cleanup failure"),),
+        )
+
+    monkeypatch.setattr(routes, "preserve_staged_upload", fail_request)
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_cleanup)
+    response = _upload(
+        client, 1, [("request.pdf", b"%PDF-request", "application/pdf")]
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    assert response.json()["detail"]["diagnostic_chain"] == [
+        "M02_BATCH_REQUEST_FAILED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    ]
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+
+
+def test_staged_owner_cleanup_is_idempotent_and_never_deletes_committed_or_shared_blob(
+    api,
+) -> None:
+    client, session_local, storage_root = api
+    content = b"%PDF-owner-contract"
+    first = _upload(client, 1, [("first.pdf", content, "application/pdf")])
+    second = _upload(client, 1, [("second.pdf", content, "application/pdf")])
+    assert first.status_code == second.status_code == 200
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 1
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 2
+    objects = [
+        path
+        for path in storage_root.rglob("*")
+        if path.is_file() and ".temporary" not in path.parts
+    ]
+    assert len(objects) == 1
+    assert objects[0].read_bytes() == content
+
+
+class _ControlledReader:
+    def __init__(self, reads):
+        self._reads = iter(reads)
+        self.close_count = 0
+        self.closed = False
+
+    def read(self, _size=-1):
+        value = next(self._reads)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.close_count += 1
+
+
+def test_download_header_failure_closes_descriptor_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.api.m02_intake_routes as routes
+
+    reader = _ControlledReader([b""])
+    monkeypatch.setattr(routes, "quote", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("header failure")
+    ))
+    with pytest.raises(RuntimeError, match="header failure"):
+        routes._build_download_response(reader, "file.pdf")
+    assert reader.close_count == 1
+
+
+def test_download_response_construction_failure_closes_descriptor_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.api.m02_intake_routes as routes
+
+    reader = _ControlledReader([b""])
+
+    class FailingResponse:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("response construction failure")
+
+    monkeypatch.setattr(routes, "M02DownloadResponse", FailingResponse)
+    with pytest.raises(RuntimeError, match="response construction failure"):
+        routes._build_download_response(reader, "file.pdf")
+    assert reader.close_count == 1
+
+
+def test_download_never_iterated_can_be_closed_exactly_once() -> None:
+    from app.api.m02_intake_routes import _build_download_response
+
+    reader = _ControlledReader([b"unused"])
+    response = _build_download_response(reader, "file.pdf")
+    response.close()
+    response.close()
+    assert reader.close_count == 1
+
+
+@pytest.mark.parametrize(
+    "reads",
+    [
+        [OSError("first read failure")],
+        [b"first", OSError("mid-stream failure")],
+    ],
+)
+def test_download_read_failures_close_descriptor_once(reads) -> None:
+    from app.api.m02_intake_routes import _build_download_response
+
+    reader = _ControlledReader(reads)
+    response = _build_download_response(reader, "file.pdf")
+    stream = response._stream_reader()
+    if reads[0] == b"first":
+        assert next(stream) == b"first"
+    with pytest.raises(OSError):
+        next(stream)
+    assert reader.close_count == 1
+
+
+def test_download_normal_completion_closes_descriptor_once_and_preserves_headers() -> None:
+    from app.api.m02_intake_routes import _build_download_response
+
+    reader = _ControlledReader([b"one", b"two", b""])
+    response = _build_download_response(reader, "opaque.pdf")
+    assert b"".join(response._stream_reader()) == b"onetwo"
+    response.close()
+    assert reader.close_count == 1
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"].startswith("attachment;")
+
+
+def test_download_cancellation_closes_descriptor_once() -> None:
+    from app.api.m02_intake_routes import _build_download_response
+
+    reader = _ControlledReader([b"one", b""])
+    response = _build_download_response(reader, "opaque.pdf")
+    scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+
+    async def receive():
+        await asyncio.Event().wait()
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            raise asyncio.CancelledError()
+
+    asyncio.run(response(scope, receive, send))
+    assert reader.close_count == 1

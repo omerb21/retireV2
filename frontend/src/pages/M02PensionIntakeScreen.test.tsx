@@ -500,4 +500,168 @@ describe("PKG-007 M02 controlled pension intake", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:current");
     click.mockRestore();
   });
+
+  it("ignores a rejected A download after switching to B", async () => {
+    const oldDownload = deferred<Response>();
+    const existingA = intake(1, "I-A-REJECT", {
+      source: {
+        source_id: "S-A-REJECT",
+        original_filename: "opaque.dat",
+        sanitized_download_filename: "opaque.dat",
+        normalized_extension: ".dat",
+        declared_mime_type: "text/plain",
+        validated_media_type: "text/plain",
+        detected_text_encoding: "utf-8",
+        sha256_checksum: "b".repeat(64),
+        byte_size: 6,
+        source_type: "manual",
+        declared_statement_date: null,
+        preservation_status: "preserved",
+        validation_diagnostics: [],
+        uploaded_at: "2026-07-28T00:00:00Z"
+      }
+    });
+    const createObjectURL = vi.fn();
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/2") return Promise.resolve(clientResponse(2, "Client B"));
+      if (url === "/api/clients/1/m02/intakes") return Promise.resolve(jsonResponse([existingA]));
+      if (url === "/api/clients/2/m02/intakes") return Promise.resolve(jsonResponse([]));
+      if (url === "/api/clients/1/m02/sources/S-A-REJECT/download") {
+        return oldDownload.promise;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+    await screen.findByText("Active client: Client B (#2)");
+    oldDownload.reject(new Error("STALE DOWNLOAD REJECTION"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Active client: Client B (#2)")).toBeInTheDocument();
+      expect(screen.queryByText(/STALE DOWNLOAD REJECTION/)).not.toBeInTheDocument();
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(click).not.toHaveBeenCalled();
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+    });
+    click.mockRestore();
+  });
+
+  it("keeps a new A download owned when the old A rejection and finally settle", async () => {
+    const oldDownload = deferred<Response>();
+    const newDownload = deferred<Response>();
+    let downloadCount = 0;
+    const existingA = intake(1, "I-A-NEW", {
+      source: {
+        source_id: "S-A-NEW",
+        original_filename: "opaque.dat",
+        sanitized_download_filename: "opaque.dat",
+        normalized_extension: ".dat",
+        declared_mime_type: "text/plain",
+        validated_media_type: "text/plain",
+        detected_text_encoding: "utf-8",
+        sha256_checksum: "c".repeat(64),
+        byte_size: 6,
+        source_type: "manual",
+        declared_statement_date: null,
+        preservation_status: "preserved",
+        validation_diagnostics: [],
+        uploaded_at: "2026-07-28T00:00:00Z"
+      }
+    });
+    const createObjectURL = vi.fn(() => "blob:new-a");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/2") return Promise.resolve(clientResponse(2, "Client B"));
+      if (url === "/api/clients/1/m02/intakes") return Promise.resolve(jsonResponse([existingA]));
+      if (url === "/api/clients/2/m02/intakes") return Promise.resolve(jsonResponse([]));
+      if (url === "/api/clients/1/m02/sources/S-A-NEW/download") {
+        downloadCount += 1;
+        return downloadCount === 1 ? oldDownload.promise : newDownload.promise;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+    await screen.findByText("Active client: Client B (#2)");
+    fireEvent.click(screen.getByRole("button", { name: "Go A" }));
+    await screen.findByText("Active client: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    expect(screen.getByRole("button", { name: "Preparing attachment..." })).toBeDisabled();
+
+    oldDownload.reject(new Error("STALE OLD A REJECTION"));
+    await waitFor(() => {
+      expect(screen.queryByText(/STALE OLD A REJECTION/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Preparing attachment..." })).toBeDisabled();
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(click).not.toHaveBeenCalled();
+    });
+
+    newDownload.resolve(downloadResponse("new-a"));
+    await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:new-a");
+    expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+    click.mockRestore();
+  });
+
+  it("shows a current download rejection and resets without browser side effects", async () => {
+    const currentDownload = deferred<Response>();
+    const existing = intake(1, "I-CURRENT-REJECT", {
+      source: {
+        source_id: "S-CURRENT-REJECT",
+        original_filename: "opaque.dat",
+        sanitized_download_filename: "opaque.dat",
+        normalized_extension: ".dat",
+        declared_mime_type: "text/plain",
+        validated_media_type: "text/plain",
+        detected_text_encoding: "utf-8",
+        sha256_checksum: "d".repeat(64),
+        byte_size: 6,
+        source_type: "manual",
+        declared_statement_date: null,
+        preservation_status: "preserved",
+        validation_diagnostics: [],
+        uploaded_at: "2026-07-28T00:00:00Z"
+      }
+    });
+    const createObjectURL = vi.fn();
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/1/m02/intakes") return Promise.resolve(jsonResponse([existing]));
+      if (url === "/api/clients/1/m02/sources/S-CURRENT-REJECT/download") {
+        return currentDownload.promise;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    currentDownload.reject(new Error("CURRENT DOWNLOAD REJECTION"));
+    expect(await screen.findByText(/CURRENT DOWNLOAD REJECTION/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    click.mockRestore();
+  });
 });

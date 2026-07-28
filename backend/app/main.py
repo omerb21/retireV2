@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.clients_routes import router as clients_router
 from app.api.fixation_m07_routes import router as fixation_m07_router
 from app.api.fixation_routes import router as fixation_router
+from app.api.m02_intake_routes import router as m02_intake_router
 from app.api.official_parameter_routes import router as official_parameter_router
+from app.services.m02_storage import ManagedLocalStorage
 
 app = FastAPI(title="Retirement Planning V2")
 
@@ -20,6 +22,12 @@ app.include_router(clients_router)
 app.include_router(fixation_router)
 app.include_router(fixation_m07_router)
 app.include_router(official_parameter_router)
+app.include_router(m02_intake_router)
+
+
+@app.on_event("startup")
+def validate_m02_storage_configuration() -> None:
+    ManagedLocalStorage.from_environment()
 
 
 @app.get("/health")

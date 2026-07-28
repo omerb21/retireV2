@@ -10,6 +10,7 @@ import { FixationInputScreen } from "../pages/FixationInputScreen";
 import { GrantsScreen } from "../pages/GrantsScreen";
 import { RunDetailScreen } from "../pages/RunDetailScreen";
 import { RunHistoryScreen } from "../pages/RunHistoryScreen";
+import { M02PensionIntakeScreen } from "../pages/M02PensionIntakeScreen";
 
 export function AppRoutes() {
   return (
@@ -19,6 +20,7 @@ export function AppRoutes() {
       <Route path="/clients/new" element={<CreateClientScreen />} />
       <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
+      <Route path="/clients/:clientId/pension-intake" element={<M02PensionIntakeScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
       <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
       <Route path="/clients/:clientId/fixation/workspace" element={<FixationWorkspaceScreen />} />

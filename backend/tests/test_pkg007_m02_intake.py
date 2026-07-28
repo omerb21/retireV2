@@ -38,6 +38,7 @@ from app.services.m02_storage import (
     ManagedLocalStorage,
     StagedUpload,
     _TrustedDirectory,
+    _WindowsDirectoryApi,
     _validate_text,
 )
 
@@ -499,7 +500,7 @@ def test_same_batch_duplicate_reuses_one_blob_and_keeps_both_sources(api) -> Non
     ) == 1
 
 
-def test_cleanup_failure_is_reported_and_never_returns_file_success(
+def test_cleanup_failure_preserves_already_committed_file_result(
     api, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, session_local, _ = api
@@ -514,8 +515,13 @@ def test_cleanup_failure_is_reported_and_never_returns_file_success(
     response = _upload(
         client, 1, [("cleanup.pdf", b"%PDF-cleanup", "application/pdf")]
     )
-    assert response.status_code == 500
-    assert response.json()["detail"]["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"][0]["status"] == "preserved"
+    assert body["request_error"] == {
+        "code": "M02_STORAGE_CLEANUP_FAILED",
+        "message": "Managed upload cleanup could not be completed",
+    }
     with session_local() as session:
         assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 1
         assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 1
@@ -668,6 +674,138 @@ def test_storage_configuration_fails_closed(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(M02StorageConfigurationError) as error:
         ManagedLocalStorage.from_environment()
     assert error.value.code == "M02_STORAGE_CONFIGURATION_BLOCKED"
+
+
+def test_upload_route_returns_stable_storage_error_without_managed_path(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _, _ = api
+
+    def fail_storage(_cls):
+        raise M02StorageConfigurationError(
+            "private path C:/managed/customer-storage is unavailable"
+        )
+
+    monkeypatch.setattr(
+        ManagedLocalStorage,
+        "from_environment",
+        classmethod(fail_storage),
+    )
+    response = _upload(
+        client, 1, [("source.pdf", b"%PDF-source", "application/pdf")]
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "M02_STORAGE_UNAVAILABLE",
+        "message": "Managed source storage is unavailable",
+    }
+    assert "customer-storage" not in response.text
+
+
+def test_managed_directory_open_normalizes_not_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    target = tmp_path / "managed"
+    original_name = storage_module.os.name
+    monkeypatch.setattr(storage_module.os, "name", "posix")
+    monkeypatch.setattr(
+        storage_module.os,
+        "open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            NotADirectoryError("private managed path")
+        ),
+    )
+    with pytest.raises(M02StorageConfigurationError) as error:
+        _TrustedDirectory.open(target)
+    assert isinstance(error.value.__cause__, NotADirectoryError)
+    assert "private managed path" not in str(error.value)
+    monkeypatch.setattr(storage_module.os, "name", original_name)
+
+
+class _FakeWindowsDirectoryApi:
+    def __init__(
+        self,
+        openings: list[tuple[int, int, tuple[int, int]] | BaseException],
+    ) -> None:
+        self.openings = list(openings)
+        self.closed: list[int] = []
+
+    def open_directory(self, _path: Path) -> tuple[int, int, tuple[int, int]]:
+        value = self.openings.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def close(self, handle: int) -> None:
+        self.closed.append(handle)
+
+
+def test_windows_directory_contract_uses_pinned_non_reparse_handle() -> None:
+    arguments = _WindowsDirectoryApi.create_file_arguments(Path("managed"))
+    assert arguments[1] == _WindowsDirectoryApi.GENERIC_READ
+    assert arguments[2] == _WindowsDirectoryApi.SHARE_READ_WRITE
+    assert (
+        arguments[5] & _WindowsDirectoryApi.FILE_FLAG_OPEN_REPARSE_POINT
+    ) != 0
+    assert (
+        arguments[5] & _WindowsDirectoryApi.FILE_FLAG_BACKUP_SEMANTICS
+    ) != 0
+
+    api = _FakeWindowsDirectoryApi(
+        [(77, _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY, (4, 9))]
+    )
+    directory = _TrustedDirectory._open_windows(Path("managed"), api=api)
+    assert directory._handle == 77
+    assert directory.identity == (4, 9)
+    directory.close()
+    assert api.closed == [77]
+
+
+def test_windows_directory_rejects_reparse_and_closes_handle() -> None:
+    api = _FakeWindowsDirectoryApi(
+        [
+            (
+                88,
+                _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY
+                | _WindowsDirectoryApi.FILE_ATTRIBUTE_REPARSE_POINT,
+                (4, 10),
+            )
+        ]
+    )
+    with pytest.raises(M02StorageConfigurationError):
+        _TrustedDirectory._open_windows(Path("managed"), api=api)
+    assert api.closed == [88]
+
+
+def test_windows_directory_identity_mismatch_is_typed_and_closes_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    pinned_api = _FakeWindowsDirectoryApi([])
+    directory = _TrustedDirectory(
+        Path("managed"), 70, (5, 11), windows_api=pinned_api
+    )
+    probe_api = _FakeWindowsDirectoryApi(
+        [(71, _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY, (5, 12))]
+    )
+    monkeypatch.setattr(storage_module, "_windows_directory_api", lambda: probe_api)
+    with pytest.raises(M02StorageConfigurationError, match="identity changed"):
+        directory._verify_windows_path_identity()
+    assert probe_api.closed == [71]
+    assert directory.identity == (5, 11)
+    directory.close()
+    assert pinned_api.closed == [70]
+
+
+def test_windows_directory_api_failure_is_typed_without_path_disclosure() -> None:
+    api = _FakeWindowsDirectoryApi([PermissionError("C:/private/managed")])
+    with pytest.raises(M02StorageConfigurationError) as error:
+        _TrustedDirectory._open_windows(Path("C:/private/managed"), api=api)
+    assert isinstance(error.value.__cause__, PermissionError)
+    assert "C:/private/managed" not in str(error.value)
 
 
 def test_blob_identity_is_immutable(api) -> None:
@@ -1062,7 +1200,7 @@ def test_final_directory_replacement_race_never_writes_attacker_directory(
     api, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, session_local, storage_root = api
-    original = _TrustedDirectory.link_from
+    original = _TrustedDirectory.create_link_from
     attempted = False
     attacker_directory: Path | None = None
     approved_moved: Path | None = None
@@ -1082,7 +1220,7 @@ def test_final_directory_replacement_race_never_writes_attacker_directory(
                 pass
         return original(directory, source, source_name, destination_name)
 
-    monkeypatch.setattr(_TrustedDirectory, "link_from", swap_before_link)
+    monkeypatch.setattr(_TrustedDirectory, "create_link_from", swap_before_link)
     response = _upload(
         client, 1, [("race.pdf", b"%PDF-final-race", "application/pdf")]
     )
@@ -1101,6 +1239,147 @@ def test_final_directory_replacement_race_never_writes_attacker_directory(
     else:
         assert response.status_code == 200
         assert response.json()["results"][0]["status"] == "preserved"
+
+
+def test_final_link_transfers_owner_before_post_link_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "managed"
+    root.mkdir()
+    storage = ManagedLocalStorage(root)
+    staged = storage.new_staged_upload(
+        original_filename="owner.pdf",
+        extension=".pdf",
+        declared_mime_type="application/pdf",
+        validated_media_type="application/pdf",
+    )
+    with staged.open_write() as target:
+        target.write(b"%PDF-owner")
+
+    def fail_after_link(_directory, _source):
+        raise M02StorageConfigurationError("injected post-link verification failure")
+
+    monkeypatch.setattr(_TrustedDirectory, "verify_link_from", fail_after_link)
+    with pytest.raises(M02StorageConfigurationError):
+        storage.place(staged)
+    assert staged.resource_state == "final-created-uncommitted"
+    assert staged.final_storage_key is not None
+    assert staged.final_directory is not None
+    staged.cleanup()
+    staged.cleanup()
+    assert staged.resource_state == "cleaned"
+    assert not [path for path in root.rglob("*") if path.is_file()]
+    storage.close()
+
+
+def test_database_commit_failure_cleans_final_object_without_orphan(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, storage_root = api
+    original_commit = Session.commit
+
+    def fail_m02_commit(session):
+        if any(
+            isinstance(item, (M02IntakeRecord, M02PreservedBlob, M02PreservedSource))
+            for item in session.new
+        ):
+            raise SQLAlchemyError("injected DB commit failure")
+        return original_commit(session)
+
+    monkeypatch.setattr(Session, "commit", fail_m02_commit)
+    response = _upload(
+        client, 1, [("database.pdf", b"%PDF-database", "application/pdf")]
+    )
+    assert response.status_code == 200
+    assert response.json()["results"][0]["status"] == "failed"
+    assert response.json()["results"][0]["error_code"] == "M02_PERSISTENCE_FAILED"
+    assert not [path for path in storage_root.rglob("*") if path.is_file()]
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 0
+
+
+@pytest.mark.parametrize("completed_count", [1, 2])
+def test_batch_preserves_all_committed_results_when_later_cleanup_fails(
+    api, monkeypatch: pytest.MonkeyPatch, completed_count: int
+) -> None:
+    client, session_local, _ = api
+    original_cleanup = StagedUpload.cleanup
+
+    def fail_invalid_cleanup(self, *, primary_error=None):
+        if self.original_filename == "broken.pdf":
+            raise M02StorageCleanupError(
+                "injected later cleanup failure",
+                primary_error=primary_error,
+                cleanup_errors=(OSError("injected cleanup failure"),),
+            )
+        return original_cleanup(self, primary_error=primary_error)
+
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_invalid_cleanup)
+    files = [
+        (
+            f"committed-{index}.pdf",
+            f"%PDF-committed-{index}".encode(),
+            "application/pdf",
+        )
+        for index in range(completed_count)
+    ]
+    files.append(("broken.pdf", b"not-a-pdf", "application/pdf"))
+    response = _upload(client, 1, files)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["results"]) == completed_count
+    assert all(result["status"] == "preserved" for result in body["results"])
+    assert body["request_error"] == {
+        "code": "M02_STORAGE_CLEANUP_FAILED",
+        "message": "Managed upload cleanup could not be completed",
+    }
+    with session_local() as session:
+        assert (
+            session.scalar(text("SELECT COUNT(*) FROM m02_intake_records"))
+            == completed_count
+        )
+
+
+def test_shared_blob_remains_when_duplicate_cleanup_fails(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, storage_root = api
+    original_cleanup = StagedUpload.cleanup
+
+    def fail_duplicate_cleanup(self, *, primary_error=None):
+        if self.original_filename == "duplicate.pdf":
+            raise M02StorageCleanupError(
+                "injected duplicate cleanup failure",
+                primary_error=primary_error,
+                cleanup_errors=(OSError("injected cleanup failure"),),
+            )
+        return original_cleanup(self, primary_error=primary_error)
+
+    monkeypatch.setattr(StagedUpload, "cleanup", fail_duplicate_cleanup)
+    content = b"%PDF-shared"
+    response = _upload(
+        client,
+        1,
+        [
+            ("first.pdf", content, "application/pdf"),
+            ("duplicate.pdf", content, "application/pdf"),
+        ],
+    )
+    assert response.status_code == 200
+    assert len(response.json()["results"]) == 2
+    assert response.json()["request_error"]["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 1
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 2
+    objects = [
+        path
+        for path in storage_root.rglob("*")
+        if path.is_file() and ".temporary" not in path.parts
+    ]
+    assert len(objects) == 1
+    assert objects[0].read_bytes() == content
 
 
 def test_validation_cleanup_failure_preserves_primary_diagnostic(

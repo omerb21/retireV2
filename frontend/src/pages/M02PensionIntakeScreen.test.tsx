@@ -245,7 +245,10 @@ describe("PKG-007 M02 controlled pension intake", () => {
               error_message: "Invalid PDF"
             }
           ],
-          request_error: null
+          request_error: {
+            code: "M02_STORAGE_CLEANUP_FAILED",
+            message: "Managed upload cleanup could not be completed"
+          }
         }));
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -267,6 +270,7 @@ describe("PKG-007 M02 controlled pension intake", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
 
     expect(await screen.findByText("source.dat: preserved")).toBeInTheDocument();
+    expect(screen.getByText(/M02_STORAGE_CLEANUP_FAILED/)).toBeInTheDocument();
     expect(screen.getByText(/statement.pdf: failed — M02_SIGNATURE_MISMATCH/)).toBeInTheDocument();
     expect(screen.getByText(/No content is parsed in M02/)).toBeInTheDocument();
   });

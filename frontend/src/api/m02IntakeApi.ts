@@ -94,6 +94,12 @@ export interface M02UploadBatch {
   request_error: { code: string; message: string } | null;
 }
 
+export interface M02Download {
+  blob: Blob;
+  filename: string;
+  headers: Headers;
+}
+
 async function responseBody(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
   return contentType.includes("application/json") ? response.json() : response.text();
@@ -212,7 +218,7 @@ export function uploadM02Sources(
 export async function downloadM02Source(
   clientId: number,
   source: M02Source
-): Promise<void> {
+): Promise<M02Download> {
   const response = await fetch(
     buildApiUrl(
       `/clients/${clientId}/m02/sources/${encodeURIComponent(source.source_id)}/download`
@@ -225,14 +231,19 @@ export async function downloadM02Source(
       body: await responseBody(response)
     });
   }
-  const objectUrl = URL.createObjectURL(await response.blob());
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = source.original_filename;
-    anchor.rel = "noopener";
-    anchor.click();
-  } finally {
-    URL.revokeObjectURL(objectUrl);
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const encodedFilename = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  let filename = source.original_filename;
+  if (encodedFilename) {
+    try {
+      filename = decodeURIComponent(encodedFilename);
+    } catch {
+      filename = source.original_filename;
+    }
   }
+  return {
+    blob: await response.blob(),
+    filename,
+    headers: response.headers
+  };
 }

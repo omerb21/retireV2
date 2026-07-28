@@ -222,7 +222,7 @@ export function M02PensionIntakeScreen() {
   async function saveManual(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const context = captureClientContext();
-    if (validClientId === null) {
+    if (validClientId === null || client?.m01_case?.lifecycle_status === "archived") {
       return;
     }
     setIsSaving(true);
@@ -268,7 +268,11 @@ export function M02PensionIntakeScreen() {
   async function uploadFiles(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const context = captureClientContext();
-    if (validClientId === null || selectedFiles.length === 0) {
+    if (
+      validClientId === null
+      || client?.m01_case?.lifecycle_status === "archived"
+      || selectedFiles.length === 0
+    ) {
       setMutationError("Select at least one opaque source file.");
       return;
     }
@@ -321,7 +325,7 @@ export function M02PensionIntakeScreen() {
 
   async function transition(intake: M02Intake, target: M02LifecycleStatus) {
     const context = captureClientContext();
-    if (validClientId === null) {
+    if (validClientId === null || client?.m01_case?.lifecycle_status === "archived") {
       return;
     }
     setTransitioningId(intake.intake_id);
@@ -350,10 +354,23 @@ export function M02PensionIntakeScreen() {
     setDownloadingId(intake.intake_id);
     setMutationError(null);
     try {
+      const prepared = await downloadM02Source(validClientId, intake.source);
       if (!isCurrentClientContext(context)) {
         return;
       }
-      await downloadM02Source(validClientId, intake.source);
+      const objectUrl = URL.createObjectURL(prepared.blob);
+      try {
+        if (!isCurrentClientContext(context)) {
+          return;
+        }
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = prepared.filename;
+        anchor.rel = "noopener";
+        anchor.click();
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     } catch (error) {
       if (isCurrentClientContext(context)) {
         setMutationError(errorMessage(error));
@@ -381,8 +398,18 @@ export function M02PensionIntakeScreen() {
       </p>
       {loadError ? <pre>{loadError}</pre> : null}
 
+      {client?.m01_case?.lifecycle_status === "archived" ? (
+        <p>Archived client case: M02 intake is read-only until the M01 case is reopened.</p>
+      ) : null}
+
       <form onSubmit={saveManual}>
-        <fieldset disabled={isSaving || client === null}>
+        <fieldset
+          disabled={
+            isSaving
+            || client === null
+            || client.m01_case?.lifecycle_status === "archived"
+          }
+        >
           <legend>{editingIntakeId ? "Correct intake metadata" : "Manual pension intake"}</legend>
           <label>Source type <input value={form.sourceType} onChange={(event) => updateForm("sourceType", event.target.value)} required /></label>
           <label>Declared provider <input value={form.declaredProviderName} onChange={(event) => updateForm("declaredProviderName", event.target.value)} /></label>
@@ -403,7 +430,13 @@ export function M02PensionIntakeScreen() {
       </form>
 
       <form onSubmit={uploadFiles}>
-        <fieldset disabled={isUploading || client === null}>
+        <fieldset
+          disabled={
+            isUploading
+            || client === null
+            || client.m01_case?.lifecycle_status === "archived"
+          }
+        >
           <legend>Preserve opaque source files</legend>
           <p>Accepted: PDF, XML, DAT, CSV, XLSX. Maximum 25 MiB per file. No content is parsed in M02.</p>
           <input aria-label="Opaque source files" type="file" accept={ACCEPTED_FILE_TYPES} multiple onChange={selectFiles} />
@@ -460,12 +493,13 @@ export function M02PensionIntakeScreen() {
                     </button>
                   </>
                 ) : null}
-                {(["uploaded", "metadata_review"] as M02LifecycleStatus[]).includes(intake.lifecycle_status) ? (
+                {client?.m01_case?.lifecycle_status !== "archived"
+                  && (["uploaded", "metadata_review"] as M02LifecycleStatus[]).includes(intake.lifecycle_status) ? (
                   <button type="button" onClick={() => { setEditingIntakeId(intake.intake_id); setForm(formFromIntake(intake)); setMutationError(null); }}>
                     Correct metadata
                   </button>
                 ) : null}
-                {intake.allowed_lifecycle_targets.map((target) => (
+                {client?.m01_case?.lifecycle_status === "archived" ? null : intake.allowed_lifecycle_targets.map((target) => (
                   <button
                     key={target}
                     type="button"

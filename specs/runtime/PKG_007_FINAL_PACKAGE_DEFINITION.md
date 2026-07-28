@@ -46,8 +46,10 @@ After a separately authorized implementation, a user working inside an active
 client case can:
 
 1. open a client-scoped pension intake screen;
-2. create a controlled manual intake record;
-3. optionally attach one opaque source file;
+2. create a controlled manual intake record preserving the declared start date
+   and declared product-type text when supplied;
+3. select and upload one or more opaque source files in one operation, with a
+   separate intake, source, validation result, and lifecycle for every file;
 4. see preserved source metadata and preservation status;
 5. see the original filename without using it as a storage path;
 6. see the server-computed SHA-256 checksum and byte size;
@@ -84,7 +86,7 @@ for ledger or calculation use.
 | Frontend upload support | Missing and required | No multipart API helper, intake route, progress/status screen, history presentation, duplicate/superseding display, or download action exists. |
 | Tests | Reusable with substantial focused additions | Existing client isolation, A-to-B/A-to-B-to-A, M01, PKG-005, PKG-006, migration, API, and frontend test patterns are reusable. File/storage/lifecycle/rollback coverage is missing. |
 | Object storage | Deferred | The first stage uses managed local storage behind an adapter boundary. No object-storage implementation is authorized. |
-| Parsing, OCR, and live retrieval | Excluded | No existing runtime behavior is authorized for M02. XML/XLSX remain opaque; OCR and live clearinghouse retrieval are excluded. |
+| Parsing, OCR, and live retrieval | Excluded | No existing runtime behavior is authorized for M02. XML, DAT, CSV, and XLSX remain opaque; OCR and live clearinghouse retrieval are excluded. |
 
 ## 5. Locked Q-003 and Q-004 decisions
 
@@ -94,10 +96,11 @@ The only allowed extensions are:
 
 - `.pdf`;
 - `.xml`;
+- `.dat`;
 - `.csv`;
 - `.xlsx`.
 
-The maximum accepted request file size is exactly:
+The maximum accepted size of each submitted file is exactly:
 
 `25 MiB = 26,214,400 bytes`
 
@@ -111,8 +114,9 @@ Every other extension is rejected. Explicitly prohibited formats include:
 - scripts;
 - executables.
 
-XML and XLSX are preserved as opaque artifacts and are not parsed for business
-content in M02.
+XML, DAT, CSV, and XLSX are preserved as opaque artifacts and are not parsed
+for business content in M02. DAT support is V1-derived and does not establish
+a new V2 format interpretation.
 
 ### 5.2 Q-004 exclusions
 
@@ -144,14 +148,17 @@ workflow.
 |---|---|
 | `intake_id` | Stable server-generated primary key |
 | `client_id` | Required foreign key to `clients.client_id` |
-| `provider_name` | Nullable while metadata is incomplete; trimmed declared value |
+| `declared_provider_name` | Nullable trimmed value declared by the user; may remain missing or explicitly unknown and creates no provider authority |
 | `product_name` | Nullable declared product/fund name |
 | `product_identifier` | Nullable declared product/fund code or identifier |
-| `account_reference` | Nullable declared account/reference identifier |
+| `declared_account_reference` | Nullable account/reference identifier declared by the user |
+| `manual_technical_reference` | Required server-generated stable technical identity for a manual-only record; nullable for upload-created records; never a professional account number |
 | `declared_total_balance_amount` | Nullable exact decimal; no classification or calculation meaning |
 | `declared_monthly_pension_amount` | Nullable exact decimal; no conversion meaning |
 | `declared_component_values` | Nullable JSON list of declared label/exact-decimal-string pairs; labels remain opaque and unclassified |
 | `declared_statement_date` | Nullable statement/import date |
+| `declared_start_date` | Nullable source date declared by the user; not eligibility, retirement, or pension-start authority and causes no M02 calculation |
+| `declared_product_type` | Nullable opaque product-type text declared by the user; not M04 classification, taxonomy authority, or a pension/capital decision |
 | `source_type` | Required trimmed declared source type |
 | `declared_basis` | Nullable text describing the declared basis |
 | `notes` | Nullable intake notes |
@@ -172,17 +179,25 @@ decimal strings but may not map them to M04 categories or M05 ledger
 components.
 
 Creation may preserve incomplete metadata in `metadata_review` or `uploaded`.
-Transition to `accepted_for_review` requires:
+Saving a manual intake is never blocked merely because a real provider or
+declared account reference is missing. The backend may return those omissions
+as diagnostics. It must not invent a provider or present
+`manual_technical_reference` as a real account.
 
-- nonempty provider identity;
-- at least one nonempty product name or product identifier;
-- nonempty account/reference identifier;
-- nonempty source type; and
-- no unresolved preservation failure when an upload was requested.
+Transition to `accepted_for_review` requires a nonempty source type and no
+unresolved preservation failure when an upload was requested. For an
+upload-created intake, the existing provider, product, and declared-account
+metadata gate remains required. For a manual-only intake, at least one
+nonempty product name, product identifier, or `declared_product_type` is
+required, while missing `declared_provider_name` or
+`declared_account_reference` remains a diagnostic and does not block the M02
+transition. A future downstream package may require those real identifiers,
+but M02 does not create or satisfy that downstream authority.
 
-Balance, component, monthly-pension, and declared-date values remain optional.
-Their presence creates no tax, pension, capital, availability, eligibility, or
-calculation inference.
+Balance, component, monthly-pension, declared statement date,
+`declared_start_date`, and `declared_product_type` remain declared source facts.
+Their presence creates no tax, pension, capital, availability, eligibility,
+classification, retirement-date, pension-start, or calculation inference.
 
 ### 6.3 `m02_preserved_blobs`
 
@@ -224,9 +239,10 @@ metadata.
 | `intake_id` | Required unique same-client reference to `m02_intake_records` |
 | `blob_id` | Required same-client reference to `m02_preserved_blobs` |
 | `original_filename` | Required metadata only; never a storage path |
-| `normalized_extension` | Required one of `.pdf`, `.xml`, `.csv`, `.xlsx` |
-| `declared_mime_type` | Required declared MIME value accepted by the validator |
+| `normalized_extension` | Required one of `.pdf`, `.xml`, `.dat`, `.csv`, `.xlsx` |
+| `declared_mime_type` | Declared MIME value accepted by the validator; may be empty only for DAT under the bounded technical text rule in section 9.4 |
 | `validated_media_type` | Required server-determined accepted type |
+| `detected_text_encoding` | Nullable technical metadata for XML, DAT, or CSV when deterministically identified; never parser or schema validity |
 | `uploaded_at` | Required server timestamp |
 
 Required constraints and indexes:
@@ -257,14 +273,21 @@ A manual-only intake:
 1. is created through a client-scoped JSON operation;
 2. receives its client ID from the route;
 3. starts in `metadata_review`;
-4. stores only declared values;
+4. stores only declared values, including `declared_start_date` and
+   `declared_product_type` when supplied;
 5. has `preservation_status=not_applicable`;
 6. may be corrected while editable;
 7. derives missing-metadata diagnostics on the backend;
-8. may move to `accepted_for_review` only after required metadata is present;
-9. does not create a `PensionHolding`, classification, ledger row, calculation
+8. receives a deterministic server-generated `manual_technical_reference`
+   that is explicitly technical, is not displayed as a real account, and is
+   never emitted downstream as a declared account identifier;
+9. may be saved with missing or explicitly unknown
+   `declared_provider_name` and with no `declared_account_reference`;
+10. may move to `accepted_for_review` only after the path-specific M02
+    metadata gate in section 6.2 is satisfied;
+11. does not create a `PensionHolding`, classification, ledger row, calculation
    input, or M07/M08 evidence record; and
-10. remains visible throughout its non-destructive history.
+12. remains visible throughout its non-destructive history.
 
 Manual metadata writes are atomic. Validation failure leaves the previous
 record unchanged. Numeric values are preserved as exact declared decimals;
@@ -276,29 +299,33 @@ interpretation.
 An upload operation:
 
 1. is client-scoped and multipart;
-2. receives metadata and one optional file;
+2. accepts one or more files selected in one request;
 3. ignores browser paths and never trusts a browser-selected storage key;
 4. streams bytes into backend-managed temporary storage;
 5. enforces the byte limit during streaming;
 6. computes SHA-256 over the exact received bytes;
 7. validates extension, declared MIME family, and deterministic signature or
    container characteristics;
-8. creates or reuses one same-client immutable blob;
-9. creates a separate intake and source record even for a duplicate candidate;
+8. creates or reuses one same-client immutable blob for each file;
+9. creates a separate intake and source record for every file, including every
+   duplicate candidate;
 10. never stores duplicate physical bytes for a same-client checksum match;
 11. starts a successfully preserved upload in `uploaded`;
-12. returns backend-authored metadata, diagnostics, indicators, lifecycle, and
-    allowed transitions; and
-13. never parses or extracts business content.
+12. returns a structured per-file result with backend-authored metadata,
+    diagnostics, indicators, lifecycle, and allowed transitions;
+13. never combines file bytes, merges file metadata into one intake, or assigns
+    a batch-wide lifecycle in place of each file's lifecycle; and
+14. never parses or extracts business content.
 
-An upload rejected by request, extension, size, MIME, signature, container, or
-text validation creates no intake, source, or blob. If technically valid bytes
-cannot be preserved after validation has completed, the source and blob are
-rolled back and one client-scoped intake failure record is retained in
-`metadata_review` with `preservation_status=failed` and a stable safe failure
-code. That record contains no storage key, checksum claim, file contents,
-temporary path, or raw storage exception and cannot move to
-`accepted_for_review` unless a new successful intake is created.
+A file rejected by request, extension, size, MIME, signature, container, or
+text validation creates no source or blob for that file. If technically valid
+bytes cannot be preserved after validation has completed, that file's source
+and blob are rolled back and one client-scoped intake failure record is
+retained in `metadata_review` with `preservation_status=failed` and a stable
+safe failure code. That record contains no storage key, checksum claim, file
+contents, temporary path, or raw storage exception and cannot move to
+`accepted_for_review` unless a new successful intake is created. Failure of
+one file does not roll back other files that completed successfully.
 
 ## 9. File validation contract
 
@@ -312,7 +339,9 @@ All uploads require:
 - deterministic type-specific validation;
 - a safe original filename representation;
 - no executable interpretation;
-- no reliance on `application/octet-stream` as a bypass.
+- no reliance on `application/octet-stream` as a general bypass; the narrow
+  V1-derived DAT handling in section 9.4 is the only exception and still
+  requires bounded non-binary text validation.
 
 Any extension/MIME/signature mismatch is rejected with a stable structured
 error. Validation does not establish that the document is truthful, safe,
@@ -340,22 +369,35 @@ authoritative, or semantically well formed.
 - no member is extracted to a public or persistent path;
 - no workbook cells or business content are read.
 
-### 9.4 XML and CSV
+### 9.4 XML, DAT, and CSV
 
 Accepted declared MIME families are:
 
 - XML: `application/xml` or `text/xml`;
+- DAT: `text/plain`, or an empty/`application/octet-stream` declaration only
+  when the bounded text checks below succeed; this is not a general
+  `application/octet-stream` bypass;
 - CSV: `text/csv`.
 
-Both must:
+All three must:
 
 - contain non-binary text;
-- decode as UTF-8 or UTF-8 with BOM;
+- decode without normalization as UTF-8, UTF-8 with BOM, Windows-1255,
+  ISO-8859-8, or Latin-1;
 - contain no NUL bytes;
+- preserve the exact received bytes without rewriting, transcoding, or
+  normalizing the encoding;
+- retain the deterministically detected encoding as source metadata when it
+  can be identified; and
 - remain opaque after technical validation.
 
-M02 performs no XML schema validation, XML semantic parsing, CSV delimiter or
-column parsing, extraction, or normalized import.
+Encoding detection proves only that the bounded text check succeeded. It is
+not evidence of parser validity, XML schema validity, professional
+correctness, or source authority. M02 performs no XML or DAT structural or
+semantic parsing, XML schema validation, CSV delimiter or column parsing,
+extraction, or normalized import. CSV uses the same technical encoding set
+only for opaque preservation; this is not asserted as a V1 professional CSV
+contract and authorizes no future CSV parsing.
 
 ## 10. Managed local-storage contract
 
@@ -446,9 +488,9 @@ Detection is automatic, but lifecycle supersession is explicit:
 
 | Current state | Target state | Preconditions and effect |
 |---|---|---|
-| `uploaded` | `metadata_review` | Required metadata is present; bytes remain unchanged |
+| `uploaded` | `metadata_review` | Required upload-path metadata is present; bytes remain unchanged |
 | `uploaded` | `rejected` | Stable rejection reason required |
-| `metadata_review` | `accepted_for_review` | Required metadata is complete and preservation is not failed |
+| `metadata_review` | `accepted_for_review` | Path-specific required metadata in section 6.2 is complete and preservation is not failed |
 | `metadata_review` | `rejected` | Stable rejection reason required |
 | `accepted_for_review` | `metadata_review` | Reopens permitted metadata correction; bytes remain immutable |
 | `accepted_for_review` | `rejected` | Stable rejection reason required |
@@ -498,6 +540,14 @@ A crash may leave an unreferenced opaque object but must not leave a committed
 source pointing to absent content. A bounded reconciliation/cleanup operation
 may remove objects proven unreferenced; it must never delete by filename or
 without checking database references.
+
+For a multi-file request, this sequence and its transaction/compensation
+boundary apply independently to each file. Successful files remain committed
+when another file fails. A failed file leaves no partial source/blob state, and
+the response contains one stable result per submitted file. Same-checksum
+files in the same batch still create separate intake/source records and may
+share the same client-local immutable blob. Response order is not authority
+and need not match selection order.
 
 Raw exceptions, file content, absolute paths, and full storage keys must not
 appear in client responses or logs.
@@ -573,12 +623,19 @@ it must stop with:
 The bounded backend surface may include:
 
 - create manual intake under `/api/clients/{client_id}/...`;
-- create upload intake through multipart under the same client scope;
+- create one or more upload intakes through one multipart request under the
+  same client scope, returning one structured result per file;
 - list client intake history;
 - get one client intake;
 - update permitted metadata;
 - transition lifecycle;
 - download one preserved source as an attachment.
+
+The multipart upload API accepts only `.pdf`, `.xml`, `.dat`, `.csv`, and
+`.xlsx`, applies the 25 MiB limit and validation independently to every file,
+and preserves XML/DAT/CSV bytes in the locked encoding set without semantic
+parsing. A batch response is not one lifecycle result: it contains one
+correlatable result for each submitted file.
 
 Every response is backend-authored and includes:
 
@@ -586,6 +643,7 @@ Every response is backend-authored and includes:
 - declared metadata;
 - preservation status and safe failure code;
 - source metadata when preserved;
+- detected text encoding when available;
 - checksum and byte size;
 - duplicate and superseding indicators and safe same-client links;
 - lifecycle and allowed targets;
@@ -601,7 +659,7 @@ Required error families include stable codes for:
 - MIME mismatch;
 - signature/container mismatch;
 - unsafe filename metadata;
-- invalid UTF-8 text;
+- unsupported binary text or unsupported text encoding;
 - invalid OOXML container;
 - preservation failure;
 - metadata incomplete;
@@ -619,10 +677,16 @@ The M02 screen must:
 
 - be entered from the active M01 client case;
 - show the active client identity;
-- provide controlled manual fields;
-- provide one optional file input with the exact accepted types and 25 MiB
+- provide controlled manual fields, including declared start date and declared
+  product-type text, while labeling any server technical reference as
+  non-account operational identity;
+- allow multi-file selection with the exact accepted types and per-file 25 MiB
   limit shown before submission;
+- configure the file chooser for `.pdf`, `.xml`, `.dat`, `.csv`, and `.xlsx`
+  without presenting any of them as parsed in M02;
 - display upload/preservation progress or pending state;
+- display a separate validation, preservation, lifecycle, duplicate, and
+  superseding result for every submitted file;
 - display stable validation and preservation failures;
 - display source metadata, checksum, byte size, and timestamps;
 - display duplicate and superseding candidate indications without authority
@@ -674,6 +738,14 @@ Required deterministic behavior covers:
 - stale upload success;
 - stale upload error;
 - stale upload `finally`;
+- batch upload during A-to-B;
+- one stale file completion inside a batch;
+- mixed success and failure in one batch;
+- stale batch `finally`;
+- same checksum within one batch;
+- duplicate against an earlier source;
+- client switch during a batch;
+- per-file responses arriving in an order different from file selection;
 - stale lifecycle mutation;
 - stale manual-intake save;
 - failed B loading never falling back to A data;
@@ -711,11 +783,15 @@ The future backend package would require bounded work in:
 
 - additive SQLAlchemy models and relationships for intake, source, and blob;
 - one additive Alembic successor and migration tests;
-- request/response schemas and stable validation errors;
+- request/response schemas, including declared manual start/product facts,
+  technical-reference boundaries, per-file batch results, and stable
+  validation errors;
 - M02 intake/lifecycle service;
 - managed-local-storage adapter and server configuration;
 - streaming checksum and byte-limit handling;
-- extension, MIME, PDF, UTF-8, and OOXML container validators;
+- extension, MIME, PDF, bounded text-encoding, and OOXML container validators;
+- V1-aligned XML/DAT/CSV technical encoding detection without byte
+  normalization or semantic parsing;
 - same-client duplicate/blob reuse;
 - superseding-candidate detection;
 - atomic persistence and compensation cleanup;
@@ -733,7 +809,7 @@ The future frontend package would require bounded work in:
 - M02 API types and multipart transport;
 - one client-scoped M02 intake/history screen;
 - route registration and an M01 navigation link;
-- manual-intake and optional-upload forms;
+- manual-intake and multi-file opaque-upload forms;
 - visible accepted-type and size guidance;
 - preservation, metadata, duplicate, superseding, and lifecycle presentation;
 - attachment download action;
@@ -748,10 +824,10 @@ No M03, parser, classification, ledger, or report UI is included.
 
 | ID | Acceptance criterion |
 |---|---|
-| AC-007-001 | A user can create a client-scoped manual-only intake; it starts in `metadata_review`, stores declared fields, and creates no source/blob or downstream fact. |
-| AC-007-002 | A user can submit one allowed opaque file with metadata; successful preservation starts in `uploaded` and returns stored metadata without parsing content. |
-| AC-007-003 | `.pdf`, `.xml`, `.csv`, and `.xlsx` up to exactly 25 MiB are accepted only when extension, MIME, and required signature/container/text validation agree. |
-| AC-007-004 | Empty, oversized, prohibited-extension, MIME-mismatched, invalid-signature, invalid-container, binary XML/CSV, and non-UTF-8 XML/CSV uploads are rejected with stable errors and no successful source. |
+| AC-007-001 | A user can create a client-scoped manual-only intake storing `declared_start_date` and `declared_product_type` when supplied; missing/explicitly-unknown provider and missing declared account do not block save, and the server technical reference is not displayed or emitted as a real account. The intake starts in `metadata_review` and creates no source/blob or downstream fact. |
+| AC-007-002 | A user can submit one or more allowed opaque files in one multipart operation; each file receives a separate intake, source, validation result, lifecycle, and structured response, with no combined blob or merged record and no content parsing. |
+| AC-007-003 | `.pdf`, `.xml`, `.dat`, `.csv`, and `.xlsx` up to exactly 25 MiB per file are accepted only when extension, MIME, and required signature/container/text validation agree; DAT support is V1-derived opaque preservation only. |
+| AC-007-004 | XML, DAT, and CSV encoded as UTF-8, UTF-8 BOM, Windows-1255, ISO-8859-8, or Latin-1 pass bounded non-binary text validation without byte normalization; detected encoding is retained when identifiable, while empty, oversized, prohibited-extension, MIME-mismatched, invalid-signature/container, unsupported-binary, NUL-bearing, or unsupported-encoding files fail with stable errors and no successful source. |
 | AC-007-005 | The backend sanitizes original filename metadata, generates an opaque relative storage key, persists no absolute path, and never overwrites by filename. |
 | AC-007-006 | SHA-256 is computed over received bytes by the backend; a browser-supplied checksum cannot control the persisted digest. |
 | AC-007-007 | A same-client checksum match creates a separate duplicate-candidate intake/source linked to the existing immutable blob without storing duplicate physical bytes or changing history. |
@@ -759,15 +835,15 @@ No M03, parser, classification, ledger, or report UI is included.
 | AC-007-009 | A newer same-client, same-source-type declared date is shown as a superseding candidate; missing/equal dates and different source types do not create that candidate. |
 | AC-007-010 | Superseding detection does not automatically transition or delete the older intake; supersession occurs only through the explicit allowed transition. |
 | AC-007-011 | The backend enforces exactly the seven locked lifecycle transitions and returns stable conflicts for same-state, skipped, terminal, or otherwise invalid transitions. |
-| AC-007-012 | Required metadata blocks `uploaded -> metadata_review` and `metadata_review -> accepted_for_review` until complete; diagnostics are backend-authored. |
+| AC-007-012 | Required metadata blocks lifecycle transitions according to the creation path and diagnostics are backend-authored; a manual-only intake may be saved and may satisfy the M02 gate without a real provider or declared account, while those omissions remain visible diagnostics and may block a future downstream package that requires them. |
 | AC-007-013 | `accepted_for_review -> metadata_review` permits metadata correction without replacing bytes; rejected and superseded records remain terminal and read-only. |
 | AC-007-014 | Intake history, including duplicate, rejected, and superseded records, remains visible and no ordinary delete action or route exists. |
-| AC-007-015 | Upload, database, and storage failure paths are atomic from the product perspective: no success references missing bytes, database rows roll back, and temporary/unreferenced request bytes are cleaned safely. |
+| AC-007-015 | Upload, database, and storage failure paths are atomic per file: no success references missing bytes, failed-file rows roll back, temporary/unreferenced bytes are cleaned safely, and successful files remain preserved when another file in the same batch fails. |
 | AC-007-016 | Download requires matching route client ID and source ID, returns attachment disposition with `nosniff`, and exposes no public URL, absolute path, or foreign existence. |
 | AC-007-017 | Foreign intake/source IDs, lifecycle requests, downloads, duplicate lookups, and superseding lookups fail safely without cross-client data or checksum leakage. |
-| AC-007-018 | A-to-B and A-to-B-to-A tests prove immediate reset plus rejection of stale upload/manual-save/lifecycle success, error, and `finally` effects while new-context requests still work. |
-| AC-007-019 | The UI visibly presents manual fields, preservation status, safe validation errors, metadata, checksum, duplicate/superseding indications, lifecycle actions, history, and navigation using real backend state. |
-| AC-007-020 | XML and XLSX remain opaque; tests prove no XML schema/business parsing, workbook extraction, OCR, preview, classification, ledger mutation, or calculation occurs. |
+| AC-007-018 | A-to-B and A-to-B-to-A tests prove immediate reset plus rejection of stale upload/manual-save/lifecycle success, error, and `finally` effects; batch tests cover stale single-file completion, mixed results, stale batch `finally`, same-batch checksum reuse, prior-source duplicates, client switching, and out-of-order responses while new-context requests still work. |
+| AC-007-019 | The UI visibly presents declared manual fields, clearly non-account technical reference, multi-file selection, per-file preservation/validation results, safe errors, metadata, checksum, duplicate/superseding indications, lifecycle actions, history, and navigation using real backend state. |
+| AC-007-020 | XML, DAT, CSV, and XLSX remain opaque; tests prove that encoding detection is not parser validity and that no XML/DAT schema or business parsing, CSV interpretation, workbook extraction, OCR, preview, classification, ledger mutation, or calculation occurs. |
 | AC-007-021 | M02 writes do not change M01 completeness/lifecycle, PKG-005 fixation behavior, PKG-006 client-case behavior, M07/M08 evidence, or engine inputs. |
 | AC-007-022 | The additive migration upgrades from `f3a7c9d2e610`, creates only the approved M02 tables/constraints/indexes, preserves all prior rows, downgrades safely, and leaves one Alembic head. |
 
@@ -777,20 +853,20 @@ Acceptance criteria count: `22`.
 
 | ID | Prohibited outcome |
 |---|---|
-| NAC-007-001 | XML parsing, schema adapters, normalized import, CSV column interpretation, workbook business extraction, or parser warnings. |
+| NAC-007-001 | XML or DAT parsing, schema adapters, normalized import, CSV column interpretation, workbook business extraction, or parser warnings. |
 | NAC-007-002 | OCR, image intake, inline preview, or live clearinghouse retrieval. |
 | NAC-007-003 | M03 source authority review, M04 classification, M05 ledger creation, or any downstream fact mutation. |
 | NAC-007-004 | Tax, fixation, pension conversion, eligibility, scenario, recommendation, or report calculation. |
 | NAC-007-005 | Treating preservation, technical validation, `accepted_for_review`, duplicate detection, or superseding detection as source truth or professional acceptance. |
-| NAC-007-006 | Accepting an extension outside the allowlist, a file over 25 MiB, a MIME/signature mismatch, macro-enabled content, an unsafe OOXML container, or binary/non-UTF-8 XML/CSV. |
+| NAC-007-006 | Accepting an extension outside the allowlist, a file over 25 MiB, a MIME/signature mismatch, macro-enabled content, an unsafe OOXML container, unsupported binary text, NUL-bearing XML/DAT/CSV, or a text encoding outside the locked set; rejecting XML/DAT merely because it is not UTF-8 is also prohibited. |
 | NAC-007-007 | Using original filename, browser path, client directory, absolute path, or browser-selected storage key for physical storage. |
 | NAC-007-008 | Public/static serving, inline rendering, exposed storage paths, filename-based overwrite, or executable interpretation. |
-| NAC-007-009 | Trusting a browser checksum, technical actor, lifecycle status, allowed-target list, duplicate result, superseding result, or client ownership. |
+| NAC-007-009 | Trusting a browser checksum, technical actor, manual technical reference, lifecycle status, allowed-target list, duplicate result, superseding result, or client ownership, or presenting the server technical reference as a real account or declared downstream account identifier. |
 | NAC-007-010 | Cross-client blob reuse, checksum-match disclosure, foreign-ID existence leakage, or client-unscoped download. |
 | NAC-007-011 | Blocking history by silently merging duplicates, overwriting an existing source, or deleting the older record or blob. |
 | NAC-007-012 | Automatically marking an older intake superseded merely because a newer candidate exists. |
 | NAC-007-013 | Ordinary UI/API deletion, destructive correction, physical replacement, or deletion of a referenced blob. |
-| NAC-007-014 | Allowing stale A-to-B or A-to-B-to-A upload, save, lifecycle, error, loading, progress, or `finally` effects to alter the current client. |
+| NAC-007-014 | Allowing stale A-to-B or A-to-B-to-A upload, batch, per-file completion, save, lifecycle, error, loading, progress, or `finally` effects to alter the current client. |
 | NAC-007-015 | Introducing broad authentication, object storage, antivirus/DLP, a production admin process, M03 implementation, or a broad frontend/backend refactor. |
 | NAC-007-016 | Claiming malware safety, production deployment/readiness, M02/M03 completion, another-package authorization, or V1/V2 parity. |
 
@@ -800,14 +876,22 @@ Negative acceptance criteria count: `16`.
 
 ### 26.1 Backend focused tests
 
-- manual-only create, list, get, metadata update, and lifecycle behavior;
+- manual-only create, list, get, metadata update, and lifecycle behavior,
+  including declared start/product fields, missing/unknown provider, missing
+  declared account, and a server technical reference that is never a real
+  account or downstream declared identifier;
 - required-metadata diagnostics;
-- multipart upload and preservation metadata;
+- single- and multi-file multipart upload with per-file preservation metadata,
+  lifecycle, validation, and structured result;
 - exact 25 MiB boundary, empty file, and over-limit streaming rejection;
 - extension and declared MIME allowlists;
 - PDF signature validation;
 - XLSX OOXML identity, path, encryption, macro, and declared-size safety;
-- XML/CSV UTF-8, BOM, binary, and NUL handling without semantic parsing;
+- XML/DAT/CSV UTF-8, UTF-8 BOM, Windows-1255, ISO-8859-8, Latin-1, unsupported
+  binary, and NUL handling without byte normalization or semantic parsing;
+- per-file atomicity for mixed success/failure, same checksum within a batch,
+  duplicate against an earlier source, and response order differing from
+  selection order;
 - filename sanitization, generated key, path traversal, and overwrite
   prevention;
 - server SHA-256 using known byte fixtures;
@@ -833,8 +917,9 @@ Negative acceptance criteria count: `16`.
 ### 26.2 Frontend focused tests
 
 - M02 route and M01 navigation;
-- manual-intake form and real API payload;
-- optional upload with allowed-type/size guidance;
+- manual-intake form and real API payload, including declared start/product
+  fields and non-account technical-reference presentation;
+- multi-file upload with allowed-type/per-file-size guidance;
 - progress, pending, success, validation failure, preservation failure, and
   cleanup presentation;
 - metadata and missing-field diagnostics;
@@ -848,6 +933,9 @@ Negative acceptance criteria count: `16`.
 - A-to-B immediate reset;
 - A-to-B-to-A generation uniqueness;
 - stale upload success, error, and `finally`;
+- batch upload across A-to-B, stale single-file completion, mixed
+  success/failure, stale batch `finally`, same-batch checksum, prior-source
+  duplicate, client switch during batch, and out-of-order results;
 - stale lifecycle mutation and manual-save mutation;
 - failed B load never showing A data;
 - new A requests operating after old A settles.
@@ -891,7 +979,8 @@ the implementation change set.
 ## 28. Explicit exclusions
 
 - M03 source-review implementation;
-- XML parsing or normalized import;
+- XML or DAT parsing, DAT business-structure determination, or normalized
+  import;
 - OCR;
 - live clearinghouse integration;
 - item-level parser warnings or malformed-content interpretation;
@@ -935,8 +1024,8 @@ unresolved for production:
 
 Stop and return to the approval gate if:
 
-- an allowed type, 25 MiB limit, MIME/signature rule, or lifecycle transition
-  must change;
+- an allowed type, 25 MiB limit, locked text-encoding set, MIME/signature rule,
+  or lifecycle transition must change;
 - managed local storage cannot be configured outside public/static/repository
   roots;
 - only unsafe absolute paths or browser-controlled paths are available;

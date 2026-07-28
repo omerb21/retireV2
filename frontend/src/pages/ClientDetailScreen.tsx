@@ -24,7 +24,10 @@ import {
   updateClientProfile,
   updateRetirementPlanningDocumentVerification
 } from "../api/clientsApi";
-import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
+import {
+  type ClientContextToken,
+  useClientContextGeneration
+} from "../hooks/useClientContextGeneration";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
 import { PensionAnalysisRecordSection } from "./PensionAnalysisRecordSection";
 import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
@@ -120,6 +123,8 @@ export function ClientDetailScreen() {
   const [caseSaveMessage, setCaseSaveMessage] = useState<string | null>(null);
   const [caseErrorMessage, setCaseErrorMessage] = useState<string | null>(null);
   const [isTransitioningCase, setIsTransitioningCase] = useState(false);
+  const [loadedClientContext, setLoadedClientContext] =
+    useState<ClientContextToken | null>(null);
 
   function applyM01Case(nextCase: M01CaseItem) {
     setM01Case(nextCase);
@@ -148,15 +153,68 @@ export function ClientDetailScreen() {
     const clientContext = captureClientContext();
 
     setClient(null);
-    setM01Case(null);
+    setLoadedClientContext(null);
     setIsLoading(true);
     setIsNotFound(false);
     setErrorMessage(null);
+    setIdNumber("");
+    setBirthDate("");
+    setGender("");
+    setContactMethod("");
+    setContactDetails("");
+    setNotes("");
+    setProfessionalIdentificationStatus("identification_incomplete");
+    setProfileExists(false);
     setProfileLoadErrorMessage(null);
+    setIsSaving(false);
+    setSaveErrorMessage(null);
+    setSaveSuccessMessage(null);
+    setClearinghouseSnapshots([]);
+    setRetirementPlanningDocuments([]);
+    setMissingDataItems([]);
     setCollectionLoadErrorMessage(null);
+    setSnapshotImportDate("");
+    setSnapshotSourceType("");
+    setSnapshotSourceFile("");
+    setSnapshotCollectionStatus("");
+    setSnapshotCollectionNotes("");
+    setIsSavingSnapshot(false);
+    setSnapshotSaveErrorMessage(null);
+    setSnapshotSaveSuccessMessage(null);
+    setDocumentType("");
+    setDocumentSourceType("");
+    setDocumentSourceFile("");
+    setDocumentCollectionDate("");
+    setDocumentCollectionStatus("");
+    setDocumentCollectionNotes("");
+    setIsSavingDocument(false);
+    setDocumentSaveErrorMessage(null);
+    setDocumentSaveSuccessMessage(null);
+    setSnapshotVerificationStatusById({});
+    setSnapshotVerificationNotesById({});
+    setDocumentVerificationStatusById({});
+    setDocumentVerificationNotesById({});
+    setVerificationSaveMessage(null);
+    setVerificationErrorMessage(null);
+    setMissingItemType("data");
+    setMissingItemLabel("");
+    setMissingStatus("");
+    setMissingNotes("");
+    setIsSavingMissingItem(false);
+    setMissingSaveErrorMessage(null);
+    setMissingSaveSuccessMessage(null);
+    setM01Case(null);
+    setCaseDisplayName("");
+    setCaseIdNumber("");
+    setCaseBirthDate("");
+    setCaseGender("");
+    setCaseEmploymentStatus("");
+    setPlannedRetirementMode("");
+    setPlannedRetirementAge("");
+    setPlannedRetirementDate("");
+    setIsSavingCase(false);
     setCaseSaveMessage(null);
     setCaseErrorMessage(null);
-    setIsSavingCase(false);
     setIsTransitioningCase(false);
 
     async function loadClient() {
@@ -174,6 +232,7 @@ export function ClientDetailScreen() {
         if (!isActive || !isCurrentClientContext(clientContext)) {
           return;
         }
+        setLoadedClientContext(clientContext);
         setClient(nextClient);
         if (nextClient.m01_case !== undefined) {
           applyM01Case(nextClient.m01_case);
@@ -261,7 +320,11 @@ export function ClientDetailScreen() {
 
   async function handleSaveCase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (client === null || m01Case === null) {
+    if (
+      client === null
+      || m01Case === null
+      || m01Case.lifecycle_status === "archived"
+    ) {
       return;
     }
 
@@ -353,7 +416,7 @@ export function ClientDetailScreen() {
   async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (client === null) {
+    if (client === null || m01Case?.lifecycle_status === "archived") {
       return;
     }
 
@@ -651,7 +714,14 @@ export function ClientDetailScreen() {
     );
   }
 
-  if (client === null) {
+  const clientOwnsActiveRoute =
+    client !== null
+    && loadedClientContext !== null
+    && validRouteClientId !== null
+    && client.client_id === validRouteClientId
+    && isCurrentClientContext(loadedClientContext);
+
+  if (client === null || !clientOwnsActiveRoute) {
     return (
       <section>
         <h2>Client Detail</h2>
@@ -867,76 +937,86 @@ export function ClientDetailScreen() {
         </>
       ) : null}
       <form onSubmit={handleSaveProfile}>
-        <p>
-          <label htmlFor="profile-id-number">ID Number</label>
-          <input
-            id="profile-id-number"
-            value={idNumber}
-            onChange={(event) => {
-              setIdNumber(event.target.value);
-              setSaveSuccessMessage(null);
-            }}
-          />
-        </p>
-        <p>
-          <label htmlFor="profile-birth-date">Birth Date</label>
-          <input
-            id="profile-birth-date"
-            type="date"
-            value={birthDate}
-            onChange={(event) => {
-              setBirthDate(event.target.value);
-              setSaveSuccessMessage(null);
-            }}
-          />
-        </p>
-        <p>
-          <label htmlFor="profile-gender">Gender</label>
-          <input
-            id="profile-gender"
-            value={gender}
-            onChange={(event) => {
-              setGender(event.target.value);
-              setSaveSuccessMessage(null);
-            }}
-          />
-        </p>
-        <p>
-          <label htmlFor="profile-contact-method">Contact Method</label>
-          <input
-            id="profile-contact-method"
-            value={contactMethod}
-            onChange={(event) => {
-              setContactMethod(event.target.value);
-              setSaveSuccessMessage(null);
-            }}
-          />
-        </p>
-        <p>
-          <label htmlFor="profile-contact-details">Contact Details</label>
-          <input
-            id="profile-contact-details"
-            value={contactDetails}
-            onChange={(event) => {
-              setContactDetails(event.target.value);
-              setSaveSuccessMessage(null);
-            }}
-          />
-        </p>
-        <p>
-          <label htmlFor="profile-notes">Notes</label>
-          <textarea
-            id="profile-notes"
-            value={notes}
-            onChange={(event) => {
-              setNotes(event.target.value);
-              setSaveSuccessMessage(null);
-            }}
-          />
-        </p>
-        <button type="submit" disabled={isSaving || profileLoadErrorMessage !== null}>
-          {isSaving ? "Saving Profile..." : "Save Profile"}
-        </button>
+        <fieldset disabled={m01Case?.lifecycle_status === "archived" || isSaving}>
+          <legend>Client Profile</legend>
+          <p>
+            <label htmlFor="profile-id-number">ID Number</label>
+            <input
+              id="profile-id-number"
+              value={idNumber}
+              onChange={(event) => {
+                setIdNumber(event.target.value);
+                setSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="profile-birth-date">Birth Date</label>
+            <input
+              id="profile-birth-date"
+              type="date"
+              value={birthDate}
+              onChange={(event) => {
+                setBirthDate(event.target.value);
+                setSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="profile-gender">Gender</label>
+            <input
+              id="profile-gender"
+              value={gender}
+              onChange={(event) => {
+                setGender(event.target.value);
+                setSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="profile-contact-method">Contact Method</label>
+            <input
+              id="profile-contact-method"
+              value={contactMethod}
+              onChange={(event) => {
+                setContactMethod(event.target.value);
+                setSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="profile-contact-details">Contact Details</label>
+            <input
+              id="profile-contact-details"
+              value={contactDetails}
+              onChange={(event) => {
+                setContactDetails(event.target.value);
+                setSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <p>
+            <label htmlFor="profile-notes">Notes</label>
+            <textarea
+              id="profile-notes"
+              value={notes}
+              onChange={(event) => {
+                setNotes(event.target.value);
+                setSaveSuccessMessage(null);
+              }}
+            />
+          </p>
+          <button
+            type="submit"
+            disabled={
+              isSaving
+              || profileLoadErrorMessage !== null
+              || m01Case?.lifecycle_status === "archived"
+            }
+          >
+            {isSaving ? "Saving Profile..." : "Save Profile"}
+          </button>
+        </fieldset>
       </form>
       {saveSuccessMessage ? <p>{saveSuccessMessage}</p> : null}
       {saveErrorMessage ? (
@@ -1321,7 +1401,7 @@ export function ClientDetailScreen() {
       </section>
       <p>
         <Link
-          to={`/clients/${client.client_id}/fixation/workspace`}
+          to={`/clients/${validRouteClientId}/fixation/workspace`}
           state={{ clientName: client.full_name }}
         >
           Fixation Activity Workspace
@@ -1329,7 +1409,7 @@ export function ClientDetailScreen() {
       </p>
       <p>
         <Link
-          to={`/clients/${client.client_id}/employment-history`}
+          to={`/clients/${validRouteClientId}/employment-history`}
           state={{ clientName: client.full_name }}
         >
           Employment History

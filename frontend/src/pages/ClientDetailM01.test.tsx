@@ -354,4 +354,248 @@ describe("PKG-006 M01 client case workspace", () => {
     expect(await screen.findByText("Full Name: Current B Result")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Case Facts" })).toBeEnabled();
   });
+
+  it("resets all visible A workspace state before B settles and fails B profile closed", async () => {
+    const bRead = deferred<Response>();
+    const bProfile = deferred<Response>();
+    const oldAProfileMutation = deferred<Response>();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/clients/1" && method === "GET") {
+        return Promise.resolve(clientResponse(1, "Client A"));
+      }
+      if (url === "/api/clients/1/profile" && method === "GET") {
+        return Promise.resolve(jsonResponse({
+          profile: {
+            client_profile_id: "CP-1",
+            client_id: 1,
+            id_number: "ID-1",
+            birth_date: "1980-01-01",
+            gender: "female",
+            contact_method: "A-CONTACT-SECRET",
+            contact_details: "A-DETAILS-SECRET",
+            notes: "A-NOTES-SECRET",
+            file_status: "file_created",
+            professional_identification_status: "identification_incomplete",
+            m01_case: m01Case(1, "Client A")
+          }
+        }));
+      }
+      if (url === "/api/clients/1/profile" && method === "PUT") {
+        return oldAProfileMutation.promise;
+      }
+      if (url === "/api/clients/1/clearinghouse-snapshots" && method === "GET") {
+        return Promise.resolve(jsonResponse([{
+          clearinghouse_snapshot_id: "A-SNAPSHOT",
+          client_id: 1,
+          import_date: "2026-01-01",
+          source_type: "A-SOURCE",
+          source_file: "A-SNAPSHOT-SECRET",
+          collection_status: "collected",
+          collection_notes: "A-COLLECTION-NOTES",
+          verification_status: "pending",
+          verification_notes: "A-VERIFICATION-DRAFT",
+          verified_at: null,
+          created_at: "2026-01-01T00:00:00Z"
+        }]));
+      }
+      if (
+        (url === "/api/clients/1/documents" || url === "/api/clients/1/missing-items")
+        && method === "GET"
+      ) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url === "/api/clients/1/case" && method === "PUT") {
+        return Promise.resolve(jsonResponse(m01Case(1, "Client A")));
+      }
+      if (url === "/api/clients/2" && method === "GET") return bRead.promise;
+      if (url === "/api/clients/2/profile" && method === "GET") return bProfile.promise;
+      if (
+        (
+          url === "/api/clients/2/clearinghouse-snapshots"
+          || url === "/api/clients/2/documents"
+          || url === "/api/clients/2/missing-items"
+        )
+        && method === "GET"
+      ) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderHarness();
+
+    expect(await screen.findByDisplayValue("A-CONTACT-SECRET")).toBeInTheDocument();
+    expect(screen.getByText(/A-SNAPSHOT-SECRET/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Contact Method"), {
+      target: { value: "A-CONTACT-DRAFT" }
+    });
+    fireEvent.change(screen.getByLabelText("Snapshot Source File"), {
+      target: { value: "A-SNAPSHOT-DRAFT" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
+    expect(await screen.findByText("Client case facts saved.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
+    expect(screen.getByRole("button", { name: "Saving Profile..." })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+
+    expect(screen.getByText("Loading client details...")).toBeInTheDocument();
+    expect(screen.queryByText(/A-SNAPSHOT-SECRET/)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("A-CONTACT-DRAFT")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("A-SNAPSHOT-DRAFT")).not.toBeInTheDocument();
+    expect(screen.queryByText("Client case facts saved.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Saving Profile..." })).not.toBeInTheDocument();
+
+    bRead.resolve(clientResponse(2, "Client B"));
+    bProfile.resolve(jsonResponse({ detail: { code: "B_PROFILE_FAILED" } }, 500));
+
+    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
+    expect(screen.getByText("Unable to load client profile.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Contact Method")).toHaveValue("");
+    expect(screen.getByLabelText("Snapshot Source File")).toHaveValue("");
+    expect(screen.queryByText(/A-SNAPSHOT-SECRET/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/A-CONTACT/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Client case facts saved.")).not.toBeInTheDocument();
+
+    oldAProfileMutation.resolve(jsonResponse({
+      profile: {
+        client_profile_id: "CP-1",
+        client_id: 1,
+        id_number: "ID-1",
+        birth_date: "1980-01-01",
+        gender: "female",
+        contact_method: "STALE-A-PROFILE",
+        contact_details: null,
+        notes: null,
+        file_status: "file_created",
+        professional_identification_status: "identification_incomplete",
+        m01_case: m01Case(1, "Stale Client A")
+      }
+    }));
+    await waitFor(() => {
+      expect(screen.queryByText(/STALE-A-PROFILE|Stale Client A/)).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Full Name: Client B")).toBeInTheDocument();
+  });
+
+  it("keeps archived M01 and profile mutation paths read-only until reopen", async () => {
+    const archived = m01Case(1, "Archived Client", {
+      lifecycle_status: "archived",
+      allowed_lifecycle_targets: ["delivered"]
+    });
+    const reopened = m01Case(1, "Archived Client", {
+      lifecycle_status: "delivered",
+      allowed_lifecycle_targets: ["review", "archived"]
+    });
+    const updated = { ...reopened, display_name: "Reopened Client" };
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/clients/1" && method === "GET") {
+        return Promise.resolve(clientResponse(1, "Archived Client", archived));
+      }
+      if (url === "/api/clients/1/profile" && method === "GET") {
+        return Promise.resolve(jsonResponse({ profile: null }));
+      }
+      if (
+        (
+          url === "/api/clients/1/clearinghouse-snapshots"
+          || url === "/api/clients/1/documents"
+          || url === "/api/clients/1/missing-items"
+        )
+        && method === "GET"
+      ) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url === "/api/clients/1/case/lifecycle" && method === "POST") {
+        return Promise.resolve(jsonResponse(reopened));
+      }
+      if (url === "/api/clients/1/case" && method === "PUT") {
+        return Promise.resolve(jsonResponse(updated));
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderHarness();
+
+    expect(await screen.findByText("Lifecycle Status: archived")).toBeInTheDocument();
+    expect(screen.getByText(/read-only until explicitly reopened/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeDisabled();
+    expect(screen.getByLabelText("Israeli ID or Client Identifier")).toBeDisabled();
+    expect(screen.getByLabelText("Employment Status")).toBeDisabled();
+    expect(screen.getByLabelText("Planned Retirement Age")).toBeDisabled();
+    for (const control of screen.getAllByLabelText("ID Number")) {
+      expect(control).toBeDisabled();
+    }
+    for (const control of screen.getAllByLabelText("Birth Date")) {
+      expect(control).toBeDisabled();
+    }
+    for (const control of screen.getAllByLabelText("Gender")) {
+      expect(control).toBeDisabled();
+    }
+    expect(screen.getByRole("button", { name: "Save Case Facts" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save Profile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move to delivered" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Move to intake" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Move to delivered" }));
+
+    expect(await screen.findByText("Lifecycle Status: delivered")).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeEnabled();
+    expect(screen.getByLabelText("Employment Status")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save Case Facts" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save Profile" })).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Reopened Client" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
+    expect(await screen.findByText("Full Name: Reopened Client")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/clients/1/case",
+      expect.objectContaining({ method: "PUT" })
+    );
+  });
+
+  it("does not apply a stale reopen result after switching clients", async () => {
+    const reopen = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const ancillary = ancillaryResponse(url);
+      if (ancillary !== null) return Promise.resolve(ancillary);
+      if (url === "/api/clients/1" && method === "GET") {
+        return Promise.resolve(clientResponse(1, "Archived A", {
+          lifecycle_status: "archived",
+          allowed_lifecycle_targets: ["delivered"]
+        }));
+      }
+      if (url === "/api/clients/2" && method === "GET") {
+        return Promise.resolve(clientResponse(2, "Client B"));
+      }
+      if (url === "/api/clients/1/case/lifecycle" && method === "POST") {
+        return reopen.promise;
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    }));
+    renderHarness();
+
+    expect(await screen.findByText("Lifecycle Status: archived")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Move to delivered" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
+
+    reopen.resolve(jsonResponse(m01Case(1, "Reopened A", {
+      lifecycle_status: "delivered",
+      allowed_lifecycle_targets: ["review", "archived"]
+    })));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Reopened A/)).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Full Name: Client B")).toBeInTheDocument();
+    expect(screen.getByText("Lifecycle Status: draft")).toBeInTheDocument();
+  });
 });

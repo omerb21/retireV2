@@ -198,6 +198,9 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-005 execution status | `ACCEPTED` at implementation commit `1d8190bab4da1619c03b013f4f7b88bd53e18507`; definition: `specs/runtime/PKG_005_FINAL_PACKAGE_DEFINITION.md`; acceptance record: `specs/runtime/PKG_005_acceptance_record.md` |
 | PKG-005 accepted product outcome | End-to-end usable fixation workflow; backend and frontend integrated; explicit B1 revision selection; missing and ambiguity handling implemented; validate, calculate, save, and reopen implemented; client-context stale-response protection implemented |
 | PKG-005 accepted boundary | Migration: none; official parameter resolver: not included; browser E2E: not available |
+| PKG-006 definition status | `DEFINED_PENDING_IMPLEMENTATION_AUTHORIZATION`; module: `M01`; definition: `specs/runtime/PKG_006_FINAL_PACKAGE_DEFINITION.md` |
+| PKG-006 product outcome | Client case foundation, derived minimum completeness, lifecycle, client isolation, and stable navigation |
+| PKG-006 migration and implementation | Migration: `ADDITIVE_MIGRATION_REQUIRED`; implementation: `NOT_AUTHORIZED` |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

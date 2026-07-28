@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import io
+import importlib.util
 import os
 import subprocess
 import zipfile
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -21,7 +25,13 @@ from app.models.m02_intake import (
     M02PreservedBlob,
     M02PreservedSource,
 )
-from app.services.m02_storage import MAX_FILE_BYTES, M02FileError
+from app.services.m02_storage import (
+    MAX_FILE_BYTES,
+    M02FileError,
+    M02StorageConfigurationError,
+    ManagedLocalStorage,
+    _validate_text,
+)
 
 
 PARENT_REVISION = "f3a7c9d2e610"
@@ -149,7 +159,7 @@ def _xlsx_bytes(*, unsafe: bool = False, macro: bool = False) -> bytes:
 
 
 def test_manual_intake_is_declared_only_and_uses_server_provenance(api) -> None:
-    client, session_local, _ = api
+    client, session_local, storage_root = api
 
     response = client.post(
         "/api/clients/1/m02/intakes/manual", json=_manual_payload()
@@ -377,7 +387,7 @@ def test_storage_failure_retains_only_safe_failed_intake(
 def test_request_level_failure_is_distinct_and_keeps_prior_commit(
     api, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client, session_local, _ = api
+    client, session_local, storage_root = api
     import app.api.m02_intake_routes as routes
 
     original = routes.preserve_staged_upload
@@ -409,6 +419,18 @@ def test_request_level_failure_is_distinct_and_keeps_prior_commit(
     with session_local() as session:
         assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 1
         assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 1
+    assert not [
+        path
+        for path in storage_root.rglob(".temporary/*")
+        if path.is_file()
+    ]
+    assert len(
+        [
+            path
+            for path in storage_root.rglob("*")
+            if path.is_file() and ".temporary" not in path.parts
+        ]
+    ) == 1
 
 
 def test_same_client_duplicate_reuses_blob_but_cross_client_does_not(api) -> None:
@@ -440,6 +462,56 @@ def test_same_client_duplicate_reuses_blob_but_cross_client_does_not(api) -> Non
             if path.is_file() and ".temporary" not in path.parts
         ]
     ) == 2
+
+
+def test_same_batch_duplicate_reuses_one_blob_and_keeps_both_sources(api) -> None:
+    client, session_local, storage_root = api
+    content = b"%PDF-same-batch"
+    response = _upload(
+        client,
+        1,
+        [
+            ("first.pdf", content, "application/pdf"),
+            ("second.pdf", content, "application/pdf"),
+        ],
+    )
+    assert response.status_code == 200
+    intakes = [result["intake"] for result in response.json()["results"]]
+    assert [item["duplicate_candidate"] for item in intakes] == [False, True]
+    assert intakes[1]["duplicate_of_intake_id"] == intakes[0]["intake_id"]
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 1
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 2
+    assert len(
+        [
+            path
+            for path in storage_root.rglob("*")
+            if path.is_file() and ".temporary" not in path.parts
+        ]
+    ) == 1
+
+
+def test_cleanup_failure_is_reported_and_never_returns_file_success(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, _ = api
+    from app.services.m02_storage import (
+        M02StorageCleanupError,
+        ManagedLocalStorage,
+    )
+
+    def fail_cleanup(_self, _temporary_path):
+        raise M02StorageCleanupError("injected cleanup failure")
+
+    monkeypatch.setattr(ManagedLocalStorage, "cleanup_temporary", fail_cleanup)
+    response = _upload(
+        client, 1, [("cleanup.pdf", b"%PDF-cleanup", "application/pdf")]
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "M02_BATCH_CLEANUP_FAILED"
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 1
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 1
 
 
 def test_superseding_candidate_requires_newer_same_source_and_explicit_transition(api) -> None:
@@ -655,3 +727,246 @@ def test_pkg007_is_single_alembic_head() -> None:
         text=True,
     )
     assert result.stdout.strip() == f"{PKG007_REVISION} (head)"
+
+
+def test_pkg007_migration_compiles_portable_postgresql_ddl() -> None:
+    migration_path = (
+        _backend_root()
+        / "alembic"
+        / "versions"
+        / "b6d8e2f4a701_pkg007_m02_intake.py"
+    )
+    spec = importlib.util.spec_from_file_location("pkg007_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    output = io.StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": output},
+    )
+    module.op = Operations(context)
+    module.upgrade()
+    sql = output.getvalue()
+    assert "GLOB" not in sql
+    assert "instr(" not in sql
+    assert "char(92)" not in sql
+    assert "sha256_checksum ~ '^[0-9a-f]{64}$'" in sql
+    assert "storage_key NOT LIKE" in sql
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("שלום עולם".encode("cp1255"), "windows-1255"),
+        ("שלום עולם".encode("iso8859_8"), ("windows-1255", "iso-8859-8")),
+        ("Résumé déjà vu, pension statement".encode("latin-1"), "latin-1"),
+        ("שלום עולם".encode("utf-8"), "utf-8"),
+        (b"\xef\xbb\xbfvalid,statement\n1,2", "utf-8-bom"),
+    ],
+)
+def test_text_likeness_preserves_supported_encodings(
+    tmp_path: Path, content: bytes, expected: str | tuple[str, ...]
+) -> None:
+    path = tmp_path / "source.dat"
+    path.write_bytes(content)
+    detected = _validate_text(path)
+    assert detected in expected if isinstance(expected, tuple) else detected == expected
+    assert path.read_bytes() == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"\xff" * 256,
+        bytes(range(1, 256)),
+        b"valid\x00text",
+        b"\x01\x02\x03\x04" * 64,
+    ],
+)
+def test_text_likeness_rejects_binary_and_control_heavy_content(
+    tmp_path: Path, content: bytes
+) -> None:
+    path = tmp_path / "source.dat"
+    path.write_bytes(content)
+    with pytest.raises(M02FileError) as error:
+        _validate_text(path)
+    assert error.value.code == "M02_UNSUPPORTED_BINARY_TEXT"
+
+
+def test_storage_rejects_repository_cwd_public_and_static_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _backend_root().parent.resolve()
+    for unsafe in (
+        Path.cwd(),
+        repository,
+        repository / "backend",
+        repository / "frontend",
+        repository / "frontend" / "public",
+        repository / "frontend" / "static",
+    ):
+        monkeypatch.setenv("M02_STORAGE_ROOT", str(unsafe))
+        with pytest.raises(M02StorageConfigurationError):
+            ManagedLocalStorage.from_environment()
+
+
+def test_storage_rejects_root_and_managed_directory_symlinks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    root_link = tmp_path / "root-link"
+    try:
+        root_link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+    monkeypatch.setenv("M02_STORAGE_ROOT", str(root_link.absolute()))
+    with pytest.raises(M02StorageConfigurationError):
+        ManagedLocalStorage.from_environment()
+
+    safe_root = tmp_path / "safe-root"
+    safe_root.mkdir()
+    (safe_root / "objects").mkdir()
+    (safe_root / ".temporary").symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv("M02_STORAGE_ROOT", str(safe_root.absolute()))
+    with pytest.raises(M02StorageConfigurationError):
+        ManagedLocalStorage.from_environment()
+
+
+def test_storage_rejects_symlinked_final_directory_and_windows_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "managed"
+    monkeypatch.setenv("M02_STORAGE_ROOT", str(root.absolute()))
+    storage = ManagedLocalStorage.from_environment()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = storage.object_root / "aa"
+    try:
+        linked.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+    with pytest.raises(M02StorageConfigurationError):
+        storage.resolve_key("objects/aa/object")
+    for key in ("../outside", "objects/../outside", r"objects\outside", "C:/outside"):
+        with pytest.raises(M02StorageConfigurationError):
+            storage.resolve_key(key)
+
+
+def test_archived_case_blocks_all_m02_mutations_but_keeps_reads_and_reopen(
+    api,
+) -> None:
+    client, session_local, _ = api
+    existing = _upload(
+        client, 1, [("before.pdf", b"%PDF-before", "application/pdf")]
+    ).json()["results"][0]["intake"]
+    with session_local() as session:
+        session.get(Client, 1).status = "archived"
+        session.commit()
+
+    mutation_responses = [
+        client.post("/api/clients/1/m02/intakes/manual", json=_manual_payload()),
+        client.put(
+            f"/api/clients/1/m02/intakes/{existing['intake_id']}",
+            json={"product_name": "blocked"},
+        ),
+        _upload(client, 1, [("blocked.pdf", b"%PDF-blocked", "application/pdf")]),
+        client.post(
+            f"/api/clients/1/m02/intakes/{existing['intake_id']}/lifecycle",
+            json={"target_status": "metadata_review"},
+        ),
+    ]
+    assert all(response.status_code == 409 for response in mutation_responses)
+    assert all(
+        response.json()["detail"]["code"] == "archived_case_read_only"
+        for response in mutation_responses
+    )
+    assert client.get("/api/clients/1/m02/intakes").status_code == 200
+    assert (
+        client.get(
+            f"/api/clients/1/m02/sources/{existing['source']['source_id']}/download"
+        ).status_code
+        == 200
+    )
+
+    with session_local() as session:
+        session.get(Client, 1).status = "delivered"
+        session.commit()
+    assert (
+        client.post("/api/clients/1/m02/intakes/manual", json=_manual_payload()).status_code
+        == 201
+    )
+
+
+def test_lifecycle_notes_persist_only_on_successful_transition(api) -> None:
+    client, _, _ = api
+    row = client.post(
+        "/api/clients/1/m02/intakes/manual", json=_manual_payload(notes="prior")
+    ).json()
+    invalid = client.post(
+        f"/api/clients/1/m02/intakes/{row['intake_id']}/lifecycle",
+        json={"target_status": "metadata_review", "notes": "must not persist"},
+    )
+    assert invalid.status_code == 409
+    assert client.get(
+        f"/api/clients/1/m02/intakes/{row['intake_id']}"
+    ).json()["notes"] == "prior"
+    accepted = client.post(
+        f"/api/clients/1/m02/intakes/{row['intake_id']}/lifecycle",
+        json={"target_status": "accepted_for_review", "notes": "reviewed transition"},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["notes"] == "reviewed transition"
+
+
+def test_concurrent_same_client_uploads_reuse_one_blob_without_orphans(api) -> None:
+    client, session_local, storage_root = api
+    content = b"%PDF-concurrent-identical"
+
+    def submit(index: int):
+        with TestClient(app) as concurrent_client:
+            return _upload(
+                concurrent_client,
+                1,
+                [(f"same-{index}.pdf", content, "application/pdf")],
+            )
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        responses = list(executor.map(submit, range(3)))
+    assert all(response.status_code == 200 for response in responses)
+    intakes = [response.json()["results"][0]["intake"] for response in responses]
+    assert sum(not item["duplicate_candidate"] for item in intakes) == 1
+    assert sum(item["duplicate_candidate"] for item in intakes) == 2
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 1
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 3
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 3
+    stored = [
+        path
+        for path in storage_root.rglob("*")
+        if path.is_file() and ".temporary" not in path.parts
+    ]
+    assert len(stored) == 1
+
+
+def test_download_stream_uses_open_descriptor_without_path_reopen(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _, _ = api
+    intake_row = _upload(
+        client, 1, [("descriptor.pdf", b"%PDF-descriptor", "application/pdf")]
+    ).json()["results"][0]["intake"]
+    original_open = Path.open
+
+    def reject_managed_reopen(path: Path, *args, **kwargs):
+        if "objects" in path.parts:
+            raise AssertionError("managed source was reopened by path")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", reject_managed_reopen)
+    response = client.get(
+        f"/api/clients/1/m02/sources/{intake_row['source']['source_id']}/download"
+    )
+    assert response.status_code == 200
+    assert response.content == b"%PDF-descriptor"

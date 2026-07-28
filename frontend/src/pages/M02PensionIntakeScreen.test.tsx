@@ -32,15 +32,55 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as unknown as Response;
 }
 
-function clientResponse(clientId: number, name: string): Response {
+function clientResponse(
+  clientId: number,
+  name: string,
+  lifecycleStatus?: "delivered" | "archived"
+): Response {
   return jsonResponse({
     client_id: clientId,
     full_name: name,
     id_number: `ID-${clientId}`,
     birth_date: "1980-01-01",
     file_status: "file_created",
-    professional_identification_status: "identification_incomplete"
+    professional_identification_status: "identification_incomplete",
+    ...(lifecycleStatus
+      ? {
+          m01_case: {
+            client_id: clientId,
+            display_name: name,
+            id_number: `ID-${clientId}`,
+            birth_date: "1980-01-01",
+            gender: "other",
+            employment_status: "not_currently_working",
+            planned_retirement_date: null,
+            planned_retirement_age: 67,
+            lifecycle_status: lifecycleStatus,
+            completeness: {
+              status: "complete",
+              missing_field_ids: [],
+              conflicting_field_ids: []
+            },
+            allowed_lifecycle_targets:
+              lifecycleStatus === "archived" ? ["delivered"] : ["review", "archived"],
+            updated_at: "2026-07-28T00:00:00Z"
+          }
+        }
+      : {})
   });
+}
+
+function downloadResponse(content = "opaque"): Response {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: new Headers({
+      "content-type": "application/octet-stream",
+      "content-disposition": "attachment; filename*=UTF-8''opaque.dat"
+    }),
+    blob: async () => new Blob([content])
+  } as unknown as Response;
 }
 
 function intake(
@@ -356,5 +396,108 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     expect(await screen.findByText(/new.dat: failed — M02_UNSUPPORTED_BINARY_TEXT/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Preserve selected files" })).toBeEnabled();
+  });
+
+  it("keeps archived M02 history and download readable while hiding mutation controls", async () => {
+    const existing = intake(1, "I-ARCHIVED", {
+      source: {
+        source_id: "S-ARCHIVED",
+        original_filename: "opaque.dat",
+        sanitized_download_filename: "opaque.dat",
+        normalized_extension: ".dat",
+        declared_mime_type: "text/plain",
+        validated_media_type: "text/plain",
+        detected_text_encoding: "utf-8",
+        sha256_checksum: "a".repeat(64),
+        byte_size: 6,
+        source_type: "manual",
+        declared_statement_date: "2026-01-01",
+        preservation_status: "preserved",
+        validation_diagnostics: [],
+        uploaded_at: "2026-07-28T00:00:00Z"
+      },
+      allowed_lifecycle_targets: ["accepted_for_review", "rejected"]
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") {
+        return Promise.resolve(clientResponse(1, "Archived Client", "archived"));
+      }
+      if (url === "/api/clients/1/m02/intakes") {
+        return Promise.resolve(jsonResponse([existing]));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    expect(await screen.findByText(/M02 intake is read-only/)).toBeInTheDocument();
+    expect(screen.getByText("Intake: I-ARCHIVED")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Correct metadata" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Move to/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save manual intake" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Preserve selected files" })).toBeDisabled();
+  });
+
+  it("performs browser download effects only for the current client generation", async () => {
+    const oldDownload = deferred<Response>();
+    let downloadCount = 0;
+    const existingA = intake(1, "I-A", {
+      source: {
+        source_id: "S-A",
+        original_filename: "opaque.dat",
+        sanitized_download_filename: "opaque.dat",
+        normalized_extension: ".dat",
+        declared_mime_type: "text/plain",
+        validated_media_type: "text/plain",
+        detected_text_encoding: "utf-8",
+        sha256_checksum: "a".repeat(64),
+        byte_size: 6,
+        source_type: "manual",
+        declared_statement_date: null,
+        preservation_status: "preserved",
+        validation_diagnostics: [],
+        uploaded_at: "2026-07-28T00:00:00Z"
+      }
+    });
+    const createObjectURL = vi.fn(() => "blob:current");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      createObjectURL,
+      revokeObjectURL
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/clients/1") return Promise.resolve(clientResponse(1, "Client A"));
+      if (url === "/api/clients/2") return Promise.resolve(clientResponse(2, "Client B"));
+      if (url === "/api/clients/1/m02/intakes") return Promise.resolve(jsonResponse([existingA]));
+      if (url === "/api/clients/2/m02/intakes") return Promise.resolve(jsonResponse([]));
+      if (url === "/api/clients/1/m02/sources/S-A/download") {
+        downloadCount += 1;
+        return downloadCount === 1 ? oldDownload.promise : Promise.resolve(downloadResponse("new"));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    renderHarness();
+
+    await screen.findByText("Active client: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
+    await screen.findByText("Active client: Client B (#2)");
+    fireEvent.click(screen.getByRole("button", { name: "Go A" }));
+    await screen.findByText("Active client: Client A (#1)");
+    oldDownload.resolve(downloadResponse("old"));
+    await waitFor(() => {
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(click).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:current");
+    click.mockRestore();
   });
 });

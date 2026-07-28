@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -51,6 +52,20 @@ from app.models.retirement_facts import (
     RetirementTimingWorkIntention,
 )
 from app.models.retirement_planning_document import RetirementPlanningDocument
+from app.schemas.m01_case import (
+    M01CaseResponse,
+    M01CaseUpdateRequest,
+    M01CompletenessResponse,
+    M01LifecycleTransitionRequest,
+)
+from app.services.m01_case_service import (
+    M01CaseError,
+    M01CaseSnapshot,
+    build_case_snapshot,
+    ensure_m01_editable,
+    transition_lifecycle,
+    update_minimum_facts,
+)
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
 LifecycleFilter = Literal["current", "superseded", "all"]
@@ -74,6 +89,7 @@ class ClientResponse(BaseModel):
     birth_date: date | None = None
     file_status: str
     professional_identification_status: str
+    m01_case: M01CaseResponse
 
 
 class ProfileUpsertRequest(BaseModel):
@@ -96,6 +112,7 @@ class ProfileResponse(BaseModel):
     notes: str | None
     file_status: str
     professional_identification_status: str
+    m01_case: M01CaseResponse
 
 
 class EmploymentRecordRequest(BaseModel):
@@ -950,8 +967,45 @@ def _professional_identification_status(client: Client, profile: ClientProfile |
     return "professionally_identified" if has_required_fields else "identification_incomplete"
 
 
+def _m01_error_to_http(error: M01CaseError) -> HTTPException:
+    detail: dict[str, Any] = {
+        "code": error.code,
+        "message": error.message,
+    }
+    if error.missing_field_ids:
+        detail["missing_field_ids"] = list(error.missing_field_ids)
+    if error.conflicting_field_ids:
+        detail["conflicting_field_ids"] = list(error.conflicting_field_ids)
+    return HTTPException(status_code=error.status_code, detail=detail)
+
+
+def _m01_case_to_response(snapshot: M01CaseSnapshot) -> M01CaseResponse:
+    return M01CaseResponse(
+        client_id=snapshot.client.client_id,
+        display_name=snapshot.client.display_name,
+        id_number=snapshot.client.id_number,
+        birth_date=snapshot.client.birth_date,
+        gender=snapshot.profile.gender if snapshot.profile is not None else None,
+        employment_status=snapshot.client.employment_status,
+        planned_retirement_date=snapshot.client.planned_retirement_date,
+        planned_retirement_age=snapshot.client.planned_retirement_age,
+        lifecycle_status=snapshot.lifecycle_status,
+        completeness=M01CompletenessResponse(
+            status=snapshot.completeness.status,
+            missing_field_ids=list(snapshot.completeness.missing_field_ids),
+            conflicting_field_ids=list(snapshot.completeness.conflicting_field_ids),
+        ),
+        allowed_lifecycle_targets=list(snapshot.allowed_lifecycle_targets),
+        updated_at=snapshot.client.updated_at,
+    )
+
+
 def _client_to_response(client: Client, profile: ClientProfile | None = None) -> ClientResponse:
     resolved_profile = profile if profile is not None else client.client_profile
+    try:
+        m01_case = _m01_case_to_response(build_case_snapshot(client, resolved_profile))
+    except M01CaseError as error:
+        raise _m01_error_to_http(error) from error
     return ClientResponse(
         client_id=client.client_id,
         full_name=client.display_name,
@@ -959,6 +1013,7 @@ def _client_to_response(client: Client, profile: ClientProfile | None = None) ->
         birth_date=client.birth_date,
         file_status="file_created",
         professional_identification_status=_professional_identification_status(client, resolved_profile),
+        m01_case=m01_case,
     )
 
 
@@ -974,6 +1029,7 @@ def _profile_to_response(client: Client, profile: ClientProfile) -> ProfileRespo
         notes=profile.notes,
         file_status="file_created",
         professional_identification_status=_professional_identification_status(client, profile),
+        m01_case=_m01_case_to_response(build_case_snapshot(client, profile)),
     )
 
 
@@ -1510,20 +1566,40 @@ def list_clients(db: Session = Depends(get_db)) -> list[ClientResponse]:
 
 @router.post("", response_model=ClientResponse)
 def create_client(payload: ClientCreateRequest, db: Session = Depends(get_db)) -> ClientResponse:
+    if not _has_text(payload.full_name):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "DISPLAY_NAME_REQUIRED", "message": "Full Name is required"},
+        )
     if not _has_text(payload.id_number):
         raise HTTPException(
             status_code=422,
             detail={"code": "ID_NUMBER_REQUIRED", "message": "ID Number is required for file creation"},
         )
+    if payload.birth_date is not None and payload.birth_date > date.today():
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "BIRTH_DATE_IN_FUTURE", "message": "Birth Date must not be in the future"},
+        )
 
     client = Client(
-        display_name=payload.full_name,
+        display_name=payload.full_name.strip(),
         id_number=payload.id_number.strip(),
         birth_date=payload.birth_date,
         status=None,
     )
     db.add(client)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DUPLICATE_CLIENT_IDENTIFIER",
+                "message": "The client identifier is already in use",
+            },
+        ) from error
     db.refresh(client)
 
     return _client_to_response(client)
@@ -1535,6 +1611,53 @@ def get_client(client_id: int, db: Session = Depends(get_db)) -> ClientResponse:
     return _client_to_response(client)
 
 
+@router.put("/{client_id}/case", response_model=M01CaseResponse)
+def put_client_case(
+    client_id: int,
+    payload: M01CaseUpdateRequest,
+    db: Session = Depends(get_db),
+) -> M01CaseResponse:
+    client = _require_client(db, client_id)
+    try:
+        snapshot = update_minimum_facts(db, client=client, payload=payload)
+        db.commit()
+    except M01CaseError as error:
+        db.rollback()
+        raise _m01_error_to_http(error) from error
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DUPLICATE_CLIENT_IDENTIFIER",
+                "message": "The client identifier is already in use",
+            },
+        ) from error
+    db.refresh(client)
+    return _m01_case_to_response(build_case_snapshot(client, snapshot.profile))
+
+
+@router.post("/{client_id}/case/lifecycle", response_model=M01CaseResponse)
+def post_client_case_lifecycle(
+    client_id: int,
+    payload: M01LifecycleTransitionRequest,
+    db: Session = Depends(get_db),
+) -> M01CaseResponse:
+    client = _require_client(db, client_id)
+    try:
+        snapshot = transition_lifecycle(
+            db,
+            client=client,
+            target_status=payload.target_status,
+        )
+        db.commit()
+    except M01CaseError as error:
+        db.rollback()
+        raise _m01_error_to_http(error) from error
+    db.refresh(client)
+    return _m01_case_to_response(build_case_snapshot(client, snapshot.profile))
+
+
 @router.put("/{client_id}/profile")
 def put_client_profile(
     client_id: int,
@@ -1542,6 +1665,10 @@ def put_client_profile(
     db: Session = Depends(get_db),
 ) -> dict:
     client = _require_client(db, client_id)
+    try:
+        ensure_m01_editable(client)
+    except M01CaseError as error:
+        raise _m01_error_to_http(error) from error
     client_key = client_id
 
     profile = db.scalar(select(ClientProfile).where(ClientProfile.client_id == client_key))
@@ -1570,9 +1697,27 @@ def put_client_profile(
             )
         client.id_number = payload.id_number.strip()
     if "birth_date" in payload.model_fields_set:
+        if payload.birth_date is not None and payload.birth_date > date.today():
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "BIRTH_DATE_IN_FUTURE",
+                    "message": "Birth Date must not be in the future",
+                },
+            )
         client.birth_date = payload.birth_date
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DUPLICATE_CLIENT_IDENTIFIER",
+                "message": "The client identifier is already in use",
+            },
+        ) from error
     db.refresh(client)
     db.refresh(profile)
     return {

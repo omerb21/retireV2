@@ -195,8 +195,9 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-004C integration boundary | B2-to-M08A integration: `NOT_STARTED`; production M08A manifest: `NOT_REGISTERED`; no fixation-admission change or next-package work is authorized |
 | PKG-004D execution status | `ACCEPTED` at implementation commit `4ab2c9a295a82f00a23007dada1f48b999295234`; definition: `specs/runtime/PKG_004D_FINAL_PACKAGE_DEFINITION.md`; acceptance record: `specs/runtime/PKG_004D_acceptance_record.md` |
 | PKG-004D accepted integration boundary | Production manifest: `m08a_fixation` version `1`; required M07 field: `eligibility_date`; dependency schema: `pkg004d.fixation-dependency-manifest.v2`; engine/formula changes: `NONE`; migration: `NONE`; UI integration: `NOT_INCLUDED` |
-| PKG-005 definition status | `DEFINED_PENDING_IMPLEMENTATION_AUTHORIZATION`; definition: `specs/runtime/PKG_005_FINAL_PACKAGE_DEFINITION.md`; implementation: `NOT_STARTED` |
-| PKG-005 product boundary | One usable end-to-end fixation workflow through the existing UI; includes frontend and backend changes where required; no subpackages are authorized |
+| PKG-005 execution status | `ACCEPTED` at implementation commit `1d8190bab4da1619c03b013f4f7b88bd53e18507`; definition: `specs/runtime/PKG_005_FINAL_PACKAGE_DEFINITION.md`; acceptance record: `specs/runtime/PKG_005_acceptance_record.md` |
+| PKG-005 accepted product outcome | End-to-end usable fixation workflow; backend and frontend integrated; explicit B1 revision selection; missing and ambiguity handling implemented; validate, calculate, save, and reopen implemented; client-context stale-response protection implemented |
+| PKG-005 accepted boundary | Migration: none; official parameter resolver: not included; browser E2E: not available |
 | Next package authorization | NOT_AUTHORIZED |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

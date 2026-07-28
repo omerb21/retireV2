@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 
 import {
   ApiTransportError,
@@ -13,12 +13,18 @@ import {
   getClearinghouseSnapshots,
   getMissingDataItems,
   getRetirementPlanningDocuments,
+  type M01CaseItem,
+  type M01EmploymentStatus,
+  type M01LifecycleStatus,
   type MissingDataItem,
   type RetirementPlanningDocumentItem,
+  transitionClientCase,
   updateClearinghouseSnapshotVerification,
+  updateClientCase,
   updateClientProfile,
   updateRetirementPlanningDocumentVerification
 } from "../api/clientsApi";
+import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
 import { PensionAnalysisRecordSection } from "./PensionAnalysisRecordSection";
 import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
@@ -43,7 +49,12 @@ function getErrorMessage(error: unknown): string {
 
 export function ClientDetailScreen() {
   const { clientId } = useParams<{ clientId: string }>();
+  const location = useLocation();
   const parsedClientId = Number(clientId);
+  const validRouteClientId =
+    Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : null;
+  const { captureClientContext, isCurrentClientContext } =
+    useClientContextGeneration(validRouteClientId, location.key);
   const [client, setClient] = useState<ClientDetailItem | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -94,13 +105,63 @@ export function ClientDetailScreen() {
   const [isSavingMissingItem, setIsSavingMissingItem] = useState(false);
   const [missingSaveErrorMessage, setMissingSaveErrorMessage] = useState<string | null>(null);
   const [missingSaveSuccessMessage, setMissingSaveSuccessMessage] = useState<string | null>(null);
+  const [m01Case, setM01Case] = useState<M01CaseItem | null>(null);
+  const [caseDisplayName, setCaseDisplayName] = useState("");
+  const [caseIdNumber, setCaseIdNumber] = useState("");
+  const [caseBirthDate, setCaseBirthDate] = useState("");
+  const [caseGender, setCaseGender] = useState("");
+  const [caseEmploymentStatus, setCaseEmploymentStatus] =
+    useState<M01EmploymentStatus | "">("");
+  const [plannedRetirementMode, setPlannedRetirementMode] =
+    useState<"age" | "date" | "">("");
+  const [plannedRetirementAge, setPlannedRetirementAge] = useState("");
+  const [plannedRetirementDate, setPlannedRetirementDate] = useState("");
+  const [isSavingCase, setIsSavingCase] = useState(false);
+  const [caseSaveMessage, setCaseSaveMessage] = useState<string | null>(null);
+  const [caseErrorMessage, setCaseErrorMessage] = useState<string | null>(null);
+  const [isTransitioningCase, setIsTransitioningCase] = useState(false);
+
+  function applyM01Case(nextCase: M01CaseItem) {
+    setM01Case(nextCase);
+    setCaseDisplayName(nextCase.display_name);
+    setCaseIdNumber(nextCase.id_number);
+    setCaseBirthDate(nextCase.birth_date ?? "");
+    setCaseGender(nextCase.gender ?? "");
+    setCaseEmploymentStatus(nextCase.employment_status ?? "");
+    setPlannedRetirementMode(
+      nextCase.planned_retirement_age !== null
+        ? "age"
+        : nextCase.planned_retirement_date !== null
+          ? "date"
+          : ""
+    );
+    setPlannedRetirementAge(
+      nextCase.planned_retirement_age !== null
+        ? String(nextCase.planned_retirement_age)
+        : ""
+    );
+    setPlannedRetirementDate(nextCase.planned_retirement_date ?? "");
+  }
 
   useEffect(() => {
     let isActive = true;
+    const clientContext = captureClientContext();
+
+    setClient(null);
+    setM01Case(null);
+    setIsLoading(true);
+    setIsNotFound(false);
+    setErrorMessage(null);
+    setProfileLoadErrorMessage(null);
+    setCollectionLoadErrorMessage(null);
+    setCaseSaveMessage(null);
+    setCaseErrorMessage(null);
+    setIsSavingCase(false);
+    setIsTransitioningCase(false);
 
     async function loadClient() {
       if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
-        if (isActive) {
+        if (isActive && isCurrentClientContext(clientContext)) {
           setIsNotFound(true);
           setErrorMessage(null);
           setIsLoading(false);
@@ -110,10 +171,13 @@ export function ClientDetailScreen() {
 
       try {
         const nextClient = await getClient(parsedClientId);
-        if (!isActive) {
+        if (!isActive || !isCurrentClientContext(clientContext)) {
           return;
         }
         setClient(nextClient);
+        if (nextClient.m01_case !== undefined) {
+          applyM01Case(nextClient.m01_case);
+        }
         setIdNumber(nextClient.id_number ?? "");
         setBirthDate(nextClient.birth_date ?? "");
         setProfessionalIdentificationStatus(nextClient.professional_identification_status);
@@ -122,7 +186,7 @@ export function ClientDetailScreen() {
 
         try {
           const profileResponse = await getClientProfile(parsedClientId);
-          if (!isActive) {
+          if (!isActive || !isCurrentClientContext(clientContext)) {
             return;
           }
           setIdNumber(profileResponse.profile?.id_number ?? nextClient.id_number ?? "");
@@ -138,7 +202,7 @@ export function ClientDetailScreen() {
           setProfileExists(profileResponse.profile !== null);
           setProfileLoadErrorMessage(null);
         } catch (profileError) {
-          if (!isActive) {
+          if (!isActive || !isCurrentClientContext(clientContext)) {
             return;
           }
           setProfileLoadErrorMessage(getErrorMessage(profileError));
@@ -150,7 +214,7 @@ export function ClientDetailScreen() {
             getRetirementPlanningDocuments(parsedClientId),
             getMissingDataItems(parsedClientId)
           ]);
-          if (!isActive) {
+          if (!isActive || !isCurrentClientContext(clientContext)) {
             return;
           }
           setClearinghouseSnapshots(nextSnapshots);
@@ -158,13 +222,13 @@ export function ClientDetailScreen() {
           setMissingDataItems(nextMissingItems);
           setCollectionLoadErrorMessage(null);
         } catch (collectionError) {
-          if (!isActive) {
+          if (!isActive || !isCurrentClientContext(clientContext)) {
             return;
           }
           setCollectionLoadErrorMessage(getErrorMessage(collectionError));
         }
       } catch (error) {
-        if (!isActive) {
+        if (!isActive || !isCurrentClientContext(clientContext)) {
           return;
         }
         if (error instanceof ApiTransportError && error.status === 404) {
@@ -177,7 +241,7 @@ export function ClientDetailScreen() {
           setErrorMessage(getErrorMessage(error));
         }
       } finally {
-        if (isActive) {
+        if (isActive && isCurrentClientContext(clientContext)) {
           setIsLoading(false);
         }
       }
@@ -188,7 +252,103 @@ export function ClientDetailScreen() {
     return () => {
       isActive = false;
     };
-  }, [parsedClientId]);
+  }, [
+    captureClientContext,
+    isCurrentClientContext,
+    location.key,
+    parsedClientId
+  ]);
+
+  async function handleSaveCase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (client === null || m01Case === null) {
+      return;
+    }
+
+    const clientContext = captureClientContext();
+    const requestClientId = client.client_id;
+    setIsSavingCase(true);
+    setCaseSaveMessage(null);
+    setCaseErrorMessage(null);
+
+    try {
+      const nextCase = await updateClientCase(requestClientId, {
+        display_name: caseDisplayName,
+        id_number: caseIdNumber,
+        birth_date: caseBirthDate || null,
+        gender: caseGender || null,
+        employment_status: caseEmploymentStatus || null,
+        planned_retirement_age:
+          plannedRetirementMode === "age" && plannedRetirementAge !== ""
+            ? Number(plannedRetirementAge)
+            : null,
+        planned_retirement_date:
+          plannedRetirementMode === "date" && plannedRetirementDate !== ""
+            ? plannedRetirementDate
+            : null
+      });
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
+      applyM01Case(nextCase);
+      setClient((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              full_name: nextCase.display_name,
+              id_number: nextCase.id_number,
+              birth_date: nextCase.birth_date,
+              m01_case: nextCase
+            }
+      );
+      setIdNumber(nextCase.id_number);
+      setBirthDate(nextCase.birth_date ?? "");
+      setGender(nextCase.gender ?? "");
+      setProfileExists(true);
+      setCaseSaveMessage("Client case facts saved.");
+    } catch (error) {
+      if (isCurrentClientContext(clientContext)) {
+        setCaseErrorMessage(getErrorMessage(error));
+      }
+    } finally {
+      if (isCurrentClientContext(clientContext)) {
+        setIsSavingCase(false);
+      }
+    }
+  }
+
+  async function handleLifecycleTransition(targetStatus: M01LifecycleStatus) {
+    if (client === null || m01Case === null) {
+      return;
+    }
+
+    const clientContext = captureClientContext();
+    const requestClientId = client.client_id;
+    setIsTransitioningCase(true);
+    setCaseSaveMessage(null);
+    setCaseErrorMessage(null);
+
+    try {
+      const nextCase = await transitionClientCase(requestClientId, targetStatus);
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
+      applyM01Case(nextCase);
+      setClient((current) =>
+        current === null ? current : { ...current, m01_case: nextCase }
+      );
+      setCaseSaveMessage(`Client case moved to ${nextCase.lifecycle_status}.`);
+    } catch (error) {
+      if (isCurrentClientContext(clientContext)) {
+        setCaseErrorMessage(getErrorMessage(error));
+      }
+    } finally {
+      if (isCurrentClientContext(clientContext)) {
+        setIsTransitioningCase(false);
+      }
+    }
+  }
 
   async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -197,6 +357,7 @@ export function ClientDetailScreen() {
       return;
     }
 
+    const clientContext = captureClientContext();
     setIsSaving(true);
     setSaveErrorMessage(null);
     setSaveSuccessMessage(null);
@@ -210,6 +371,9 @@ export function ClientDetailScreen() {
         contact_details: contactDetails || null,
         notes: notes || null
       });
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
       setIdNumber(response.profile?.id_number ?? "");
       setBirthDate(response.profile?.birth_date ?? "");
       setGender(response.profile?.gender ?? "");
@@ -219,12 +383,30 @@ export function ClientDetailScreen() {
       setProfessionalIdentificationStatus(
         response.profile?.professional_identification_status ?? "identification_incomplete"
       );
+      if (response.profile?.m01_case !== undefined) {
+        applyM01Case(response.profile.m01_case);
+        setClient((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                full_name: response.profile?.m01_case?.display_name ?? current.full_name,
+                id_number: response.profile?.m01_case?.id_number ?? current.id_number,
+                birth_date: response.profile?.m01_case?.birth_date ?? current.birth_date,
+                m01_case: response.profile?.m01_case
+              }
+        );
+      }
       setProfileExists(response.profile !== null);
       setSaveSuccessMessage("Profile saved successfully.");
     } catch (error) {
-      setSaveErrorMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setSaveErrorMessage(getErrorMessage(error));
+      }
     } finally {
-      setIsSaving(false);
+      if (isCurrentClientContext(clientContext)) {
+        setIsSaving(false);
+      }
     }
   }
 
@@ -235,6 +417,7 @@ export function ClientDetailScreen() {
       return;
     }
 
+    const clientContext = captureClientContext();
     setIsSavingSnapshot(true);
     setSnapshotSaveErrorMessage(null);
     setSnapshotSaveSuccessMessage(null);
@@ -247,6 +430,9 @@ export function ClientDetailScreen() {
         collection_status: snapshotCollectionStatus,
         collection_notes: snapshotCollectionNotes || null
       });
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
       setClearinghouseSnapshots((current) => [snapshot, ...current]);
       setSnapshotVerificationStatusById((current) => ({
         ...current,
@@ -263,9 +449,13 @@ export function ClientDetailScreen() {
       setSnapshotCollectionNotes("");
       setSnapshotSaveSuccessMessage("Clearinghouse snapshot registered.");
     } catch (error) {
-      setSnapshotSaveErrorMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setSnapshotSaveErrorMessage(getErrorMessage(error));
+      }
     } finally {
-      setIsSavingSnapshot(false);
+      if (isCurrentClientContext(clientContext)) {
+        setIsSavingSnapshot(false);
+      }
     }
   }
 
@@ -276,6 +466,7 @@ export function ClientDetailScreen() {
       return;
     }
 
+    const clientContext = captureClientContext();
     setIsSavingDocument(true);
     setDocumentSaveErrorMessage(null);
     setDocumentSaveSuccessMessage(null);
@@ -289,6 +480,9 @@ export function ClientDetailScreen() {
         collection_status: documentCollectionStatus,
         collection_notes: documentCollectionNotes || null
       });
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
       setRetirementPlanningDocuments((current) => [document, ...current]);
       setDocumentVerificationStatusById((current) => ({
         ...current,
@@ -306,9 +500,13 @@ export function ClientDetailScreen() {
       setDocumentCollectionNotes("");
       setDocumentSaveSuccessMessage("Retirement planning document registered.");
     } catch (error) {
-      setDocumentSaveErrorMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setDocumentSaveErrorMessage(getErrorMessage(error));
+      }
     } finally {
-      setIsSavingDocument(false);
+      if (isCurrentClientContext(clientContext)) {
+        setIsSavingDocument(false);
+      }
     }
   }
 
@@ -317,6 +515,7 @@ export function ClientDetailScreen() {
       return;
     }
 
+    const clientContext = captureClientContext();
     setVerificationSaveMessage(null);
     setVerificationErrorMessage(null);
 
@@ -330,12 +529,17 @@ export function ClientDetailScreen() {
           verification_notes: snapshotVerificationNotesById[snapshot.clearinghouse_snapshot_id] || null
         }
       );
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
       setClearinghouseSnapshots((current) => current.map((item) => (
         item.clearinghouse_snapshot_id === updated.clearinghouse_snapshot_id ? updated : item
       )));
       setVerificationSaveMessage("Verification status saved.");
     } catch (error) {
-      setVerificationErrorMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setVerificationErrorMessage(getErrorMessage(error));
+      }
     }
   }
 
@@ -344,6 +548,7 @@ export function ClientDetailScreen() {
       return;
     }
 
+    const clientContext = captureClientContext();
     setVerificationSaveMessage(null);
     setVerificationErrorMessage(null);
 
@@ -356,12 +561,17 @@ export function ClientDetailScreen() {
           verification_notes: documentVerificationNotesById[document.document_id] || null
         }
       );
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
       setRetirementPlanningDocuments((current) => current.map((item) => (
         item.document_id === updated.document_id ? updated : item
       )));
       setVerificationSaveMessage("Verification status saved.");
     } catch (error) {
-      setVerificationErrorMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setVerificationErrorMessage(getErrorMessage(error));
+      }
     }
   }
 
@@ -372,6 +582,7 @@ export function ClientDetailScreen() {
       return;
     }
 
+    const clientContext = captureClientContext();
     setIsSavingMissingItem(true);
     setMissingSaveErrorMessage(null);
     setMissingSaveSuccessMessage(null);
@@ -383,6 +594,9 @@ export function ClientDetailScreen() {
         missing_status: missingStatus,
         notes: missingNotes || null
       });
+      if (!isCurrentClientContext(clientContext)) {
+        return;
+      }
       setMissingDataItems((current) => [item, ...current]);
       setMissingItemType("data");
       setMissingItemLabel("");
@@ -390,9 +604,13 @@ export function ClientDetailScreen() {
       setMissingNotes("");
       setMissingSaveSuccessMessage("Missing item registered.");
     } catch (error) {
-      setMissingSaveErrorMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setMissingSaveErrorMessage(getErrorMessage(error));
+      }
     } finally {
-      setIsSavingMissingItem(false);
+      if (isCurrentClientContext(clientContext)) {
+        setIsSavingMissingItem(false);
+      }
     }
   }
 
@@ -451,6 +669,191 @@ export function ClientDetailScreen() {
       <p>Client ID: {client.client_id}</p>
       <p>Full Name: {client.full_name}</p>
       <p>ID Number: {client.id_number ?? "Not provided"}</p>
+      {m01Case !== null ? (
+        <section aria-labelledby="m01-case-foundation-heading">
+          <h3 id="m01-case-foundation-heading">Client Case Foundation</h3>
+          <p>Lifecycle Status: {m01Case.lifecycle_status}</p>
+          <p>Completeness Status: {m01Case.completeness.status}</p>
+          {m01Case.completeness.missing_field_ids.length > 0 ? (
+            <>
+              <h4>Missing Minimum Facts</h4>
+              <ul>
+                {m01Case.completeness.missing_field_ids.map((fieldId) => (
+                  <li key={fieldId}>{fieldId}</li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>No minimum facts are missing.</p>
+          )}
+          {m01Case.completeness.conflicting_field_ids.length > 0 ? (
+            <>
+              <h4>Conflicting Minimum Facts</h4>
+              <ul>
+                {m01Case.completeness.conflicting_field_ids.map((fieldId) => (
+                  <li key={fieldId}>{fieldId}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {m01Case.lifecycle_status === "archived" ? (
+            <p>Archived client cases are read-only until explicitly reopened.</p>
+          ) : null}
+          <form onSubmit={handleSaveCase}>
+            <fieldset disabled={m01Case.lifecycle_status === "archived" || isSavingCase}>
+              <legend>Minimum Case Facts</legend>
+              <p>
+                <label htmlFor="m01-display-name">Name</label>
+                <input
+                  id="m01-display-name"
+                  value={caseDisplayName}
+                  onChange={(event) => {
+                    setCaseDisplayName(event.target.value);
+                    setCaseSaveMessage(null);
+                  }}
+                />
+              </p>
+              <p>
+                <label htmlFor="m01-id-number">Israeli ID or Client Identifier</label>
+                <input
+                  id="m01-id-number"
+                  value={caseIdNumber}
+                  onChange={(event) => {
+                    setCaseIdNumber(event.target.value);
+                    setCaseSaveMessage(null);
+                  }}
+                />
+              </p>
+              <p>
+                <label htmlFor="m01-birth-date">Birth Date</label>
+                <input
+                  id="m01-birth-date"
+                  type="date"
+                  value={caseBirthDate}
+                  onChange={(event) => {
+                    setCaseBirthDate(event.target.value);
+                    setCaseSaveMessage(null);
+                  }}
+                />
+              </p>
+              <p>
+                <label htmlFor="m01-gender">Gender</label>
+                <input
+                  id="m01-gender"
+                  value={caseGender}
+                  onChange={(event) => {
+                    setCaseGender(event.target.value);
+                    setCaseSaveMessage(null);
+                  }}
+                />
+              </p>
+              <p>
+                <label htmlFor="m01-employment-status">Employment Status</label>
+                <select
+                  id="m01-employment-status"
+                  value={caseEmploymentStatus}
+                  onChange={(event) => {
+                    setCaseEmploymentStatus(event.target.value as M01EmploymentStatus | "");
+                    setCaseSaveMessage(null);
+                  }}
+                >
+                  <option value="">Not recorded</option>
+                  <option value="salaried_employee">salaried_employee</option>
+                  <option value="self_employed">self_employed</option>
+                  <option value="salaried_and_self_employed">
+                    salaried_and_self_employed
+                  </option>
+                  <option value="not_currently_working">not_currently_working</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </p>
+              <p>
+                <label htmlFor="m01-planned-retirement-mode">Planned Retirement Source</label>
+                <select
+                  id="m01-planned-retirement-mode"
+                  value={plannedRetirementMode}
+                  onChange={(event) => {
+                    const mode = event.target.value as "age" | "date" | "";
+                    setPlannedRetirementMode(mode);
+                    if (mode !== "age") {
+                      setPlannedRetirementAge("");
+                    }
+                    if (mode !== "date") {
+                      setPlannedRetirementDate("");
+                    }
+                    setCaseSaveMessage(null);
+                  }}
+                >
+                  <option value="">Not recorded</option>
+                  <option value="age">Planned retirement age</option>
+                  <option value="date">Planned retirement date</option>
+                </select>
+              </p>
+              {plannedRetirementMode === "age" ? (
+                <p>
+                  <label htmlFor="m01-planned-retirement-age">Planned Retirement Age</label>
+                  <input
+                    id="m01-planned-retirement-age"
+                    type="number"
+                    min="18"
+                    max="120"
+                    value={plannedRetirementAge}
+                    onChange={(event) => {
+                      setPlannedRetirementAge(event.target.value);
+                      setCaseSaveMessage(null);
+                    }}
+                  />
+                </p>
+              ) : null}
+              {plannedRetirementMode === "date" ? (
+                <p>
+                  <label htmlFor="m01-planned-retirement-date">Planned Retirement Date</label>
+                  <input
+                    id="m01-planned-retirement-date"
+                    type="date"
+                    value={plannedRetirementDate}
+                    onChange={(event) => {
+                      setPlannedRetirementDate(event.target.value);
+                      setCaseSaveMessage(null);
+                    }}
+                  />
+                </p>
+              ) : null}
+              <button type="submit">
+                {isSavingCase ? "Saving Case Facts..." : "Save Case Facts"}
+              </button>
+            </fieldset>
+          </form>
+          <h4>Allowed Lifecycle Transitions</h4>
+          {m01Case.allowed_lifecycle_targets.length === 0 ? (
+            <p>No lifecycle transition is currently available.</p>
+          ) : (
+            <ul>
+              {m01Case.allowed_lifecycle_targets.map((targetStatus) => (
+                <li key={targetStatus}>
+                  <button
+                    type="button"
+                    disabled={isTransitioningCase}
+                    onClick={() => {
+                      void handleLifecycleTransition(targetStatus);
+                    }}
+                  >
+                    Move to {targetStatus}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {caseSaveMessage ? <p>{caseSaveMessage}</p> : null}
+          {caseErrorMessage ? (
+            <>
+              <p>Unable to update client case.</p>
+              <pre>{caseErrorMessage}</pre>
+            </>
+          ) : null}
+          <p>Intake module: Not available in PKG-006.</p>
+        </section>
+      ) : null}
       <section aria-labelledby="retirement-planning-file-heading">
         <h3 id="retirement-planning-file-heading">Retirement Planning File</h3>
         <p>File Status: {client.file_status}</p>

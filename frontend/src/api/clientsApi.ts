@@ -20,6 +20,42 @@ export class ApiTransportError extends Error {
   }
 }
 
+export type M01EmploymentStatus =
+  | "salaried_employee"
+  | "self_employed"
+  | "salaried_and_self_employed"
+  | "not_currently_working"
+  | "unknown";
+
+export type M01LifecycleStatus =
+  | "draft"
+  | "intake"
+  | "analysis"
+  | "review"
+  | "delivered"
+  | "archived";
+
+export interface M01Completeness {
+  status: "complete" | "incomplete";
+  missing_field_ids: string[];
+  conflicting_field_ids: string[];
+}
+
+export interface M01CaseItem {
+  client_id: number;
+  display_name: string;
+  id_number: string;
+  birth_date: string | null;
+  gender: string | null;
+  employment_status: M01EmploymentStatus | null;
+  planned_retirement_date: string | null;
+  planned_retirement_age: number | null;
+  lifecycle_status: M01LifecycleStatus;
+  completeness: M01Completeness;
+  allowed_lifecycle_targets: M01LifecycleStatus[];
+  updated_at: string;
+}
+
 export interface ClientListItem {
   client_id: number;
   full_name: string;
@@ -27,6 +63,7 @@ export interface ClientListItem {
   birth_date: string | null;
   file_status: string;
   professional_identification_status: string;
+  m01_case?: M01CaseItem;
 }
 
 export type ClientDetailItem = ClientListItem;
@@ -48,6 +85,7 @@ export interface ClientProfileItem {
   notes: string | null;
   file_status: string;
   professional_identification_status: string;
+  m01_case?: M01CaseItem;
 }
 
 export interface ClientProfileResponse {
@@ -61,6 +99,16 @@ export interface ClientProfileUpdatePayload {
   contact_method: string | null;
   contact_details: string | null;
   notes: string | null;
+}
+
+export interface M01CaseUpdatePayload {
+  display_name: string;
+  id_number: string;
+  birth_date: string | null;
+  gender: string | null;
+  employment_status: M01EmploymentStatus | null;
+  planned_retirement_date: string | null;
+  planned_retirement_age: number | null;
 }
 
 export interface EmploymentRecordItem {
@@ -504,6 +552,26 @@ export function updateClientProfile(
   return requestJson<ClientProfileResponse>(`/clients/${clientId}/profile`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+export function updateClientCase(
+  clientId: number,
+  payload: M01CaseUpdatePayload
+): Promise<M01CaseItem> {
+  return requestJson<M01CaseItem>(`/clients/${clientId}/case`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function transitionClientCase(
+  clientId: number,
+  targetStatus: M01LifecycleStatus
+): Promise<M01CaseItem> {
+  return requestJson<M01CaseItem>(`/clients/${clientId}/case/lifecycle`, {
+    method: "POST",
+    body: JSON.stringify({ target_status: targetStatus })
   });
 }
 

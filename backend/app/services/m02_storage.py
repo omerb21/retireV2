@@ -9,7 +9,7 @@ import stat
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+from typing import BinaryIO, Protocol
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -97,29 +97,35 @@ class M02OwnedReader:
             pass
 
 
-class _TrustedDirectory:
-    """Pinned directory identity used for all managed relative filesystem actions."""
+class _WindowsDirectoryApiProtocol(Protocol):
+    def open_directory(self, path: Path) -> tuple[int, int, tuple[int, int]]: ...
 
-    def __init__(self, path: Path, handle: int, identity: tuple[int, int]):
-        self.path = path
-        self._handle = handle
-        self.identity = identity
-        self._closed = False
+    def close(self, handle: int) -> None: ...
 
-    @classmethod
-    def open(cls, path: Path) -> "_TrustedDirectory":
-        if os.name == "nt":
-            return cls._open_windows(path)
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        opened = os.fstat(descriptor)
-        if not stat.S_ISDIR(opened.st_mode):
-            os.close(descriptor)
-            raise M02StorageConfigurationError("Managed directory is not a directory")
-        return cls(path, descriptor, (opened.st_dev, opened.st_ino))
+
+class _WindowsDirectoryApi:
+    GENERIC_READ = 0x80000000
+    SHARE_READ_WRITE = 0x1 | 0x2
+    OPEN_EXISTING = 3
+    FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+    FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+    FILE_ATTRIBUTE_DIRECTORY = 0x10
+    FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
     @classmethod
-    def _open_windows(cls, path: Path) -> "_TrustedDirectory":
+    def create_file_arguments(cls, path: Path) -> tuple[object, ...]:
+        return (
+            str(path),
+            cls.GENERIC_READ,
+            cls.SHARE_READ_WRITE,
+            None,
+            cls.OPEN_EXISTING,
+            cls.FILE_FLAG_BACKUP_SEMANTICS
+            | cls.FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+
+    def __init__(self) -> None:
         import ctypes
         from ctypes import wintypes
 
@@ -140,9 +146,12 @@ class _TrustedDirectory:
                 ("nFileIndexLow", wintypes.DWORD),
             ]
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        create_file = kernel32.CreateFileW
-        create_file.argtypes = [
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        self._file_information = FileInformation
+        self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self._create_file = self._kernel32.CreateFileW
+        self._create_file.argtypes = [
             wintypes.LPCWSTR,
             wintypes.DWORD,
             wintypes.DWORD,
@@ -151,133 +160,255 @@ class _TrustedDirectory:
             wintypes.DWORD,
             wintypes.HANDLE,
         ]
-        create_file.restype = wintypes.HANDLE
-        handle = create_file(
-            str(path),
-            0x80000000,  # GENERIC_READ; pins identity when delete sharing is denied
-            0x1 | 0x2,  # share read/write, deliberately deny delete/rename
-            None,
-            3,  # OPEN_EXISTING
-            0x02000000 | 0x00200000,  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
-            None,
-        )
-        invalid = wintypes.HANDLE(-1).value
+        self._create_file.restype = wintypes.HANDLE
+
+    def open_directory(self, path: Path) -> tuple[int, int, tuple[int, int]]:
+        handle = self._create_file(*self.create_file_arguments(path))
+        invalid = self._wintypes.HANDLE(-1).value
         if handle == invalid:
-            raise OSError(ctypes.get_last_error(), "Unable to pin managed directory")
-        info = FileInformation()
-        if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-            kernel32.CloseHandle(handle)
-            raise OSError(ctypes.get_last_error(), "Unable to identify managed directory")
-        if not info.dwFileAttributes & 0x10 or info.dwFileAttributes & 0x400:
-            kernel32.CloseHandle(handle)
-            raise M02StorageConfigurationError(
-                "Managed directory must not be a reparse point"
+            raise OSError(
+                self._ctypes.get_last_error(), "Unable to pin managed directory"
+            )
+        info = self._file_information()
+        if not self._kernel32.GetFileInformationByHandle(
+            handle, self._ctypes.byref(info)
+        ):
+            self.close(int(handle))
+            raise OSError(
+                self._ctypes.get_last_error(),
+                "Unable to identify managed directory",
             )
         identity = (
             info.dwVolumeSerialNumber,
             (info.nFileIndexHigh << 32) | info.nFileIndexLow,
         )
-        return cls(path, int(handle), identity)
+        return int(handle), info.dwFileAttributes, identity
+
+    def close(self, handle: int) -> None:
+        self._kernel32.CloseHandle(handle)
+
+
+def _windows_directory_api() -> _WindowsDirectoryApiProtocol:
+    return _WindowsDirectoryApi()
+
+
+class _TrustedDirectory:
+    """Pinned directory identity used for all managed relative filesystem actions."""
+
+    def __init__(
+        self,
+        path: Path,
+        handle: int,
+        identity: tuple[int, int],
+        windows_api: _WindowsDirectoryApiProtocol | None = None,
+    ):
+        self.path = path
+        self._handle = handle
+        self.identity = identity
+        self._windows_api = windows_api
+        self._closed = False
+
+    @classmethod
+    def open(cls, path: Path) -> "_TrustedDirectory":
+        try:
+            if os.name == "nt":
+                return cls._open_windows(path)
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened.st_mode):
+                os.close(descriptor)
+                raise M02StorageConfigurationError(
+                    "Managed directory is not a directory"
+                )
+            return cls(path, descriptor, (opened.st_dev, opened.st_ino))
+        except M02StorageConfigurationError:
+            raise
+        except OSError as error:
+            raise M02StorageConfigurationError(
+                "Managed directory is unavailable"
+            ) from error
+
+    @classmethod
+    def _open_windows(
+        cls,
+        path: Path,
+        api: _WindowsDirectoryApiProtocol | None = None,
+    ) -> "_TrustedDirectory":
+        api = api or _windows_directory_api()
+        handle: int | None = None
+        try:
+            handle, attributes, identity = api.open_directory(path)
+            if (
+                not attributes & _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY
+                or attributes & _WindowsDirectoryApi.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                raise M02StorageConfigurationError(
+                    "Managed directory must not be a reparse point"
+                )
+            return cls(path, handle, identity, windows_api=api)
+        except M02StorageConfigurationError:
+            if handle is not None:
+                api.close(handle)
+            raise
+        except OSError as error:
+            if handle is not None:
+                api.close(handle)
+            raise M02StorageConfigurationError(
+                "Managed directory is unavailable"
+            ) from error
 
     def _verify_path_identity(self) -> None:
-        if self._closed:
-            raise M02StorageConfigurationError("Managed directory handle is closed")
-        if os.name != "nt":
-            current = os.stat(self.path, follow_symlinks=False)
-            if (current.st_dev, current.st_ino) != self.identity:
-                raise M02StorageConfigurationError("Managed directory identity changed")
-            return
+        try:
+            if self._closed:
+                raise M02StorageConfigurationError(
+                    "Managed directory handle is closed"
+                )
+            if os.name != "nt":
+                current = os.stat(self.path, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) != self.identity:
+                    raise M02StorageConfigurationError(
+                        "Managed directory identity changed"
+                    )
+                return
+            self._verify_windows_path_identity()
+        except M02StorageConfigurationError:
+            raise
+        except OSError as error:
+            raise M02StorageConfigurationError(
+                "Managed directory identity is unavailable"
+            ) from error
+
+    def _verify_windows_path_identity(self) -> None:
         pinned = _TrustedDirectory._open_windows(self.path)
         try:
             if pinned.identity != self.identity:
-                raise M02StorageConfigurationError("Managed directory identity changed")
+                raise M02StorageConfigurationError(
+                    "Managed directory identity changed"
+                )
         finally:
             pinned.close()
 
     def open_child(self, name: str, *, create: bool = False) -> "_TrustedDirectory":
-        _validate_relative_name(name)
-        if create:
+        try:
+            _validate_relative_name(name)
+            if create:
+                if os.name != "nt":
+                    try:
+                        os.mkdir(name, dir_fd=self._handle)
+                    except FileExistsError:
+                        pass
+                else:
+                    self._verify_path_identity()
+                    (self.path / name).mkdir(exist_ok=True)
+                    self._verify_path_identity()
             if os.name != "nt":
+                flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0)
+                )
+                descriptor = os.open(name, flags, dir_fd=self._handle)
+                opened = os.fstat(descriptor)
+                if not stat.S_ISDIR(opened.st_mode):
+                    os.close(descriptor)
+                    raise M02StorageConfigurationError(
+                        "Managed child is not a directory"
+                    )
+                child = _TrustedDirectory(
+                    self.path / name,
+                    descriptor,
+                    (opened.st_dev, opened.st_ino),
+                )
                 try:
-                    os.mkdir(name, dir_fd=self._handle)
-                except FileExistsError:
-                    pass
-            else:
-                self._verify_path_identity()
-                (self.path / name).mkdir(exist_ok=True)
-                self._verify_path_identity()
-        if os.name != "nt":
-            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(name, flags, dir_fd=self._handle)
-            opened = os.fstat(descriptor)
-            if not stat.S_ISDIR(opened.st_mode):
-                os.close(descriptor)
-                raise M02StorageConfigurationError("Managed child is not a directory")
-            child = _TrustedDirectory(
-                self.path / name,
-                descriptor,
-                (opened.st_dev, opened.st_ino),
-            )
-            try:
-                self._verify_path_identity()
-                child._verify_path_identity()
-            except BaseException:
-                child.close()
-                raise
+                    self._verify_path_identity()
+                    child._verify_path_identity()
+                except BaseException:
+                    child.close()
+                    raise
+                return child
+            child = _TrustedDirectory.open(self.path / name)
+            self._verify_path_identity()
             return child
-        self._verify_path_identity()
-        child = _TrustedDirectory.open(self.path / name)
-        self._verify_path_identity()
-        return child
+        except M02StorageConfigurationError:
+            raise
+        except OSError as error:
+            raise M02StorageConfigurationError(
+                "Managed child directory is unavailable"
+            ) from error
 
     def create_file(self, name: str) -> BinaryIO:
-        _validate_relative_name(name)
-        flags = (
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_BINARY", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
-        if os.name != "nt":
-            descriptor = os.open(name, flags, 0o600, dir_fd=self._handle)
-        else:
-            self._verify_path_identity()
-            descriptor = os.open(self.path / name, flags, 0o600)
         try:
-            self._verify_path_identity()
-        except BaseException:
-            os.close(descriptor)
+            _validate_relative_name(name)
+            flags = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            if os.name != "nt":
+                descriptor = os.open(name, flags, 0o600, dir_fd=self._handle)
+            else:
+                self._verify_path_identity()
+                descriptor = os.open(self.path / name, flags, 0o600)
             try:
-                if os.name != "nt":
-                    os.unlink(name, dir_fd=self._handle)
-                else:
-                    os.unlink(self.path / name)
-            except OSError:
-                pass
+                self._verify_path_identity()
+            except BaseException:
+                os.close(descriptor)
+                try:
+                    if os.name != "nt":
+                        os.unlink(name, dir_fd=self._handle)
+                    else:
+                        os.unlink(self.path / name)
+                except OSError:
+                    pass
+                raise
+            return io.BufferedWriter(io.FileIO(descriptor, mode="wb", closefd=True))
+        except M02StorageConfigurationError:
             raise
-        return io.BufferedWriter(io.FileIO(descriptor, mode="wb", closefd=True))
+        except OSError as error:
+            raise M02StorageConfigurationError(
+                "Managed file could not be created"
+            ) from error
 
     def open_file(self, name: str) -> io.BufferedReader:
-        _validate_relative_name(name)
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        if os.name != "nt":
-            descriptor = os.open(name, flags, dir_fd=self._handle)
-        else:
-            self._verify_path_identity()
-            descriptor = os.open(self.path / name, flags)
         try:
-            self._verify_path_identity()
-        except BaseException:
-            os.close(descriptor)
+            _validate_relative_name(name)
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            if os.name != "nt":
+                descriptor = os.open(name, flags, dir_fd=self._handle)
+            else:
+                self._verify_path_identity()
+                descriptor = os.open(self.path / name, flags)
+            try:
+                self._verify_path_identity()
+            except BaseException:
+                os.close(descriptor)
+                raise
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                os.close(descriptor)
+                raise M02StorageConfigurationError(
+                    "Managed object is not a regular file"
+                )
+            return io.BufferedReader(io.FileIO(descriptor, mode="rb", closefd=True))
+        except M02StorageConfigurationError:
             raise
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            os.close(descriptor)
-            raise M02StorageConfigurationError("Managed object is not a regular file")
-        return io.BufferedReader(io.FileIO(descriptor, mode="rb", closefd=True))
+        except OSError as error:
+            raise M02StorageConfigurationError(
+                "Managed object is unavailable"
+            ) from error
 
-    def link_from(
+    def create_link_from(
         self,
         source: "_TrustedDirectory",
         source_name: str,
@@ -297,18 +428,10 @@ class _TrustedDirectory:
             source._verify_path_identity()
             self._verify_path_identity()
             os.link(source.path / source_name, self.path / destination_name)
-        try:
-            source._verify_path_identity()
-            self._verify_path_identity()
-        except BaseException:
-            try:
-                if os.name != "nt":
-                    os.unlink(destination_name, dir_fd=self._handle)
-                else:
-                    os.unlink(self.path / destination_name)
-            except OSError:
-                pass
-            raise
+
+    def verify_link_from(self, source: "_TrustedDirectory") -> None:
+        source._verify_path_identity()
+        self._verify_path_identity()
 
     def unlink(self, name: str, *, missing_ok: bool = True) -> None:
         _validate_relative_name(name)
@@ -328,9 +451,8 @@ class _TrustedDirectory:
             return
         self._closed = True
         if os.name == "nt":
-            import ctypes
-
-            ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(self._handle)
+            assert self._windows_api is not None
+            self._windows_api.close(self._handle)
         else:
             os.close(self._handle)
 
@@ -364,8 +486,11 @@ class StagedUpload:
     sha256_checksum: str = ""
     byte_size: int = 0
     final_storage_key: str | None = None
+    final_directory: _TrustedDirectory | None = None
+    final_object_name: str | None = None
     committed: bool = False
     cleaned: bool = False
+    cleanup_failed: bool = False
 
     @property
     def temporary_path(self) -> Path:
@@ -377,8 +502,27 @@ class StagedUpload:
     def open_read(self) -> io.BufferedReader:
         return self.storage._temporary_directory.open_file(self.temporary_name)
 
-    def mark_final(self, storage_key: str) -> None:
+    @property
+    def resource_state(self) -> str:
+        if self.cleanup_failed:
+            return "cleanup-failed"
+        if self.cleaned:
+            return "cleaned"
+        if self.committed:
+            return "committed"
+        if self.final_storage_key is not None:
+            return "final-created-uncommitted"
+        return "staged-only"
+
+    def mark_final(
+        self,
+        storage_key: str,
+        directory: _TrustedDirectory,
+        object_name: str,
+    ) -> None:
         self.final_storage_key = storage_key
+        self.final_directory = directory
+        self.final_object_name = object_name
 
     def mark_committed(self) -> None:
         self.committed = True
@@ -391,12 +535,24 @@ class StagedUpload:
             self.storage._temporary_directory.unlink(self.temporary_name)
         except BaseException as error:
             failures.append(error)
-        if self.final_storage_key is not None and not self.committed:
+        if (
+            self.final_storage_key is not None
+            and not self.committed
+            and self.final_directory is not None
+            and self.final_object_name is not None
+        ):
             try:
-                self.storage.delete_key(self.final_storage_key)
+                self.final_directory.unlink(self.final_object_name)
             except BaseException as error:
                 failures.append(error)
+            else:
+                self.final_directory.close()
+                self.final_directory = None
+        elif self.final_directory is not None:
+            self.final_directory.close()
+            self.final_directory = None
         if failures:
+            self.cleanup_failed = True
             logging.getLogger(__name__).error(
                 "M02 staged-resource cleanup failed",
                 extra={
@@ -409,6 +565,7 @@ class StagedUpload:
                 primary_error=primary_error,
                 cleanup_errors=tuple(failures),
             )
+        self.cleanup_failed = False
         self.cleaned = True
 
 
@@ -558,12 +715,16 @@ class ManagedLocalStorage:
         object_name = uuid4().hex
         storage_key = f"objects/{shard_name}/{object_name}"
         shard = self._object_directory.open_child(shard_name, create=True)
+        ownership_transferred = False
         try:
-            shard.link_from(
+            shard.create_link_from(
                 self._temporary_directory,
                 staged.temporary_name,
                 object_name,
             )
+            staged.mark_final(storage_key, shard, object_name)
+            ownership_transferred = True
+            shard.verify_link_from(self._temporary_directory)
         except FileExistsError:
             return self.place(staged)
         except OSError as error:
@@ -571,8 +732,8 @@ class ManagedLocalStorage:
                 "M02_PRESERVATION_FAILED", "The source could not be preserved"
             ) from error
         finally:
-            shard.close()
-        staged.mark_final(storage_key)
+            if not ownership_transferred:
+                shard.close()
         return storage_key
 
     def resolve_key(self, storage_key: str) -> Path:

@@ -552,6 +552,46 @@ and need not match selection order.
 Raw exceptions, file content, absolute paths, and full storage keys must not
 appear in client responses or logs.
 
+### 14.1 Per-file processing failure
+
+A per-file processing failure occurs after the batch request has been accepted
+and the backend has begun handling identifiable files, but one file fails type,
+size, encoding/binary, storage, checksum, database-persistence, or metadata
+validation. The result remains per-file:
+
+- other files may succeed;
+- the failed file leaves no partial intake/source/blob rows or orphaned bytes;
+- every file that reached its independent committed state remains committed;
+- there is no batch-wide rollback of committed files; and
+- the response returns one structured result for each identifiable file.
+
+### 14.2 Batch-wide request failure
+
+A batch-wide request failure occurs when the backend cannot begin or complete
+the request framework as a batch, including malformed multipart, unavailable
+request body, client/context validation failure, invalid or foreign client,
+transport interruption before a complete file is received, failure before
+files can be identified or processing can begin, or another unrecoverable
+request-level failure.
+
+In that case:
+
+- no per-file success is reported for a file that did not reach its independent
+  committed state;
+- every file already independently committed remains committed;
+- every identified but uncommitted file is cleaned up without partial
+  intake/source/blob rows or orphaned bytes;
+- there is no global rollback of committed files;
+- when completed or committed per-file outcomes exist, the API returns those
+  structured results alongside a distinct request-level error;
+- when no file processing began, the API returns request-level failure only;
+- retry remains subject to the existing checksum, duplicate-candidate,
+  immutable-blob reuse, and no-overwrite contract; it never creates a silent
+  merge, duplicate, or overwrite.
+
+No distributed transaction, queue, or background-processing system is
+introduced by this distinction.
+
 ## 15. Privacy, access, and download
 
 Preserved sources have:
@@ -637,6 +677,12 @@ and preserves XML/DAT/CSV bytes in the locked encoding set without semantic
 parsing. A batch response is not one lifecycle result: it contains one
 correlatable result for each submitted file.
 
+The API distinguishes a request-level batch error from per-file validation,
+storage, checksum, persistence, and metadata errors. A request-level error is
+returned beside per-file results only when completed or committed per-file
+outcomes exist; otherwise it is returned alone. It never relabels an
+uncommitted file as successful or rolls back an independently committed file.
+
 Every response is backend-authored and includes:
 
 - client and intake IDs;
@@ -687,6 +733,10 @@ The M02 screen must:
 - display upload/preservation progress or pending state;
 - display a separate validation, preservation, lifecycle, duplicate, and
   superseding result for every submitted file;
+- display batch request errors separately from per-file validation, storage,
+  checksum, persistence, and metadata errors;
+- retain and continue showing completed successes when a batch-level error
+  occurs;
 - display stable validation and preservation failures;
 - display source metadata, checksum, byte size, and timestamps;
 - display duplicate and superseding candidate indications without authority
@@ -741,7 +791,9 @@ Required deterministic behavior covers:
 - batch upload during A-to-B;
 - one stale file completion inside a batch;
 - mixed success and failure in one batch;
+- stale batch-wide request error after A-to-B;
 - stale batch `finally`;
+- stale batch-wide `finally` after A-to-B-to-A;
 - same checksum within one batch;
 - duplicate against an earlier source;
 - client switch during a batch;
@@ -825,7 +877,7 @@ No M03, parser, classification, ledger, or report UI is included.
 | ID | Acceptance criterion |
 |---|---|
 | AC-007-001 | A user can create a client-scoped manual-only intake storing `declared_start_date` and `declared_product_type` when supplied; missing/explicitly-unknown provider and missing declared account do not block save, and the server technical reference is not displayed or emitted as a real account. The intake starts in `metadata_review` and creates no source/blob or downstream fact. |
-| AC-007-002 | A user can submit one or more allowed opaque files in one multipart operation; each file receives a separate intake, source, validation result, lifecycle, and structured response, with no combined blob or merged record and no content parsing. |
+| AC-007-002 | A user can submit one or more allowed opaque files in one multipart operation; each identifiable file receives a separate intake, source, validation result, lifecycle, and structured response, with no combined blob or merged record and no content parsing. A batch-wide request failure is reported separately from per-file outcomes. |
 | AC-007-003 | `.pdf`, `.xml`, `.dat`, `.csv`, and `.xlsx` up to exactly 25 MiB per file are accepted only when extension, MIME, and required signature/container/text validation agree; DAT support is V1-derived opaque preservation only. |
 | AC-007-004 | XML, DAT, and CSV encoded as UTF-8, UTF-8 BOM, Windows-1255, ISO-8859-8, or Latin-1 pass bounded non-binary text validation without byte normalization; detected encoding is retained when identifiable, while empty, oversized, prohibited-extension, MIME-mismatched, invalid-signature/container, unsupported-binary, NUL-bearing, or unsupported-encoding files fail with stable errors and no successful source. |
 | AC-007-005 | The backend sanitizes original filename metadata, generates an opaque relative storage key, persists no absolute path, and never overwrites by filename. |
@@ -838,10 +890,10 @@ No M03, parser, classification, ledger, or report UI is included.
 | AC-007-012 | Required metadata blocks lifecycle transitions according to the creation path and diagnostics are backend-authored; a manual-only intake may be saved and may satisfy the M02 gate without a real provider or declared account, while those omissions remain visible diagnostics and may block a future downstream package that requires them. |
 | AC-007-013 | `accepted_for_review -> metadata_review` permits metadata correction without replacing bytes; rejected and superseded records remain terminal and read-only. |
 | AC-007-014 | Intake history, including duplicate, rejected, and superseded records, remains visible and no ordinary delete action or route exists. |
-| AC-007-015 | Upload, database, and storage failure paths are atomic per file: no success references missing bytes, failed-file rows roll back, temporary/unreferenced bytes are cleaned safely, and successful files remain preserved when another file in the same batch fails. |
+| AC-007-015 | Upload, database, and storage failure paths are atomic per file: no success references missing bytes, failed or uncommitted file state is cleaned without partial rows or orphaned bytes, and independently committed files remain committed after per-file or request-level batch failure. A request-level error is returned alone before processing begins or beside completed per-file outcomes when they exist. |
 | AC-007-016 | Download requires matching route client ID and source ID, returns attachment disposition with `nosniff`, and exposes no public URL, absolute path, or foreign existence. |
 | AC-007-017 | Foreign intake/source IDs, lifecycle requests, downloads, duplicate lookups, and superseding lookups fail safely without cross-client data or checksum leakage. |
-| AC-007-018 | A-to-B and A-to-B-to-A tests prove immediate reset plus rejection of stale upload/manual-save/lifecycle success, error, and `finally` effects; batch tests cover stale single-file completion, mixed results, stale batch `finally`, same-batch checksum reuse, prior-source duplicates, client switching, and out-of-order responses while new-context requests still work. |
+| AC-007-018 | A-to-B and A-to-B-to-A tests prove immediate reset plus rejection of stale upload/manual-save/lifecycle success, error, and `finally` effects; batch tests cover stale single-file completion, stale batch-wide request error, stale batch-wide `finally`, mixed committed/per-file-failed/request-level-failed results, same-batch checksum reuse, retry under the duplicate contract, client switching, and out-of-order responses while new-context requests still work. |
 | AC-007-019 | The UI visibly presents declared manual fields, clearly non-account technical reference, multi-file selection, per-file preservation/validation results, safe errors, metadata, checksum, duplicate/superseding indications, lifecycle actions, history, and navigation using real backend state. |
 | AC-007-020 | XML, DAT, CSV, and XLSX remain opaque; tests prove that encoding detection is not parser validity and that no XML/DAT schema or business parsing, CSV interpretation, workbook extraction, OCR, preview, classification, ledger mutation, or calculation occurs. |
 | AC-007-021 | M02 writes do not change M01 completeness/lifecycle, PKG-005 fixation behavior, PKG-006 client-case behavior, M07/M08 evidence, or engine inputs. |
@@ -892,6 +944,14 @@ Negative acceptance criteria count: `16`.
 - per-file atomicity for mixed success/failure, same checksum within a batch,
   duplicate against an earlier source, and response order differing from
   selection order;
+- malformed multipart before processing and foreign-client failure before
+  processing, each returning request-level failure only;
+- request interruption before commit and request-level failure after one file
+  committed;
+- mixed committed, per-file-failed, and request-level-failed outcomes;
+- cleanup of all uncommitted files and retention of independently committed
+  files after request-level failure;
+- retry after batch failure under the existing duplicate/no-overwrite contract;
 - filename sanitization, generated key, path traversal, and overwrite
   prevention;
 - server SHA-256 using known byte fixtures;
@@ -920,6 +980,12 @@ Negative acceptance criteria count: `16`.
 - manual-intake form and real API payload, including declared start/product
   fields and non-account technical-reference presentation;
 - multi-file upload with allowed-type/per-file-size guidance;
+- an explicit `.dat` file-chooser test proving `.dat` appears in the
+  `accept`/allowlist, is selectable, is not rejected merely by extension,
+  appears in the selected-file list, is submitted in a multi-file batch,
+  receives a separate per-file result, remains opaque without parsing or
+  semantic validation, and cannot update the new client when its completion is
+  stale after A-to-B or A-to-B-to-A;
 - progress, pending, success, validation failure, preservation failure, and
   cleanup presentation;
 - metadata and missing-field diagnostics;
@@ -936,6 +1002,13 @@ Negative acceptance criteria count: `16`.
 - batch upload across A-to-B, stale single-file completion, mixed
   success/failure, stale batch `finally`, same-batch checksum, prior-source
   duplicate, client switch during batch, and out-of-order results;
+- separate presentation of batch request error and per-file errors without
+  deleting or hiding retained committed successes;
+- malformed pre-processing batch failure, request interruption before commit,
+  request-level failure after one committed file, mixed
+  committed/per-file-failed/request-level-failed outcomes, retry after failure,
+  stale batch-wide error after A-to-B, and stale batch-wide `finally` after
+  A-to-B-to-A;
 - stale lifecycle mutation and manual-save mutation;
 - failed B load never showing A data;
 - new A requests operating after old A settles.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
 from urllib.parse import quote
 
 from fastapi import (
@@ -41,6 +42,7 @@ from app.services.m02_storage import (
     M02FileError,
     M02StorageCleanupError,
     M02StorageConfigurationError,
+    M02OwnedReader,
     ManagedLocalStorage,
     safe_original_filename,
     stage_and_validate_upload,
@@ -48,6 +50,56 @@ from app.services.m02_storage import (
 
 
 router = APIRouter(prefix="/api/clients/{client_id}/m02", tags=["m02-intake"])
+
+
+class M02DownloadResponse(StreamingResponse):
+    def __init__(self, reader: M02OwnedReader, **kwargs):
+        self._reader = reader
+        super().__init__(self._stream_reader(), **kwargs)
+
+    def _stream_reader(self):
+        try:
+            while chunk := self._reader.read(1024 * 1024):
+                yield chunk
+        finally:
+            self._reader.close()
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._reader.close()
+
+    def close(self) -> None:
+        self._reader.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+def _build_download_response(
+    reader: M02OwnedReader, download_filename: str
+) -> M02DownloadResponse:
+    try:
+        encoded_filename = quote(download_filename, safe="")
+        return M02DownloadResponse(
+            reader,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename=\"m02-source\"; "
+                    f"filename*=UTF-8''{encoded_filename}"
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
+            },
+        )
+    except BaseException:
+        reader.close()
+        raise
 
 
 def _storage() -> ManagedLocalStorage:
@@ -145,13 +197,15 @@ async def post_upload_intakes(
         )
     storage = _storage()
     results: list[M02UploadFileResult] = []
-    request_error: dict[str, str] | None = None
+    request_error: dict[str, object] | None = None
+    staged_resources = []
+    cleanup_primary_error: BaseException | None = None
     for index, upload in enumerate(files):
         display_filename = "unnamed-source"
-        staged = None
         try:
             display_filename = safe_original_filename(upload.filename)
             staged = await stage_and_validate_upload(storage, upload)
+            staged_resources.append(staged)
             row = preserve_staged_upload(
                 db,
                 storage,
@@ -168,8 +222,6 @@ async def post_upload_intakes(
                 declared_basis=declared_basis,
                 notes=notes,
             )
-            storage.cleanup_temporary(staged.temporary_path)
-            staged = None
             results.append(
                 M02UploadFileResult(
                     selection_index=index,
@@ -178,32 +230,49 @@ async def post_upload_intakes(
                     intake=to_response(db, row),
                 )
             )
+        except M02StorageCleanupError as error:
+            cleanup_primary_error = error.primary_error
+            request_error = {
+                "code": M02StorageCleanupError.code,
+                "message": "Managed upload cleanup could not be completed",
+                "diagnostic_chain": list(error.diagnostic_codes),
+            }
+            break
         except M02FileError as error:
-            if staged is not None:
-                try:
-                    storage.cleanup_temporary(staged.temporary_path)
-                except M02StorageCleanupError:
-                    request_error = {
-                        "code": "M02_BATCH_CLEANUP_FAILED",
-                        "message": "The upload request cleanup could not be completed",
-                    }
-                    break
+            cleanup_primary_error = error
             failed_intake = None
             if error.code == "M02_PRESERVATION_FAILED":
-                failed_intake = to_response(
-                    db,
-                    record_preservation_failure(
+                try:
+                    failed_intake = to_response(
                         db,
-                        client_id,
-                        source_type=source_type,
-                        failure_code=error.code,
-                        declared_provider_name=declared_provider_name,
-                        product_name=product_name,
-                        product_identifier=product_identifier,
-                        declared_account_reference=declared_account_reference,
-                        declared_statement_date=declared_statement_date,
-                    ),
-                )
+                        record_preservation_failure(
+                            db,
+                            client_id,
+                            source_type=source_type,
+                            failure_code=error.code,
+                            declared_provider_name=declared_provider_name,
+                            product_name=product_name,
+                            product_identifier=product_identifier,
+                            declared_account_reference=declared_account_reference,
+                            declared_statement_date=declared_statement_date,
+                        ),
+                    )
+                except Exception as nested_error:
+                    db.rollback()
+                    logging.getLogger(__name__).error(
+                        "M02 preservation-failure evidence could not be recorded",
+                        exc_info=nested_error,
+                        extra={"event_code": "M02_BATCH_REQUEST_FAILED"},
+                    )
+                    cleanup_primary_error = M02FileError(
+                        "M02_BATCH_REQUEST_FAILED",
+                        "The upload request could not be completed",
+                    )
+                    request_error = {
+                        "code": "M02_BATCH_REQUEST_FAILED",
+                        "message": "The upload request could not be completed",
+                    }
+                    break
             results.append(
                 M02UploadFileResult(
                     selection_index=index,
@@ -214,25 +283,49 @@ async def post_upload_intakes(
                     error_message=error.message,
                 )
             )
-        except Exception:
+        except Exception as error:
             db.rollback()
-            if staged is not None:
-                try:
-                    storage.cleanup_temporary(staged.temporary_path)
-                except M02StorageCleanupError:
-                    request_error = {
-                        "code": "M02_BATCH_CLEANUP_FAILED",
-                        "message": "The upload request cleanup could not be completed",
-                    }
-                    break
+            logging.getLogger(__name__).error(
+                "M02 batch request failed after staging",
+                exc_info=error,
+                extra={"event_code": "M02_BATCH_REQUEST_FAILED"},
+            )
+            cleanup_primary_error = M02FileError(
+                "M02_BATCH_REQUEST_FAILED",
+                "The upload request could not be completed",
+            )
             request_error = {
                 "code": "M02_BATCH_REQUEST_FAILED",
                 "message": "The upload request could not be completed",
             }
             break
+    cleanup_failures: list[M02StorageCleanupError] = []
+    for staged in staged_resources:
+        try:
+            staged.cleanup(primary_error=cleanup_primary_error)
+        except M02StorageCleanupError as error:
+            cleanup_failures.append(error)
+    storage.close()
+    if cleanup_failures:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": M02StorageCleanupError.code,
+                "message": "Managed upload cleanup could not be completed",
+                "diagnostic_chain": list(cleanup_failures[0].diagnostic_codes),
+            },
+        )
+    if (
+        request_error is not None
+        and request_error["code"] == M02StorageCleanupError.code
+    ):
+        raise HTTPException(status_code=500, detail=request_error)
     if request_error is not None and not results:
         raise HTTPException(status_code=400, detail=request_error)
-    return M02UploadBatchResponse(results=results, request_error=request_error)
+    return M02UploadBatchResponse(
+        results=results,
+        request_error=request_error,  # type: ignore[arg-type]
+    )
 
 
 @router.get("/sources/{source_id}/download")
@@ -259,23 +352,6 @@ def download_source(
                 "message": "The preserved source is unavailable",
             },
         )
-    def stream_opened_file():
-        try:
-            while chunk := opened.read(1024 * 1024):
-                yield chunk
-        finally:
-            opened.close()
-
-    encoded_filename = quote(source.sanitized_download_filename, safe="")
-    return StreamingResponse(
-        stream_opened_file(),
-        media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": (
-                "attachment; filename=\"m02-source\"; "
-                f"filename*=UTF-8''{encoded_filename}"
-            ),
-            "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "no-store",
-        },
-    )
+    finally:
+        storage.close()
+    return _build_download_response(opened, source.sanitized_download_filename)

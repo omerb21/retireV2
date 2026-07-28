@@ -324,7 +324,7 @@ def _preserve_staged_upload_locked(
     final_storage_key: str | None = None
     try:
         if duplicate_blob is None:
-            final_storage_key = storage.place(staged.temporary_path)
+            final_storage_key = storage.place(staged)
             blob = M02PreservedBlob(
                 blob_id=f"M02B-{uuid4().hex}",
                 client_id=client_id,
@@ -383,22 +383,17 @@ def _preserve_staged_upload_locked(
         )
         db.add_all([row, source])
         db.commit()
+        staged.mark_committed()
         db.refresh(row)
         return row
     except SQLAlchemyError as error:
         db.rollback()
-        if final_storage_key is not None:
-            storage.delete_key(final_storage_key)
         raise M02FileError(
             "M02_PERSISTENCE_FAILED", "The source metadata could not be persisted"
         ) from error
     except BaseException:
         db.rollback()
-        if final_storage_key is not None:
-            storage.delete_key(final_storage_key)
         raise
-    finally:
-        storage.cleanup_temporary(staged.temporary_path)
 
 
 def record_preservation_failure(

@@ -198,6 +198,7 @@ async def post_upload_intakes(
     storage = _storage()
     results: list[M02UploadFileResult] = []
     request_error: dict[str, object] | None = None
+    request_error_status = 400
     staged_resources = []
     cleanup_primary_error: BaseException | None = None
     for index, upload in enumerate(files):
@@ -232,10 +233,19 @@ async def post_upload_intakes(
             )
         except M02StorageCleanupError as error:
             cleanup_primary_error = error.primary_error
+            request_error_status = 500
             request_error = {
                 "code": M02StorageCleanupError.code,
                 "message": "Managed upload cleanup could not be completed",
                 "diagnostic_chain": list(error.diagnostic_codes),
+            }
+            break
+        except M02StorageConfigurationError as error:
+            cleanup_primary_error = error
+            request_error_status = 503
+            request_error = {
+                "code": "M02_STORAGE_UNAVAILABLE",
+                "message": "Managed source storage is unavailable",
             }
             break
         except M02FileError as error:
@@ -307,21 +317,30 @@ async def post_upload_intakes(
             cleanup_failures.append(error)
     storage.close()
     if cleanup_failures:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "code": M02StorageCleanupError.code,
-                "message": "Managed upload cleanup could not be completed",
-                "diagnostic_chain": list(cleanup_failures[0].diagnostic_codes),
-            },
-        )
+        request_error_status = 500
+        request_error = {
+            "code": M02StorageCleanupError.code,
+            "message": "Managed upload cleanup could not be completed",
+            "diagnostic_chain": list(cleanup_failures[0].diagnostic_codes),
+        }
+    has_committed_result = any(result.status == "preserved" for result in results)
+    if (
+        request_error is not None
+        and has_committed_result
+        and "diagnostic_chain" in request_error
+    ):
+        request_error = {
+            "code": request_error["code"],
+            "message": request_error["message"],
+        }
     if (
         request_error is not None
         and request_error["code"] == M02StorageCleanupError.code
+        and not has_committed_result
     ):
         raise HTTPException(status_code=500, detail=request_error)
     if request_error is not None and not results:
-        raise HTTPException(status_code=400, detail=request_error)
+        raise HTTPException(status_code=request_error_status, detail=request_error)
     return M02UploadBatchResponse(
         results=results,
         request_error=request_error,  # type: ignore[arg-type]

@@ -59,18 +59,24 @@ class M02LifecycleRequest(BaseModel):
 class M02SourceResponse(BaseModel):
     source_id: str
     original_filename: str
+    sanitized_download_filename: str
     normalized_extension: str
     declared_mime_type: str
     validated_media_type: str
     detected_text_encoding: str | None
     sha256_checksum: str
     byte_size: int
+    source_type: str
+    declared_statement_date: date | None
+    preservation_status: str
+    validation_diagnostics: list[str]
     uploaded_at: datetime
 
 
 class M02IntakeResponse(BaseModel):
     intake_id: str
     client_id: int
+    record_kind: str
     declared_provider_name: str | None
     product_name: str | None
     product_identifier: str | None
@@ -89,6 +95,7 @@ class M02IntakeResponse(BaseModel):
     lifecycle_status: str
     preservation_status: str
     preservation_failure_code: str | None
+    rejection_reason_code: str | None
     duplicate_candidate: bool
     duplicate_of_intake_id: str | None
     superseding_candidate: bool
@@ -98,6 +105,8 @@ class M02IntakeResponse(BaseModel):
     source: M02SourceResponse | None
     created_by_actor: str
     updated_by_actor: str
+    lifecycle_decided_by_actor: str
+    lifecycle_decided_at: datetime
     actor_is_authentication: Literal[False] = False
     created_at: datetime
     updated_at: datetime

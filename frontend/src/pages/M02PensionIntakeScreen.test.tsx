@@ -51,6 +51,7 @@ function intake(
   return {
     intake_id: id,
     client_id: clientId,
+    record_kind: "manual",
     declared_provider_name: null,
     product_name: "Declared Fund",
     product_identifier: null,
@@ -69,6 +70,7 @@ function intake(
     lifecycle_status: "metadata_review",
     preservation_status: "not_applicable",
     preservation_failure_code: null,
+    rejection_reason_code: null,
     duplicate_candidate: false,
     duplicate_of_intake_id: null,
     superseding_candidate: false,
@@ -78,6 +80,8 @@ function intake(
     source: null,
     created_by_actor: "system:m02-intake:M02 intake workflow",
     updated_by_actor: "system:m02-intake:M02 intake workflow",
+    lifecycle_decided_by_actor: "system:m02-intake:M02 intake workflow",
+    lifecycle_decided_at: "2026-07-28T00:00:00Z",
     actor_is_authentication: false,
     created_at: "2026-07-28T00:00:00Z",
     updated_at: "2026-07-28T00:00:00Z",
@@ -116,15 +120,21 @@ describe("PKG-007 M02 controlled pension intake", () => {
       source: {
         source_id: "S-1",
         original_filename: "opaque.dat",
+        sanitized_download_filename: "opaque.dat",
         normalized_extension: ".dat",
         declared_mime_type: "application/octet-stream",
         validated_media_type: "text/plain",
         detected_text_encoding: "windows-1255",
         sha256_checksum: "a".repeat(64),
         byte_size: 42,
+        source_type: "clearinghouse",
+        declared_statement_date: "2026-01-01",
+        preservation_status: "preserved",
+        validation_diagnostics: [],
         uploaded_at: "2026-07-28T00:00:00Z"
       },
       manual_technical_reference: null,
+      record_kind: "uploaded_source",
       lifecycle_status: "uploaded",
       preservation_status: "preserved",
       duplicate_candidate: true,
@@ -160,6 +170,7 @@ describe("PKG-007 M02 controlled pension intake", () => {
   it("explicitly selects and submits DAT in a multi-file opaque batch", async () => {
     const uploadedDat = intake(1, "I-DAT", {
       manual_technical_reference: null,
+      record_kind: "uploaded_source",
       lifecycle_status: "uploaded",
       preservation_status: "preserved"
     });

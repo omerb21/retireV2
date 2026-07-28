@@ -27,6 +27,7 @@ def upgrade() -> None:
             sa.ForeignKey("clients.client_id"),
             nullable=False,
         ),
+        sa.Column("record_kind", sa.String(32), nullable=False),
         sa.Column("declared_provider_name", sa.String(255), nullable=True),
         sa.Column("product_name", sa.String(255), nullable=True),
         sa.Column("product_identifier", sa.String(128), nullable=True),
@@ -44,6 +45,13 @@ def upgrade() -> None:
         sa.Column("lifecycle_status", sa.String(32), nullable=False),
         sa.Column("preservation_status", sa.String(32), nullable=False),
         sa.Column("preservation_failure_code", sa.String(64), nullable=True),
+        sa.Column("rejection_reason_code", sa.String(64), nullable=True),
+        sa.Column(
+            "diagnostics",
+            sa.JSON(),
+            nullable=False,
+            server_default=sa.text("'[]'"),
+        ),
         sa.Column(
             "duplicate_candidate",
             sa.Boolean(),
@@ -60,6 +68,13 @@ def upgrade() -> None:
         sa.Column("superseding_intake_id", sa.String(64), nullable=True),
         sa.Column("created_by_actor", sa.String(128), nullable=False),
         sa.Column("updated_by_actor", sa.String(128), nullable=False),
+        sa.Column("lifecycle_decided_by_actor", sa.String(128), nullable=False),
+        sa.Column(
+            "lifecycle_decided_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -82,9 +97,27 @@ def upgrade() -> None:
             name="ck_m02_intake_records_preservation_status",
         ),
         sa.CheckConstraint(
-            "(manual_technical_reference IS NOT NULL AND preservation_status = 'not_applicable') "
-            "OR (manual_technical_reference IS NULL AND preservation_status != 'not_applicable')",
+            "record_kind IN ('manual','uploaded_source')",
+            name="ck_m02_intake_records_record_kind",
+        ),
+        sa.CheckConstraint(
+            "(record_kind = 'manual' AND manual_technical_reference IS NOT NULL "
+            "AND preservation_status = 'not_applicable') OR "
+            "(record_kind = 'uploaded_source' AND manual_technical_reference IS NULL "
+            "AND preservation_status != 'not_applicable')",
             name="ck_m02_intake_records_creation_path",
+        ),
+        sa.CheckConstraint(
+            "(duplicate_candidate = 0 AND duplicate_of_intake_id IS NULL) OR "
+            "(duplicate_candidate = 1 AND duplicate_of_intake_id IS NOT NULL "
+            "AND duplicate_of_intake_id != intake_id)",
+            name="ck_m02_intake_records_duplicate_consistency",
+        ),
+        sa.CheckConstraint(
+            "(superseding_candidate = 0 AND superseding_intake_id IS NULL) OR "
+            "(superseding_candidate = 1 AND superseding_intake_id IS NOT NULL "
+            "AND superseding_intake_id != intake_id)",
+            name="ck_m02_intake_records_superseding_consistency",
         ),
         sa.UniqueConstraint(
             "manual_technical_reference",
@@ -108,6 +141,16 @@ def upgrade() -> None:
         "ix_m02_intake_records_client_created",
         "m02_intake_records",
         ["client_id", "created_at"],
+    )
+    op.create_index(
+        "ix_m02_intake_records_client_lifecycle",
+        "m02_intake_records",
+        ["client_id", "lifecycle_status"],
+    )
+    op.create_index(
+        "ix_m02_intake_records_client_source_date",
+        "m02_intake_records",
+        ["client_id", "source_type", "declared_statement_date"],
     )
 
     op.create_table(
@@ -139,6 +182,13 @@ def upgrade() -> None:
             "byte_size > 0 AND byte_size <= 26214400",
             name="ck_m02_preserved_blobs_byte_size",
         ),
+        sa.CheckConstraint(
+            "storage_key LIKE 'objects/%' "
+            "AND instr(storage_key, '..') = 0 "
+            "AND instr(storage_key, ':') = 0 "
+            "AND instr(storage_key, char(92)) = 0",
+            name="ck_m02_preserved_blobs_relative_storage_key",
+        ),
         sa.UniqueConstraint(
             "client_id",
             "sha256_checksum",
@@ -164,10 +214,21 @@ def upgrade() -> None:
         sa.Column("intake_id", sa.String(64), nullable=False),
         sa.Column("blob_id", sa.String(64), nullable=False),
         sa.Column("original_filename", sa.String(255), nullable=False),
+        sa.Column("sanitized_download_filename", sa.String(255), nullable=False),
         sa.Column("normalized_extension", sa.String(16), nullable=False),
         sa.Column("declared_mime_type", sa.String(255), nullable=False),
         sa.Column("validated_media_type", sa.String(128), nullable=False),
         sa.Column("detected_text_encoding", sa.String(32), nullable=True),
+        sa.Column("source_type", sa.String(128), nullable=False),
+        sa.Column("declared_statement_date", sa.Date(), nullable=True),
+        sa.Column("byte_size", sa.Integer(), nullable=False),
+        sa.Column("preservation_status", sa.String(32), nullable=False),
+        sa.Column(
+            "validation_diagnostics",
+            sa.JSON(),
+            nullable=False,
+            server_default=sa.text("'[]'"),
+        ),
         sa.Column(
             "uploaded_at",
             sa.DateTime(timezone=True),
@@ -177,6 +238,14 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "normalized_extension IN ('.pdf','.xml','.dat','.csv','.xlsx')",
             name="ck_m02_preserved_sources_extension",
+        ),
+        sa.CheckConstraint(
+            "preservation_status = 'preserved'",
+            name="ck_m02_preserved_sources_preservation_status",
+        ),
+        sa.CheckConstraint(
+            "byte_size > 0 AND byte_size <= 26214400",
+            name="ck_m02_preserved_sources_byte_size",
         ),
         sa.UniqueConstraint(
             "intake_id", name="uq_m02_preserved_sources_intake"
@@ -216,6 +285,14 @@ def downgrade() -> None:
     )
     op.drop_table("m02_preserved_sources")
     op.drop_table("m02_preserved_blobs")
+    op.drop_index(
+        "ix_m02_intake_records_client_source_date",
+        table_name="m02_intake_records",
+    )
+    op.drop_index(
+        "ix_m02_intake_records_client_lifecycle",
+        table_name="m02_intake_records",
+    )
     op.drop_index(
         "ix_m02_intake_records_client_created",
         table_name="m02_intake_records",

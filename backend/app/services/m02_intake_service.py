@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -99,6 +99,7 @@ def create_manual_intake(
     row = M02IntakeRecord(
         intake_id=f"M02I-{uuid4().hex}",
         client_id=client_id,
+        record_kind="manual",
         manual_technical_reference=f"M02-MANUAL-{uuid4().hex}",
         lifecycle_status="metadata_review",
         preservation_status="not_applicable",
@@ -106,9 +107,12 @@ def create_manual_intake(
         superseding_candidate=False,
         created_by_actor=M02_ACTOR,
         updated_by_actor=M02_ACTOR,
+        lifecycle_decided_by_actor=M02_ACTOR,
+        lifecycle_decided_at=datetime.now(timezone.utc),
         **values,
     )
     _apply_superseding_candidate(db, row)
+    row.diagnostics = _diagnostics(row)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -141,6 +145,10 @@ def update_intake(
     row.superseding_candidate = False
     row.superseding_intake_id = None
     _apply_superseding_candidate(db, row)
+    row.diagnostics = _diagnostics(row)
+    if row.preserved_source is not None:
+        row.preserved_source.source_type = row.source_type
+        row.preserved_source.declared_statement_date = row.declared_statement_date
     db.commit()
     db.refresh(row)
     return row
@@ -194,6 +202,10 @@ def transition_intake(
         )
     row.lifecycle_status = target_status
     row.updated_by_actor = M02_ACTOR
+    row.lifecycle_decided_by_actor = M02_ACTOR
+    row.lifecycle_decided_at = datetime.now(timezone.utc)
+    if target_status == "rejected":
+        row.rejection_reason_code = rejection_reason_code.strip()
     db.commit()
     db.refresh(row)
     return row
@@ -252,6 +264,7 @@ def preserve_staged_upload(
         row = M02IntakeRecord(
             intake_id=f"M02I-{uuid4().hex}",
             client_id=client_id,
+            record_kind="uploaded_source",
             declared_provider_name=_optional_text(declared_provider_name),
             product_name=_optional_text(product_name),
             product_identifier=_optional_text(product_identifier),
@@ -270,18 +283,27 @@ def preserve_staged_upload(
             superseding_candidate=False,
             created_by_actor=M02_ACTOR,
             updated_by_actor=M02_ACTOR,
+            lifecycle_decided_by_actor=M02_ACTOR,
+            lifecycle_decided_at=datetime.now(timezone.utc),
         )
         _apply_superseding_candidate(db, row)
+        row.diagnostics = _diagnostics(row)
         source = M02PreservedSource(
             source_id=f"M02S-{uuid4().hex}",
             client_id=client_id,
             intake_id=row.intake_id,
             blob_id=blob.blob_id,
             original_filename=staged.original_filename,
+            sanitized_download_filename=staged.original_filename,
             normalized_extension=staged.extension,
             declared_mime_type=staged.declared_mime_type,
             validated_media_type=staged.validated_media_type,
             detected_text_encoding=staged.detected_text_encoding,
+            source_type=row.source_type,
+            declared_statement_date=row.declared_statement_date,
+            byte_size=staged.byte_size,
+            preservation_status="preserved",
+            validation_diagnostics=[],
         )
         db.add_all([row, source])
         db.commit()
@@ -318,6 +340,7 @@ def record_preservation_failure(
     row = M02IntakeRecord(
         intake_id=f"M02I-{uuid4().hex}",
         client_id=client_id,
+        record_kind="uploaded_source",
         source_type=_required_text(source_type, "source_type"),
         declared_provider_name=_optional_text(declared_provider_name),
         product_name=_optional_text(product_name),
@@ -332,7 +355,10 @@ def record_preservation_failure(
         superseding_candidate=False,
         created_by_actor=M02_ACTOR,
         updated_by_actor=M02_ACTOR,
+        lifecycle_decided_by_actor=M02_ACTOR,
+        lifecycle_decided_at=datetime.now(timezone.utc),
     )
+    row.diagnostics = _diagnostics(row)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -347,17 +373,23 @@ def to_response(db: Session, row: M02IntakeRecord) -> M02IntakeResponse:
         source_response = M02SourceResponse(
             source_id=source.source_id,
             original_filename=source.original_filename,
+            sanitized_download_filename=source.sanitized_download_filename,
             normalized_extension=source.normalized_extension,
             declared_mime_type=source.declared_mime_type,
             validated_media_type=source.validated_media_type,
             detected_text_encoding=source.detected_text_encoding,
             sha256_checksum=blob.sha256_checksum,
             byte_size=blob.byte_size,
+            source_type=source.source_type,
+            declared_statement_date=source.declared_statement_date,
+            preservation_status=source.preservation_status,
+            validation_diagnostics=source.validation_diagnostics,
             uploaded_at=source.uploaded_at,
         )
     return M02IntakeResponse(
         intake_id=row.intake_id,
         client_id=row.client_id,
+        record_kind=row.record_kind,
         declared_provider_name=row.declared_provider_name,
         product_name=row.product_name,
         product_identifier=row.product_identifier,
@@ -375,6 +407,7 @@ def to_response(db: Session, row: M02IntakeRecord) -> M02IntakeResponse:
         lifecycle_status=row.lifecycle_status,
         preservation_status=row.preservation_status,
         preservation_failure_code=row.preservation_failure_code,
+        rejection_reason_code=row.rejection_reason_code,
         duplicate_candidate=row.duplicate_candidate,
         duplicate_of_intake_id=row.duplicate_of_intake_id,
         superseding_candidate=row.superseding_candidate,
@@ -384,6 +417,8 @@ def to_response(db: Session, row: M02IntakeRecord) -> M02IntakeResponse:
         source=source_response,
         created_by_actor=row.created_by_actor,
         updated_by_actor=row.updated_by_actor,
+        lifecycle_decided_by_actor=row.lifecycle_decided_by_actor,
+        lifecycle_decided_at=row.lifecycle_decided_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -514,8 +549,13 @@ def _apply_superseding_candidate(db: Session, row: M02IntakeRecord) -> None:
             M02IntakeRecord.lifecycle_status != "superseded",
         )
         .order_by(
+            case(
+                (M02IntakeRecord.lifecycle_status == "accepted_for_review", 0),
+                else_=1,
+            ),
             M02IntakeRecord.declared_statement_date.desc(),
             M02IntakeRecord.created_at.desc(),
+            M02IntakeRecord.intake_id,
         )
     )
     if older is not None and older.intake_id != row.intake_id:

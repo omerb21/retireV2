@@ -11,18 +11,24 @@ export type M02LifecycleStatus =
 export interface M02Source {
   source_id: string;
   original_filename: string;
+  sanitized_download_filename: string;
   normalized_extension: string;
   declared_mime_type: string;
   validated_media_type: string;
   detected_text_encoding: string | null;
   sha256_checksum: string;
   byte_size: number;
+  source_type: string;
+  declared_statement_date: string | null;
+  preservation_status: "preserved";
+  validation_diagnostics: string[];
   uploaded_at: string;
 }
 
 export interface M02Intake {
   intake_id: string;
   client_id: number;
+  record_kind: "manual" | "uploaded_source";
   declared_provider_name: string | null;
   product_name: string | null;
   product_identifier: string | null;
@@ -41,6 +47,7 @@ export interface M02Intake {
   lifecycle_status: M02LifecycleStatus;
   preservation_status: "not_applicable" | "pending" | "preserved" | "failed";
   preservation_failure_code: string | null;
+  rejection_reason_code: string | null;
   duplicate_candidate: boolean;
   duplicate_of_intake_id: string | null;
   superseding_candidate: boolean;
@@ -50,6 +57,8 @@ export interface M02Intake {
   source: M02Source | null;
   created_by_actor: string;
   updated_by_actor: string;
+  lifecycle_decided_by_actor: string;
+  lifecycle_decided_at: string;
   actor_is_authentication: false;
   created_at: string;
   updated_at: string;

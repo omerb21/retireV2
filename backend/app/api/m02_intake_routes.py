@@ -236,7 +236,7 @@ def download_source(
     response = FileResponse(
         path,
         media_type="application/octet-stream",
-        filename=safe_original_filename(source.original_filename),
+        filename=source.sanitized_download_filename,
         content_disposition_type="attachment",
     )
     response.headers["X-Content-Type-Options"] = "nosniff"

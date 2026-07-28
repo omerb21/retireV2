@@ -502,6 +502,7 @@ def test_locked_lifecycle_transitions(api, start: str, target: str) -> None:
         persisted = session.get(M02IntakeRecord, row["intake_id"])
         persisted.lifecycle_status = start
         if start == "uploaded":
+            persisted.record_kind = "uploaded_source"
             persisted.manual_technical_reference = None
             persisted.preservation_status = "preserved"
             persisted.declared_provider_name = "Provider"

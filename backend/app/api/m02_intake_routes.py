@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -10,7 +11,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from app.services.m02_intake_service import (
     preserve_staged_upload,
     record_preservation_failure,
     require_client,
+    require_mutable_client,
     require_intake,
     require_source,
     to_response,
@@ -37,6 +39,7 @@ from app.services.m02_intake_service import (
 )
 from app.services.m02_storage import (
     M02FileError,
+    M02StorageCleanupError,
     M02StorageConfigurationError,
     ManagedLocalStorage,
     safe_original_filename,
@@ -113,6 +116,7 @@ def post_intake_lifecycle(
         intake_id,
         payload.target_status,
         payload.rejection_reason_code,
+        payload.notes,
     )
     return to_response(db, row)
 
@@ -133,7 +137,7 @@ async def post_upload_intakes(
     notes: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> M02UploadBatchResponse:
-    require_client(db, client_id)
+    require_mutable_client(db, client_id)
     if not files:
         raise HTTPException(
             status_code=422,
@@ -144,6 +148,7 @@ async def post_upload_intakes(
     request_error: dict[str, str] | None = None
     for index, upload in enumerate(files):
         display_filename = "unnamed-source"
+        staged = None
         try:
             display_filename = safe_original_filename(upload.filename)
             staged = await stage_and_validate_upload(storage, upload)
@@ -163,6 +168,8 @@ async def post_upload_intakes(
                 declared_basis=declared_basis,
                 notes=notes,
             )
+            storage.cleanup_temporary(staged.temporary_path)
+            staged = None
             results.append(
                 M02UploadFileResult(
                     selection_index=index,
@@ -172,6 +179,15 @@ async def post_upload_intakes(
                 )
             )
         except M02FileError as error:
+            if staged is not None:
+                try:
+                    storage.cleanup_temporary(staged.temporary_path)
+                except M02StorageCleanupError:
+                    request_error = {
+                        "code": "M02_BATCH_CLEANUP_FAILED",
+                        "message": "The upload request cleanup could not be completed",
+                    }
+                    break
             failed_intake = None
             if error.code == "M02_PRESERVATION_FAILED":
                 failed_intake = to_response(
@@ -200,6 +216,15 @@ async def post_upload_intakes(
             )
         except Exception:
             db.rollback()
+            if staged is not None:
+                try:
+                    storage.cleanup_temporary(staged.temporary_path)
+                except M02StorageCleanupError:
+                    request_error = {
+                        "code": "M02_BATCH_CLEANUP_FAILED",
+                        "message": "The upload request cleanup could not be completed",
+                    }
+                    break
             request_error = {
                 "code": "M02_BATCH_REQUEST_FAILED",
                 "message": "The upload request could not be completed",
@@ -215,7 +240,7 @@ def download_source(
     client_id: int,
     source_id: str,
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> StreamingResponse:
     require_client(db, client_id)
     source = require_source(db, client_id, source_id)
     if source.blob.client_id != client_id:
@@ -224,8 +249,9 @@ def download_source(
             detail={"code": "M02_RESOURCE_NOT_FOUND", "message": "Resource not found"},
         )
     storage = _storage()
-    path = storage.resolve_key(source.blob.storage_key)
-    if not path.is_file():
+    try:
+        opened = storage.open_key(source.blob.storage_key)
+    except (OSError, M02StorageConfigurationError):
         raise HTTPException(
             status_code=503,
             detail={
@@ -233,12 +259,23 @@ def download_source(
                 "message": "The preserved source is unavailable",
             },
         )
-    response = FileResponse(
-        path,
+    def stream_opened_file():
+        try:
+            while chunk := opened.read(1024 * 1024):
+                yield chunk
+        finally:
+            opened.close()
+
+    encoded_filename = quote(source.sanitized_download_filename, safe="")
+    return StreamingResponse(
+        stream_opened_file(),
         media_type="application/octet-stream",
-        filename=source.sanitized_download_filename,
-        content_disposition_type="attachment",
+        headers={
+            "Content-Disposition": (
+                "attachment; filename=\"m02-source\"; "
+                f"filename*=UTF-8''{encoded_filename}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
     )
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Cache-Control"] = "no-store"
-    return response

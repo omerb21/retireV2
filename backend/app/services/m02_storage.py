@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import logging
 import os
 import re
 import shutil
@@ -36,6 +38,10 @@ VALIDATED_MEDIA_BY_EXTENSION = {
 
 class M02StorageConfigurationError(RuntimeError):
     code = "M02_STORAGE_CONFIGURATION_BLOCKED"
+
+
+class M02StorageCleanupError(RuntimeError):
+    code = "M02_STORAGE_CLEANUP_FAILED"
 
 
 class M02FileError(ValueError):
@@ -87,12 +93,17 @@ class ManagedLocalStorage:
         raw_root = Path(configured)
         if not raw_root.is_absolute():
             raise M02StorageConfigurationError("M02_STORAGE_ROOT must be absolute")
+        cls._reject_symlink(raw_root)
         root = raw_root.resolve(strict=False)
         cls._validate_safe_root(root)
         try:
             root.mkdir(parents=True, exist_ok=True)
-            (root / ".temporary").mkdir(exist_ok=True)
-            (root / "objects").mkdir(exist_ok=True)
+            cls._reject_symlink(root)
+            for managed in (root / ".temporary", root / "objects"):
+                cls._reject_symlink(managed)
+                managed.mkdir(exist_ok=True)
+                cls._reject_symlink(managed)
+                cls._assert_contained(root, managed)
             probe = root / f".write-probe-{uuid4().hex}"
             with probe.open("x", encoding="ascii") as handle:
                 handle.write("m02")
@@ -106,27 +117,74 @@ class ManagedLocalStorage:
     @staticmethod
     def _validate_safe_root(root: Path) -> None:
         repository_root = Path(__file__).resolve().parents[3]
+        cwd = Path.cwd().resolve(strict=False)
         unsafe_roots = {
             repository_root,
             repository_root / "frontend",
+            repository_root / "frontend" / "public",
+            repository_root / "frontend" / "static",
             repository_root / "backend",
             repository_root / "public",
             repository_root / "static",
+            cwd,
         }
         for unsafe in unsafe_roots:
             unsafe = unsafe.resolve(strict=False)
-            if root == unsafe or unsafe in root.parents:
+            if (
+                root == unsafe
+                or unsafe in root.parents
+                or root in unsafe.parents
+            ):
                 raise M02StorageConfigurationError(
-                    "M02_STORAGE_ROOT must be outside repository, home, cwd, public, and static roots"
+                    "M02_STORAGE_ROOT must be isolated from repository, cwd, public, and static roots"
                 )
 
+    @staticmethod
+    def _reject_symlink(path: Path) -> None:
+        try:
+            if path.exists() or path.is_symlink():
+                if stat.S_ISLNK(path.lstat().st_mode):
+                    raise M02StorageConfigurationError(
+                        "Managed storage paths must not be symbolic links"
+                    )
+        except OSError as error:
+            raise M02StorageConfigurationError(
+                "Managed storage path metadata is unavailable"
+            ) from error
+
+    @staticmethod
+    def _assert_contained(root: Path, path: Path) -> Path:
+        resolved_root = root.resolve(strict=True)
+        resolved = path.resolve(strict=False)
+        if resolved == resolved_root or resolved_root in resolved.parents:
+            return resolved
+        raise M02StorageConfigurationError("Managed storage path escaped its root")
+
+    def _validate_managed_path(self, path: Path, *, require_exists: bool = False) -> Path:
+        self._reject_symlink(self.root)
+        self._reject_symlink(self.temporary_root)
+        self._reject_symlink(self.object_root)
+        resolved = self._assert_contained(self.root, path)
+        current = path
+        while current != self.root:
+            self._reject_symlink(current)
+            current = current.parent
+        if require_exists and not path.exists():
+            raise M02StorageConfigurationError("Managed storage object is unavailable")
+        return resolved
+
     def new_temporary_path(self) -> Path:
+        self._validate_managed_path(self.temporary_root, require_exists=True)
         return self.temporary_root / f"{uuid4().hex}.upload"
 
     def place(self, temporary_path: Path) -> str:
+        self._validate_managed_path(temporary_path, require_exists=True)
         storage_key = f"objects/{uuid4().hex[:2]}/{uuid4().hex}"
         destination = self.resolve_key(storage_key)
+        self._reject_symlink(destination.parent)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        self._validate_managed_path(destination.parent, require_exists=True)
+        self._reject_symlink(destination)
         try:
             os.link(temporary_path, destination)
         except FileExistsError:
@@ -146,24 +204,70 @@ class ManagedLocalStorage:
             or key_path.parts[0] != "objects"
         ):
             raise M02StorageConfigurationError("Invalid persisted storage key")
-        resolved = (self.root / Path(*key_path.parts)).resolve(strict=False)
-        if self.root not in resolved.parents:
-            raise M02StorageConfigurationError("Storage key escaped managed root")
-        return resolved
+        candidate = self.root / Path(*key_path.parts)
+        return self._validate_managed_path(candidate)
+
+    def open_key(self, storage_key: str) -> io.BufferedReader:
+        path = self.resolve_key(storage_key)
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor: int | None = None
+        try:
+            before = path.lstat()
+            if not stat.S_ISREG(before.st_mode):
+                raise M02StorageConfigurationError("Preserved source is not a regular file")
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            after = path.lstat()
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+            ):
+                os.close(descriptor)
+                descriptor = None
+                raise M02StorageConfigurationError(
+                    "Preserved source changed during secure open"
+                )
+            self._validate_managed_path(path, require_exists=True)
+            stream = io.BufferedReader(io.FileIO(descriptor, mode="rb", closefd=True))
+            descriptor = None
+            return stream
+        except (OSError, M02StorageConfigurationError):
+            if descriptor is not None:
+                os.close(descriptor)
+            raise
 
     def delete_key(self, storage_key: str) -> None:
         try:
-            self.resolve_key(storage_key).unlink(missing_ok=True)
-        except OSError:
-            pass
+            path = self.resolve_key(storage_key)
+            self._reject_symlink(path)
+            path.unlink(missing_ok=True)
+        except (OSError, M02StorageConfigurationError) as error:
+            logging.getLogger(__name__).error(
+                "M02 cleanup failed for a managed persisted object",
+                extra={"event_code": M02StorageCleanupError.code},
+            )
+            raise M02StorageCleanupError(
+                "A managed persisted object could not be cleaned up"
+            ) from error
 
     def cleanup_temporary(self, temporary_path: Path | None) -> None:
         if temporary_path is None:
             return
         try:
+            self._validate_managed_path(temporary_path)
+            self._reject_symlink(temporary_path)
             temporary_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except (OSError, M02StorageConfigurationError) as error:
+            logging.getLogger(__name__).error(
+                "M02 cleanup failed for a managed temporary object",
+                extra={"event_code": M02StorageCleanupError.code},
+            )
+            raise M02StorageCleanupError(
+                "A managed temporary object could not be cleaned up"
+            ) from error
 
 
 async def stage_and_validate_upload(
@@ -237,7 +341,6 @@ def _validate_text(path: Path) -> str:
         raise M02FileError(
             "M02_UNSUPPORTED_BINARY_TEXT", "Binary or NUL-bearing text is not accepted"
         )
-    detected: tuple[str, str] | None = None
     if content.startswith(b"\xef\xbb\xbf"):
         candidates = (("utf-8-sig", "utf-8-bom"),)
     else:
@@ -247,26 +350,54 @@ def _validate_text(path: Path) -> str:
             ("iso8859_8", "iso-8859-8"),
             ("latin-1", "latin-1"),
         )
-    decoded = ""
+    detected: tuple[str, str, float] | None = None
     for codec, label in candidates:
         try:
             decoded = content.decode(codec)
-            detected = (codec, label)
-            break
         except UnicodeDecodeError:
             continue
+        score = _text_likeness_score(decoded)
+        if score is not None and (detected is None or score > detected[2]):
+            detected = (codec, label, score)
     if detected is None:
         raise M02FileError(
-            "M02_UNSUPPORTED_TEXT_ENCODING", "The text encoding is not supported"
-        )
-    control_count = sum(
-        1 for character in decoded if ord(character) < 32 and character not in "\t\r\n\f"
-    )
-    if control_count / max(len(decoded), 1) > 0.02:
-        raise M02FileError(
-            "M02_UNSUPPORTED_BINARY_TEXT", "Binary text content is not accepted"
+            "M02_UNSUPPORTED_BINARY_TEXT",
+            "Binary or unsupported text content is not accepted",
         )
     return detected[1]
+
+
+def _text_likeness_score(decoded: str) -> float | None:
+    control_count = sum(
+        1
+        for character in decoded
+        if (
+            ord(character) < 32
+            and character not in "\t\r\n\f"
+        )
+        or 0x7F <= ord(character) <= 0x9F
+    )
+    meaningful_count = sum(
+        1
+        for character in decoded
+        if character.isalnum()
+        or character.isspace()
+        or character in ".,;:!?-_/'\"()[]{}<>@#$%^&*+=|\\"
+        or "\u0590" <= character <= "\u05ff"
+    )
+    if (
+        control_count / max(len(decoded), 1) > 0.02
+        or meaningful_count / max(len(decoded), 1) < 0.70
+        or (len(decoded) >= 32 and len(set(decoded)) < 3)
+    ):
+        return None
+    hebrew_count = sum("\u0590" <= character <= "\u05ff" for character in decoded)
+    latin_count = sum(
+        ("a" <= character.lower() <= "z") or "\u00c0" <= character <= "\u024f"
+        for character in decoded
+    )
+    mixed_script_penalty = 0.25 if hebrew_count and latin_count else 0.0
+    return meaningful_count / max(len(decoded), 1) - mixed_script_penalty
 
 
 def _validate_xlsx(path: Path) -> None:

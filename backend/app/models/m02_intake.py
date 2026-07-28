@@ -187,9 +187,9 @@ class M02PreservedBlob(Base):
         ),
         CheckConstraint(
             "storage_key LIKE 'objects/%' "
-            "AND instr(storage_key, '..') = 0 "
-            "AND instr(storage_key, ':') = 0 "
-            "AND instr(storage_key, char(92)) = 0",
+            "AND storage_key NOT LIKE '%..%' "
+            "AND storage_key NOT LIKE '%:%' "
+            "AND storage_key NOT LIKE '%\\%'",
             name="ck_m02_preserved_blobs_relative_storage_key",
         ),
         UniqueConstraint(

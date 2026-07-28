@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import threading
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import case, select
+from sqlalchemy import case, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -23,6 +26,7 @@ from app.schemas.m02_intake import (
     M02SourceResponse,
 )
 from app.services.m02_storage import ManagedLocalStorage, M02FileError, StagedUpload
+from app.services.m01_case_service import M01CaseError, ensure_m01_editable
 
 
 M02_ACTOR = "system:m02-intake:M02 intake workflow"
@@ -49,6 +53,8 @@ METADATA_FIELDS = {
     "declared_basis",
     "notes",
 }
+_blob_lock_guard = threading.Lock()
+_blob_locks: dict[tuple[int, str], threading.Lock] = {}
 
 
 def require_client(db: Session, client_id: int) -> Client:
@@ -59,6 +65,37 @@ def require_client(db: Session, client_id: int) -> Client:
             detail={"code": "M02_RESOURCE_NOT_FOUND", "message": "Resource not found"},
         )
     return client
+
+
+def require_mutable_client(db: Session, client_id: int) -> Client:
+    client = require_client(db, client_id)
+    try:
+        ensure_m01_editable(client)
+    except M01CaseError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": error.message},
+        ) from error
+    return client
+
+
+@contextmanager
+def _checksum_lock(db: Session, client_id: int, checksum: str):
+    key = (client_id, checksum)
+    with _blob_lock_guard:
+        lock = _blob_locks.setdefault(key, threading.Lock())
+    with lock:
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            advisory_key = int.from_bytes(
+                hashlib.sha256(f"{client_id}:{checksum}".encode("ascii")).digest()[:8],
+                byteorder="big",
+                signed=True,
+            )
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": advisory_key},
+            )
+        yield
 
 
 def require_intake(db: Session, client_id: int, intake_id: str) -> M02IntakeRecord:
@@ -94,7 +131,7 @@ def require_source(db: Session, client_id: int, source_id: str) -> M02PreservedS
 def create_manual_intake(
     db: Session, client_id: int, payload: M02ManualIntakeRequest
 ) -> M02IntakeRecord:
-    require_client(db, client_id)
+    require_mutable_client(db, client_id)
     values = _normalized_payload(payload.model_dump())
     row = M02IntakeRecord(
         intake_id=f"M02I-{uuid4().hex}",
@@ -125,7 +162,7 @@ def update_intake(
     intake_id: str,
     payload: M02IntakeUpdateRequest,
 ) -> M02IntakeRecord:
-    require_client(db, client_id)
+    require_mutable_client(db, client_id)
     row = require_intake(db, client_id, intake_id)
     if row.lifecycle_status not in EDITABLE_STATUSES:
         raise HTTPException(
@@ -160,8 +197,9 @@ def transition_intake(
     intake_id: str,
     target_status: str,
     rejection_reason_code: str | None,
+    notes: str | None = None,
 ) -> M02IntakeRecord:
-    require_client(db, client_id)
+    require_mutable_client(db, client_id)
     row = require_intake(db, client_id, intake_id)
     if target_status not in ALLOWED_TRANSITIONS.get(row.lifecycle_status, set()):
         raise HTTPException(
@@ -206,6 +244,8 @@ def transition_intake(
     row.lifecycle_decided_at = datetime.now(timezone.utc)
     if target_status == "rejected":
         row.rejection_reason_code = rejection_reason_code.strip()
+    if notes is not None:
+        row.notes = _optional_text(notes)
     db.commit()
     db.refresh(row)
     return row
@@ -228,8 +268,44 @@ def preserve_staged_upload(
     declared_basis: str | None,
     notes: str | None,
 ) -> M02IntakeRecord:
-    require_client(db, client_id)
+    require_mutable_client(db, client_id)
     source_type = _required_text(source_type, "source_type")
+    with _checksum_lock(db, client_id, staged.sha256_checksum):
+        return _preserve_staged_upload_locked(
+            db,
+            storage,
+            client_id,
+            staged,
+            source_type=source_type,
+            declared_provider_name=declared_provider_name,
+            product_name=product_name,
+            product_identifier=product_identifier,
+            declared_account_reference=declared_account_reference,
+            declared_statement_date=declared_statement_date,
+            declared_start_date=declared_start_date,
+            declared_product_type=declared_product_type,
+            declared_basis=declared_basis,
+            notes=notes,
+        )
+
+
+def _preserve_staged_upload_locked(
+    db: Session,
+    storage: ManagedLocalStorage,
+    client_id: int,
+    staged: StagedUpload,
+    *,
+    source_type: str,
+    declared_provider_name: str | None,
+    product_name: str | None,
+    product_identifier: str | None,
+    declared_account_reference: str | None,
+    declared_statement_date: date | None,
+    declared_start_date: date | None,
+    declared_product_type: str | None,
+    declared_basis: str | None,
+    notes: str | None,
+) -> M02IntakeRecord:
     prior = db.execute(
         select(M02PreservedBlob, M02PreservedSource)
         .join(
@@ -337,6 +413,7 @@ def record_preservation_failure(
     declared_account_reference: str | None = None,
     declared_statement_date: date | None = None,
 ) -> M02IntakeRecord:
+    require_mutable_client(db, client_id)
     row = M02IntakeRecord(
         intake_id=f"M02I-{uuid4().hex}",
         client_id=client_id,

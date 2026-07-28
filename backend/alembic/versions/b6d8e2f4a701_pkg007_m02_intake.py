@@ -18,6 +18,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    dialect_name = op.get_bind().dialect.name
+    sha256_constraint = (
+        "length(sha256_checksum) = 64 "
+        "AND sha256_checksum = lower(sha256_checksum) "
+        "AND sha256_checksum NOT GLOB '*[^0-9a-f]*'"
+        if dialect_name == "sqlite"
+        else "length(sha256_checksum) = 64 "
+        "AND sha256_checksum = lower(sha256_checksum) "
+        "AND sha256_checksum ~ '^[0-9a-f]{64}$'"
+    )
     op.create_table(
         "m02_intake_records",
         sa.Column("intake_id", sa.String(64), primary_key=True),
@@ -173,9 +183,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         ),
         sa.CheckConstraint(
-            "length(sha256_checksum) = 64 "
-            "AND sha256_checksum = lower(sha256_checksum) "
-            "AND sha256_checksum NOT GLOB '*[^0-9a-f]*'",
+            sha256_constraint,
             name="ck_m02_preserved_blobs_sha256",
         ),
         sa.CheckConstraint(
@@ -184,9 +192,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "storage_key LIKE 'objects/%' "
-            "AND instr(storage_key, '..') = 0 "
-            "AND instr(storage_key, ':') = 0 "
-            "AND instr(storage_key, char(92)) = 0",
+            "AND storage_key NOT LIKE '%..%' "
+            "AND storage_key NOT LIKE '%:%' "
+            "AND storage_key NOT LIKE '%\\%'",
             name="ck_m02_preserved_blobs_relative_storage_key",
         ),
         sa.UniqueConstraint(

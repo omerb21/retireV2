@@ -13,7 +13,7 @@
 
 ## Accepted Product Outcome
 
-The authenticated application workflow now allows a user to:
+The application workflow now allows a user to:
 
 1. open an existing client;
 2. enter the fixation workspace;

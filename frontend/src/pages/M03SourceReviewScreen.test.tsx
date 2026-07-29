@@ -207,6 +207,91 @@ describe("M03SourceReviewScreen", () => {
     });
   });
 
+  it("rejects stale candidate success after returning to the original client", async () => {
+    const firstCandidates = deferred<Response>();
+    let aCandidateCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
+      if (clientMatch) return json({ ...client(), client_id: Number(clientMatch[1]) });
+      if (url.endsWith("/api/clients/1/m03/candidates")) {
+        aCandidateCalls += 1;
+        return aCandidateCalls === 1 ? firstCandidates.promise : json([target()]);
+      }
+      if (url.endsWith("/api/clients/2/m03/candidates")) {
+        return json([{ ...target(), client_id: 2, intake_id: "manual-2" }]);
+      }
+      throw new Error(`unexpected ${url}`);
+    }));
+    renderNavigablePage();
+    fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
+    await screen.findByRole("button", { name: /manual-2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+    await screen.findByRole("button", { name: /manual-1/ });
+    firstCandidates.resolve(json([{ ...target(), intake_id: "stale-candidate" }]));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /stale-candidate/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /manual-1/ })).toBeEnabled();
+      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+    });
+  });
+
+  it.each([
+    ["detail", "success"],
+    ["detail", "error"],
+    ["history", "success"],
+    ["history", "error"],
+    ["annotations", "success"],
+    ["annotations", "error"],
+    ["eligibility", "success"],
+    ["eligibility", "error"],
+  ] as const)("protects stale %s %s independently", async (readPath, outcome) => {
+    const staleRead = deferred<Response>();
+    let aCandidateLoads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
+      if (clientMatch) return json({ ...client(), client_id: Number(clientMatch[1]) });
+      if (url.endsWith("/m03/candidates")) {
+        const id = url.includes("/clients/2/") ? 2 : 1;
+        if (id === 1) aCandidateLoads += 1;
+        return json([{ ...target(), client_id: id, intake_id: `manual-${id}` }]);
+      }
+      if (url.includes("/clients/1/m03/targets/manual-1")) {
+        const path = url.endsWith("/history") ? "history"
+          : url.endsWith("/annotations") ? "annotations"
+            : url.endsWith("/eligibility") ? "eligibility" : "detail";
+        if (aCandidateLoads === 1 && path === readPath) return staleRead.promise;
+        const accepted = aCandidateLoads > 1 ? revision("accepted", 2) : null;
+        if (path === "history") return json(accepted ? [revision("under_review", 1), accepted] : []);
+        if (path === "annotations") return json([]);
+        return json(target(accepted));
+      }
+      throw new Error(`unexpected ${url}`);
+    }));
+    renderNavigablePage();
+    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
+    await screen.findByRole("button", { name: /manual-2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+    expect(await screen.findByText(/#2 accepted/)).toBeInTheDocument();
+    if (outcome === "success") {
+      const response = readPath === "history" || readPath === "annotations"
+        ? json([])
+        : json(target());
+      staleRead.resolve(response);
+    } else {
+      staleRead.resolve(json({ detail: "stale read error" }, 500));
+    }
+    await waitFor(() => {
+      expect(screen.getByText(/#2 accepted/)).toBeInTheDocument();
+      expect(screen.getByText(/eligible for a separately authorized/)).toBeInTheDocument();
+      expect(screen.queryByText(/stale read error/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+    });
+  });
+
   it("protects detail, history, annotations, and eligibility from stale A-B-A success", async () => {
     const oldDetail = deferred<Response>();
     const oldHistory = deferred<Response>();
@@ -258,10 +343,16 @@ describe("M03SourceReviewScreen", () => {
     });
   });
 
-  it.each(["start", "accept", "reject", "reopen", "annotation", "supersession"] as const)(
-    "protects %s and its post-mutation refresh from stale A-B-A completion",
-    async (action) => {
+  it.each(
+    (["start", "accept", "reject", "reopen", "annotation", "supersession"] as const)
+      .flatMap((action) => (["A-B", "A-B-A"] as const)
+        .flatMap((transition) => (["success", "rejected", "api-error"] as const)
+          .map((outcome) => [action, outcome, transition] as const))),
+  )(
+    "protects %s stale %s across %s without launching refresh",
+    async (action, outcome, transition) => {
       const operation = deferred<Response>();
+      let targetReadCalls = 0;
       const current = action === "start" ? null
         : action === "accept" || action === "reject" ? revision("under_review", 1)
           : revision("accepted", 2);
@@ -283,6 +374,7 @@ describe("M03SourceReviewScreen", () => {
         if (url.includes("/clients/1/m03/targets/manual-1")) {
           const isMutation = init?.method === "POST";
           if (isMutation) return operation.promise;
+          targetReadCalls += 1;
           if (url.endsWith("/history")) return json(current ? [current] : []);
           if (url.endsWith("/annotations")) return json(action === "supersession" ? [existingNote] : []);
           return json(target(current));
@@ -309,14 +401,80 @@ describe("M03SourceReviewScreen", () => {
       }
       fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
       await screen.findByRole("button", { name: /manual-2/ });
-      fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
-      await screen.findByRole("button", { name: /manual-1/ });
-      operation.resolve(json(current ?? revision("under_review", 1), 201));
+      if (transition === "A-B-A") {
+        fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+        await screen.findByRole("button", { name: /manual-1/ });
+      }
+      if (outcome === "success") {
+        operation.resolve(json(current ?? revision("under_review", 1), 201));
+      } else if (outcome === "api-error") {
+        operation.resolve(json({ detail: "stale mutation API error" }, 409));
+      } else {
+        operation.reject(new Error("stale mutation rejection"));
+      }
       await waitFor(() => {
+        expect(targetReadCalls).toBe(4);
         expect(screen.queryByText(/Review target/)).not.toBeInTheDocument();
         expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
         expect(screen.queryByText(/M03 request failed/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/stale mutation/)).not.toBeInTheDocument();
+        const expectedCandidate = transition === "A-B-A" ? /manual-1/ : /manual-2/;
+        expect(screen.getByRole("button", { name: expectedCandidate })).toBeEnabled();
       });
     },
   );
+
+  it("keeps a new-context refresh independent when the original A mutation resolves after return", async () => {
+    const oldMutation = deferred<Response>();
+    const newMutation = deferred<Response>();
+    let mutationCalls = 0;
+    let targetReadCalls = 0;
+    let current: ReturnType<typeof revision> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
+      if (clientMatch) return json({ ...client(), client_id: Number(clientMatch[1]) });
+      if (url.endsWith("/m03/candidates")) {
+        const id = url.includes("/clients/2/") ? 2 : 1;
+        return json([{ ...target(current), client_id: id, intake_id: `manual-${id}` }]);
+      }
+      if (url.includes("/clients/1/m03/targets/manual-1")) {
+        if (init?.method === "POST") {
+          mutationCalls += 1;
+          return mutationCalls === 1 ? oldMutation.promise : newMutation.promise;
+        }
+        targetReadCalls += 1;
+        if (url.endsWith("/history")) return json(current ? [current] : []);
+        if (url.endsWith("/annotations")) return json([]);
+        return json(target(current));
+      }
+      throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
+    }));
+    renderNavigablePage();
+    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+    await screen.findByText(/Review target/);
+    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
+    await screen.findByRole("button", { name: /manual-2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+    await screen.findByText(/Review target/);
+    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+
+    oldMutation.resolve(json(revision("under_review", 1), 201));
+    await waitFor(() => {
+      expect(targetReadCalls).toBe(8);
+      expect(screen.getByRole("button", { name: "Start review" })).toBeDisabled();
+    });
+
+    current = revision("under_review", 1);
+    newMutation.resolve(json(current, 201));
+    await waitFor(() => {
+      expect(targetReadCalls).toBe(12);
+      expect(screen.getByText(/#1 under_review/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Decision\/reopen reason/)).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Accept review" })).toBeDisabled();
+      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+    });
+  });
 });

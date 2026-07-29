@@ -203,7 +203,8 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall are `READY_FO
 | PKG-006 definition and migration | Module: `M01`; definition: `specs/runtime/PKG_006_FINAL_PACKAGE_DEFINITION.md`; accepted migration: `f3a7c9d2e610` |
 | PKG-007 definition status | `DEFINITION_ACCEPTED` at definition commit `18fd30b4de8e2c68978e524962fc750f118675b4`; module: `M02`; definition: `specs/runtime/PKG_007_FINAL_PACKAGE_DEFINITION.md`; definition acceptance record: `specs/runtime/PKG_007_definition_acceptance_record.md` |
 | PKG-007 product outcome | Controlled manual pension intake and optional opaque source preservation |
-| PKG-007 implementation boundary | Implementation: `NOT_AUTHORIZED`; migration execution: `NOT_AUTHORIZED`; additive migration required but not executed; M03: `NOT_AUTHORIZED` |
+| PKG-007 execution status | `ACCEPTED_WITH_NON_BLOCKING_FOLLOW_UP` at implementation commit `4f2ff42467283653d6e022706c749815bd8c9589`; closure: this documentation commit; implementation acceptance record: `specs/runtime/PKG_007_acceptance_record.md`; accepted migration: `b6d8e2f4a701`; M03: `NOT_AUTHORIZED` |
+| PKG-007 non-blocking follow-up | `D-007-010_DEFERRED_NON_BLOCKING`; direct SQL remains outside the existing SQLAlchemy ORM immutable-blob guard; no database trigger or permission-layer enforcement was added or authorized |
 | Next package authorization | `NOT_AUTHORIZED` |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.

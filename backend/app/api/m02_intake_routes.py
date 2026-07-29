@@ -115,6 +115,55 @@ def _storage() -> ManagedLocalStorage:
         ) from error
 
 
+def _close_storage_with_cleanup_boundary(
+    storage: ManagedLocalStorage,
+    *,
+    primary_error: BaseException | None = None,
+) -> M02StorageCleanupError | None:
+    try:
+        storage.close()
+        return None
+    except M02StorageCleanupError as error:
+        if primary_error is None or error.primary_error is not None:
+            return error
+        return M02StorageCleanupError(
+            "Managed storage cleanup could not be completed",
+            primary_error=primary_error,
+            cleanup_errors=(error,),
+            operational_diagnostics=error.operational_diagnostics,
+            cleanup_steps=error.cleanup_steps or ("STORAGE_CLOSE",),
+        )
+    except Exception as error:
+        return M02StorageCleanupError(
+            "Managed storage cleanup could not be completed",
+            primary_error=primary_error,
+            cleanup_errors=(error,),
+            cleanup_steps=("STORAGE_CLOSE",),
+        )
+
+
+def _cleanup_error_detail(
+    failures: list[M02StorageCleanupError],
+) -> dict[str, object]:
+    diagnostic_chain: list[str] = []
+    cleanup_steps: list[str] = []
+    for failure in failures:
+        for code in failure.diagnostic_codes:
+            if code not in diagnostic_chain:
+                diagnostic_chain.append(code)
+        for step in failure.cleanup_steps:
+            if step not in cleanup_steps:
+                cleanup_steps.append(step)
+    detail: dict[str, object] = {
+        "code": M02StorageCleanupError.code,
+        "message": "Managed upload cleanup could not be completed",
+        "diagnostic_chain": diagnostic_chain,
+    }
+    if cleanup_steps:
+        detail["cleanup_steps"] = cleanup_steps
+    return detail
+
+
 @router.post("/intakes/manual", response_model=M02IntakeResponse, status_code=201)
 def post_manual_intake(
     client_id: int,
@@ -315,18 +364,22 @@ async def post_upload_intakes(
             staged.cleanup(primary_error=cleanup_primary_error)
         except M02StorageCleanupError as error:
             cleanup_failures.append(error)
-    storage.close()
+    storage_close_failure = _close_storage_with_cleanup_boundary(
+        storage,
+        primary_error=cleanup_primary_error,
+    )
+    if storage_close_failure is not None:
+        cleanup_failures.append(storage_close_failure)
     if cleanup_failures:
         request_error_status = 500
-        request_error = {
-            "code": M02StorageCleanupError.code,
-            "message": "Managed upload cleanup could not be completed",
-            "diagnostic_chain": list(cleanup_failures[0].diagnostic_codes),
-        }
+        request_error = _cleanup_error_detail(cleanup_failures)
     has_committed_result = any(result.status == "preserved" for result in results)
+    preserve_results_with_cleanup = has_committed_result or (
+        storage_close_failure is not None and bool(results)
+    )
     if (
         request_error is not None
-        and has_committed_result
+        and preserve_results_with_cleanup
         and "diagnostic_chain" in request_error
     ):
         request_error = {
@@ -336,7 +389,7 @@ async def post_upload_intakes(
     if (
         request_error is not None
         and request_error["code"] == M02StorageCleanupError.code
-        and not has_committed_result
+        and not preserve_results_with_cleanup
     ):
         raise HTTPException(status_code=500, detail=request_error)
     if request_error is not None and not results:

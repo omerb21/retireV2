@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { getClient, type ClientDetailItem } from "../api/clientsApi";
 import {
   addM03Annotation, decideM03Review, downloadM03Source, getM03Annotations,
-  getM03History, getM03Target, listM03Candidates, startM03Review,
+  getM03Eligibility, getM03History, getM03Target, listM03Candidates, startM03Review,
   type M03Annotation, type M03Revision, type M03Target
 } from "../api/m03ReviewApi";
 import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
@@ -23,6 +23,8 @@ export function M03SourceReviewScreen() {
   const [reason, setReason] = useState("");
   const [topic, setTopic] = useState("");
   const [note, setNote] = useState("");
+  const [supersedesAnnotationId, setSupersedesAnnotationId] = useState("");
+  const [retainedIntakeId, setRetainedIntakeId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -30,6 +32,8 @@ export function M03SourceReviewScreen() {
   useEffect(() => {
     setClient(null); setCandidates([]); setTarget(null); setHistory([]); setAnnotations([]);
     setError(null); setLoading(false); setSubmitting(false); setReason(""); setTopic(""); setNote("");
+    setSupersedesAnnotationId("");
+    setRetainedIntakeId("");
   }, [clientId, location.key]);
 
   const loadCandidates = useCallback(async () => {
@@ -52,11 +56,12 @@ export function M03SourceReviewScreen() {
     if (clientId === null) return;
     const token = captureClientContext(); setLoading(true); setError(null);
     try {
-      const [next, revisions, notes] = await Promise.all([
-        getM03Target(clientId, intakeId), getM03History(clientId, intakeId), getM03Annotations(clientId, intakeId)
+      const [next, revisions, notes, eligibility] = await Promise.all([
+        getM03Target(clientId, intakeId), getM03History(clientId, intakeId),
+        getM03Annotations(clientId, intakeId), getM03Eligibility(clientId, intakeId)
       ]);
       if (!isCurrentClientContext(token)) return;
-      setTarget(next); setHistory(revisions); setAnnotations(notes);
+      setTarget({ ...next, ...eligibility }); setHistory(revisions); setAnnotations(notes);
     } catch (cause) {
       if (isCurrentClientContext(token)) setError(message(cause));
     } finally {
@@ -69,12 +74,13 @@ export function M03SourceReviewScreen() {
     const token = captureClientContext(); setSubmitting(true); setError(null);
     try {
       await operation();
-      const [next, revisions, notes] = await Promise.all([
+      const [next, revisions, notes, eligibility] = await Promise.all([
         getM03Target(clientId, target.intake_id), getM03History(clientId, target.intake_id),
-        getM03Annotations(clientId, target.intake_id)
+        getM03Annotations(clientId, target.intake_id), getM03Eligibility(clientId, target.intake_id)
       ]);
       if (!isCurrentClientContext(token)) return;
-      setTarget(next); setHistory(revisions); setAnnotations(notes); setReason(""); setTopic(""); setNote("");
+      setTarget({ ...next, ...eligibility }); setHistory(revisions); setAnnotations(notes); setReason(""); setTopic(""); setNote("");
+      setSupersedesAnnotationId("");
     } catch (cause) {
       if (isCurrentClientContext(token)) setError(message(cause));
     } finally {
@@ -100,6 +106,12 @@ export function M03SourceReviewScreen() {
           </button>
         </li>)}</ul>
       )}
+      <label>Open retained review by M02 intake ID
+        <input value={retainedIntakeId} onChange={(event) => setRetainedIntakeId(event.target.value)} />
+      </label>
+      <button type="button" disabled={!retainedIntakeId.trim()} onClick={() => void loadTarget(retainedIntakeId.trim())}>
+        Open retained review
+      </button>
       {target ? <section>
         <h3>Review target</h3>
         <p>Kind: {target.target_kind}; M02 lifecycle: {target.m02_lifecycle_status}</p>
@@ -121,13 +133,32 @@ export function M03SourceReviewScreen() {
             <label>Topic <input value={topic} onChange={(event) => setTopic(event.target.value)} /></label>
             <label>Note <textarea value={note} onChange={(event) => setNote(event.target.value)} /></label>
             <label>Reason <textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-            <button type="button" disabled={!topic.trim() || !note.trim() || !reason.trim()} onClick={() => void mutate(() => addM03Annotation(clientId, target.intake_id, { review_revision_id: current.revision_id, topic, note, reason }))}>Save annotation</button>
+            <label>Supersede existing annotation
+              <select value={supersedesAnnotationId} onChange={(event) => setSupersedesAnnotationId(event.target.value)}>
+                <option value="">None — add a new annotation</option>
+                {annotations.map((row) => (
+                  <option key={row.annotation_id} value={row.annotation_id}>
+                    {row.topic}: {row.annotation_id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" disabled={!topic.trim() || !note.trim() || !reason.trim()} onClick={() => void mutate(() => addM03Annotation(clientId, target.intake_id, {
+              review_revision_id: current.revision_id,
+              topic,
+              note,
+              reason,
+              ...(supersedesAnnotationId ? { supersedes_annotation_id: supersedesAnnotationId } : {}),
+            }))}>Save annotation</button>
           </> : null}
         </fieldset>
         <h4>Immutable review history</h4>
         <ol>{history.map((row) => <li key={row.revision_id}>#{row.revision_sequence} {row.state} — {row.reason ?? "started"} — {row.actor}</li>)}</ol>
         <h4>Annotation history</h4>
-        <ul>{annotations.map((row) => <li key={row.annotation_id}>{row.topic}: {row.note} — {row.reason}</li>)}</ul>
+        <ul>{annotations.map((row) => <li key={row.annotation_id}>
+          {row.topic}: {row.note} — {row.reason}
+          {row.supersedes_annotation_id ? ` — supersedes ${row.supersedes_annotation_id}` : ""}
+        </li>)}</ul>
       </section> : null}
       <p><Link to={`/clients/${clientId}`}>Back to M01 client case</Link></p>
     </section>

@@ -37,12 +37,16 @@ const root = (clientId: number, intakeId?: string) =>
 
 export const listM03Candidates = (clientId: number) => request<M03Target[]>(`${root(clientId)}/candidates`);
 export const getM03Target = (clientId: number, intakeId: string) => request<M03Target>(root(clientId, intakeId));
+export const getM03Eligibility = (clientId: number, intakeId: string) => request<M03Target>(`${root(clientId, intakeId)}/eligibility`);
 export const getM03History = (clientId: number, intakeId: string) => request<M03Revision[]>(`${root(clientId, intakeId)}/history`);
 export const getM03Annotations = (clientId: number, intakeId: string) => request<M03Annotation[]>(`${root(clientId, intakeId)}/annotations`);
 export const startM03Review = (clientId: number, intakeId: string) => request<M03Revision>(`${root(clientId, intakeId)}/start`, json("POST"));
 export const decideM03Review = (clientId: number, intakeId: string, action: "accept" | "reject" | "reopen", reason: string, expected: string) =>
   request<M03Revision>(`${root(clientId, intakeId)}/${action}`, json("POST", { reason, expected_current_revision_id: expected }));
-export const addM03Annotation = (clientId: number, intakeId: string, payload: { review_revision_id: string; topic: string; note: string; reason: string }) =>
+export const addM03Annotation = (clientId: number, intakeId: string, payload: {
+  review_revision_id: string; topic: string; note: string; reason: string;
+  supersedes_annotation_id?: string;
+}) =>
   request<M03Annotation>(`${root(clientId, intakeId)}/annotations`, json("POST", payload));
 
 export async function downloadM03Source(clientId: number, sourceId: string): Promise<void> {

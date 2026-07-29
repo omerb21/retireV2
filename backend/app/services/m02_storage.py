@@ -51,11 +51,13 @@ class M02StorageCleanupError(RuntimeError):
         primary_error: BaseException | None = None,
         cleanup_errors: tuple[BaseException, ...] = (),
         operational_diagnostics: tuple[str, ...] = (),
+        cleanup_steps: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.primary_error = primary_error
         self.cleanup_errors = cleanup_errors
         self.operational_diagnostics = operational_diagnostics
+        self.cleanup_steps = cleanup_steps
         self.diagnostic_codes = tuple(
             code
             for code in (
@@ -230,6 +232,16 @@ def _close_windows_handle_preserving_error(
         _record_secondary_close_failure(primary_error, close_error)
 
 
+def _close_posix_descriptor_preserving_error(
+    descriptor: int,
+    primary_error: BaseException,
+) -> None:
+    try:
+        os.close(descriptor)
+    except BaseException as close_error:
+        _record_secondary_close_failure(primary_error, close_error)
+
+
 class _DirectoryHandleKind(str, Enum):
     WINDOWS = "windows"
     POSIX = "posix"
@@ -259,9 +271,15 @@ class _TrustedDirectory:
 
     @classmethod
     def open(cls, path: Path) -> "_TrustedDirectory":
+        if os.name == "nt":
+            return cls._open_windows(path)
+        return cls._open_posix(path)
+
+    @classmethod
+    def _open_posix(cls, path: Path) -> "_TrustedDirectory":
+        descriptor: int | None = None
+        ownership_transferred = False
         try:
-            if os.name == "nt":
-                return cls._open_windows(path)
             flags = (
                 os.O_RDONLY
                 | getattr(os, "O_DIRECTORY", 0)
@@ -270,22 +288,27 @@ class _TrustedDirectory:
             descriptor = os.open(path, flags)
             opened = os.fstat(descriptor)
             if not stat.S_ISDIR(opened.st_mode):
-                os.close(descriptor)
                 raise M02StorageConfigurationError(
                     "Managed directory is not a directory"
                 )
-            return cls(
+            trusted = cls(
                 path,
                 descriptor,
                 (opened.st_dev, opened.st_ino),
                 handle_kind=_DirectoryHandleKind.POSIX,
             )
-        except M02StorageConfigurationError:
+            ownership_transferred = True
+            return trusted
+        except BaseException as error:
+            if descriptor is not None and not ownership_transferred:
+                _close_posix_descriptor_preserving_error(descriptor, error)
+            if isinstance(error, M02StorageConfigurationError):
+                raise
+            if isinstance(error, OSError):
+                raise M02StorageConfigurationError(
+                    "Managed directory is unavailable"
+                ) from error
             raise
-        except OSError as error:
-            raise M02StorageConfigurationError(
-                "Managed directory is unavailable"
-            ) from error
 
     @classmethod
     def _open_windows(
@@ -296,7 +319,12 @@ class _TrustedDirectory:
         api = api or _windows_directory_api()
         handle: int | None = None
         try:
-            handle, attributes, identity = api.open_directory(path)
+            candidate_handle, attributes, identity = api.open_directory(path)
+            if candidate_handle == -1:
+                raise M02StorageConfigurationError(
+                    "Managed directory is unavailable"
+                )
+            handle = candidate_handle
             if (
                 not attributes & _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY
                 or attributes & _WindowsDirectoryApi.FILE_ATTRIBUTE_REPARSE_POINT
@@ -315,9 +343,11 @@ class _TrustedDirectory:
             if handle is not None:
                 _close_windows_handle_preserving_error(api, handle, error)
             raise
-        except OSError as error:
+        except Exception as error:
             if handle is not None:
                 _close_windows_handle_preserving_error(api, handle, error)
+            if isinstance(error, M02StorageConfigurationError):
+                raise
             raise M02StorageConfigurationError(
                 "Managed directory is unavailable"
             ) from error
@@ -363,44 +393,14 @@ class _TrustedDirectory:
                 _record_secondary_close_failure(primary_error, close_error)
 
     def open_child(self, name: str, *, create: bool = False) -> "_TrustedDirectory":
+        _validate_relative_name(name)
+        if os.name != "nt":
+            return self._open_posix_child(name, create=create)
         try:
-            _validate_relative_name(name)
             if create:
-                if os.name != "nt":
-                    try:
-                        os.mkdir(name, dir_fd=self._handle)
-                    except FileExistsError:
-                        pass
-                else:
-                    self._verify_path_identity()
-                    (self.path / name).mkdir(exist_ok=True)
-                    self._verify_path_identity()
-            if os.name != "nt":
-                flags = (
-                    os.O_RDONLY
-                    | getattr(os, "O_DIRECTORY", 0)
-                    | getattr(os, "O_NOFOLLOW", 0)
-                )
-                descriptor = os.open(name, flags, dir_fd=self._handle)
-                opened = os.fstat(descriptor)
-                if not stat.S_ISDIR(opened.st_mode):
-                    os.close(descriptor)
-                    raise M02StorageConfigurationError(
-                        "Managed child is not a directory"
-                    )
-                child = _TrustedDirectory(
-                    self.path / name,
-                    descriptor,
-                    (opened.st_dev, opened.st_ino),
-                    handle_kind=_DirectoryHandleKind.POSIX,
-                )
-                try:
-                    self._verify_path_identity()
-                    child._verify_path_identity()
-                except BaseException:
-                    child.close()
-                    raise
-                return child
+                self._verify_path_identity()
+                (self.path / name).mkdir(exist_ok=True)
+                self._verify_path_identity()
             child = _TrustedDirectory.open(self.path / name)
             self._verify_path_identity()
             return child
@@ -410,6 +410,53 @@ class _TrustedDirectory:
             raise M02StorageConfigurationError(
                 "Managed child directory is unavailable"
             ) from error
+
+    def _open_posix_child(
+        self, name: str, *, create: bool = False
+    ) -> "_TrustedDirectory":
+        descriptor: int | None = None
+        child: _TrustedDirectory | None = None
+        ownership_transferred = False
+        try:
+            _validate_relative_name(name)
+            if create:
+                try:
+                    os.mkdir(name, dir_fd=self._handle)
+                except FileExistsError:
+                    pass
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(name, flags, dir_fd=self._handle)
+            opened = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened.st_mode):
+                raise M02StorageConfigurationError(
+                    "Managed child is not a directory"
+                )
+            child = _TrustedDirectory(
+                self.path / name,
+                descriptor,
+                (opened.st_dev, opened.st_ino),
+                handle_kind=_DirectoryHandleKind.POSIX,
+            )
+            self._verify_path_identity()
+            child._verify_path_identity()
+            ownership_transferred = True
+            return child
+        except BaseException as error:
+            if descriptor is not None and not ownership_transferred:
+                if child is not None:
+                    child._closed = True
+                _close_posix_descriptor_preserving_error(descriptor, error)
+            if isinstance(error, M02StorageConfigurationError):
+                raise
+            if isinstance(error, OSError):
+                raise M02StorageConfigurationError(
+                    "Managed child directory is unavailable"
+                ) from error
+            raise
 
     def create_file(self, name: str) -> BinaryIO:
         try:
@@ -519,12 +566,12 @@ class _TrustedDirectory:
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         if self.handle_kind == _DirectoryHandleKind.POSIX:
             os.close(self._handle)
-            return
-        assert self._windows_api is not None
-        self._windows_api.close_handle(self._handle)
+        else:
+            assert self._windows_api is not None
+            self._windows_api.close_handle(self._handle)
+        self._closed = True
 
     def __del__(self) -> None:
         try:
@@ -593,6 +640,10 @@ class StagedUpload:
     final_directory: _TrustedDirectory | None = None
     final_object_name: str | None = None
     cleaned: bool = False
+    temporary_removed: bool = False
+    final_removed: bool = False
+    final_directory_closed: bool = False
+    cleanup_failure_steps: tuple[str, ...] = ()
     _resource_state: StagedResourceState = StagedResourceState.STAGED_ONLY
     _cleanup_origin_state: StagedResourceState | None = None
 
@@ -653,10 +704,14 @@ class StagedUpload:
             self._cleanup_origin_state = self._resource_state
             self._transition(StagedResourceState.CLEANUP_PENDING)
         failures: list[BaseException] = []
-        try:
-            self.storage._temporary_directory.unlink(self.temporary_name)
-        except BaseException as error:
-            failures.append(error)
+        failure_steps: list[str] = []
+        if not self.temporary_removed:
+            try:
+                self.storage._temporary_directory.unlink(self.temporary_name)
+                self.temporary_removed = True
+            except BaseException as error:
+                failures.append(error)
+                failure_steps.append("STAGED_UNLINK")
         owns_uncommitted_final = (
             self._cleanup_origin_state
             == StagedResourceState.FINAL_CREATED_UNCOMMITTED
@@ -667,22 +722,44 @@ class StagedUpload:
             and owns_uncommitted_final
             and self.final_directory is not None
             and self.final_object_name is not None
+            and not self.final_removed
         ):
             try:
                 self.final_directory.unlink(self.final_object_name)
+                self.final_removed = True
             except BaseException as error:
                 failures.append(error)
-            else:
+                failure_steps.append("FINAL_UNLINK")
+        if (
+            not failures
+            and self.final_directory is not None
+            and owns_uncommitted_final
+            and not self.final_directory_closed
+        ):
+            try:
                 self.final_directory.close()
+                self.final_directory_closed = True
+            except BaseException as error:
+                failures.append(error)
+                failure_steps.append("FINAL_DIRECTORY_CLOSE")
+            else:
                 self.final_directory = None
         elif (
             not failures
             and self.final_directory is not None
             and self._cleanup_origin_state == StagedResourceState.COMMITTED
+            and not self.final_directory_closed
         ):
-            self.final_directory.close()
-            self.final_directory = None
+            try:
+                self.final_directory.close()
+                self.final_directory_closed = True
+            except BaseException as error:
+                failures.append(error)
+                failure_steps.append("FINAL_DIRECTORY_CLOSE")
+            else:
+                self.final_directory = None
         if failures:
+            self.cleanup_failure_steps = tuple(failure_steps)
             self._transition(StagedResourceState.CLEANUP_FAILED)
             logging.getLogger(__name__).error(
                 "M02 staged-resource cleanup failed",
@@ -695,12 +772,14 @@ class StagedUpload:
                 "A staged M02 resource could not be cleaned up",
                 primary_error=primary_error,
                 cleanup_errors=tuple(failures),
+                cleanup_steps=self.cleanup_failure_steps,
                 operational_diagnostics=(
                     ("M02_FINAL_PLACEMENT_SUCCEEDED",)
                     if owns_uncommitted_final
                     else ()
                 ),
             )
+        self.cleanup_failure_steps = ()
         self._transition(StagedResourceState.CLEANED)
         self.cleaned = True
 
@@ -942,10 +1021,29 @@ class ManagedLocalStorage:
     def close(self) -> None:
         if self._closed:
             return
+        failures: list[BaseException] = []
+        failure_steps: list[str] = []
+        for step, directory in (
+            ("TEMP_DIRECTORY_CLOSE", self._temporary_directory),
+            ("OBJECT_DIRECTORY_CLOSE", self._object_directory),
+            ("ROOT_DIRECTORY_CLOSE", self._root_directory),
+        ):
+            try:
+                directory.close()
+            except BaseException as error:
+                failures.append(error)
+                failure_steps.append(step)
+        if failures:
+            logging.getLogger(__name__).error(
+                "M02 managed-storage directory cleanup failed",
+                extra={"event_code": M02StorageCleanupError.code},
+            )
+            raise M02StorageCleanupError(
+                "Managed storage directory cleanup could not be completed",
+                cleanup_errors=tuple(failures),
+                cleanup_steps=tuple(failure_steps),
+            )
         self._closed = True
-        self._temporary_directory.close()
-        self._object_directory.close()
-        self._root_directory.close()
 
     def __del__(self) -> None:
         try:

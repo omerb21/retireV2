@@ -50,6 +50,8 @@ ACCEPTED_ADDITIVE_TABLES = {
     "m02_intake_records",
     "m02_preserved_blobs",
     "m02_preserved_sources",
+    "m03_review_revisions",
+    "m03_annotations",
 }
 
 _M07_REVISION_ID: str | None = None

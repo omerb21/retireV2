@@ -49,6 +49,7 @@ from app.services.m02_storage import (
 
 PARENT_REVISION = "f3a7c9d2e610"
 PKG007_REVISION = "b6d8e2f4a701"
+CURRENT_REVISION = "e4a7c3d9b802"
 ACTOR = "system:m02-intake:M02 intake workflow"
 
 
@@ -1120,7 +1121,7 @@ def test_pkg007_migration_is_additive_and_downgrades(tmp_path: Path) -> None:
     downgraded.dispose()
 
 
-def test_pkg007_is_single_alembic_head() -> None:
+def test_migration_chain_has_single_head_after_pkg008() -> None:
     env = os.environ.copy()
     env["DATABASE_URL"] = "sqlite:///./pkg007-head-check.db"
     result = subprocess.run(
@@ -1131,7 +1132,7 @@ def test_pkg007_is_single_alembic_head() -> None:
         check=True,
         text=True,
     )
-    assert result.stdout.strip() == f"{PKG007_REVISION} (head)"
+    assert result.stdout.strip() == f"{CURRENT_REVISION} (head)"
 
 
 def test_pkg007_migration_compiles_portable_postgresql_ddl() -> None:

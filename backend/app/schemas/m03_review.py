@@ -63,4 +63,3 @@ class M03TargetResponse(BaseModel):
     eligibility_meaning: Literal[
         "reviewed evidence may be consumed by a separately authorized downstream transformation"
     ] = "reviewed evidence may be consumed by a separately authorized downstream transformation"
-

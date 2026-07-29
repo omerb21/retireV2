@@ -4,6 +4,7 @@ import asyncio
 import io
 import importlib.util
 import os
+import stat
 import subprocess
 import zipfile
 from collections.abc import Generator
@@ -710,8 +711,6 @@ def test_managed_directory_open_normalizes_not_a_directory(
     import app.services.m02_storage as storage_module
 
     target = tmp_path / "managed"
-    original_name = storage_module.os.name
-    monkeypatch.setattr(storage_module.os, "name", "posix")
     monkeypatch.setattr(
         storage_module.os,
         "open",
@@ -720,10 +719,9 @@ def test_managed_directory_open_normalizes_not_a_directory(
         ),
     )
     with pytest.raises(M02StorageConfigurationError) as error:
-        _TrustedDirectory.open(target)
+        _TrustedDirectory._open_posix(target)
     assert isinstance(error.value.__cause__, NotADirectoryError)
     assert "private managed path" not in str(error.value)
-    monkeypatch.setattr(storage_module.os, "name", original_name)
 
 
 class _FakeWindowsDirectoryApi:
@@ -842,6 +840,47 @@ def test_windows_directory_api_failure_is_typed_without_path_disclosure() -> Non
         _TrustedDirectory._open_windows(Path("C:/private/managed"), api=api)
     assert isinstance(error.value.__cause__, PermissionError)
     assert "C:/private/managed" not in str(error.value)
+    assert api.closed == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        PermissionError("allocation failed"),
+        RuntimeError("open function failed"),
+        ValueError("argument preparation failed"),
+    ],
+)
+def test_windows_pre_acquisition_failures_never_close_or_fallback(
+    failure: BaseException, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    api = _FakeWindowsDirectoryApi([failure])
+    posix_closes: list[int] = []
+    monkeypatch.setattr(storage_module.os, "close", posix_closes.append)
+    with pytest.raises(M02StorageConfigurationError) as error:
+        _TrustedDirectory._open_windows(Path("managed"), api=api)
+    assert error.value.__cause__ is failure
+    assert api.closed == []
+    assert posix_closes == []
+    assert not getattr(error.value, "__notes__", ())
+
+
+def test_windows_invalid_handle_sentinel_is_never_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    api = _FakeWindowsDirectoryApi(
+        [(-1, _WindowsDirectoryApi.FILE_ATTRIBUTE_DIRECTORY, (0, 0))]
+    )
+    posix_closes: list[int] = []
+    monkeypatch.setattr(storage_module.os, "close", posix_closes.append)
+    with pytest.raises(M02StorageConfigurationError):
+        _TrustedDirectory._open_windows(Path("managed"), api=api)
+    assert api.closed == []
+    assert posix_closes == []
 
 
 def test_posix_directory_close_uses_descriptor_backend_once(
@@ -863,6 +902,155 @@ def test_posix_directory_close_uses_descriptor_backend_once(
     directory.close()
     assert posix_closes == [41]
     assert windows_api.closed == []
+
+
+class _DirectoryStat:
+    st_mode = stat.S_IFDIR | 0o700
+    st_dev = 7
+    st_ino = 19
+
+
+def test_posix_root_fstat_failure_closes_descriptor_once_and_preserves_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    closed: list[int] = []
+    primary = OSError("injected fstat failure")
+    monkeypatch.setattr(storage_module.os, "open", lambda *_args, **_kwargs: 51)
+    monkeypatch.setattr(
+        storage_module.os,
+        "fstat",
+        lambda _fd: (_ for _ in ()).throw(primary),
+    )
+    monkeypatch.setattr(storage_module.os, "close", closed.append)
+    with pytest.raises(M02StorageConfigurationError) as error:
+        _TrustedDirectory._open_posix(Path("managed"))
+    assert error.value.__cause__ is primary
+    assert closed == [51]
+
+
+def test_posix_child_fstat_failure_closes_child_but_not_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    closed: list[int] = []
+    primary = OSError("injected child fstat failure")
+    parent = _TrustedDirectory(
+        Path("managed"),
+        60,
+        (7, 18),
+        handle_kind=_DirectoryHandleKind.POSIX,
+    )
+    monkeypatch.setattr(storage_module.os, "open", lambda *_args, **_kwargs: 61)
+    monkeypatch.setattr(
+        storage_module.os,
+        "fstat",
+        lambda _fd: (_ for _ in ()).throw(primary),
+    )
+    monkeypatch.setattr(storage_module.os, "close", closed.append)
+    with pytest.raises(M02StorageConfigurationError) as error:
+        parent._open_posix_child("objects")
+    assert error.value.__cause__ is primary
+    assert closed == [61]
+    assert parent._closed is False
+
+
+def test_posix_child_post_open_identity_failure_closes_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    closed: list[int] = []
+    verifications = 0
+    parent = _TrustedDirectory(
+        Path("managed"),
+        70,
+        (7, 18),
+        handle_kind=_DirectoryHandleKind.POSIX,
+    )
+
+    def fail_child_identity(_directory):
+        nonlocal verifications
+        verifications += 1
+        if verifications == 2:
+            raise M02StorageConfigurationError("injected child identity failure")
+
+    monkeypatch.setattr(storage_module.os, "open", lambda *_args, **_kwargs: 71)
+    monkeypatch.setattr(storage_module.os, "fstat", lambda _fd: _DirectoryStat())
+    monkeypatch.setattr(storage_module.os, "close", closed.append)
+    monkeypatch.setattr(_TrustedDirectory, "_verify_path_identity", fail_child_identity)
+    with pytest.raises(M02StorageConfigurationError, match="child identity"):
+        parent._open_posix_child("objects")
+    assert closed == [71]
+    assert parent._closed is False
+
+
+def test_posix_root_constructor_failure_closes_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    closed: list[int] = []
+    primary = RuntimeError("injected constructor failure")
+    monkeypatch.setattr(storage_module.os, "open", lambda *_args, **_kwargs: 81)
+    monkeypatch.setattr(storage_module.os, "fstat", lambda _fd: _DirectoryStat())
+    monkeypatch.setattr(storage_module.os, "close", closed.append)
+    monkeypatch.setattr(
+        _TrustedDirectory,
+        "__init__",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(primary),
+    )
+    with pytest.raises(RuntimeError) as error:
+        _TrustedDirectory._open_posix(Path("managed"))
+    assert error.value is primary
+    assert closed == [81]
+
+
+def test_posix_post_open_close_failure_preserves_primary_diagnostically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    primary = OSError("injected fstat failure")
+    close_calls: list[int] = []
+
+    def fail_close(descriptor):
+        close_calls.append(descriptor)
+        raise OSError("injected close failure")
+
+    monkeypatch.setattr(storage_module.os, "open", lambda *_args, **_kwargs: 91)
+    monkeypatch.setattr(
+        storage_module.os,
+        "fstat",
+        lambda _fd: (_ for _ in ()).throw(primary),
+    )
+    monkeypatch.setattr(storage_module.os, "close", fail_close)
+    with pytest.raises(M02StorageConfigurationError) as error:
+        _TrustedDirectory._open_posix(Path("managed"))
+    assert error.value.__cause__ is primary
+    assert close_calls == [91]
+    assert any(
+        "Secondary managed-directory close failure" in note
+        for note in primary.__notes__
+    )
+
+
+def test_posix_success_transfers_descriptor_until_idempotent_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.m02_storage as storage_module
+
+    closed: list[int] = []
+    monkeypatch.setattr(storage_module.os, "open", lambda *_args, **_kwargs: 101)
+    monkeypatch.setattr(storage_module.os, "fstat", lambda _fd: _DirectoryStat())
+    monkeypatch.setattr(storage_module.os, "close", closed.append)
+    directory = _TrustedDirectory._open_posix(Path("managed"))
+    assert closed == []
+    directory.close()
+    directory.close()
+    assert closed == [101]
 
 
 def test_blob_identity_is_immutable(api) -> None:
@@ -1466,6 +1654,206 @@ def test_staged_unlink_failure_after_final_link_keeps_owner_for_retry(
     assert not staged.temporary_path.exists()
     staged.cleanup()
     storage.close()
+
+
+def test_final_directory_close_failure_becomes_structured_and_retries_without_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "managed"
+    root.mkdir()
+    storage = ManagedLocalStorage(root)
+    staged = storage.new_staged_upload(
+        original_filename="close.pdf",
+        extension=".pdf",
+        declared_mime_type="application/pdf",
+        validated_media_type="application/pdf",
+    )
+    with staged.open_write() as target:
+        target.write(b"%PDF-close")
+    storage_key = storage.place(staged)
+    final_path = storage.resolve_key(storage_key)
+    final_directory = staged.final_directory
+    final_identity = final_directory.identity
+    original_unlink = final_directory.unlink
+    original_close = final_directory.close
+    unlink_calls = 0
+    close_calls = 0
+
+    def track_unlink(name, *, missing_ok=True):
+        nonlocal unlink_calls
+        unlink_calls += 1
+        return original_unlink(name, missing_ok=missing_ok)
+
+    def fail_close_once():
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 1:
+            raise OSError("injected final-directory close failure")
+        return original_close()
+
+    monkeypatch.setattr(final_directory, "unlink", track_unlink)
+    monkeypatch.setattr(final_directory, "close", fail_close_once)
+    primary = M02FileError(
+        "M02_PERSISTENCE_FAILED", "Injected primary persistence failure"
+    )
+    with pytest.raises(M02StorageCleanupError) as error:
+        staged.cleanup(primary_error=primary)
+
+    assert error.value.primary_error is primary
+    assert isinstance(error.value.cleanup_errors[0], OSError)
+    assert error.value.cleanup_steps == ("FINAL_DIRECTORY_CLOSE",)
+    assert error.value.diagnostic_codes == (
+        "M02_PERSISTENCE_FAILED",
+        "M02_FINAL_PLACEMENT_SUCCEEDED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    )
+    assert staged.resource_state == "cleanup-failed"
+    assert staged.final_removed is True
+    assert staged.final_directory_closed is False
+    assert staged.final_directory is final_directory
+    assert staged.final_directory.identity == final_identity
+    assert not final_path.exists()
+
+    staged.cleanup()
+    assert staged.resource_state == "cleaned"
+    assert staged.final_directory_closed is True
+    assert staged.final_directory is None
+    assert unlink_calls == 1
+    assert close_calls == 2
+    staged.cleanup()
+    assert unlink_calls == 1
+    assert close_calls == 2
+    storage.close()
+
+
+def test_committed_close_failure_never_deletes_final_and_retries_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "managed"
+    root.mkdir()
+    storage = ManagedLocalStorage(root)
+    staged = storage.new_staged_upload(
+        original_filename="committed.pdf",
+        extension=".pdf",
+        declared_mime_type="application/pdf",
+        validated_media_type="application/pdf",
+    )
+    with staged.open_write() as target:
+        target.write(b"%PDF-committed")
+    storage_key = storage.place(staged)
+    final_path = storage.resolve_key(storage_key)
+    staged.mark_committed()
+    final_directory = staged.final_directory
+    original_close = final_directory.close
+    close_calls = 0
+
+    def fail_close_once():
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 1:
+            raise OSError("injected committed close failure")
+        return original_close()
+
+    monkeypatch.setattr(final_directory, "close", fail_close_once)
+    with pytest.raises(M02StorageCleanupError) as error:
+        staged.cleanup()
+    assert error.value.cleanup_steps == ("FINAL_DIRECTORY_CLOSE",)
+    assert staged.resource_state == "cleanup-failed"
+    assert staged.final_removed is False
+    assert final_path.read_bytes() == b"%PDF-committed"
+
+    staged.cleanup()
+    assert staged.resource_state == "cleaned"
+    assert final_path.read_bytes() == b"%PDF-committed"
+    assert close_calls == 2
+    storage.close()
+
+
+def test_committed_close_failure_reaches_batch_api_without_deleting_blob(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, storage_root = api
+    original_cleanup = StagedUpload.cleanup
+    injected = False
+
+    def cleanup_with_close_failure(staged, *, primary_error=None):
+        nonlocal injected
+        if staged.final_directory is not None and not injected:
+            injected = True
+            original_close = staged.final_directory.close
+            failed_once = False
+
+            def fail_once():
+                nonlocal failed_once
+                if not failed_once:
+                    failed_once = True
+                    raise OSError("injected final-directory close failure")
+                return original_close()
+
+            monkeypatch.setattr(staged.final_directory, "close", fail_once)
+        return original_cleanup(staged, primary_error=primary_error)
+
+    monkeypatch.setattr(StagedUpload, "cleanup", cleanup_with_close_failure)
+    response = _upload(
+        client, 1, [("committed.pdf", b"%PDF-committed", "application/pdf")]
+    )
+    assert response.status_code == 200
+    assert response.json()["results"][0]["status"] == "preserved"
+    assert response.json()["request_error"] == {
+        "code": "M02_STORAGE_CLEANUP_FAILED",
+        "message": "Managed upload cleanup could not be completed",
+    }
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 1
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_sources")) == 1
+    objects = [
+        path
+        for path in storage_root.rglob("*")
+        if path.is_file() and ".temporary" not in path.parts
+    ]
+    assert len(objects) == 1
+    assert objects[0].read_bytes() == b"%PDF-committed"
+
+
+def test_managed_temporary_directory_close_failure_is_structured_and_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "managed"
+    root.mkdir()
+    storage = ManagedLocalStorage(root)
+    original_temp_close = storage._temporary_directory.close
+    original_object_close = storage._object_directory.close
+    original_root_close = storage._root_directory.close
+    close_counts = {"temporary": 0, "objects": 0, "root": 0}
+
+    def fail_temp_once():
+        close_counts["temporary"] += 1
+        if close_counts["temporary"] == 1:
+            raise OSError("injected temporary-directory close failure")
+        return original_temp_close()
+
+    def close_objects():
+        close_counts["objects"] += 1
+        return original_object_close()
+
+    def close_root():
+        close_counts["root"] += 1
+        return original_root_close()
+
+    monkeypatch.setattr(storage._temporary_directory, "close", fail_temp_once)
+    monkeypatch.setattr(storage._object_directory, "close", close_objects)
+    monkeypatch.setattr(storage._root_directory, "close", close_root)
+    with pytest.raises(M02StorageCleanupError) as error:
+        storage.close()
+    assert error.value.cleanup_steps == ("TEMP_DIRECTORY_CLOSE",)
+    assert isinstance(error.value.cleanup_errors[0], OSError)
+    assert storage._closed is False
+
+    storage.close()
+    assert storage._closed is True
+    assert close_counts == {"temporary": 2, "objects": 2, "root": 2}
+    storage.close()
+    assert close_counts == {"temporary": 2, "objects": 2, "root": 2}
 
 
 def test_batch_reports_staged_unlink_failure_after_final_link_without_rows(

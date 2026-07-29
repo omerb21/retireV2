@@ -24,6 +24,7 @@ def load_all_models() -> None:
     import app.models.internal_planner_judgment  # noqa: F401
     import app.models.missing_data_item  # noqa: F401
     import app.models.m02_intake  # noqa: F401
+    import app.models.m03_review  # noqa: F401
     import app.models.m07_evidence  # noqa: F401
     import app.models.official_parameter_set  # noqa: F401
     import app.models.retirement_planning_document  # noqa: F401

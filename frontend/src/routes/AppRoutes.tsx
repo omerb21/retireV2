@@ -11,6 +11,7 @@ import { GrantsScreen } from "../pages/GrantsScreen";
 import { RunDetailScreen } from "../pages/RunDetailScreen";
 import { RunHistoryScreen } from "../pages/RunHistoryScreen";
 import { M02PensionIntakeScreen } from "../pages/M02PensionIntakeScreen";
+import { M03SourceReviewScreen } from "../pages/M03SourceReviewScreen";
 
 export function AppRoutes() {
   return (
@@ -21,6 +22,7 @@ export function AppRoutes() {
       <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
       <Route path="/clients/:clientId/pension-intake" element={<M02PensionIntakeScreen />} />
+      <Route path="/clients/:clientId/source-review" element={<M03SourceReviewScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
       <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
       <Route path="/clients/:clientId/fixation/workspace" element={<FixationWorkspaceScreen />} />

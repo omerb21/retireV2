@@ -1409,6 +1409,14 @@ export function ClientDetailScreen() {
       </p>
       <p>
         <Link
+          to={`/clients/${validRouteClientId}/source-review`}
+          state={{ clientName: client.full_name }}
+        >
+          M03 Source Review
+        </Link>
+      </p>
+      <p>
+        <Link
           to={`/clients/${validRouteClientId}/fixation/workspace`}
           state={{ clientName: client.full_name }}
         >

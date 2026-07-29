@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import io
 import importlib.util
 import os
@@ -950,11 +951,18 @@ def test_posix_child_fstat_failure_closes_child_but_not_parent(
         lambda _fd: (_ for _ in ()).throw(primary),
     )
     monkeypatch.setattr(storage_module.os, "close", closed.append)
-    with pytest.raises(M02StorageConfigurationError) as error:
-        parent._open_posix_child("objects")
-    assert error.value.__cause__ is primary
-    assert closed == [61]
-    assert parent._closed is False
+    try:
+        with pytest.raises(M02StorageConfigurationError) as error:
+            parent._open_posix_child("objects")
+        assert error.value.__cause__ is primary
+        assert closed == [61]
+        assert parent._closed is False
+    finally:
+        parent.close()
+    assert closed == [61, 60]
+    del parent
+    gc.collect()
+    assert closed == [61, 60]
 
 
 def test_posix_child_post_open_identity_failure_closes_once(
@@ -981,10 +989,17 @@ def test_posix_child_post_open_identity_failure_closes_once(
     monkeypatch.setattr(storage_module.os, "fstat", lambda _fd: _DirectoryStat())
     monkeypatch.setattr(storage_module.os, "close", closed.append)
     monkeypatch.setattr(_TrustedDirectory, "_verify_path_identity", fail_child_identity)
-    with pytest.raises(M02StorageConfigurationError, match="child identity"):
-        parent._open_posix_child("objects")
-    assert closed == [71]
-    assert parent._closed is False
+    try:
+        with pytest.raises(M02StorageConfigurationError, match="child identity"):
+            parent._open_posix_child("objects")
+        assert closed == [71]
+        assert parent._closed is False
+    finally:
+        parent.close()
+    assert closed == [71, 70]
+    del parent
+    gc.collect()
+    assert closed == [71, 70]
 
 
 def test_posix_root_constructor_failure_closes_descriptor(
@@ -1854,6 +1869,189 @@ def test_managed_temporary_directory_close_failure_is_structured_and_retryable(
     assert close_counts == {"temporary": 2, "objects": 2, "root": 2}
     storage.close()
     assert close_counts == {"temporary": 2, "objects": 2, "root": 2}
+
+
+@pytest.mark.parametrize("completed_count", [1, 2])
+@pytest.mark.parametrize("raw_close_failure", [False, True])
+def test_batch_preserves_committed_results_when_storage_close_fails(
+    api,
+    monkeypatch: pytest.MonkeyPatch,
+    completed_count: int,
+    raw_close_failure: bool,
+) -> None:
+    client, session_local, _ = api
+    import app.api.m02_intake_routes as routes
+
+    retained_storage: list[ManagedLocalStorage] = []
+    close_calls = 0
+    original_storage_close = ManagedLocalStorage.close
+    original_storage_factory = routes._storage
+
+    def create_failing_storage():
+        storage = original_storage_factory()
+        retained_storage.append(storage)
+
+        def fail_close():
+            nonlocal close_calls
+            close_calls += 1
+            if raw_close_failure:
+                raise OSError("injected raw storage close failure")
+            raise M02StorageCleanupError(
+                "injected typed storage close failure",
+                cleanup_errors=(OSError("injected close failure"),),
+                cleanup_steps=("TEMP_DIRECTORY_CLOSE",),
+            )
+
+        monkeypatch.setattr(storage, "close", fail_close)
+        return storage
+
+    monkeypatch.setattr(routes, "_storage", create_failing_storage)
+    try:
+        response = _upload(
+            client,
+            1,
+            [
+                (
+                    f"committed-{index}.pdf",
+                    f"%PDF-committed-{index}".encode(),
+                    "application/pdf",
+                )
+                for index in range(completed_count)
+            ],
+        )
+    finally:
+        for storage in retained_storage:
+            storage.close = original_storage_close.__get__(  # type: ignore[method-assign]
+                storage, ManagedLocalStorage
+            )
+            storage.close()
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["results"]) == completed_count
+    assert all(result["status"] == "preserved" for result in body["results"])
+    assert body["request_error"] == {
+        "code": "M02_STORAGE_CLEANUP_FAILED",
+        "message": "Managed upload cleanup could not be completed",
+    }
+    assert close_calls == 1
+    assert len(retained_storage) == 1
+    with session_local() as session:
+        assert (
+            session.scalar(text("SELECT COUNT(*) FROM m02_intake_records"))
+            == completed_count
+        )
+
+
+def test_per_file_failure_is_preserved_when_storage_close_fails(
+    api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session_local, _ = api
+    import app.api.m02_intake_routes as routes
+
+    retained_storage: list[ManagedLocalStorage] = []
+    close_calls = 0
+    original_storage_close = ManagedLocalStorage.close
+    original_storage_factory = routes._storage
+
+    def create_failing_storage():
+        storage = original_storage_factory()
+        retained_storage.append(storage)
+
+        def fail_close():
+            nonlocal close_calls
+            close_calls += 1
+            raise M02StorageCleanupError(
+                "injected typed storage close failure",
+                cleanup_errors=(OSError("injected close failure"),),
+                cleanup_steps=("OBJECT_DIRECTORY_CLOSE",),
+            )
+
+        monkeypatch.setattr(storage, "close", fail_close)
+        return storage
+
+    monkeypatch.setattr(routes, "_storage", create_failing_storage)
+    try:
+        response = _upload(
+            client, 1, [("invalid.pdf", b"not-a-pdf", "application/pdf")]
+        )
+    finally:
+        for storage in retained_storage:
+            storage.close = original_storage_close.__get__(  # type: ignore[method-assign]
+                storage, ManagedLocalStorage
+            )
+            storage.close()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"][0]["status"] == "failed"
+    assert body["results"][0]["error_code"] == "M02_SIGNATURE_MISMATCH"
+    assert body["request_error"]["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    assert close_calls == 1
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+
+
+@pytest.mark.parametrize("raw_close_failure", [False, True])
+def test_primary_batch_and_storage_close_failures_share_structured_api_detail(
+    api, monkeypatch: pytest.MonkeyPatch, raw_close_failure: bool
+) -> None:
+    client, session_local, storage_root = api
+    import app.api.m02_intake_routes as routes
+
+    retained_storage: list[ManagedLocalStorage] = []
+    close_calls = 0
+    original_storage_close = ManagedLocalStorage.close
+    original_storage_factory = routes._storage
+
+    def fail_batch(*_args, **_kwargs):
+        raise RuntimeError("injected primary batch failure")
+
+    def create_failing_storage():
+        storage = original_storage_factory()
+        retained_storage.append(storage)
+
+        def fail_close():
+            nonlocal close_calls
+            close_calls += 1
+            if raw_close_failure:
+                raise OSError("private path injected raw close failure")
+            raise M02StorageCleanupError(
+                "injected typed storage close failure",
+                cleanup_errors=(OSError("injected close failure"),),
+                cleanup_steps=("ROOT_DIRECTORY_CLOSE",),
+            )
+
+        monkeypatch.setattr(storage, "close", fail_close)
+        return storage
+
+    monkeypatch.setattr(routes, "preserve_staged_upload", fail_batch)
+    monkeypatch.setattr(routes, "_storage", create_failing_storage)
+    try:
+        response = _upload(
+            client, 1, [("batch.pdf", b"%PDF-batch", "application/pdf")]
+        )
+    finally:
+        for storage in retained_storage:
+            storage.close = original_storage_close.__get__(  # type: ignore[method-assign]
+                storage, ManagedLocalStorage
+            )
+            storage.close()
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "M02_STORAGE_CLEANUP_FAILED"
+    assert detail["diagnostic_chain"] == [
+        "M02_BATCH_REQUEST_FAILED",
+        "M02_STORAGE_CLEANUP_FAILED",
+    ]
+    assert detail["cleanup_steps"] == [
+        "STORAGE_CLOSE" if raw_close_failure else "ROOT_DIRECTORY_CLOSE"
+    ]
+    assert "private path" not in response.text
+    assert close_calls == 1
+    assert len(retained_storage) == 1
+    with session_local() as session:
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_intake_records")) == 0
+        assert session.scalar(text("SELECT COUNT(*) FROM m02_preserved_blobs")) == 0
+    assert not [path for path in storage_root.rglob("*") if path.is_file()]
 
 
 def test_batch_reports_staged_unlink_failure_after_final_link_without_rows(

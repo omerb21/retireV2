@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+import re
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -15,6 +15,8 @@ from app.services.m01_case_service import effective_lifecycle_status
 
 
 ACTOR = M03_WORKFLOW_ACTOR
+REVISION_ID_PATTERN = re.compile(r"^M03-R-[0-9a-f]{32}$")
+MAX_SERVER_CLOCK_SKEW = timedelta(minutes=5)
 
 
 class M03ReviewError(Exception):
@@ -97,6 +99,14 @@ def _history(db: Session, intake_id: str) -> list[M03ReviewRevision]:
     ).order_by(M03ReviewRevision.revision_sequence)).all())
 
 
+def _utc(value: datetime | None) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _leaf(
     rows: list[M03ReviewRevision],
     intake: M02IntakeRecord,
@@ -106,11 +116,16 @@ def _leaf(
     if not rows:
         return None
     expected_source_id = source.source_id if source else None
+    intake_created_at = _utc(intake.created_at)
+    now_limit = datetime.now(timezone.utc) + MAX_SERVER_CLOCK_SKEW
     for index, row in enumerate(rows, 1):
         expected_parent = None if index == 1 else rows[index - 2].revision_id
         expected_state = {"accepted", "rejected"} if index > 1 and rows[index - 2].state == "under_review" else {"under_review"}
+        decided_at = _utc(row.decided_at)
+        predecessor_decided_at = _utc(rows[index - 2].decided_at) if index > 1 else intake_created_at
         if (
-            row.client_id != intake.client_id
+            REVISION_ID_PATTERN.fullmatch(row.revision_id) is None
+            or row.client_id != intake.client_id
             or row.intake_id != intake.intake_id
             or row.target_kind != kind
             or row.source_id != expected_source_id
@@ -120,6 +135,10 @@ def _leaf(
             or row.state not in expected_state
             or (index == 1 and row.reason is not None)
             or (index > 1 and (row.reason is None or not row.reason.strip()))
+            or decided_at is None
+            or intake_created_at is None
+            or decided_at < predecessor_decided_at
+            or decided_at > now_limit
         ):
             raise M03ReviewError(409, "M03_REVIEW_CHAIN_INCONSISTENT", "Review chain is inconsistent")
     return rows[-1]
@@ -211,7 +230,6 @@ def _append(
     if expected is not None and (leaf is None or leaf.revision_id != expected):
         raise M03ReviewError(409, "M03_STALE_CURRENT_REVISION", "The review changed before this action")
     row = M03ReviewRevision(
-        revision_id=f"M03-R-{uuid4().hex}",
         client_id=intake.client_id,
         target_kind=kind,
         intake_id=intake.intake_id,
@@ -275,7 +293,6 @@ def add_annotation(db: Session, client_id: int, intake_id: str, payload: M03Anno
         if prior is None:
             raise _not_found()
     row = M03Annotation(
-        annotation_id=f"M03-A-{uuid4().hex}",
         client_id=client_id,
         intake_id=intake_id,
         source_id=source.source_id if kind == "source_evidence_review" else None,
@@ -285,7 +302,6 @@ def add_annotation(db: Session, client_id: int, intake_id: str, payload: M03Anno
         reason=payload.reason,
         actor=ACTOR,
         supersedes_annotation_id=payload.supersedes_annotation_id,
-        created_at=datetime.now(timezone.utc),
     )
     db.add(row)
     try:

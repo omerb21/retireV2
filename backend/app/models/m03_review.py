@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, func, inspect, select
 from sqlalchemy.orm import Mapped, mapped_column
@@ -11,6 +12,18 @@ from app.db.base import Base
 M03_TARGET_KINDS = ("source_evidence_review", "manual_record_review")
 M03_REVIEW_STATES = ("under_review", "accepted", "rejected")
 M03_WORKFLOW_ACTOR = "system:m03-review-ui:M03 review workflow"
+
+
+def new_m03_revision_id() -> str:
+    return f"M03-R-{uuid4().hex}"
+
+
+def new_m03_annotation_id() -> str:
+    return f"M03-A-{uuid4().hex}"
+
+
+def m03_server_timestamp() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class M03ReviewRevision(Base):
@@ -82,6 +95,9 @@ def _prevent_delete(_mapper, _connection, _target) -> None:
 
 def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> None:
     from app.models.m02_intake import M02IntakeRecord, M02PreservedSource
+
+    target.revision_id = new_m03_revision_id()
+    target.decided_at = m03_server_timestamp()
 
     intake = connection.execute(
         select(
@@ -161,6 +177,9 @@ def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> N
 
 def _validate_annotation_insert(_mapper, connection, target: M03Annotation) -> None:
     from app.models.m02_intake import M02IntakeRecord, M02PreservedSource
+
+    target.annotation_id = new_m03_annotation_id()
+    target.created_at = m03_server_timestamp()
 
     if target.actor != M03_WORKFLOW_ACTOR:
         raise ValueError("M03 annotation actor must be server-controlled")

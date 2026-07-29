@@ -74,11 +74,13 @@ export function M03SourceReviewScreen() {
     const token = captureClientContext(); setSubmitting(true); setError(null);
     try {
       await operation();
+      if (!isCurrentClientContext(token)) return;
+      const refreshToken = captureClientContext();
       const [next, revisions, notes, eligibility] = await Promise.all([
         getM03Target(clientId, target.intake_id), getM03History(clientId, target.intake_id),
         getM03Annotations(clientId, target.intake_id), getM03Eligibility(clientId, target.intake_id)
       ]);
-      if (!isCurrentClientContext(token)) return;
+      if (!isCurrentClientContext(refreshToken)) return;
       setTarget({ ...next, ...eligibility }); setHistory(revisions); setAnnotations(notes); setReason(""); setTopic(""); setNote("");
       setSupersedesAnnotationId("");
     } catch (cause) {

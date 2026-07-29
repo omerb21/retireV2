@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ from app.main import app
 from app.models.client import Client
 from app.models.m02_intake import M02IntakeRecord, M02PreservedBlob, M02PreservedSource
 from app.models.m03_review import M03Annotation, M03ReviewRevision
+from app.services.m03_review_service import ACTOR
 
 
 @pytest.fixture
@@ -108,6 +111,7 @@ def test_append_only_accept_reopen_and_eligibility(api) -> None:
         "reason": "reviewed source-level record",
         "expected_current_revision_id": root["revision_id"],
         "actor": "forged",
+        "decided_at": "2000-01-01T00:00:00Z",
     })
     assert accepted.status_code == 422
     accepted = client.post("/api/clients/1/m03/targets/manual-1/accept", json={
@@ -177,3 +181,314 @@ def test_foreign_ids_are_indistinguishable_and_create_no_rows(api) -> None:
     assert client.post("/api/clients/1/m03/targets/manual-2/start").json() == foreign.json()
     with sessions() as db:
         assert db.scalar(text("SELECT COUNT(*) FROM m03_review_revisions")) == 0
+
+
+@pytest.mark.parametrize("reason", ["", "   ", "\t", "\n", " \t\r\n "])
+@pytest.mark.parametrize("action", ["accept", "reject"])
+def test_decision_reasons_reject_all_whitespace_without_partial_writes(api, reason: str, action: str) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    response = client.post(f"/api/clients/1/m03/targets/manual-1/{action}", json={
+        "reason": reason,
+        "expected_current_revision_id": root["revision_id"],
+    })
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] in {"value_error", "string_too_short"}
+    with sessions() as db:
+        assert db.scalar(text("SELECT COUNT(*) FROM m03_review_revisions")) == 1
+
+
+def test_reopen_and_annotation_reasons_are_trimmed_and_blank_is_atomic(api) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    accepted = client.post("/api/clients/1/m03/targets/manual-1/accept", json={
+        "reason": "  reviewed  ",
+        "expected_current_revision_id": root["revision_id"],
+    }).json()
+    assert accepted["reason"] == "reviewed"
+    blank_reopen = client.post("/api/clients/1/m03/targets/manual-1/reopen", json={
+        "reason": "\t\n ",
+        "expected_current_revision_id": accepted["revision_id"],
+    })
+    assert blank_reopen.status_code == 422
+    blank_annotation = client.post("/api/clients/1/m03/targets/manual-1/annotations", json={
+        "review_revision_id": accepted["revision_id"],
+        "topic": "topic",
+        "note": "note",
+        "reason": "\r\n\t",
+    })
+    assert blank_annotation.status_code == 422
+    annotation = client.post("/api/clients/1/m03/targets/manual-1/annotations", json={
+        "review_revision_id": accepted["revision_id"],
+        "topic": "  topic  ",
+        "note": "  note  ",
+        "reason": "  context  ",
+    }).json()
+    assert (annotation["topic"], annotation["note"], annotation["reason"]) == ("topic", "note", "context")
+    with sessions() as db:
+        assert db.scalar(text("SELECT COUNT(*) FROM m03_review_revisions")) == 2
+        assert db.scalar(text("SELECT COUNT(*) FROM m03_annotations")) == 1
+
+
+def test_revision_and_annotation_orm_update_and_delete_are_blocked(api) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    accepted = client.post("/api/clients/1/m03/targets/manual-1/accept", json={
+        "reason": "accepted",
+        "expected_current_revision_id": root["revision_id"],
+    }).json()
+    annotation = client.post("/api/clients/1/m03/targets/manual-1/annotations", json={
+        "review_revision_id": accepted["revision_id"],
+        "topic": "topic",
+        "note": "note",
+        "reason": "reason",
+    }).json()
+
+    revision_changes = {
+        "revision_id": "forged-revision",
+        "client_id": 2,
+        "target_kind": "source_evidence_review",
+        "intake_id": "manual-2",
+        "source_id": "source-1",
+        "predecessor_revision_id": root["revision_id"],
+        "revision_sequence": 99,
+        "state": "rejected",
+        "reason": "changed",
+        "actor": "forged",
+        "decided_at": datetime(2000, 1, 1, tzinfo=timezone.utc),
+    }
+    annotation_changes = {
+        "annotation_id": "forged-annotation",
+        "client_id": 2,
+        "intake_id": "manual-2",
+        "source_id": "source-1",
+        "review_revision_id": root["revision_id"],
+        "topic": "changed",
+        "note": "changed",
+        "reason": "changed",
+        "actor": "forged",
+        "supersedes_annotation_id": annotation["annotation_id"],
+        "created_at": datetime(2000, 1, 1, tzinfo=timezone.utc),
+    }
+    for model, row_id, changes in (
+        (M03ReviewRevision, accepted["revision_id"], revision_changes),
+        (M03Annotation, annotation["annotation_id"], annotation_changes),
+    ):
+        for field, value in changes.items():
+            with sessions() as db:
+                row = db.get(model, row_id)
+                setattr(row, field, value)
+                with pytest.raises(ValueError, match="immutable"):
+                    db.commit()
+                db.rollback()
+        with sessions() as db:
+            row = db.get(model, row_id)
+            db.delete(row)
+            with pytest.raises(ValueError, match="cannot be deleted"):
+                db.commit()
+            db.rollback()
+
+    with sessions() as db:
+        revision = db.get(M03ReviewRevision, accepted["revision_id"])
+        note = db.get(M03Annotation, annotation["annotation_id"])
+        assert revision.state == "accepted"
+        assert revision.reason == "accepted"
+        assert note.topic == "topic"
+        assert note.note == "note"
+    reopened = client.post("/api/clients/1/m03/targets/manual-1/reopen", json={
+        "reason": "append remains available",
+        "expected_current_revision_id": accepted["revision_id"],
+    })
+    assert reopened.status_code == 201
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"client_id": 2}, "same client"),
+        ({"target_kind": "source_evidence_review", "source_id": "source-1"}, "manual review"),
+        ({"intake_id": "upload-1", "target_kind": "source_evidence_review", "source_id": None}, "uploaded review"),
+        ({"intake_id": "upload-1", "target_kind": "source_evidence_review", "source_id": "missing"}, "uploaded review"),
+    ],
+)
+def test_direct_orm_revision_insert_enforces_target_provenance(api, overrides: dict, message: str) -> None:
+    _client_api, sessions = api
+    values = {
+        "revision_id": "direct-invalid",
+        "client_id": 1,
+        "target_kind": "manual_record_review",
+        "intake_id": "manual-1",
+        "source_id": None,
+        "predecessor_revision_id": None,
+        "revision_sequence": 1,
+        "state": "under_review",
+        "reason": None,
+        "actor": ACTOR,
+    }
+    values.update(overrides)
+    with sessions() as db:
+        db.add(M03ReviewRevision(**values))
+        with pytest.raises(ValueError, match=message):
+            db.commit()
+        db.rollback()
+        assert db.scalar(text("SELECT COUNT(*) FROM m03_review_revisions")) == 0
+
+
+def test_direct_orm_predecessor_and_annotation_must_stay_in_target_chain(api) -> None:
+    client, sessions = api
+    manual_root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    upload_root = client.post("/api/clients/1/m03/targets/upload-1/start").json()
+    with sessions() as db:
+        db.add(M03ReviewRevision(
+            revision_id="cross-target-child", client_id=1,
+            target_kind="source_evidence_review", intake_id="upload-1", source_id="source-1",
+            predecessor_revision_id=manual_root["revision_id"], revision_sequence=2,
+            state="accepted", reason="forged", actor=ACTOR,
+        ))
+        with pytest.raises(ValueError, match="same target chain"):
+            db.commit()
+        db.rollback()
+        db.add(M03Annotation(
+            annotation_id="cross-target-note", client_id=1, intake_id="upload-1",
+            source_id="source-1", review_revision_id=manual_root["revision_id"],
+            topic="topic", note="note", reason="reason", actor=ACTOR,
+        ))
+        with pytest.raises(ValueError, match="same target chain"):
+            db.commit()
+        db.rollback()
+        assert db.get(M03ReviewRevision, upload_root["revision_id"]) is not None
+        assert db.get(M03ReviewRevision, "cross-target-child") is None
+        assert db.get(M03Annotation, "cross-target-note") is None
+
+
+@pytest.mark.parametrize("corruption", [
+    "actor = 'forged'",
+    "client_id = 2",
+    "target_kind = 'source_evidence_review', source_id = 'source-1'",
+    "predecessor_revision_id = revision_id",
+    "state = 'under_review'",
+])
+def test_eligibility_fails_closed_for_forged_persisted_chain(api, corruption: str) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    accepted = client.post("/api/clients/1/m03/targets/manual-1/accept", json={
+        "reason": "accepted",
+        "expected_current_revision_id": root["revision_id"],
+    }).json()
+    assert client.get("/api/clients/1/m03/targets/manual-1/eligibility").json()["eligible"] is True
+    with sessions() as db:
+        db.execute(
+            text(f"UPDATE m03_review_revisions SET {corruption} WHERE revision_id = :revision_id"),
+            {"revision_id": accepted["revision_id"]},
+        )
+        db.commit()
+    result = client.get("/api/clients/1/m03/targets/manual-1/eligibility")
+    assert result.status_code == 200
+    assert result.json()["eligible"] is False
+    assert result.json()["exclusion_reason"] == "review_chain_inconsistent"
+
+
+def test_eligibility_fails_closed_for_inconsistent_uploaded_provenance(api) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/upload-1/start").json()
+    accepted = client.post("/api/clients/1/m03/targets/upload-1/accept", json={
+        "reason": "accepted", "expected_current_revision_id": root["revision_id"],
+    })
+    assert accepted.status_code == 201
+    with sessions() as db:
+        db.execute(text("UPDATE m02_preserved_sources SET byte_size = 9 WHERE source_id = 'source-1'"))
+        db.commit()
+    result = client.get("/api/clients/1/m03/targets/upload-1/eligibility")
+    assert result.status_code == 200
+    assert result.json()["eligible"] is False
+    assert result.json()["exclusion_reason"] == "uploaded_provenance_inconsistent"
+
+
+def test_start_and_decisions_are_atomic_under_concurrency(api) -> None:
+    client, sessions = api
+
+    def start():
+        return client.post("/api/clients/1/m03/targets/manual-1/start")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        starts = list(pool.map(lambda _index: start(), range(2)))
+    assert sorted(response.status_code for response in starts) == [201, 409]
+    assert next(response.json()["detail"]["code"] for response in starts if response.status_code == 409) in {
+        "M03_REVIEW_ALREADY_STARTED",
+        "M03_CONCURRENT_LEAF_CONFLICT",
+    }
+    root = next(response.json() for response in starts if response.status_code == 201)
+    with sessions() as db:
+        rows = list(db.scalars(select(M03ReviewRevision)).all())
+        assert len(rows) == 1
+        assert rows[0].revision_sequence == 1
+
+    def decide(action: str):
+        return client.post(f"/api/clients/1/m03/targets/manual-1/{action}", json={
+            "reason": action,
+            "expected_current_revision_id": root["revision_id"],
+        })
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        decisions = list(pool.map(decide, ["accept", "reject"]))
+    assert sorted(response.status_code for response in decisions) == [201, 409]
+    with sessions() as db:
+        rows = list(db.scalars(select(M03ReviewRevision).order_by(M03ReviewRevision.revision_sequence)).all())
+        assert len(rows) == 2
+        assert rows[1].state in {"accepted", "rejected"}
+
+    terminal = next(response.json() for response in decisions if response.status_code == 201)
+
+    def reopen():
+        return client.post("/api/clients/1/m03/targets/manual-1/reopen", json={
+            "reason": "reopen",
+            "expected_current_revision_id": terminal["revision_id"],
+        })
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reopens = list(pool.map(lambda _index: reopen(), range(2)))
+    assert sorted(response.status_code for response in reopens) == [201, 409]
+    with sessions() as db:
+        rows = list(db.scalars(select(M03ReviewRevision).order_by(M03ReviewRevision.revision_sequence)).all())
+        assert len(rows) == 3
+        assert rows[-1].state == "under_review"
+
+
+def test_annotation_supersession_is_append_only_and_safe(api) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    accepted = client.post("/api/clients/1/m03/targets/manual-1/accept", json={
+        "reason": "accepted", "expected_current_revision_id": root["revision_id"],
+    }).json()
+    first = client.post("/api/clients/1/m03/targets/manual-1/annotations", json={
+        "review_revision_id": accepted["revision_id"], "topic": "old",
+        "note": "old note", "reason": "old reason",
+    }).json()
+    second_response = client.post("/api/clients/1/m03/targets/manual-1/annotations", json={
+        "review_revision_id": accepted["revision_id"], "topic": "new",
+        "note": "new note", "reason": "supersede",
+        "supersedes_annotation_id": first["annotation_id"],
+    })
+    assert second_response.status_code == 201
+    second = second_response.json()
+    assert second["supersedes_annotation_id"] == first["annotation_id"]
+    history = client.get("/api/clients/1/m03/targets/manual-1/annotations").json()
+    assert [row["annotation_id"] for row in history] == [first["annotation_id"], second["annotation_id"]]
+    assert history[0]["note"] == "old note"
+    assert client.get("/api/clients/1/m03/targets/manual-1/eligibility").json()["eligible"] is True
+
+    foreign_root = client.post("/api/clients/2/m03/targets/manual-2/start").json()
+    foreign_note = client.post("/api/clients/2/m03/targets/manual-2/annotations", json={
+        "review_revision_id": foreign_root["revision_id"], "topic": "foreign",
+        "note": "foreign", "reason": "foreign",
+    }).json()
+    foreign_or_missing = ["missing-annotation", foreign_note["annotation_id"]]
+    for annotation_id in foreign_or_missing:
+        response = client.post("/api/clients/1/m03/targets/manual-1/annotations", json={
+            "review_revision_id": accepted["revision_id"], "topic": "x",
+            "note": "x", "reason": "x", "supersedes_annotation_id": annotation_id,
+        })
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "M03_RESOURCE_NOT_FOUND"
+    with sessions() as db:
+        assert db.scalar(text("SELECT COUNT(*) FROM m03_annotations WHERE client_id = 1")) == 2

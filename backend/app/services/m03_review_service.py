@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
 from app.models.m02_intake import M02IntakeRecord, M02PreservedSource
-from app.models.m03_review import M03Annotation, M03ReviewRevision
+from app.models.m03_review import M03Annotation, M03ReviewRevision, M03_WORKFLOW_ACTOR
 from app.schemas.m03_review import M03AnnotationRequest, M03AnnotationResponse, M03RevisionResponse, M03TargetResponse
 from app.services.m01_case_service import effective_lifecycle_status
 
 
-ACTOR = "system:m03-review-ui:M03 review workflow"
+ACTOR = M03_WORKFLOW_ACTOR
 
 
 class M03ReviewError(Exception):
@@ -57,25 +57,70 @@ def _target(intake: M02IntakeRecord) -> tuple[str, M02PreservedSource | None]:
             raise M03ReviewError(409, "M03_INVALID_MANUAL_PROVENANCE", "Manual target provenance is inconsistent")
         return "manual_record_review", None
     if intake.record_kind == "uploaded_source" and source is not None and source.blob is not None:
-        if source.client_id != intake.client_id or source.blob.client_id != intake.client_id:
+        if (
+            source.client_id != intake.client_id
+            or source.intake_id != intake.intake_id
+            or source.blob.client_id != intake.client_id
+            or source.blob_id != source.blob.blob_id
+            or source.preservation_status != "preserved"
+            or intake.preservation_status != "preserved"
+            or source.byte_size != source.blob.byte_size
+            or not source.blob.sha256_checksum
+        ):
             raise _not_found()
         return "source_evidence_review", source
     raise M03ReviewError(409, "M03_INCOMPLETE_UPLOADED_PROVENANCE", "Uploaded target provenance is incomplete")
 
 
-def _history(db: Session, client_id: int, intake_id: str) -> list[M03ReviewRevision]:
+def _target_for_response(
+    intake: M02IntakeRecord,
+) -> tuple[str, M02PreservedSource | None, str | None]:
+    try:
+        kind, source = _target(intake)
+        return kind, source, None
+    except M03ReviewError:
+        if intake.record_kind == "manual":
+            return "manual_record_review", None, "manual_provenance_inconsistent"
+        source = intake.preserved_source
+        if (
+            source is None
+            or source.client_id != intake.client_id
+            or source.intake_id != intake.intake_id
+        ):
+            source = None
+        return "source_evidence_review", source, "uploaded_provenance_inconsistent"
+
+
+def _history(db: Session, intake_id: str) -> list[M03ReviewRevision]:
     return list(db.scalars(select(M03ReviewRevision).where(
-        M03ReviewRevision.client_id == client_id,
         M03ReviewRevision.intake_id == intake_id,
     ).order_by(M03ReviewRevision.revision_sequence)).all())
 
 
-def _leaf(rows: list[M03ReviewRevision]) -> M03ReviewRevision | None:
+def _leaf(
+    rows: list[M03ReviewRevision],
+    intake: M02IntakeRecord,
+    kind: str,
+    source: M02PreservedSource | None,
+) -> M03ReviewRevision | None:
     if not rows:
         return None
+    expected_source_id = source.source_id if source else None
     for index, row in enumerate(rows, 1):
         expected_parent = None if index == 1 else rows[index - 2].revision_id
-        if row.revision_sequence != index or row.predecessor_revision_id != expected_parent:
+        expected_state = {"accepted", "rejected"} if index > 1 and rows[index - 2].state == "under_review" else {"under_review"}
+        if (
+            row.client_id != intake.client_id
+            or row.intake_id != intake.intake_id
+            or row.target_kind != kind
+            or row.source_id != expected_source_id
+            or row.actor != ACTOR
+            or row.revision_sequence != index
+            or row.predecessor_revision_id != expected_parent
+            or row.state not in expected_state
+            or (index == 1 and row.reason is not None)
+            or (index > 1 and (row.reason is None or not row.reason.strip()))
+        ):
             raise M03ReviewError(409, "M03_REVIEW_CHAIN_INCONSISTENT", "Review chain is inconsistent")
     return rows[-1]
 
@@ -95,15 +140,13 @@ def revision_response(row: M03ReviewRevision) -> M03RevisionResponse:
 def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetResponse:
     _client(db, client_id)
     intake = _intake(db, client_id, intake_id)
-    kind, source = _target(intake)
-    rows = _history(db, client_id, intake_id)
+    kind, source, exclusion = _target_for_response(intake)
+    rows = _history(db, intake_id)
     try:
-        leaf = _leaf(rows)
+        leaf = _leaf(rows, intake, kind, source)
     except M03ReviewError:
         leaf = None
         exclusion = "review_chain_inconsistent"
-    else:
-        exclusion = None
     if exclusion is None:
         if intake.lifecycle_status != "accepted_for_review":
             exclusion = f"m02_{intake.lifecycle_status}"
@@ -112,14 +155,21 @@ def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetRes
         elif leaf.state != "accepted":
             exclusion = f"review_{leaf.state}"
     eligible = exclusion is None
+    blob = (
+        source.blob
+        if source is not None
+        and source.blob is not None
+        and source.blob.client_id == intake.client_id
+        else None
+    )
     return M03TargetResponse(
         client_id=client_id,
         intake_id=intake_id,
         target_kind=kind,
         m02_lifecycle_status=intake.lifecycle_status,
         source_id=source.source_id if source else None,
-        blob_id=source.blob_id if source else None,
-        sha256_checksum=source.blob.sha256_checksum if source else None,
+        blob_id=blob.blob_id if blob else None,
+        sha256_checksum=blob.sha256_checksum if blob else None,
         current_revision=revision_response(leaf) if leaf else None,
         accepted_revision_id=leaf.revision_id if eligible and leaf else None,
         eligible=eligible,
@@ -137,14 +187,27 @@ def list_candidates(db: Session, client_id: int) -> list[M03TargetResponse]:
 
 
 def review_history(db: Session, client_id: int, intake_id: str) -> list[M03RevisionResponse]:
-    _intake(db, client_id, intake_id)
-    return [revision_response(row) for row in _history(db, client_id, intake_id)]
-
-
-def _append(db: Session, intake: M02IntakeRecord, state: str, reason: str | None, expected: str | None) -> M03ReviewRevision:
+    intake = _intake(db, client_id, intake_id)
     kind, source = _target(intake)
-    rows = _history(db, intake.client_id, intake.intake_id)
-    leaf = _leaf(rows)
+    rows = _history(db, intake_id)
+    _leaf(rows, intake, kind, source)
+    return [revision_response(row) for row in rows]
+
+
+def _append(
+    db: Session,
+    intake: M02IntakeRecord,
+    state: str,
+    reason: str | None,
+    expected: str | None,
+    *,
+    require_empty: bool = False,
+) -> M03ReviewRevision:
+    kind, source = _target(intake)
+    rows = _history(db, intake.intake_id)
+    leaf = _leaf(rows, intake, kind, source)
+    if require_empty and leaf is not None:
+        raise M03ReviewError(409, "M03_REVIEW_ALREADY_STARTED", "Review already exists")
     if expected is not None and (leaf is None or leaf.revision_id != expected):
         raise M03ReviewError(409, "M03_STALE_CURRENT_REVISION", "The review changed before this action")
     row = M03ReviewRevision(
@@ -156,13 +219,13 @@ def _append(db: Session, intake: M02IntakeRecord, state: str, reason: str | None
         predecessor_revision_id=leaf.revision_id if leaf else None,
         revision_sequence=len(rows) + 1,
         state=state,
-        reason=reason.strip() if reason else None,
+        reason=reason,
         actor=ACTOR,
     )
     db.add(row)
     try:
         db.commit()
-    except IntegrityError as error:
+    except (IntegrityError, OperationalError) as error:
         db.rollback()
         raise M03ReviewError(409, "M03_CONCURRENT_LEAF_CONFLICT", "The review changed concurrently") from error
     db.refresh(row)
@@ -174,15 +237,16 @@ def start_review(db: Session, client_id: int, intake_id: str) -> M03ReviewRevisi
     intake = _intake(db, client_id, intake_id)
     if intake.lifecycle_status != "accepted_for_review":
         raise M03ReviewError(409, "M03_M02_NOT_ACCEPTED_FOR_REVIEW", "M02 intake is not accepted for review")
-    if _history(db, client_id, intake_id):
+    if _history(db, intake_id):
         raise M03ReviewError(409, "M03_REVIEW_ALREADY_STARTED", "Review already exists")
-    return _append(db, intake, "under_review", None, None)
+    return _append(db, intake, "under_review", None, None, require_empty=True)
 
 
 def decide_review(db: Session, client_id: int, intake_id: str, action: str, reason: str, expected: str) -> M03ReviewRevision:
     _mutable_client(db, client_id)
     intake = _intake(db, client_id, intake_id)
-    leaf = _leaf(_history(db, client_id, intake_id))
+    kind, source = _target(intake)
+    leaf = _leaf(_history(db, intake_id), intake, kind, source)
     if leaf is None:
         raise M03ReviewError(409, "M03_REVIEW_NOT_STARTED", "Review has not started")
     allowed = leaf.state == "under_review" if action in {"accepted", "rejected"} else leaf.state in {"accepted", "rejected"}
@@ -216,16 +280,17 @@ def add_annotation(db: Session, client_id: int, intake_id: str, payload: M03Anno
         intake_id=intake_id,
         source_id=source.source_id if kind == "source_evidence_review" else None,
         review_revision_id=revision.revision_id,
-        topic=payload.topic.strip(),
-        note=payload.note.strip(),
-        reason=payload.reason.strip(),
+        topic=payload.topic,
+        note=payload.note,
+        reason=payload.reason,
         actor=ACTOR,
         supersedes_annotation_id=payload.supersedes_annotation_id,
+        created_at=datetime.now(timezone.utc),
     )
     db.add(row)
     try:
         db.commit()
-    except IntegrityError as error:
+    except (IntegrityError, OperationalError) as error:
         db.rollback()
         raise M03ReviewError(409, "M03_ANNOTATION_CONFLICT", "Annotation conflicts with existing history") from error
     db.refresh(row)

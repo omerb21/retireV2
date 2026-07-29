@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -13,6 +13,14 @@ class StrictModel(BaseModel):
 class M03ReasonRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=4096)
     expected_current_revision_id: str = Field(min_length=1, max_length=64)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_required_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must contain non-whitespace characters")
+        return normalized
 
 
 class M03RevisionResponse(BaseModel):
@@ -32,6 +40,14 @@ class M03AnnotationRequest(StrictModel):
     note: str = Field(min_length=1, max_length=4096)
     reason: str = Field(min_length=1, max_length=4096)
     supersedes_annotation_id: str | None = Field(default=None, max_length=64)
+
+    @field_validator("topic", "note", "reason")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must contain non-whitespace characters")
+        return normalized
 
 
 class M03AnnotationResponse(BaseModel):

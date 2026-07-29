@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base, load_all_models
@@ -230,6 +231,52 @@ def test_reopen_and_annotation_reasons_are_trimmed_and_blank_is_atomic(api) -> N
         assert db.scalar(text("SELECT COUNT(*) FROM m03_annotations")) == 1
 
 
+def test_ordinary_orm_insert_replaces_caller_owned_ids_and_timestamps(api) -> None:
+    _client_api, sessions = api
+    caller_timestamp = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    with sessions() as db:
+        revision = M03ReviewRevision(
+            revision_id="caller-chosen-root",
+            client_id=1,
+            target_kind="manual_record_review",
+            intake_id="manual-1",
+            source_id=None,
+            predecessor_revision_id=None,
+            revision_sequence=1,
+            state="under_review",
+            reason=None,
+            actor=ACTOR,
+            decided_at=caller_timestamp,
+        )
+        db.add(revision)
+        db.commit()
+        db.refresh(revision)
+        assert revision.revision_id != "caller-chosen-root"
+        assert revision.revision_id.startswith("M03-R-")
+        assert revision.decided_at.replace(tzinfo=timezone.utc) > caller_timestamp
+
+        annotation = M03Annotation(
+            annotation_id="caller-chosen-note",
+            client_id=1,
+            intake_id="manual-1",
+            source_id=None,
+            review_revision_id=revision.revision_id,
+            topic="topic",
+            note="note",
+            reason="reason",
+            actor=ACTOR,
+            created_at=caller_timestamp,
+        )
+        db.add(annotation)
+        db.commit()
+        db.refresh(annotation)
+        assert annotation.annotation_id != "caller-chosen-note"
+        assert annotation.annotation_id.startswith("M03-A-")
+        assert annotation.created_at.replace(tzinfo=timezone.utc) > caller_timestamp
+        assert db.get(M03ReviewRevision, "caller-chosen-root") is None
+        assert db.get(M03Annotation, "caller-chosen-note") is None
+
+
 def test_revision_and_annotation_orm_update_and_delete_are_blocked(api) -> None:
     client, sessions = api
     root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
@@ -367,6 +414,9 @@ def test_direct_orm_predecessor_and_annotation_must_stay_in_target_chain(api) ->
     "target_kind = 'source_evidence_review', source_id = 'source-1'",
     "predecessor_revision_id = revision_id",
     "state = 'under_review'",
+    "revision_sequence = 99",
+    "revision_id = 'malformed-review-id'",
+    "decided_at = '2000-01-01 00:00:00'",
 ])
 def test_eligibility_fails_closed_for_forged_persisted_chain(api, corruption: str) -> None:
     client, sessions = api
@@ -402,6 +452,31 @@ def test_eligibility_fails_closed_for_inconsistent_uploaded_provenance(api) -> N
     assert result.status_code == 200
     assert result.json()["eligible"] is False
     assert result.json()["exclusion_reason"] == "uploaded_provenance_inconsistent"
+
+
+def test_timestamp_constraints_and_ordering_fail_closed(api) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    accepted = client.post("/api/clients/1/m03/targets/manual-1/accept", json={
+        "reason": "accepted", "expected_current_revision_id": root["revision_id"],
+    }).json()
+    with sessions() as db:
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text("UPDATE m03_review_revisions SET decided_at = NULL WHERE revision_id = :revision_id"),
+                {"revision_id": accepted["revision_id"]},
+            )
+            db.commit()
+        db.rollback()
+        db.execute(
+            text("UPDATE m03_review_revisions SET decided_at = '2999-01-01 00:00:00' WHERE revision_id = :revision_id"),
+            {"revision_id": root["revision_id"]},
+        )
+        db.commit()
+    result = client.get("/api/clients/1/m03/targets/manual-1/eligibility")
+    assert result.status_code == 200
+    assert result.json()["eligible"] is False
+    assert result.json()["exclusion_reason"] == "review_chain_inconsistent"
 
 
 def test_start_and_decisions_are_atomic_under_concurrency(api) -> None:

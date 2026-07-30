@@ -60,6 +60,9 @@ ACCEPTED_ADDITIVE_TABLES = {
     "m02_preserved_sources",
     "m03_review_revisions",
     "m03_annotations",
+    "m04_classification_subjects",
+    "m04_classification_revisions",
+    "m04_component_decisions",
 }
 
 

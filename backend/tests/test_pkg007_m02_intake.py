@@ -49,7 +49,7 @@ from app.services.m02_storage import (
 
 PARENT_REVISION = "f3a7c9d2e610"
 PKG007_REVISION = "b6d8e2f4a701"
-CURRENT_REVISION = "e4a7c3d9b802"
+CURRENT_REVISION = "95222c79dce8"
 ACTOR = "system:m02-intake:M02 intake workflow"
 
 

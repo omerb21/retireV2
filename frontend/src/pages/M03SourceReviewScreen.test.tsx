@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { M03SourceReviewScreen } from "./M03SourceReviewScreen";
@@ -26,6 +26,30 @@ const target = (current: ReturnType<typeof revision> | null = null) => ({
   accepted_revision_id: current?.state === "accepted" ? current.revision_id : null,
   eligible: current?.state === "accepted", exclusion_reason: current ? `review_${current.state}` : "review_not_started",
   eligibility_meaning: "reviewed evidence may be consumed by a separately authorized downstream transformation"
+});
+const targetFor = (
+  clientId: number,
+  intakeId: string,
+  current: ReturnType<typeof revision> | null,
+  label: string,
+) => ({
+  ...target(current),
+  client_id: clientId,
+  intake_id: intakeId,
+  m02_lifecycle_status: label,
+});
+const annotationFor = (label: string, intakeId: string) => ({
+  annotation_id: `${label}-annotation-id`,
+  review_revision_id: `${label}-revision-id`,
+  intake_id: intakeId,
+  source_id: null,
+  topic: `${label}-annotation-topic`,
+  note: `${label}-annotation-note`,
+  reason: `${label}-annotation-reason`,
+  actor: "system:m03-review-ui:M03 review workflow",
+  actor_is_authentication: false as const,
+  supersedes_annotation_id: null,
+  created_at: "2026-07-29T00:00:00Z",
 });
 
 type Deferred<T> = {
@@ -177,6 +201,138 @@ describe("M03SourceReviewScreen", () => {
     expect(await screen.findByText(/#2 accepted/)).toBeInTheDocument();
     expect(screen.getByText(/not eligible.*m02_superseded/)).toBeInTheDocument();
   });
+
+  it.each(
+    (["candidates", "detail", "history", "annotations", "eligibility"] as const)
+      .flatMap((readPath) => (["A-B", "A-B-A"] as const)
+        .flatMap((transition) => (["success", "rejected", "api-error"] as const)
+          .map((outcome) => [readPath, transition, outcome] as const))),
+  )(
+    "read race: %s A-old %s during %s preserves current generation and finally ownership",
+    async (readPath, transition, outcome) => {
+      const oldRead = deferred<Response>();
+      const currentRead = deferred<Response>();
+      let aCandidateCalls = 0;
+      const currentLabel = transition === "A-B" ? "B-current" : "A-new";
+      const currentClientId = transition === "A-B" ? 2 : 1;
+      const currentIntakeId = transition === "A-B" ? "b-current-intake" : "a-new-intake";
+
+      const pathFromUrl = (url: string) => url.endsWith("/history") ? "history"
+        : url.endsWith("/annotations") ? "annotations"
+          : url.endsWith("/eligibility") ? "eligibility" : "detail";
+      const payloadFor = (
+        path: "detail" | "history" | "annotations" | "eligibility",
+        label: string,
+        clientId: number,
+        intakeId: string,
+      ) => {
+        const accepted = {
+          ...revision("accepted", 2),
+          reason: `${label}-history`,
+        };
+        if (path === "history") return [revision("under_review", 1), accepted];
+        if (path === "annotations") return [annotationFor(label, intakeId)];
+        if (path === "eligibility") {
+          return {
+            ...targetFor(clientId, intakeId, accepted, label),
+            eligible: label !== "A-old",
+            accepted_revision_id: label !== "A-old" ? accepted.revision_id : null,
+            exclusion_reason: label === "A-old" ? "A-old-exclusion" : null,
+          };
+        }
+        return targetFor(clientId, intakeId, accepted, label);
+      };
+
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
+        if (clientMatch) {
+          const id = Number(clientMatch[1]);
+          return json({ ...client(), client_id: id, full_name: `Client ${id}` });
+        }
+        if (url.endsWith("/m03/candidates")) {
+          const id = url.includes("/clients/2/") ? 2 : 1;
+          if (id === 1) aCandidateCalls += 1;
+          if (readPath === "candidates") {
+            if (id === 1 && aCandidateCalls === 1) return oldRead.promise;
+            if (
+              (transition === "A-B" && id === 2)
+              || (transition === "A-B-A" && id === 1 && aCandidateCalls === 2)
+            ) return currentRead.promise;
+          }
+          const label = id === 2 ? "B-current" : aCandidateCalls > 1 ? "A-new" : "A-old";
+          const intakeId = id === 2 ? "b-current-intake" : aCandidateCalls > 1 ? "a-new-intake" : "a-old-intake";
+          return json([targetFor(id, intakeId, null, label)]);
+        }
+        const targetMatch = url.match(/\/clients\/(\d+)\/m03\/targets\/([^/]+)/);
+        if (targetMatch) {
+          const id = Number(targetMatch[1]);
+          const intakeId = decodeURIComponent(targetMatch[2]);
+          const path = pathFromUrl(url);
+          const label = intakeId === "a-old-intake" ? "A-old"
+            : intakeId === "b-current-intake" ? "B-current" : "A-new";
+          if (path === readPath && label === "A-old") return oldRead.promise;
+          if (path === readPath && label === currentLabel) return currentRead.promise;
+          return json(payloadFor(path, label, id, intakeId));
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+
+      renderNavigablePage();
+      if (readPath !== "candidates") {
+        fireEvent.click(await screen.findByRole("button", { name: /a-old-intake/ }));
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
+      if (transition === "A-B-A") {
+        await screen.findByRole("button", { name: /b-current-intake/ });
+        fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+      }
+      if (readPath !== "candidates") {
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(currentIntakeId) }));
+      }
+      expect(await screen.findByText(/Loading M03 review/)).toBeInTheDocument();
+
+      await act(async () => {
+        if (outcome === "success") {
+          const oldBody = readPath === "candidates"
+            ? [targetFor(1, "A-old-stale-intake", null, "A-old")]
+            : payloadFor(readPath, "A-old", 1, "a-old-intake");
+          oldRead.resolve(json(oldBody));
+        } else if (outcome === "api-error") {
+          oldRead.resolve(json({ detail: { code: "A_OLD_API_ERROR" } }, 500));
+        } else {
+          oldRead.reject(new Error("A-old rejected promise"));
+        }
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText(/Loading M03 review/)).toBeInTheDocument();
+      expect(screen.queryByText(/A-old|A_OLD_API_ERROR|rejected promise/)).not.toBeInTheDocument();
+
+      await act(async () => {
+        const currentBody = readPath === "candidates"
+          ? [targetFor(currentClientId, currentIntakeId, null, currentLabel)]
+          : payloadFor(readPath, currentLabel, currentClientId, currentIntakeId);
+        currentRead.resolve(json(currentBody));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      if (readPath === "candidates") {
+        expect(await screen.findByRole("button", { name: new RegExp(currentIntakeId) })).toBeEnabled();
+      } else {
+        expect(await screen.findByText(new RegExp(`${currentLabel}-history`))).toBeInTheDocument();
+        expect(screen.getByText(new RegExp(`${currentLabel}-annotation-note`))).toBeInTheDocument();
+        expect(screen.getByText(/eligible for a separately authorized downstream transformation/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/Decision\/reopen reason/)).toBeEnabled();
+        expect(screen.getByLabelText(/Supersede existing annotation/)).toBeEnabled();
+      }
+      expect(screen.queryByText(/A-old|A_OLD_API_ERROR|rejected promise/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("pre")).not.toBeInTheDocument();
+    },
+  );
 
   it("rejects stale candidate errors and finally across an immediate A-B-A transition", async () => {
     const firstCandidates = deferred<Response>();

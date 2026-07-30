@@ -473,6 +473,41 @@ def _validated_history(
     return rows, component_map
 
 
+def _integrity_exclusion_reason(db: Session, context: M04Context) -> str:
+    """Return the narrowest stable fail-closed reason visible to this client."""
+    for row in _history(db, context.subject):
+        snapshot = row.input_snapshot
+        if (
+            row.catalogue_version != M04_CATALOGUE_VERSION
+            or not _valid_rule_evidence(row.matched_rule_evidence)
+        ):
+            return "invalid_rule_evidence"
+        if (
+            context.subject is None
+            or row.subject_id != context.subject.subject_id
+            or row.client_id != context.client.client_id
+            or row.intake_id != context.intake.intake_id
+            or row.target_kind != context.target_kind
+            or row.source_id != context.source_id
+            or not isinstance(snapshot, dict)
+            or snapshot.get("client_id") != row.client_id
+            or snapshot.get("intake_id") != row.intake_id
+            or snapshot.get("target_kind") != row.target_kind
+            or snapshot.get("source_id") != row.source_id
+        ):
+            return "foreign_or_inconsistent_provenance"
+        for component in _components(db, row.revision_id):
+            if not _valid_rule_evidence(component.matched_rule_evidence):
+                return "invalid_rule_evidence"
+            if (
+                component.client_id != row.client_id
+                or component.intake_id != row.intake_id
+                or component.target_kind != row.target_kind
+            ):
+                return "foreign_or_inconsistent_provenance"
+    return "malformed_classification_chain"
+
+
 def _revalidation_required(
     subject: M04ClassificationSubject | None,
     rows: list[M04ClassificationRevision],
@@ -728,7 +763,7 @@ def eligibility(
     except M04ClassificationError:
         return M04EligibilityResponse(
             eligible_for_m05=False,
-            exclusion_reason="malformed_classification_chain",
+            exclusion_reason=_integrity_exclusion_reason(db, context),
             current_revision_id=None,
             accepted_revision_id=None,
             m03_revision_id=context.m03.accepted_revision_id,
@@ -756,7 +791,16 @@ def eligibility(
     elif leaf.state == "proposed":
         reason = "classification_proposed"
     elif leaf.state == "unresolved":
-        reason = "classification_unresolved"
+        unresolved_reasons = (
+            leaf.action_evidence.get("unresolved_reasons", [])
+            if isinstance(leaf.action_evidence, dict)
+            else []
+        )
+        reason = (
+            "opaque_uploaded_facts_unavailable"
+            if "opaque_uploaded_facts_unavailable" in unresolved_reasons
+            else "classification_unresolved"
+        )
     elif leaf.state == "rejected":
         reason = "classification_rejected"
     elif leaf.state != "accepted":

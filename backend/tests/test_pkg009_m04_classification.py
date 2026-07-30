@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -326,6 +327,14 @@ def test_unresolved_reopen_and_prohibited_transitions(api) -> None:
     assert unresolved.status_code == 201
     assert unresolved.json()["state"] == "unresolved"
     assert "opaque_uploaded_facts_unavailable" in unresolved.json()["action_evidence"]["unresolved_reasons"]
+    opaque_eligibility = client.get(
+        "/api/clients/1/m04/targets/upload-1/eligibility"
+    ).json()
+    assert opaque_eligibility["eligible_for_m05"] is False
+    assert (
+        opaque_eligibility["exclusion_reason"]
+        == "opaque_uploaded_facts_unavailable"
+    )
     reopened = client.post(
         "/api/clients/1/m04/targets/upload-1/reopen",
         json=_reason(unresolved.json()["revision_id"], "review again"),
@@ -507,6 +516,55 @@ def test_raw_sql_corruption_fails_eligibility_closed(api) -> None:
     assert response.status_code == 200
     assert response.json()["eligible_for_m05"] is False
     assert response.json()["exclusion_reason"] == "malformed_classification_chain"
+
+
+def test_invalid_rule_evidence_has_stable_exclusion(api) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        db.execute(
+            text(
+                "UPDATE m04_classification_revisions "
+                "SET matched_rule_evidence = :evidence WHERE state = 'accepted'"
+            ),
+            {"evidence": '[{"rule_id":"caller-forged-rule"}]'},
+        )
+        db.commit()
+    invalid_rule = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()
+    assert invalid_rule["eligible_for_m05"] is False
+    assert invalid_rule["exclusion_reason"] == "invalid_rule_evidence"
+
+
+def test_inconsistent_provenance_has_stable_exclusion(api) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        accepted = db.scalar(
+            select(M04ClassificationRevision).where(
+                M04ClassificationRevision.state == "accepted"
+            )
+        )
+        assert accepted is not None
+        snapshot = dict(accepted.input_snapshot)
+        snapshot["client_id"] = 999
+        db.execute(
+            text(
+                "UPDATE m04_classification_revisions "
+                "SET input_snapshot = :snapshot WHERE state = 'accepted'"
+            ),
+            {"snapshot": json.dumps(snapshot)},
+        )
+        db.commit()
+    inconsistent = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()
+    assert inconsistent["eligible_for_m05"] is False
+    assert (
+        inconsistent["exclusion_reason"]
+        == "foreign_or_inconsistent_provenance"
+    )
 
 
 def test_concurrent_start_is_atomic(api) -> None:

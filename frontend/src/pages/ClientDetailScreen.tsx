@@ -1417,6 +1417,14 @@ export function ClientDetailScreen() {
       </p>
       <p>
         <Link
+          to={`/clients/${validRouteClientId}/classification`}
+          state={{ clientName: client.full_name }}
+        >
+          M04 Classification
+        </Link>
+      </p>
+      <p>
+        <Link
           to={`/clients/${validRouteClientId}/fixation/workspace`}
           state={{ clientName: client.full_name }}
         >

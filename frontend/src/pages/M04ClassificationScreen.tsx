@@ -125,6 +125,17 @@ export function M04ClassificationScreen() {
   const mutationEpoch = useRef(0);
   const selectedTarget = useRef<string | null>(null);
   const selectedRevision = useRef<string | null>(null);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      listEpoch.current += 1; detailEpoch.current += 1;
+      previewEpoch.current += 1; mutationEpoch.current += 1;
+      selectedTarget.current = null; selectedRevision.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     listEpoch.current += 1; detailEpoch.current += 1;
@@ -149,7 +160,8 @@ export function M04ClassificationScreen() {
   const loadTargets = useCallback(async () => {
     if (clientId === null) return;
     const token = captureClientContext(); const request = ++listEpoch.current;
-    const owned = () => request === listEpoch.current && isCurrentClientContext(token);
+    const owned = () => mounted.current && request === listEpoch.current &&
+      isCurrentClientContext(token);
     setLoading(true); setError(null);
     try {
       const [nextClient, rows] = await Promise.all([
@@ -170,7 +182,7 @@ export function M04ClassificationScreen() {
     const token = captureClientContext(); const request = ++detailEpoch.current;
     previewEpoch.current += 1; mutationEpoch.current += 1;
     selectedTarget.current = intakeId; selectedRevision.current = null;
-    const owned = () => request === detailEpoch.current &&
+    const owned = () => mounted.current && request === detailEpoch.current &&
       selectedTarget.current === intakeId && isCurrentClientContext(token);
     setLoading(true); setSubmitting(false); setError(null); setPreview(null);
     setTarget(null); setHistory([]); setRules([]); setComponents([]);
@@ -194,9 +206,11 @@ export function M04ClassificationScreen() {
   const runPreview = async () => {
     if (clientId === null || !target) return;
     const token = captureClientContext(); const intakeId = target.intake_id;
+    const revisionId = target.current_revision?.revision_id ?? null;
     const request = ++previewEpoch.current;
-    const owned = () => request === previewEpoch.current &&
-      selectedTarget.current === intakeId && isCurrentClientContext(token);
+    const owned = () => mounted.current && request === previewEpoch.current &&
+      selectedTarget.current === intakeId && selectedRevision.current === revisionId &&
+      isCurrentClientContext(token);
     setLoading(true); setError(null);
     try {
       const next = await previewM04Rules(clientId, intakeId);
@@ -215,7 +229,8 @@ export function M04ClassificationScreen() {
     const token = captureClientContext(); const intakeId = target.intake_id;
     const currentRevisionId = target.current_revision?.revision_id ?? null;
     const request = ++mutationEpoch.current;
-    const owned = () => request === mutationEpoch.current &&
+    previewEpoch.current += 1; setPreview(null); setLoading(false);
+    const owned = () => mounted.current && request === mutationEpoch.current &&
       selectedTarget.current === intakeId &&
       selectedRevision.current === currentRevisionId &&
       isCurrentClientContext(token);
@@ -298,12 +313,12 @@ export function M04ClassificationScreen() {
 
       <fieldset disabled={archived || submitting}>
         <legend>Lifecycle actions</legend>
+        <button type="button" onClick={() => void runPreview()}>Preview exact rules</button>
         {!current ? <button type="button"
           onClick={() => void mutate(() => startM04(clientId, target.intake_id))}>
           Start classification
         </button> : null}
         {current?.state === "under_review" ? <>
-          <button type="button" onClick={() => void runPreview()}>Preview exact rules</button>
           <button type="button" onClick={() => void mutate(() =>
             createM04Proposal(clientId, target.intake_id, current.revision_id))}>
             Create proposal

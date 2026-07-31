@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { getClient, type ClientDetailItem } from "../api/clientsApi";
 import {
@@ -38,6 +38,65 @@ const draftsFrom = (rows: M04Component[]): ComponentDraft[] => rows.map((row) =>
   currentEmployerRelated: row.current_employer_related,
   explanation: row.explanation || "Planner classification explanation",
 }));
+const evidenceText = (value: unknown) => value === null || value === undefined || value === ""
+  ? "not present" : typeof value === "string" ? value : JSON.stringify(value);
+
+function RuleEvidenceView({ rule }: { rule: Record<string, unknown> }) {
+  return <dl className="m04-rule-evidence">
+    <dt>Catalogue version</dt><dd>{evidenceText(rule.catalogue_version)}</dd>
+    <dt>Rule ID</dt><dd>{evidenceText(rule.rule_id)}</dd>
+    <dt>Matcher type</dt><dd>{evidenceText(rule.matcher_type)}</dd>
+    <dt>Exact matcher value</dt><dd>{evidenceText(rule.exact_matcher_value)}</dd>
+    <dt>Rule scope</dt><dd>{evidenceText(rule.scope)}</dd>
+    <dt>Provider scope</dt><dd>{evidenceText(rule.provider_scope)}</dd>
+    <dt>Source-format scope</dt><dd>{evidenceText(rule.source_format_scope)}</dd>
+    <dt>Output product family</dt><dd>{evidenceText(rule.output_product_family)}</dd>
+    <dt>Output component kind</dt><dd>{evidenceText(rule.output_component_kind)}</dd>
+    <dt>Output interpretation</dt><dd>{evidenceText(rule.output_interpretation)}</dd>
+    <dt>Rationale</dt><dd>{evidenceText(rule.rationale)}</dd>
+    <dt>Evidence/authority reference</dt><dd>{evidenceText(rule.authority_reference)}</dd>
+    <dt>Conflict behavior</dt><dd>{evidenceText(rule.conflict_behavior)}</dd>
+  </dl>;
+}
+
+function ComponentEvidenceView({ component }: { component: M04Component }) {
+  return <li>
+    <p>Evidence identity: {component.evidence_identity}; original label: {component.original_label ?? "none"}; original code: {component.original_code ?? "none"}.</p>
+    <p>Decision: {component.component_kind}; interpretation: {component.interpretation}; current-employer-related: {component.current_employer_related}.</p>
+    <p>Explanation: {component.explanation}</p>
+    <h6>Component matched rules</h6>
+    {component.matched_rule_evidence.length
+      ? component.matched_rule_evidence.map((rule, index) =>
+        <RuleEvidenceView key={String(rule.rule_id ?? index)} rule={rule} />)
+      : <p>No component rule evidence persisted.</p>}
+  </li>;
+}
+
+function RevisionEvidenceView({ revision, current }:
+  { revision: M04Revision; current: boolean }) {
+  const unresolved = revision.action_evidence.unresolved_reasons;
+  const conflicts = revision.action_evidence.conflicts;
+  return <li>
+    <h5>Revision #{revision.revision_sequence} — {current ? "current" : "historical"}</h5>
+    <p>State: {revision.state}; action: {revision.action_type}; actor: {revision.actor}; timestamp: {revision.created_at}.</p>
+    <p>Predecessor: {revision.predecessor_revision_id ?? "root"}; catalogue: {revision.catalogue_version}; match basis: {revision.match_basis}.</p>
+    <p>Reason code: {revision.reason_code ?? "none"}; reason: {revision.reason ?? "none"}; explanation: {revision.explanation ?? "none"}.</p>
+    <p>Product-family decision: {revision.product_family ?? "none"}; subtype: {revision.pension_subtype ?? "none"}; aggregate interpretation: {revision.aggregate_interpretation ?? "none"}.</p>
+    <p>Action evidence: {JSON.stringify(revision.action_evidence)}</p>
+    {unresolved ? <p>Persisted unresolved reasons: {evidenceText(unresolved)}</p> : null}
+    {conflicts ? <p>Persisted conflicts: {evidenceText(conflicts)}</p> : null}
+    <h6>Revision matched rules</h6>
+    {revision.matched_rule_evidence.length
+      ? revision.matched_rule_evidence.map((rule, index) =>
+        <RuleEvidenceView key={String(rule.rule_id ?? index)} rule={rule} />)
+      : <p>No revision-level rule evidence persisted.</p>}
+    <h6>Persisted component decisions</h6>
+    {revision.components.length
+      ? <ul>{revision.components.map((component) =>
+        <ComponentEvidenceView key={component.component_decision_id} component={component} />)}</ul>
+      : <p>No component decisions persisted for this revision.</p>}
+  </li>;
+}
 
 export function M04ClassificationScreen() {
   const { clientId: raw } = useParams();
@@ -60,13 +119,26 @@ export function M04ClassificationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const listEpoch = useRef(0);
+  const detailEpoch = useRef(0);
+  const previewEpoch = useRef(0);
+  const mutationEpoch = useRef(0);
+  const selectedTarget = useRef<string | null>(null);
+  const selectedRevision = useRef<string | null>(null);
 
   useEffect(() => {
+    listEpoch.current += 1; detailEpoch.current += 1;
+    previewEpoch.current += 1; mutationEpoch.current += 1;
+    selectedTarget.current = null; selectedRevision.current = null;
     setClient(null); setTargets([]); setTarget(null); setHistory([]);
     setPreview(null); setRules([]); setRetainedId(""); setExplanation("");
     setFamily("unknown_or_unresolved"); setComponents([]); setHistoricalId("");
     setError(null); setLoading(false); setSubmitting(false);
   }, [clientId, location.key]);
+
+  useEffect(() => {
+    selectedRevision.current = target?.current_revision?.revision_id ?? null;
+  }, [target?.current_revision?.revision_id]);
 
   const bindRevision = useCallback((revision: M04Revision | null) => {
     if (!revision) return;
@@ -76,76 +148,98 @@ export function M04ClassificationScreen() {
 
   const loadTargets = useCallback(async () => {
     if (clientId === null) return;
-    const token = captureClientContext(); setLoading(true); setError(null);
+    const token = captureClientContext(); const request = ++listEpoch.current;
+    const owned = () => request === listEpoch.current && isCurrentClientContext(token);
+    setLoading(true); setError(null);
     try {
       const [nextClient, rows] = await Promise.all([
         getClient(clientId), listM04Targets(clientId),
       ]);
-      if (!isCurrentClientContext(token)) return;
+      if (!owned()) return;
       setClient(nextClient); setTargets(rows);
     } catch (cause) {
-      if (isCurrentClientContext(token)) setError(message(cause));
+      if (owned()) setError(message(cause));
     } finally {
-      if (isCurrentClientContext(token)) setLoading(false);
+      if (owned()) setLoading(false);
     }
   }, [captureClientContext, clientId, isCurrentClientContext]);
   useEffect(() => { void loadTargets(); }, [loadTargets]);
 
   const loadTarget = useCallback(async (intakeId: string) => {
     if (clientId === null) return;
-    const token = captureClientContext(); setLoading(true); setError(null); setPreview(null);
+    const token = captureClientContext(); const request = ++detailEpoch.current;
+    previewEpoch.current += 1; mutationEpoch.current += 1;
+    selectedTarget.current = intakeId; selectedRevision.current = null;
+    const owned = () => request === detailEpoch.current &&
+      selectedTarget.current === intakeId && isCurrentClientContext(token);
+    setLoading(true); setSubmitting(false); setError(null); setPreview(null);
+    setTarget(null); setHistory([]); setRules([]); setComponents([]);
     try {
       const [next, revisions, eligibility, matched] = await Promise.all([
         getM04Target(clientId, intakeId), getM04History(clientId, intakeId),
         getM04Eligibility(clientId, intakeId), getM04MatchedRules(clientId, intakeId),
       ]);
-      if (!isCurrentClientContext(token)) return;
+      if (!owned()) return;
       const combined = { ...next, eligibility };
+      selectedRevision.current = combined.current_revision?.revision_id ?? null;
       setTarget(combined); setHistory(revisions); setRules(matched);
       bindRevision(combined.current_revision);
     } catch (cause) {
-      if (isCurrentClientContext(token)) setError(message(cause));
+      if (owned()) setError(message(cause));
     } finally {
-      if (isCurrentClientContext(token)) setLoading(false);
+      if (owned()) setLoading(false);
     }
   }, [bindRevision, captureClientContext, clientId, isCurrentClientContext]);
 
   const runPreview = async () => {
     if (clientId === null || !target) return;
-    const token = captureClientContext(); setLoading(true); setError(null);
+    const token = captureClientContext(); const intakeId = target.intake_id;
+    const request = ++previewEpoch.current;
+    const owned = () => request === previewEpoch.current &&
+      selectedTarget.current === intakeId && isCurrentClientContext(token);
+    setLoading(true); setError(null);
     try {
-      const next = await previewM04Rules(clientId, target.intake_id);
-      if (!isCurrentClientContext(token)) return;
+      const next = await previewM04Rules(clientId, intakeId);
+      if (!owned()) return;
       setPreview(next); setFamily(next.product_family);
       setComponents(draftsFrom(next.components));
     } catch (cause) {
-      if (isCurrentClientContext(token)) setError(message(cause));
+      if (owned()) setError(message(cause));
     } finally {
-      if (isCurrentClientContext(token)) setLoading(false);
+      if (owned()) setLoading(false);
     }
   };
 
   const mutate = async (operation: () => Promise<unknown>) => {
     if (clientId === null || !target) return;
     const token = captureClientContext(); const intakeId = target.intake_id;
+    const currentRevisionId = target.current_revision?.revision_id ?? null;
+    const request = ++mutationEpoch.current;
+    const owned = () => request === mutationEpoch.current &&
+      selectedTarget.current === intakeId &&
+      selectedRevision.current === currentRevisionId &&
+      isCurrentClientContext(token);
     setSubmitting(true); setError(null);
     try {
       await operation();
-      if (!isCurrentClientContext(token)) return; // stale mutation launches zero refreshes
+      if (!owned()) return; // stale mutation launches zero refreshes
       const refreshToken = captureClientContext();
+      const detailRequest = ++detailEpoch.current;
+      const listRequest = ++listEpoch.current;
       const [next, revisions, eligibility, matched, rows] = await Promise.all([
         getM04Target(clientId, intakeId), getM04History(clientId, intakeId),
         getM04Eligibility(clientId, intakeId), getM04MatchedRules(clientId, intakeId),
         listM04Targets(clientId),
       ]);
-      if (!isCurrentClientContext(refreshToken)) return;
+      if (!owned() || !isCurrentClientContext(refreshToken) ||
+        detailRequest !== detailEpoch.current || listRequest !== listEpoch.current) return;
       const combined = { ...next, eligibility };
       setTarget(combined); setHistory(revisions); setRules(matched); setTargets(rows);
       setPreview(null); setExplanation(""); bindRevision(combined.current_revision);
     } catch (cause) {
-      if (isCurrentClientContext(token)) setError(message(cause));
+      if (owned()) setError(message(cause));
     } finally {
-      if (isCurrentClientContext(token)) setSubmitting(false);
+      if (owned()) setSubmitting(false);
     }
   };
 
@@ -322,13 +416,13 @@ export function M04ClassificationScreen() {
         <p>Conflicts: {preview.conflicts.join(", ") || "none"}</p>
       </section> : null}
       <h4>Current matched-rule evidence</h4>
-      <ul>{rules.map((row, index) => <li key={String(row.rule_id ?? index)}>
-        {String(row.rule_id ?? "unknown rule")} — {String(row.rationale ?? "no rationale")}
-      </li>)}</ul>
+      {rules.length ? rules.map((row, index) =>
+        <RuleEvidenceView key={String(row.rule_id ?? index)} rule={row} />)
+        : <p>No current matched-rule evidence persisted.</p>}
       <h4>Immutable classification history</h4>
-      <ol>{history.map((row) => <li key={row.revision_id}>
-        #{row.revision_sequence} {row.action_type} → {row.state}; family {row.product_family ?? "none"}; interpretation {row.aggregate_interpretation ?? "none"}; catalogue {row.catalogue_version}
-      </li>)}</ol>
+      <p>This is technical provenance only; it is not professional, tax, legal, liquidity, withdrawal, or M05 authority.</p>
+      <ol>{history.map((row) => <RevisionEvidenceView key={row.revision_id}
+        revision={row} current={row.revision_id === current?.revision_id} />)}</ol>
     </section> : null}
     <p><Link to={`/clients/${clientId}`}>Back to M01 client case</Link></p>
   </section>;

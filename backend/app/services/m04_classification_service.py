@@ -401,6 +401,39 @@ def _transition_is_valid(
     )
 
 
+def _validated_snapshot_component_map(
+    snapshot: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    raw_components = snapshot.get("components")
+    if not isinstance(raw_components, list):
+        raise M04ClassificationError(
+            409,
+            "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
+            "Classification snapshot components must be a structured list",
+        )
+    component_map: dict[str, dict[str, Any]] = {}
+    for item in raw_components:
+        if not isinstance(item, dict):
+            raise M04ClassificationError(
+                409,
+                "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
+                "Classification snapshot component is malformed",
+            )
+        identity = item.get("evidence_identity")
+        if (
+            not isinstance(identity, str)
+            or not identity.strip()
+            or identity in component_map
+        ):
+            raise M04ClassificationError(
+                409,
+                "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
+                "Classification snapshot component identity is invalid or duplicated",
+            )
+        component_map[identity] = item
+    return component_map
+
+
 def _validated_history(
     db: Session, context: M04Context
 ) -> tuple[list[M04ClassificationRevision], dict[str, list[M04ComponentDecision]]]:
@@ -411,11 +444,11 @@ def _validated_history(
         components = _components(db, row.revision_id)
         component_map[row.revision_id] = components
         snapshot = row.input_snapshot
-        snapshot_components = {
-            item.get("evidence_identity"): item
-            for item in snapshot.get("components", [])
-            if isinstance(item, dict)
-        } if isinstance(snapshot, dict) else {}
+        snapshot_components = (
+            _validated_snapshot_component_map(snapshot)
+            if isinstance(snapshot, dict)
+            else {}
+        )
         created_at = row.created_at
         previous_created_at = previous.created_at if previous else None
         if (
@@ -445,6 +478,16 @@ def _validated_history(
                 409,
                 "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
                 "Classification chain is inconsistent",
+            )
+        persisted_identities = [component.evidence_identity for component in components]
+        if row.state != "under_review" and (
+            len(persisted_identities) != len(set(persisted_identities))
+            or set(persisted_identities) != set(snapshot_components)
+        ):
+            raise M04ClassificationError(
+                409,
+                "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
+                "Classification snapshot identities do not match persisted components",
             )
         seen: set[str] = set()
         for component in components:

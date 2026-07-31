@@ -813,6 +813,127 @@ def test_authoritative_aggregate_derivation_positive_cases() -> None:
     assert _aggregate([{"interpretation": "unresolved"}]) == "unresolved"
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "duplicate_identical_identity",
+        "duplicate_conflicting_interpretation",
+        "duplicate_conflicting_label",
+        "duplicate_conflicting_code",
+        "duplicate_with_malformed_payload",
+        "missing_identity",
+        "empty_identity",
+        "non_string_identity",
+        "snapshot_count_greater_than_rows",
+        "snapshot_count_less_than_rows",
+        "two_snapshot_identities_for_one_row",
+        "unknown_malformed_entry",
+    ],
+)
+def test_raw_snapshot_component_multiplicity_fails_closed(api, case: str) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        revision_ids_before = tuple(
+            db.scalars(
+                select(M04ClassificationRevision.revision_id).order_by(
+                    M04ClassificationRevision.revision_sequence
+                )
+            )
+        )
+        accepted = db.scalar(
+            select(M04ClassificationRevision).where(
+                M04ClassificationRevision.state == "accepted"
+            )
+        )
+        assert accepted is not None
+        snapshot = json.loads(json.dumps(accepted.input_snapshot))
+        components = snapshot["components"]
+        original = dict(components[0])
+        if case == "duplicate_identical_identity":
+            components.append(dict(original))
+        elif case == "duplicate_conflicting_interpretation":
+            components.append({**original, "interpretation": "capital"})
+        elif case == "duplicate_conflicting_label":
+            components.append({**original, "original_label": "Conflicting label"})
+        elif case == "duplicate_conflicting_code":
+            components.append({**original, "original_code": "conflicting_code"})
+        elif case == "duplicate_with_malformed_payload":
+            components.append({"evidence_identity": original["evidence_identity"]})
+        elif case == "missing_identity":
+            components[0] = {key: value for key, value in original.items()
+                             if key != "evidence_identity"}
+        elif case == "empty_identity":
+            components[0] = {**original, "evidence_identity": ""}
+        elif case == "non_string_identity":
+            components[0] = {**original, "evidence_identity": 123}
+        elif case == "snapshot_count_greater_than_rows":
+            components.append({**original, "evidence_identity": "extra-identity"})
+        elif case == "snapshot_count_less_than_rows":
+            snapshot["components"] = []
+        elif case == "two_snapshot_identities_for_one_row":
+            components.append({**original, "evidence_identity": "second-identity"})
+        elif case == "unknown_malformed_entry":
+            components.append("malformed-entry")
+        db.connection().exec_driver_sql(
+            "UPDATE m04_classification_revisions SET input_snapshot = ? "
+            "WHERE revision_id = ?",
+            (json.dumps(snapshot), accepted.revision_id),
+        )
+        _redigest_accepted(db)
+    detail = client.get("/api/clients/1/m04/targets/manual-1")
+    assert detail.status_code == 409
+    assert detail.json()["detail"]["code"] == "M04_CLASSIFICATION_CHAIN_INCONSISTENT"
+    eligibility = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    )
+    assert eligibility.status_code == 200
+    assert eligibility.json()["eligible_for_m05"] is False
+    assert eligibility.json()["accepted_revision_id"] is None
+    assert eligibility.json()["exclusion_reason"] == "malformed_classification_chain"
+    with sessions() as db:
+        assert tuple(
+            db.scalars(
+                select(M04ClassificationRevision.revision_id).order_by(
+                    M04ClassificationRevision.revision_sequence
+                )
+            )
+        ) == revision_ids_before
+
+
+@pytest.mark.parametrize("aggregate", ["pension", "capital", "mixed"])
+def test_valid_snapshot_component_one_to_one_positive_controls(api, aggregate: str) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        connection = db.connection()
+        if aggregate == "capital":
+            connection.exec_driver_sql(
+                "UPDATE m04_component_decisions SET interpretation = 'capital' "
+                "WHERE revision_id IN (SELECT revision_id FROM "
+                "m04_classification_revisions WHERE state = 'accepted')"
+            )
+            connection.exec_driver_sql(
+                "UPDATE m04_classification_revisions "
+                "SET aggregate_interpretation = 'capital' WHERE state = 'accepted'"
+            )
+        elif aggregate == "mixed":
+            _add_corrupt_component(db, interpretation="capital")
+            connection.exec_driver_sql(
+                "UPDATE m04_classification_revisions "
+                "SET aggregate_interpretation = 'mixed' WHERE state = 'accepted'"
+            )
+        _redigest_accepted(db)
+    detail = client.get("/api/clients/1/m04/targets/manual-1")
+    assert detail.status_code == 200
+    assert detail.json()["current_revision"]["aggregate_interpretation"] == aggregate
+    eligibility = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()
+    assert eligibility["eligible_for_m05"] is True
+    assert eligibility["accepted_revision_id"] is not None
+
+
 def test_accept_rejects_semantically_inconsistent_proposal(api) -> None:
     client, sessions = api
     started = client.post("/api/clients/1/m04/targets/manual-1/start").json()

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { M04Component, M04Revision } from "../api/m04ClassificationApi";
 import { M04ClassificationScreen } from "./M04ClassificationScreen";
 
 const json = (body: unknown, status = 200): Response => ({
@@ -20,7 +21,9 @@ const client = (id = 1, status: "delivered" | "archived" = "delivered") => ({
   professional_identification_status: "identification_incomplete",
   m01_case: { lifecycle_status: status },
 });
-const component = (interpretation: "pension" | "capital" | "unresolved" = "unresolved") => ({
+const component = (
+  interpretation: "pension" | "capital" | "unresolved" = "unresolved",
+): M04Component => ({
   component_decision_id: "component-1",
   evidence_identity: "component:0:abc",
   original_label: "תגמולים",
@@ -34,14 +37,17 @@ const component = (interpretation: "pension" | "capital" | "unresolved" = "unres
 const revision = (
   state: "under_review" | "proposed" | "accepted" | "unresolved" | "rejected",
   sequence: number,
-  action = state === "under_review" ? "start" : state,
-) => ({
+  action?: M04Revision["action_type"],
+): M04Revision => ({
   revision_id: `r-${sequence}`,
   revision_sequence: sequence,
   predecessor_revision_id: sequence === 1 ? null : `r-${sequence - 1}`,
   historical_revision_id: null,
   state,
-  action_type: action,
+  action_type: action ?? ({
+    under_review: "start", proposed: "proposal", accepted: "accept",
+    unresolved: "unresolved", rejected: "reject",
+  } as const)[state],
   product_family: state === "under_review" ? null : "provident_fund",
   pension_subtype: null,
   aggregate_interpretation:
@@ -100,6 +106,33 @@ const preview = {
   unresolved_reasons: ["component_interpretation_unresolved"],
   persists_revision: false,
 };
+const fullRule = (overrides: Record<string, unknown> = {}) => ({
+  catalogue_version: "m04-rules-v1",
+  rule_id: "m04.asset.product-type.provident_fund",
+  matcher_type: "declared_product_type_exact",
+  exact_matcher_value: "provident_fund",
+  scope: "asset",
+  provider_scope: "Persisted Provider",
+  source_format_scope: "manual",
+  output_product_family: "provident_fund",
+  output_component_kind: null,
+  output_interpretation: null,
+  rationale: "Exact accepted token",
+  authority_reference: "PKG_009_FINAL_PACKAGE_DEFINITION.md section 5.1",
+  conflict_behavior: "unresolved",
+  ...overrides,
+});
+const ACTION_CASES = [
+  { action: "start", state: null, button: "Start classification", endpoint: "/start" },
+  { action: "proposal", state: "under_review", button: "Create proposal", endpoint: "/proposal" },
+  { action: "unresolved", state: "under_review", button: "Mark unresolved", endpoint: "/unresolved", reason: true },
+  { action: "accept", state: "proposed", button: "Accept proposal", endpoint: "/accept", reason: true },
+  { action: "reject", state: "proposed", button: "Reject proposal", endpoint: "/reject", reason: true },
+  { action: "reopen", state: "accepted", button: "Reopen classification", endpoint: "/reopen", reason: true },
+  { action: "override", state: "proposed", button: "Create override proposal", endpoint: "/override", reason: true },
+  { action: "undo", state: "proposed", button: "Create undo proposal", endpoint: "/undo", reason: true },
+  { action: "start_revalidation", state: "accepted", button: "Start revalidation", endpoint: "/start-revalidation", reason: true, revalidation: true },
+] as const;
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -179,7 +212,8 @@ describe("M04ClassificationScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
     expect(await screen.findByText(/no external source\/blob\/checksum evidence/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start classification" }));
-    expect(await screen.findByText(/#1 start.*under_review/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Revision #1 — current/ })).toBeInTheDocument();
+    expect(screen.getByText(/State: under_review; action: start/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Preview exact rules" }));
     expect(await screen.findByText(/Catalogue: m04-rules-v1/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create proposal" }));
@@ -203,7 +237,63 @@ describe("M04ClassificationScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
     expect(await screen.findByText(/Archived case: M04 is read-only/)).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Lifecycle actions" })).toBeDisabled();
-    expect(screen.getByText(/#4 accept.*accepted/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Revision #4 — current/ })).toBeInTheDocument();
+    expect(screen.getByText(/State: accepted; action: accept/)).toBeInTheDocument();
+  });
+
+  it("renders complete persisted rule, component, revision, conflict, and authority evidence", async () => {
+    const assetRule = fullRule();
+    const componentRule = fullRule({
+      rule_id: "m04.component.token.contribution",
+      matcher_type: "component_code_exact",
+      exact_matcher_value: "contribution_component",
+      scope: "component",
+      provider_scope: undefined,
+      source_format_scope: undefined,
+      output_product_family: null,
+      output_component_kind: "contribution_component",
+      rationale: "Exact bounded component token",
+      authority_reference: "PKG_009_FINAL_PACKAGE_DEFINITION.md section 5.2",
+    });
+    const historical = revision("under_review", 1, "start");
+    const current = {
+      ...revision("unresolved", 2, "unresolved"),
+      explanation: "Persisted unresolved explanation",
+      reason: "Planner retained unresolved evidence",
+      action_evidence: {
+        unresolved_reasons: ["opaque_uploaded_facts_unavailable"],
+        conflicts: ["conflicting-rule-a", "conflicting-rule-b"],
+      },
+      matched_rule_evidence: [assetRule],
+      components: [{ ...component(), matched_rule_evidence: [componentRule] }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/clients/1")) return json(client());
+      if (url.endsWith("/m04/targets")) return json([target(1, current)]);
+      if (url.endsWith("/history")) return json([historical, current]);
+      if (url.endsWith("/matched-rules")) return json([assetRule]);
+      if (url.endsWith("/eligibility")) return json(target(1, current).eligibility);
+      if (url.endsWith("/manual-1")) return json(target(1, current));
+      throw new Error(`unexpected ${url}`);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
+    expect((await screen.findAllByText("declared_product_type_exact")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("provident_fund").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Persisted Provider").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("manual").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/PKG_009_FINAL_PACKAGE_DEFINITION/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("unresolved").length).toBeGreaterThan(0);
+    expect(screen.getByText("component_code_exact")).toBeInTheDocument();
+    expect(screen.getAllByText("not present").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Persisted unresolved explanation/)).toBeInTheDocument();
+    expect(screen.getByText(/Planner retained unresolved evidence/)).toBeInTheDocument();
+    expect(screen.getAllByText(/opaque_uploaded_facts_unavailable/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/conflicting-rule-a/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: /Revision #1 — historical/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Revision #2 — current/ })).toBeInTheDocument();
+    expect(screen.getByText(/not professional, tax, legal, liquidity, withdrawal, or M05 authority/)).toBeInTheDocument();
   });
 
   it.each([
@@ -213,7 +303,7 @@ describe("M04ClassificationScreen", () => {
     ["unresolved", ["Reopen classification", "Create override proposal", "Create undo proposal"]],
     ["rejected", ["Reopen classification", "Create override proposal", "Create undo proposal"]],
   ] as const)("exposes the bounded action matrix for %s", async (state, buttons) => {
-    const current = revision(state, 3, state);
+    const current = revision(state, 3);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/clients/1")) return json(client());
@@ -248,6 +338,160 @@ describe("M04ClassificationScreen", () => {
     expect(await screen.findByRole("button", { name: "Start revalidation" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reopen classification" })).not.toBeInTheDocument();
   });
+
+  it.each(["success", "rejected", "api-error"] as const)(
+    "same-generation target X-to-Y ignores stale X %s and finally",
+    async (outcome) => {
+      const oldX = deferred<Response>();
+      const x = { ...target(1), intake_id: "target-x", declared_provider_name: "Provider X old" };
+      const y = { ...target(1), intake_id: "target-y", declared_provider_name: "Provider Y current" };
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/clients/1")) return json(client());
+        if (url.endsWith("/m04/targets")) return json([x, y]);
+        if (url.endsWith("/target-x")) return oldX.promise;
+        if (url.endsWith("/target-y")) return json(y);
+        if (url.includes("/target-")) {
+          if (url.endsWith("/history") || url.endsWith("/matched-rules")) return json([]);
+          if (url.endsWith("/eligibility")) return json(target(1).eligibility);
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: /target-x/ }));
+      fireEvent.click(screen.getByRole("button", { name: /target-y/ }));
+      expect(await screen.findByText(/Provider: Provider Y current/)).toBeInTheDocument();
+      await act(async () => {
+        if (outcome === "success") oldX.resolve(json(x));
+        else if (outcome === "api-error") oldX.resolve(json({ detail: { code: "OLD_X" } }, 409));
+        else oldX.reject(new Error("old X rejection"));
+        try { await oldX.promise; } catch { /* expected */ }
+      });
+      expect(screen.getByText(/Provider: Provider Y current/)).toBeInTheDocument();
+      expect(screen.queryByText(/Provider X old/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["success", "rejected", "api-error"] as const)(
+    "same-target overlapping preview keeps newer preview after old %s and finally",
+    async (outcome) => {
+      const oldPreview = deferred<Response>();
+      let previewCalls = 0;
+      const current = revision("under_review", 1);
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/clients/1")) return json(client());
+        if (url.endsWith("/m04/targets")) return json([target(1, current)]);
+        if (url.endsWith("/history")) return json([current]);
+        if (url.endsWith("/matched-rules")) return json([]);
+        if (url.endsWith("/eligibility")) return json(target(1, current).eligibility);
+        if (url.endsWith("/manual-1")) return json(target(1, current));
+        if (url.endsWith("/preview")) {
+          previewCalls += 1;
+          return previewCalls === 1 ? oldPreview.promise : json({
+            ...preview, product_family: "education_fund",
+            unresolved_reasons: ["NEW_PREVIEW_AUTHORITATIVE"],
+          });
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
+      const button = await screen.findByRole("button", { name: "Preview exact rules" });
+      fireEvent.click(button); fireEvent.click(button);
+      expect(await screen.findByText(/NEW_PREVIEW_AUTHORITATIVE/)).toBeInTheDocument();
+      await act(async () => {
+        if (outcome === "success") oldPreview.resolve(json({
+          ...preview, product_family: "savings_policy",
+          unresolved_reasons: ["OLD_PREVIEW_STALE"],
+        }));
+        else if (outcome === "api-error") oldPreview.resolve(json({ detail: { code: "OLD" } }, 409));
+        else oldPreview.reject(new Error("old preview rejection"));
+        try { await oldPreview.promise; } catch { /* expected */ }
+      });
+      expect(screen.getByText(/NEW_PREVIEW_AUTHORITATIVE/)).toBeInTheDocument();
+      expect(screen.queryByText(/OLD_PREVIEW_STALE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(
+    (["detail", "history", "matched-rules", "eligibility"] as const).flatMap((path) =>
+      (["A-B", "A-B-A"] as const).flatMap((transition) =>
+        (["success", "rejected", "api-error"] as const).map(
+          (outcome) => [path, transition, outcome] as const,
+        ),
+      ),
+    ),
+  )(
+    "%s bundle read %s stale %s cannot overwrite the current target bundle or finally",
+    async (deferredPath, transition, outcome) => {
+      const oldPart = deferred<Response>();
+      let aBundle = 0;
+      const bundleResponse = (kind: typeof deferredPath, id: number, marker: string) => {
+        const current = { ...revision("under_review", 1), explanation: `${marker}-history` };
+        if (kind === "detail") return json({
+          ...target(id, current), declared_provider_name: `${marker}-detail`,
+        });
+        if (kind === "history") return json([current]);
+        if (kind === "matched-rules") return json([
+          fullRule({ rationale: `${marker}-matched-rules` }),
+        ]);
+        return json({
+          ...target(id, current).eligibility,
+          exclusion_reason: `${marker}-eligibility`,
+        });
+      };
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
+        if (clientMatch) return json(client(Number(clientMatch[1])));
+        const id = url.includes("/clients/2/") ? 2 : 1;
+        if (url.endsWith("/m04/targets")) return json([target(id)]);
+        let kind: typeof deferredPath | null = null;
+        if (url.endsWith("/history")) kind = "history";
+        else if (url.endsWith("/matched-rules")) kind = "matched-rules";
+        else if (url.endsWith("/eligibility")) kind = "eligibility";
+        else if (url.endsWith(`/manual-${id}`)) kind = "detail";
+        if (kind) {
+          if (id === 1 && kind === "detail") aBundle += 1;
+          const marker = id === 2 ? "B-CURRENT" : aBundle === 1 ? "A-OLD" : "A-NEW";
+          if (id === 1 && aBundle === 1 && kind === deferredPath) return oldPart.promise;
+          return bundleResponse(kind, id, marker);
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      renderNavigable();
+      fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
+      fireEvent.click(await screen.findByRole("button", { name: /manual-2/ }));
+      const authoritative = transition === "A-B" ? "B-CURRENT" : "A-NEW";
+      if (transition === "A-B-A") {
+        fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+        fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+      }
+      const expectedMarker = deferredPath === "detail" ? `${authoritative}-detail`
+        : deferredPath === "history" ? `${authoritative}-history`
+          : deferredPath === "matched-rules" ? `${authoritative}-matched-rules`
+            : `${authoritative}-eligibility`;
+      expect(await screen.findByText(new RegExp(expectedMarker))).toBeInTheDocument();
+      await act(async () => {
+        if (outcome === "success") oldPart.resolve(
+          bundleResponse(deferredPath, 1, "A-OLD"),
+        );
+        else if (outcome === "api-error") oldPart.resolve(json({ detail: { code: "OLD_BUNDLE" } }, 409));
+        else oldPart.reject(new Error("old bundle rejection"));
+        try { await oldPart.promise; } catch { /* expected */ }
+      });
+      expect(screen.getByText(new RegExp(expectedMarker))).toBeInTheDocument();
+      expect(screen.queryByText(/A-OLD-(detail|history|matched-rules|eligibility)/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+    },
+  );
 
   it.each(
     (["A-B", "A-B-A"] as const).flatMap((transition) =>
@@ -297,41 +541,100 @@ describe("M04ClassificationScreen", () => {
     },
   );
 
-  it.each(["success", "rejected", "api-error"] as const)(
-    "stale mutation %s launches zero follow-up refreshes",
-    async (outcome) => {
-    const mutation = deferred<Response>();
-    let aTargetReads = 0;
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
-      if (clientMatch) return json(client(Number(clientMatch[1])));
-      const id = url.includes("/clients/2/") ? 2 : 1;
-      if (url.endsWith("/m04/targets")) return json([target(id)]);
-      if (url.endsWith("/manual-1/start")) return mutation.promise;
-      if (url.endsWith(`/manual-${id}`)) {
-        if (id === 1) aTargetReads += 1;
-        return json(target(id));
+  it.each(
+    ACTION_CASES.flatMap((actionCase) =>
+      (["A-B", "A-B-A"] as const).flatMap((transition) =>
+        (["success", "rejected", "api-error"] as const).map(
+          (outcome) => [actionCase.action, actionCase, transition, outcome] as const,
+        ),
+      ),
+    ),
+  )(
+    "%s mutation %s stale %s preserves current ownership and launches zero refreshes",
+    async (_actionName, actionCase, transition, outcome) => {
+      const oldMutation = deferred<Response>();
+      const currentMutation = deferred<Response>();
+      let mutationCalls = 0;
+      let detailReads = 0;
+      const currentRevision = actionCase.state
+        ? revision(actionCase.state, actionCase.state === "under_review" ? 1 : 2)
+        : null;
+      const currentTarget = (id: number) => target(
+        id,
+        currentRevision,
+        "revalidation" in actionCase && actionCase.revalidation
+          ? "m04_revalidation_required" : undefined,
+      );
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        const clientMatch = url.match(/\/api\/clients\/(\d+)$/);
+        if (clientMatch) return json(client(Number(clientMatch[1])));
+        const id = url.includes("/clients/2/") ? 2 : 1;
+        if (url.endsWith("/m04/targets")) return json([currentTarget(id)]);
+        if (url.endsWith(actionCase.endpoint)) {
+          mutationCalls += 1;
+          return mutationCalls === 1 ? oldMutation.promise : currentMutation.promise;
+        }
+        if (url.endsWith(`/manual-${id}`)) {
+          detailReads += 1;
+          return json(currentTarget(id));
+        }
+        if (url.endsWith("/history")) return json(currentRevision
+          ? currentRevision.revision_id === "r-1"
+            ? [currentRevision] : [revision("under_review", 1), currentRevision]
+          : []);
+        if (url.endsWith("/matched-rules")) return json([]);
+        if (url.endsWith("/eligibility")) return json(currentTarget(id).eligibility);
+        throw new Error(`unexpected ${url}`);
+      }));
+      const prepareAndClick = async (id: number) => {
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(`manual-${id}`) }));
+        const button = await screen.findByRole("button", { name: actionCase.button });
+        if ("reason" in actionCase && actionCase.reason) {
+          fireEvent.change(screen.getByLabelText("Explanation"), {
+            target: { value: `current ${actionCase.action} explanation` },
+          });
+        }
+        if (actionCase.action === "override") {
+          fireEvent.change(screen.getByLabelText("Interpretation"), {
+            target: { value: "pension" },
+          });
+        }
+        if (actionCase.action === "undo") {
+          fireEvent.change(screen.getByLabelText("Historical revision for undo"), {
+            target: { value: "r-1" },
+          });
+        }
+        fireEvent.click(button);
+      };
+
+      renderNavigable();
+      await prepareAndClick(1);
+      fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
+      if (transition === "A-B-A") {
+        await screen.findByRole("button", { name: /manual-2/ });
+        fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
+        await prepareAndClick(1);
+      } else {
+        await prepareAndClick(2);
       }
-      if (url.endsWith("/history") || url.endsWith("/matched-rules")) return json([]);
-      if (url.endsWith("/eligibility")) return json(target(id).eligibility);
-      throw new Error(`unexpected ${url}`);
-    }));
-    renderNavigable();
-    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-    await screen.findByRole("button", { name: "Start classification" });
-    const readsBefore = aTargetReads;
-    fireEvent.click(screen.getByRole("button", { name: "Start classification" }));
-    fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
-    expect(await screen.findByRole("button", { name: /manual-2/ })).toBeInTheDocument();
-    await act(async () => {
-      if (outcome === "success") mutation.resolve(json(revision("under_review", 1), 201));
-      else if (outcome === "api-error") mutation.resolve(json({ detail: { code: "OLD" } }, 409));
-      else mutation.reject(new Error("old mutation rejection"));
-      try { await mutation.promise; } catch { /* expected */ }
-    });
-    await waitFor(() => expect(aTargetReads).toBe(readsBefore));
-    expect(screen.queryByText(/#1 start/)).not.toBeInTheDocument();
+      const readsBeforeOldSettlement = detailReads;
+      await act(async () => {
+        if (outcome === "success") oldMutation.resolve(json({ old: true }, 201));
+        else if (outcome === "api-error") oldMutation.resolve(json({ detail: { code: "OLD_MUTATION" } }, 409));
+        else oldMutation.reject(new Error("old mutation rejection"));
+        try { await oldMutation.promise; } catch { /* expected */ }
+      });
+      expect(detailReads).toBe(readsBeforeOldSettlement);
+      expect(screen.getByRole("group", { name: "Lifecycle actions" })).toBeDisabled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`Provider: Provider ${transition === "A-B" ? 2 : 1}`))).toBeInTheDocument();
+
+      await act(async () => { currentMutation.resolve(json({ current: true }, 201)); });
+      await waitFor(() => expect(detailReads).toBeGreaterThan(readsBeforeOldSettlement));
+      await waitFor(() => expect(screen.getByRole("group", { name: "Lifecycle actions" })).not.toBeDisabled());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(mutationCalls).toBe(2);
     },
   );
 });

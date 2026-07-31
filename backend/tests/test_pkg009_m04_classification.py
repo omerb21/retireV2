@@ -542,6 +542,22 @@ def test_bulk_delete_of_immutable_m04_rows_is_blocked(api, model) -> None:
         assert db.get(model, before_id) is not None
 
 
+def test_bulk_alias_and_synchronize_session_variants_are_blocked(api) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    revision_alias = M04ClassificationRevision.__table__.alias("revision_alias")
+    with sessions() as db:
+        with pytest.raises(ValueError, match="bulk updated or deleted"):
+            db.execute(update(revision_alias).values(explanation="alias rewrite"))
+        db.rollback()
+        with pytest.raises(ValueError, match="bulk updated or deleted"):
+            db.execute(
+                delete(M04ComponentDecision),
+                execution_options={"synchronize_session": False},
+            )
+        db.rollback()
+
+
 def test_instance_component_update_and_revision_delete_are_blocked(api) -> None:
     client, sessions = api
     _accepted_classification(client)
@@ -779,6 +795,12 @@ def test_aggregate_corruption_matrix_fails_closed(api, case: str) -> None:
     assert result.json()["eligible_for_m05"] is False
     assert result.json()["accepted_revision_id"] is None
     assert result.json()["exclusion_reason"] == "malformed_classification_chain"
+    detail = client.get("/api/clients/1/m04/targets/manual-1")
+    assert detail.status_code == 409
+    assert detail.json()["detail"]["code"] in {
+        "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
+        "M04_COMPONENT_EVIDENCE_INCONSISTENT",
+    }
 
 
 def test_authoritative_aggregate_derivation_positive_cases() -> None:

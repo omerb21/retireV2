@@ -469,6 +469,27 @@ def _validated_history(
                     "Component evidence is inconsistent",
                 )
             seen.add(component.evidence_identity)
+        if row.state == "under_review":
+            aggregate_is_consistent = (
+                row.aggregate_interpretation is None and not components
+            )
+        else:
+            aggregate_is_consistent = (
+                seen == set(snapshot_components)
+                and row.aggregate_interpretation
+                == _aggregate(
+                    [
+                        {"interpretation": component.interpretation}
+                        for component in components
+                    ]
+                )
+            )
+        if not aggregate_is_consistent:
+            raise M04ClassificationError(
+                409,
+                "M04_CLASSIFICATION_CHAIN_INCONSISTENT",
+                "Classification aggregate is inconsistent with its components",
+            )
         previous = row
     return rows, component_map
 
@@ -1084,6 +1105,13 @@ def _is_resolved(
         row.product_family not in (None, "unknown_or_unresolved")
         and row.aggregate_interpretation not in (None, "unresolved")
         and bool(components)
+        and row.aggregate_interpretation
+        == _aggregate(
+            [
+                {"interpretation": component.interpretation}
+                for component in components
+            ]
+        )
         and all(
             component.component_kind != "unknown_component"
             and component.interpretation != "unresolved"

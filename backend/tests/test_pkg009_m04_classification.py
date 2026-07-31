@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select, text
+from sqlalchemy import create_engine, delete, event, inspect, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base, load_all_models
@@ -25,6 +25,7 @@ from app.models.m04_classification import (
     M04ComponentDecision,
 )
 from app.services.m03_review_service import decide_review, start_review
+from app.services.m04_classification_service import _aggregate, _row_digest
 from app.services.m04_rule_catalogue import ExactRule, evaluate_exact_catalogue
 
 
@@ -498,6 +499,115 @@ def test_ordinary_orm_update_delete_and_direct_insert_are_blocked(api) -> None:
             db.commit()
 
 
+@pytest.mark.parametrize(
+    ("model", "field", "value"),
+    [
+        (M04ClassificationRevision, "explanation", "bulk rewrite"),
+        (M04ClassificationRevision, "revision_sequence", 999),
+        (M04ClassificationRevision, "predecessor_revision_id", "forged"),
+        (M04ClassificationRevision, "input_snapshot", {"forged": True}),
+        (M04ClassificationRevision, "matched_rule_evidence", []),
+        (M04ComponentDecision, "explanation", "bulk component rewrite"),
+    ],
+)
+def test_bulk_update_of_immutable_m04_rows_is_blocked(
+    api, model, field: str, value
+) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        before = db.scalar(select(model))
+        before_value = getattr(before, field)
+        with pytest.raises(ValueError, match="bulk updated or deleted"):
+            db.execute(update(model).values({field: value}))
+        db.rollback()
+    with sessions() as db:
+        after = db.scalar(select(model))
+        assert getattr(after, field) == before_value
+
+
+@pytest.mark.parametrize(
+    "model", [M04ClassificationRevision, M04ComponentDecision]
+)
+def test_bulk_delete_of_immutable_m04_rows_is_blocked(api, model) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        before = db.scalar(select(model))
+        before_id = inspect(before).identity
+        with pytest.raises(ValueError, match="bulk updated or deleted"):
+            db.execute(delete(model))
+        db.rollback()
+    with sessions() as db:
+        assert db.get(model, before_id) is not None
+
+
+def test_instance_component_update_and_revision_delete_are_blocked(api) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        component = db.scalar(select(M04ComponentDecision))
+        original = component.explanation
+        component.explanation = "instance rewrite"
+        with pytest.raises(ValueError, match="immutable"):
+            db.flush()
+        db.rollback()
+    with sessions() as db:
+        assert db.scalar(select(M04ComponentDecision)).explanation == original
+        revision = db.scalar(select(M04ClassificationRevision))
+        revision_id = revision.revision_id
+        db.delete(revision)
+        with pytest.raises(ValueError, match="cannot be deleted"):
+            db.flush()
+        db.rollback()
+    with sessions() as db:
+        assert db.get(M04ClassificationRevision, revision_id) is not None
+
+
+def test_parent_delete_and_arbitrary_subject_update_are_blocked(api) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        subject = db.scalar(select(M04ClassificationSubject))
+        subject_id = subject.subject_id
+        db.delete(subject)
+        with pytest.raises(ValueError, match="cannot be deleted"):
+            db.flush()
+        db.rollback()
+        with pytest.raises(ValueError, match="bulk updated or deleted"):
+            db.execute(
+                update(M04ClassificationSubject).values(archive_generation=99)
+            )
+        db.rollback()
+    with sessions() as db:
+        subject = db.get(M04ClassificationSubject, subject_id)
+        assert subject is not None
+        assert subject.archive_generation == 0
+        assert db.scalar(select(M04ClassificationRevision)) is not None
+
+
+def test_controlled_archive_generation_and_unrelated_bulk_dml_remain_allowed(api) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        db.add(Client(client_id=3, display_name="Disposable", id_number="003"))
+        db.commit()
+        db.execute(update(Client).where(Client.client_id == 3).values(display_name="Updated"))
+        db.commit()
+    with sessions() as db:
+        assert db.get(Client, 3).display_name == "Updated"
+        db.execute(delete(Client).where(Client.client_id == 3))
+        db.commit()
+    with sessions() as db:
+        assert db.get(Client, 3) is None
+        client_row = db.get(Client, 1)
+        client_row.status = "archived"
+        db.commit()
+    with sessions() as db:
+        subject = db.scalar(select(M04ClassificationSubject))
+        assert subject.archive_generation == 1
+
+
 def test_raw_sql_corruption_fails_eligibility_closed(api) -> None:
     client, sessions = api
     _accepted_classification(client)
@@ -516,6 +626,210 @@ def test_raw_sql_corruption_fails_eligibility_closed(api) -> None:
     assert response.status_code == 200
     assert response.json()["eligible_for_m05"] is False
     assert response.json()["exclusion_reason"] == "malformed_classification_chain"
+
+
+def _redigest_accepted(db: Session) -> None:
+    db.expire_all()
+    accepted = db.scalar(
+        select(M04ClassificationRevision).where(
+            M04ClassificationRevision.state == "accepted"
+        )
+    )
+    assert accepted is not None
+    components = list(
+        db.scalars(
+            select(M04ComponentDecision).where(
+                M04ComponentDecision.revision_id == accepted.revision_id
+            )
+        )
+    )
+    digest = _row_digest(accepted, components)
+    db.connection().exec_driver_sql(
+        "UPDATE m04_classification_revisions SET evidence_digest = ? "
+        "WHERE revision_id = ?",
+        (digest, accepted.revision_id),
+    )
+    db.commit()
+
+
+def _add_corrupt_component(
+    db: Session, *, interpretation: str, update_snapshot: bool = True
+) -> None:
+    accepted = db.scalar(
+        select(M04ClassificationRevision).where(
+            M04ClassificationRevision.state == "accepted"
+        )
+    )
+    assert accepted is not None
+    identity = "component:corrupt:second"
+    db.connection().exec_driver_sql(
+        "INSERT INTO m04_component_decisions "
+        "(component_decision_id, revision_id, client_id, intake_id, target_kind, "
+        "evidence_identity, original_label, original_code, component_kind, "
+        "interpretation, matched_rule_evidence, explanation, "
+        "current_employer_related, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+        (
+            "M04-C-corrupt-second",
+            accepted.revision_id,
+            accepted.client_id,
+            accepted.intake_id,
+            accepted.target_kind,
+            identity,
+            "Second component",
+            "severance_component",
+            "severance_component",
+            interpretation,
+            "[]",
+            "corruption fixture",
+            "unknown",
+        ),
+    )
+    if update_snapshot:
+        snapshot = dict(accepted.input_snapshot)
+        snapshot["components"] = [
+            *snapshot.get("components", []),
+            {
+                "evidence_identity": identity,
+                "original_label": "Second component",
+                "original_code": "severance_component",
+                "declared_value": "50.00",
+                "current_employer_related": "unknown",
+            },
+        ]
+        db.connection().exec_driver_sql(
+            "UPDATE m04_classification_revisions SET input_snapshot = ? "
+            "WHERE revision_id = ?",
+            (json.dumps(snapshot), accepted.revision_id),
+        )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "pension_aggregate_all_capital",
+        "capital_aggregate_all_pension",
+        "mixed_aggregate_all_same",
+        "nonmixed_aggregate_mixed_components",
+        "component_interpretation_mixed",
+        "accepted_unresolved_component",
+        "missing_component",
+        "inconsistent_evidence_identity",
+        "component_set_changed_with_redigest",
+        "aggregate_changed_with_redigest",
+    ],
+)
+def test_aggregate_corruption_matrix_fails_closed(api, case: str) -> None:
+    client, sessions = api
+    _accepted_classification(client)
+    with sessions() as db:
+        connection = db.connection()
+        if case == "pension_aggregate_all_capital":
+            connection.exec_driver_sql(
+                "UPDATE m04_component_decisions SET interpretation = 'capital' "
+                "WHERE revision_id IN (SELECT revision_id FROM "
+                "m04_classification_revisions WHERE state = 'accepted')"
+            )
+        elif case in {"capital_aggregate_all_pension", "aggregate_changed_with_redigest"}:
+            connection.exec_driver_sql(
+                "UPDATE m04_classification_revisions SET aggregate_interpretation = 'capital' "
+                "WHERE state = 'accepted'"
+            )
+        elif case == "mixed_aggregate_all_same":
+            connection.exec_driver_sql(
+                "UPDATE m04_classification_revisions SET aggregate_interpretation = 'mixed' "
+                "WHERE state = 'accepted'"
+            )
+        elif case == "nonmixed_aggregate_mixed_components":
+            _add_corrupt_component(db, interpretation="capital")
+        elif case == "component_interpretation_mixed":
+            connection.exec_driver_sql("PRAGMA ignore_check_constraints = ON")
+            connection.exec_driver_sql(
+                "UPDATE m04_component_decisions SET interpretation = 'mixed' "
+                "WHERE revision_id IN (SELECT revision_id FROM "
+                "m04_classification_revisions WHERE state = 'accepted')"
+            )
+        elif case == "accepted_unresolved_component":
+            connection.exec_driver_sql(
+                "UPDATE m04_component_decisions SET interpretation = 'unresolved' "
+                "WHERE revision_id IN (SELECT revision_id FROM "
+                "m04_classification_revisions WHERE state = 'accepted')"
+            )
+        elif case == "missing_component":
+            connection.exec_driver_sql(
+                "DELETE FROM m04_component_decisions WHERE revision_id IN "
+                "(SELECT revision_id FROM m04_classification_revisions "
+                "WHERE state = 'accepted')"
+            )
+        elif case == "inconsistent_evidence_identity":
+            connection.exec_driver_sql(
+                "UPDATE m04_component_decisions SET evidence_identity = 'forged-identity' "
+                "WHERE revision_id IN (SELECT revision_id FROM "
+                "m04_classification_revisions WHERE state = 'accepted')"
+            )
+        elif case == "component_set_changed_with_redigest":
+            _add_corrupt_component(
+                db, interpretation="pension", update_snapshot=False
+            )
+        _redigest_accepted(db)
+    result = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    )
+    assert result.status_code == 200
+    assert result.json()["eligible_for_m05"] is False
+    assert result.json()["accepted_revision_id"] is None
+    assert result.json()["exclusion_reason"] == "malformed_classification_chain"
+
+
+def test_authoritative_aggregate_derivation_positive_cases() -> None:
+    assert _aggregate([{"interpretation": "pension"}]) == "pension"
+    assert _aggregate([{"interpretation": "capital"}]) == "capital"
+    assert _aggregate(
+        [{"interpretation": "pension"}, {"interpretation": "capital"}]
+    ) == "mixed"
+    assert _aggregate([]) == "unresolved"
+    assert _aggregate([{"interpretation": "unresolved"}]) == "unresolved"
+
+
+def test_accept_rejects_semantically_inconsistent_proposal(api) -> None:
+    client, sessions = api
+    started = client.post("/api/clients/1/m04/targets/manual-1/start").json()
+    proposal = client.post(
+        "/api/clients/1/m04/targets/manual-1/proposal",
+        json={"expected_current_revision_id": started["revision_id"]},
+    ).json()
+    override = client.post(
+        "/api/clients/1/m04/targets/manual-1/override",
+        json=_override_payload(proposal),
+    ).json()
+    with sessions() as db:
+        db.connection().exec_driver_sql(
+            "UPDATE m04_classification_revisions SET aggregate_interpretation = 'capital' "
+            "WHERE revision_id = ?",
+            (override["revision_id"],),
+        )
+        db.expire_all()
+        row = db.get(M04ClassificationRevision, override["revision_id"])
+        components = list(
+            db.scalars(
+                select(M04ComponentDecision).where(
+                    M04ComponentDecision.revision_id == row.revision_id
+                )
+            )
+        )
+        digest = _row_digest(row, components)
+        db.connection().exec_driver_sql(
+            "UPDATE m04_classification_revisions SET evidence_digest = ? "
+            "WHERE revision_id = ?",
+            (digest, row.revision_id),
+        )
+        db.commit()
+    rejected = client.post(
+        "/api/clients/1/m04/targets/manual-1/accept",
+        json=_reason(override["revision_id"]),
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "M04_CLASSIFICATION_CHAIN_INCONSISTENT"
 
 
 def test_invalid_rule_evidence_has_stable_exclusion(api) -> None:

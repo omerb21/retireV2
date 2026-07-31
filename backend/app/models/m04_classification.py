@@ -21,7 +21,8 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.sql.dml import Delete, Update
 
 from app.db.base import Base
 from app.models.client import Client
@@ -335,6 +336,30 @@ def _prevent_update(_mapper, _connection, target) -> None:
 
 def _prevent_delete(_mapper, _connection, _target) -> None:
     raise ValueError("M04 append-only records cannot be deleted")
+
+
+_M04_IMMUTABLE_TABLE_NAMES = {
+    "m04_classification_subjects",
+    "m04_classification_revisions",
+    "m04_component_decisions",
+}
+
+
+def _statement_table_name(statement: object) -> str | None:
+    table = getattr(statement, "table", None)
+    while table is not None:
+        name = getattr(table, "name", None)
+        if name in _M04_IMMUTABLE_TABLE_NAMES:
+            return name
+        table = getattr(table, "original", None)
+    return None
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _prevent_m04_bulk_mutation(orm_execute_state) -> None:
+    statement = orm_execute_state.statement
+    if isinstance(statement, (Update, Delete)) and _statement_table_name(statement):
+        raise ValueError("M04 append-only records cannot be bulk updated or deleted")
 
 
 def _validate_subject_insert(_mapper, _connection, target: M04ClassificationSubject) -> None:

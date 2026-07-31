@@ -419,6 +419,219 @@ describe("M04ClassificationScreen", () => {
   );
 
   it.each(
+    (["target-list", "detail-bundle", "preview", "mutation"] as const).flatMap((unit) =>
+      (["success", "rejected", "api-error"] as const).map(
+        (outcome) => [unit, outcome] as const,
+      ),
+    ),
+  )(
+    "%s unmount invalidates pending %s, finally, and post-unmount refresh",
+    async (unit, outcome) => {
+      const pending = deferred<Response>();
+      const urls: string[] = [];
+      const current = unit === "mutation" ? null : revision("under_review", 1);
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input); urls.push(url);
+        if (url.endsWith("/api/clients/1")) return json(client());
+        if (url.endsWith("/m04/targets")) {
+          return unit === "target-list" ? pending.promise : json([target(1, current)]);
+        }
+        if (url.endsWith("/manual-1/start")) return pending.promise;
+        if (url.endsWith("/preview")) return pending.promise;
+        if (url.endsWith("/history") || url.endsWith("/matched-rules")) return json(current ? [current] : []);
+        if (url.endsWith("/eligibility")) return json(target(1, current).eligibility);
+        if (url.endsWith("/manual-1")) {
+          return unit === "detail-bundle" ? pending.promise : json(target(1, current));
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      const view = renderPage();
+      if (unit !== "target-list") {
+        fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+        if (unit === "preview") {
+          fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+        } else if (unit === "mutation") {
+          fireEvent.click(await screen.findByRole("button", { name: "Start classification" }));
+        }
+      } else {
+        await waitFor(() => expect(urls.some((url) => url.endsWith("/m04/targets"))).toBe(true));
+      }
+      const callsAtUnmount = urls.length;
+      view.unmount();
+      await act(async () => {
+        if (outcome === "success") pending.resolve(json(unit === "target-list" ? [target(1)] : {}));
+        else if (outcome === "api-error") pending.resolve(json({ detail: { code: "POST_UNMOUNT" } }, 409));
+        else pending.reject(new Error("post-unmount rejection"));
+        try { await pending.promise; } catch { /* expected */ }
+      });
+      expect(urls).toHaveLength(callsAtUnmount);
+      expect(view.container).toBeEmptyDOMElement();
+    },
+  );
+
+  it.each(
+    ACTION_CASES.flatMap((actionCase) =>
+      (["success", "rejected", "api-error"] as const).map(
+        (previewOutcome) => [actionCase.action, actionCase, previewOutcome] as const,
+      ),
+    ),
+  )(
+    "%s mutation invalidates an older preview %s and preserves post-mutation state",
+    async (_actionName, actionCase, previewOutcome) => {
+      const oldPreview = deferred<Response>();
+      let mutationStarted = false;
+      let detailCalls = 0;
+      const source = actionCase.state
+        ? revision(actionCase.state, actionCase.state === "under_review" ? 1 : 2)
+        : null;
+      const post = {
+        ...revision(source?.state ?? "under_review", (source?.revision_sequence ?? 0) + 1),
+        revision_id: "r-post-mutation",
+        explanation: "POST_MUTATION_AUTHORITATIVE",
+      };
+      const sourceTarget = target(
+        1, source,
+        "revalidation" in actionCase && actionCase.revalidation
+          ? "m04_revalidation_required" : undefined,
+      );
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/clients/1")) return json(client());
+        if (url.endsWith("/m04/targets")) return json([mutationStarted ? target(1, post) : sourceTarget]);
+        if (url.endsWith("/preview")) return oldPreview.promise;
+        if (url.endsWith(actionCase.endpoint)) {
+          mutationStarted = true;
+          return json(post, 201);
+        }
+        if (url.endsWith("/history")) return json(mutationStarted
+          ? [post]
+          : actionCase.action === "undo" && source
+            ? [revision("under_review", 1), source]
+            : source ? [source] : []);
+        if (url.endsWith("/matched-rules")) return json([]);
+        if (url.endsWith("/eligibility")) return json(
+          (mutationStarted ? target(1, post) : sourceTarget).eligibility,
+        );
+        if (url.endsWith("/manual-1")) {
+          detailCalls += 1;
+          return json(mutationStarted ? target(1, post) : sourceTarget);
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+      fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+      if ("reason" in actionCase && actionCase.reason) {
+        fireEvent.change(screen.getByLabelText("Explanation"), {
+          target: { value: `${actionCase.action} explanation` },
+        });
+      }
+      if (actionCase.action === "override") {
+        fireEvent.change(screen.getByLabelText("Interpretation"), {
+          target: { value: "pension" },
+        });
+      }
+      if (actionCase.action === "undo") {
+        const historySelect = screen.getByLabelText("Historical revision for undo");
+        fireEvent.change(historySelect, { target: { value: "r-1" } });
+      }
+      fireEvent.click(screen.getByRole("button", { name: actionCase.button }));
+      expect(await screen.findByText(/POST_MUTATION_AUTHORITATIVE/)).toBeInTheDocument();
+      const readsAfterMutation = detailCalls;
+      await act(async () => {
+        if (previewOutcome === "success") oldPreview.resolve(json({
+          ...preview, unresolved_reasons: ["OLD_PREVIEW_MUST_NOT_APPLY"],
+        }));
+        else if (previewOutcome === "api-error") oldPreview.resolve(json({ detail: { code: "OLD_PREVIEW" } }, 409));
+        else oldPreview.reject(new Error("old preview rejection"));
+        try { await oldPreview.promise; } catch { /* expected */ }
+      });
+      expect(detailCalls).toBe(readsAfterMutation);
+      expect(screen.getByText(/POST_MUTATION_AUTHORITATIVE/)).toBeInTheDocument();
+      expect(screen.queryByText(/OLD_PREVIEW_MUST_NOT_APPLY/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["success", "rejected", "api-error"] as const)(
+    "preview bound to revision R1 is stale after detail refresh to R2: %s",
+    async (outcome) => {
+      const oldPreview = deferred<Response>();
+      let detailCalls = 0;
+      const r1 = revision("under_review", 1);
+      const r2 = { ...revision("under_review", 2, "reopen"), explanation: "REVISION_R2_CURRENT" };
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/clients/1")) return json(client());
+        if (url.endsWith("/m04/targets")) return json([target(1, r1)]);
+        if (url.endsWith("/preview")) return oldPreview.promise;
+        if (url.endsWith("/history")) return json(detailCalls > 1 ? [r1, r2] : [r1]);
+        if (url.endsWith("/matched-rules")) return json([]);
+        if (url.endsWith("/eligibility")) return json(target(1, detailCalls > 1 ? r2 : r1).eligibility);
+        if (url.endsWith("/manual-1")) {
+          detailCalls += 1;
+          return json(target(1, detailCalls > 1 ? r2 : r1));
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      renderPage();
+      const targetButton = await screen.findByRole("button", { name: /manual-1/ });
+      fireEvent.click(targetButton);
+      fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+      fireEvent.click(targetButton);
+      expect(await screen.findByText(/REVISION_R2_CURRENT/)).toBeInTheDocument();
+      await act(async () => {
+        if (outcome === "success") oldPreview.resolve(json({
+          ...preview, unresolved_reasons: ["R1_PREVIEW_STALE"],
+        }));
+        else if (outcome === "api-error") oldPreview.resolve(json({ detail: { code: "R1_OLD" } }, 409));
+        else oldPreview.reject(new Error("R1 preview rejection"));
+        try { await oldPreview.promise; } catch { /* expected */ }
+      });
+      expect(screen.getByText(/REVISION_R2_CURRENT/)).toBeInTheDocument();
+      expect(screen.queryByText(/R1_PREVIEW_STALE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it("allows a new preview after a successful mutation while an older preview remains stale", async () => {
+    const oldPreview = deferred<Response>();
+    let previewCalls = 0;
+    let started = false;
+    const post = { ...revision("under_review", 1), explanation: "POST_START_REVISION" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/clients/1")) return json(client());
+      if (url.endsWith("/m04/targets")) return json([target(1, started ? post : null)]);
+      if (url.endsWith("/preview")) {
+        previewCalls += 1;
+        return previewCalls === 1 ? oldPreview.promise : json({
+          ...preview, unresolved_reasons: ["NEW_PREVIEW_AFTER_MUTATION"],
+        });
+      }
+      if (url.endsWith("/start")) { started = true; return json(post, 201); }
+      if (url.endsWith("/history")) return json(started ? [post] : []);
+      if (url.endsWith("/matched-rules")) return json([]);
+      if (url.endsWith("/eligibility")) return json(target(1, started ? post : null).eligibility);
+      if (url.endsWith("/manual-1")) return json(target(1, started ? post : null));
+      throw new Error(`unexpected ${url}`);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start classification" }));
+    expect(await screen.findByText(/POST_START_REVISION/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Preview exact rules" }));
+    expect(await screen.findByText(/NEW_PREVIEW_AFTER_MUTATION/)).toBeInTheDocument();
+    await act(async () => { oldPreview.resolve(json({
+      ...preview, unresolved_reasons: ["OLD_PREVIEW_STALE"],
+    })); });
+    expect(screen.getByText(/NEW_PREVIEW_AFTER_MUTATION/)).toBeInTheDocument();
+    expect(screen.queryByText(/OLD_PREVIEW_STALE/)).not.toBeInTheDocument();
+  });
+
+  it.each(
     (["detail", "history", "matched-rules", "eligibility"] as const).flatMap((path) =>
       (["A-B", "A-B-A"] as const).flatMap((transition) =>
         (["success", "rejected", "api-error"] as const).map(

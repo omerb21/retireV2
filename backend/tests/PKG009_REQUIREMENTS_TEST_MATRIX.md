@@ -31,6 +31,14 @@ Executable frontend ownership evidence:
   the current mutation and refresh.
 - `renders complete persisted rule, component, revision, conflict, and
   authority evidence` proves current/history technical provenance rendering.
+- Twelve unmount cases cover target list, detail bundle, preview, and mutation
+  settlement across success, rejected promises, and structured API errors.
+- Twenty-seven preview-to-mutation cases cover all nine lifecycle actions and
+  all three older-preview outcomes; stale preview settlement cannot overwrite
+  post-mutation authoritative state or launch follow-up reads.
+- Three revision-bound preview cases prove that an R1 preview is stale after
+  the selected target advances to R2. A separate control proves that a newly
+  launched post-mutation preview remains applicable.
 
 Backend integrity evidence:
 
@@ -43,6 +51,11 @@ Backend integrity evidence:
 - The ten-case `test_aggregate_corruption_matrix_fails_closed` recomputes
   digests after controlled corruption and proves semantic aggregate checks;
   positive derivation and pre-acceptance rejection tests cover the valid path.
+- The twelve-case `test_raw_snapshot_component_multiplicity_fails_closed`
+  matrix validates raw snapshot identities before normalization, including
+  identical/conflicting duplicates, malformed identities and entries, and
+  count/identity mismatches. Three API-level positive controls prove valid
+  one-to-one pension, capital, and mixed component snapshots remain eligible.
 - `test_pkg009_migration.py` covers the single head, additive SQLite
   upgrade/downgrade/re-upgrade, empty/no-backfill state, bounded downgrade, and
   PostgreSQL offline DDL generation.

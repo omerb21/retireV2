@@ -595,41 +595,162 @@ describe("M04ClassificationScreen", () => {
     },
   );
 
-  it("allows a new preview after a successful mutation while an older preview remains stale", async () => {
-    const oldPreview = deferred<Response>();
-    let previewCalls = 0;
-    let started = false;
-    const post = { ...revision("under_review", 1), explanation: "POST_START_REVISION" };
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/api/clients/1")) return json(client());
-      if (url.endsWith("/m04/targets")) return json([target(1, started ? post : null)]);
-      if (url.endsWith("/preview")) {
-        previewCalls += 1;
-        return previewCalls === 1 ? oldPreview.promise : json({
-          ...preview, unresolved_reasons: ["NEW_PREVIEW_AFTER_MUTATION"],
+  it.each(ACTION_CASES.map((actionCase) => [actionCase.action, actionCase] as const))(
+    "%s post-mutation new preview succeeds with action-specific payload",
+    async (_actionName, actionCase) => {
+      const oldPreview = deferred<Response>();
+      const mutation = deferred<Response>();
+      const newPreview = deferred<Response>();
+      let previewCalls = 0;
+      let mutationCalls = 0;
+      let mutationResolved = false;
+      let mutationInit: RequestInit | undefined;
+      const refreshUrls: string[] = [];
+      const source = actionCase.state
+        ? revision(actionCase.state, actionCase.state === "under_review" ? 1 : 2)
+        : null;
+      const postState = ({
+        start: "under_review", proposal: "proposed", unresolved: "unresolved",
+        accept: "accepted", reject: "rejected", reopen: "under_review",
+        override: "proposed", undo: "proposed", start_revalidation: "under_review",
+      } as const)[actionCase.action];
+      const post = {
+        ...revision(
+          postState,
+          (source?.revision_sequence ?? 0) + 1,
+          actionCase.action,
+        ),
+        revision_id: `r-post-${actionCase.action}`,
+        explanation: `POST_${actionCase.action.toUpperCase()}_REVISION`,
+      };
+      const sourceTarget = target(
+        1,
+        source,
+        "revalidation" in actionCase && actionCase.revalidation
+          ? "m04_revalidation_required" : undefined,
+      );
+      const historyBefore = actionCase.action === "undo" && source
+        ? [revision("under_review", 1), source]
+        : source ? [source] : [];
+      const historyAfter = [...historyBefore, post];
+      vi.stubGlobal("fetch", vi.fn(async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        const url = String(input);
+        if (mutationResolved) refreshUrls.push(url);
+        if (url.endsWith("/api/clients/1")) return json(client());
+        if (url.endsWith("/m04/targets")) {
+          return json([mutationResolved ? target(1, post) : sourceTarget]);
+        }
+        if (url.endsWith("/preview")) {
+          previewCalls += 1;
+          return previewCalls === 1 ? oldPreview.promise : newPreview.promise;
+        }
+        if (url.endsWith(actionCase.endpoint)) {
+          mutationCalls += 1;
+          mutationInit = init;
+          return mutation.promise;
+        }
+        if (url.endsWith("/history")) return json(mutationResolved ? historyAfter : historyBefore);
+        if (url.endsWith("/matched-rules")) return json([]);
+        if (url.endsWith("/eligibility")) return json(
+          (mutationResolved ? target(1, post) : sourceTarget).eligibility,
+        );
+        if (url.endsWith("/manual-1")) {
+          return json(mutationResolved ? target(1, post) : sourceTarget);
+        }
+        throw new Error(`unexpected ${url}`);
+      }));
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
+      fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+      expect(previewCalls).toBe(1);
+      expect(screen.getByText(/Loading M04/)).toBeInTheDocument();
+      if ("reason" in actionCase && actionCase.reason) {
+        fireEvent.change(screen.getByLabelText("Explanation"), {
+          target: { value: `${actionCase.action} explanation` },
         });
       }
-      if (url.endsWith("/start")) { started = true; return json(post, 201); }
-      if (url.endsWith("/history")) return json(started ? [post] : []);
-      if (url.endsWith("/matched-rules")) return json([]);
-      if (url.endsWith("/eligibility")) return json(target(1, started ? post : null).eligibility);
-      if (url.endsWith("/manual-1")) return json(target(1, started ? post : null));
-      throw new Error(`unexpected ${url}`);
-    }));
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
-    fireEvent.click(screen.getByRole("button", { name: "Start classification" }));
-    expect(await screen.findByText(/POST_START_REVISION/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Preview exact rules" }));
-    expect(await screen.findByText(/NEW_PREVIEW_AFTER_MUTATION/)).toBeInTheDocument();
-    await act(async () => { oldPreview.resolve(json({
-      ...preview, unresolved_reasons: ["OLD_PREVIEW_STALE"],
-    })); });
-    expect(screen.getByText(/NEW_PREVIEW_AFTER_MUTATION/)).toBeInTheDocument();
-    expect(screen.queryByText(/OLD_PREVIEW_STALE/)).not.toBeInTheDocument();
-  });
+      if (actionCase.action === "override") {
+        fireEvent.change(screen.getByLabelText("Interpretation"), {
+          target: { value: "pension" },
+        });
+      }
+      if (actionCase.action === "undo") {
+        fireEvent.change(screen.getByLabelText("Historical revision for undo"), {
+          target: { value: "r-1" },
+        });
+      }
+      fireEvent.click(screen.getByRole("button", { name: actionCase.button }));
+      expect(mutationCalls).toBe(1);
+      await waitFor(() => expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument());
+
+      const reasonPayload = source ? {
+        expected_current_revision_id: source.revision_id,
+        reason_code: "planner_decision",
+        explanation: `${actionCase.action} explanation`,
+      } : null;
+      const expectedBody = actionCase.action === "start" ? undefined
+        : actionCase.action === "proposal"
+          ? { expected_current_revision_id: source?.revision_id }
+          : actionCase.action === "override"
+            ? {
+              ...reasonPayload,
+              confirmed: true,
+              product_family: "provident_fund",
+              pension_subtype: null,
+              components: [{
+                evidence_identity: "component:0:abc",
+                component_kind: "contribution_component",
+                interpretation: "pension",
+                current_employer_related: "unknown",
+                explanation: "component explanation",
+              }],
+            }
+            : actionCase.action === "undo"
+              ? { ...reasonPayload, confirmed: true, historical_revision_id: "r-1" }
+              : reasonPayload;
+      expect(mutationInit?.method).toBe("POST");
+      expect(mutationInit?.body === undefined
+        ? undefined : JSON.parse(String(mutationInit.body))).toEqual(expectedBody);
+
+      mutationResolved = true;
+      await act(async () => { mutation.resolve(json(post, 201)); });
+      expect(await screen.findByText(new RegExp(`POST_${actionCase.action.toUpperCase()}_REVISION`)))
+        .toBeInTheDocument();
+      expect(refreshUrls.filter((url) => url.endsWith("/manual-1"))).toHaveLength(1);
+      expect(refreshUrls.filter((url) => url.endsWith("/history"))).toHaveLength(1);
+      expect(refreshUrls.filter((url) => url.endsWith("/eligibility"))).toHaveLength(1);
+      expect(refreshUrls.filter((url) => url.endsWith("/matched-rules"))).toHaveLength(1);
+      expect(refreshUrls.filter((url) => url.endsWith("/m04/targets"))).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "Preview exact rules" }));
+      expect(previewCalls).toBe(2);
+      expect(screen.getByText(/Loading M04/)).toBeInTheDocument();
+      await act(async () => { newPreview.resolve(json({
+        ...preview,
+        unresolved_reasons: [`NEW_PREVIEW_AFTER_${actionCase.action.toUpperCase()}`],
+      })); });
+      expect(await screen.findByText(
+        new RegExp(`NEW_PREVIEW_AFTER_${actionCase.action.toUpperCase()}`),
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+
+      await act(async () => { oldPreview.resolve(json({
+        ...preview, unresolved_reasons: [`OLD_${actionCase.action.toUpperCase()}_PREVIEW_STALE`],
+      })); });
+      expect(screen.queryByText(
+        new RegExp(`OLD_${actionCase.action.toUpperCase()}_PREVIEW_STALE`),
+      )).not.toBeInTheDocument();
+      expect(screen.getByText(
+        new RegExp(`NEW_PREVIEW_AFTER_${actionCase.action.toUpperCase()}`),
+      )).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(mutationCalls).toBe(1);
+    },
+  );
 
   it.each(
     (["detail", "history", "matched-rules", "eligibility"] as const).flatMap((path) =>

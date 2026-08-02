@@ -37,8 +37,13 @@ Executable frontend ownership evidence:
   all three older-preview outcomes; stale preview settlement cannot overwrite
   post-mutation authoritative state or launch follow-up reads.
 - Three revision-bound preview cases prove that an R1 preview is stale after
-  the selected target advances to R2. A separate control proves that a newly
-  launched post-mutation preview remains applicable.
+  the selected target advances to R2.
+- The nine visible `post-mutation new preview succeeds with action-specific
+  payload` parameter cases exercise `start`, `proposal`, `unresolved`,
+  `accept`, `reject`, `reopen`, `override`, `undo`, and `start_revalidation`.
+  Each case holds P1 and the real action-specific mutation independently,
+  verifies its exact payload and five-call authoritative refresh, then proves
+  a separately controlled P2 applies normally while late P1 remains stale.
 
 Backend integrity evidence:
 

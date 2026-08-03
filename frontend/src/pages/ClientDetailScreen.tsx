@@ -1425,6 +1425,14 @@ export function ClientDetailScreen() {
       </p>
       <p>
         <Link
+          to={`/clients/${validRouteClientId}/pension-ledger`}
+          state={{ clientName: client.full_name }}
+        >
+          M05 Pension Balance Ledger
+        </Link>
+      </p>
+      <p>
+        <Link
           to={`/clients/${validRouteClientId}/fixation/workspace`}
           state={{ clientName: client.full_name }}
         >

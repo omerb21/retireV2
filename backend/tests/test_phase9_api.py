@@ -55,6 +55,11 @@ ACCEPTED_ADDITIVE_TABLES = {
     "m04_classification_subjects",
     "m04_classification_revisions",
     "m04_component_decisions",
+    "m05_ledger_subjects",
+    "m05_candidate_links",
+    "m05_ledger_revisions",
+    "m05_ledger_values",
+    "m05_adjustment_evidence",
 }
 
 _M07_REVISION_ID: str | None = None

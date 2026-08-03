@@ -853,26 +853,26 @@ def _append(
     revision.evidence_digest = _revision_digest(revision, values)
     authorize_m05_insert(revision)
     db.add(revision)
-    db.flush()
-    for item in values:
-        value = M05LedgerValue(
-            revision_id=revision.revision_id,
-            subject_id=subject.subject_id,
-            client_id=subject.client_id,
-            **item,
-        )
-        authorize_m05_insert(value)
-        db.add(value)
-    if adjustment is not None:
-        row = M05AdjustmentEvidence(
-            revision_id=revision.revision_id,
-            subject_id=subject.subject_id,
-            client_id=subject.client_id,
-            **adjustment,
-        )
-        authorize_m05_insert(row)
-        db.add(row)
     try:
+        db.flush()
+        for item in values:
+            value = M05LedgerValue(
+                revision_id=revision.revision_id,
+                subject_id=subject.subject_id,
+                client_id=subject.client_id,
+                **item,
+            )
+            authorize_m05_insert(value)
+            db.add(value)
+        if adjustment is not None:
+            row = M05AdjustmentEvidence(
+                revision_id=revision.revision_id,
+                subject_id=subject.subject_id,
+                client_id=subject.client_id,
+                **adjustment,
+            )
+            authorize_m05_insert(row)
+            db.add(row)
         db.commit()
     except (IntegrityError, OperationalError) as error:
         db.rollback()

@@ -26,6 +26,7 @@ def load_all_models() -> None:
     import app.models.m02_intake  # noqa: F401
     import app.models.m03_review  # noqa: F401
     import app.models.m04_classification  # noqa: F401
+    import app.models.m05_ledger  # noqa: F401
     import app.models.m07_evidence  # noqa: F401
     import app.models.official_parameter_set  # noqa: F401
     import app.models.retirement_planning_document  # noqa: F401

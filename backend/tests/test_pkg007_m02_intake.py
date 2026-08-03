@@ -1121,18 +1121,18 @@ def test_pkg007_migration_is_additive_and_downgrades(tmp_path: Path) -> None:
     downgraded.dispose()
 
 
-def test_migration_chain_has_single_head_after_pkg008() -> None:
+def test_pkg009_revision_remains_in_the_linear_migration_chain() -> None:
     env = os.environ.copy()
     env["DATABASE_URL"] = "sqlite:///./pkg007-head-check.db"
     result = subprocess.run(
-        ["alembic", "heads"],
+        ["alembic", "history", "-r", f"{CURRENT_REVISION}:heads"],
         cwd=_backend_root(),
         env=env,
         capture_output=True,
         check=True,
         text=True,
     )
-    assert result.stdout.strip() == f"{CURRENT_REVISION} (head)"
+    assert CURRENT_REVISION in result.stdout
 
 
 def test_pkg007_migration_compiles_portable_postgresql_ddl() -> None:

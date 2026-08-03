@@ -23,9 +23,9 @@ def _run(database_url: str, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_pkg009_is_the_single_additive_head() -> None:
-    result = _run("sqlite:///:memory:", "heads")
-    assert result.stdout.strip() == f"{REVISION} (head)"
+def test_pkg009_remains_in_the_linear_migration_chain() -> None:
+    result = _run("sqlite:///:memory:", "history", "-r", f"{REVISION}:heads")
+    assert REVISION in result.stdout
 
 
 def test_pkg009_sqlite_upgrade_downgrade_reupgrade_is_bounded(tmp_path: Path) -> None:

@@ -247,7 +247,7 @@ An authoritative candidate requires a non-empty current resolved M04
 component set. Empty components are `m04_ineligible` or
 `component_set_incomplete`; total-only reconciliation is prohibited.
 
-## 10. Monetary states, precision, and canonical zero
+## 10. Monetary states, predecessor values, and observable representations
 
 Every monetary field has exactly one state:
 
@@ -259,38 +259,67 @@ Every monetary field has exactly one state:
 
 Missing, excluded, and malformed never become zero silently.
 
-All authoritative M05 monetary values use Decimal scale exactly `2`, with
-persistence-compatible `Numeric(20,2)`. Accepted adjusted-value intent must be
-an exact decimal representation with no more than two fractional digits and
-must be canonically representable at scale 2 without rounding.
+### 10.1 Canonical persisted M02 Numeric facts
 
-Reject rather than round:
+M05 consumes accepted persisted M02 facts as predecessor facts. For
+`declared_total_balance_amount`, and for any other M02 value persisted as
+`Numeric(20,2)`, the authoritative M05-observable fact is the canonical Decimal
+value returned by M02 persistence.
 
-- more than two fractional digits;
-- exponent form not exactly representable at scale 2;
-- binary float;
-- NaN or infinity;
-- Boolean;
-- list/object;
-- formatted currency or comma-formatted string; and
-- whitespace-padded string unless strict schema parsing rejects it earlier.
+M05 does not know, reconstruct, or claim to validate whether the unavailable
+original M02 representation was `0.50`, `0.500`, exponent notation, a JSON
+number, a binary float, or another representation M02 accepted and stored
+canonically. This is reliance on the accepted predecessor's persisted fact,
+not silent M05 rounding or coercion.
 
-All sums and discrepancy arithmetic use Decimal scale 2, with no intermediate
-binary float, implicit rounding, or hidden post-comparison quantization. The
-tolerance comparison uses the exact stored Decimal discrepancy.
+A persisted M02 `Numeric(20,2)` value is accepted by M05 when it is non-null
+where required, finite, within the representable range, returned as an exact
+Decimal, consumed at its canonical scale-2 value without further rounding, and
+covered by valid M05 ILS confirmation. The maximum magnitude is exactly
+`999999999999999999.99`; values outside that range fail closed.
 
-Canonical zero normalizes `-0.00`, `0`, `0.0`, and `0.00` to `0.00`.
-Canonical zero is not negative and creates no negative warning.
+M05 never reparses the unavailable predecessor representation and never
+changes the canonical persisted value.
 
-Required examples:
+### 10.2 Observable M02 component source strings
+
+Where an M02 component monetary value remains observable as a source string,
+M05 performs strict representation-sensitive parsing. The accepted form is a
+plain decimal representation with no more than two fractional digits. Reject
+rather than round exponent notation, commas, currency symbols, whitespace
+padding, Boolean/list/object, NaN/infinity, or more than two fractional digits.
+
+Required observable-string examples are:
 
 | Input | Outcome |
 |---|---|
-| `0.50` | accepted as `0.50` |
-| `0.500` | rejected for excessive scale |
-| `0.499` | rejected, never rounded |
-| `-0.00` | canonical `0.00`, no negative warning |
-| `-0.01` | accepted exact signed value plus mandatory negative warning |
+| `"0.50"` | accepted as exact `0.50` |
+| `"0.500"` | rejected for excessive scale |
+| `"0.499"` | rejected, never rounded |
+| `"-0.00"` | canonical `0.00`, no negative warning |
+| `"-0.01"` | accepted exact signed value plus mandatory negative warning |
+
+### 10.3 M05-authored monetary values
+
+Adjustment new values and every M05-authored monetary mutation intent use a
+strict observable scale-2 Decimal representation and reject rather than round.
+M05 mutation schemas reject binary-float monetary input, excessive scale,
+unrepresentable exponent, NaN/infinity, Boolean, list/object, formatted or
+comma strings, currency symbols, and whitespace padding.
+
+M05 source-string parsers reject non-decimal representations. M05 does not
+claim to detect whether an already canonical M02 Numeric fact originated from
+a binary float before persistence.
+
+### 10.4 Arithmetic and canonical zero
+
+All sums and discrepancy arithmetic use exact Decimal scale 2, with no
+intermediate binary float, implicit rounding, or hidden post-comparison
+quantization. Tolerance compares the exact stored Decimal result.
+
+Returned persisted Decimal zero and observable inputs `-0.00`, `0`, `0.0`, and
+`0.00` normalize to canonical `0.00`. Canonical zero is not negative and
+creates no negative warning.
 
 ## 11. Source, derived, and effective values
 
@@ -632,7 +661,7 @@ execution.
 | `M05_PREDECESSOR_LIFECYCLE_BLOCKED` | Exact M01 mutation-eligible states or M02 `accepted_for_review` cannot be enforced. |
 | `M05_PROVIDER_ACCOUNT_IDENTITY_AMBIGUITY` | Exact byte-for-byte provider/account identity cannot be used without normalization/inference. |
 | `M05_COMPONENT_MAPPING_AMBIGUITY` | Index plus exact label/code one-to-one M02-M04-M05 mapping cannot be proven. |
-| `M05_DECIMAL_SCALE_ROUNDING_AMBIGUITY` | Scale-2 Decimal, canonical zero, reject-not-round, or `Numeric(20,2)` cannot be enforced. |
+| `M05_DECIMAL_SCALE_ROUNDING_AMBIGUITY` | Implementation would require original-representation provenance not preserved by M02, silently change/round a canonical persisted value, or fail strict validation at an observable M02-string/M05-authored boundary. |
 | `M05_CURRENCY_CONFIRMATION_BLOCKED` | Explicit source-snapshot-specific server-controlled ILS confirmation cannot be retained immutably. |
 | `M05_WARNING_CATALOGUE_AMBIGUITY` | Stable mandatory/informational IDs or exact-set disposition cannot be enforced. |
 | `M05_ADJUSTMENT_EFFECTIVE_VALUE_AMBIGUITY` | One effective value per identity or single-identity additive adjustment cannot be proven. |
@@ -669,8 +698,8 @@ Stop-condition count: `24`.
 | AC-010-008 | M02 component index plus exact label and M04 evidence index/label/code map one-to-one to one ledger value identity under same client/intake/target/current M04 revision; duplicate labels at distinct indices stay distinct. |
 | AC-010-009 | Duplicate/mismatched/unmapped/cross-scope/stale/unknown reconcilable components fail with `component_mapping_invalid` or `component_set_incomplete` and never partially map. |
 | AC-010-010 | Every monetary field retains `recorded_value`, `recorded_zero`, `missing`, `excluded`, or `malformed`; no non-value state becomes zero. |
-| AC-010-011 | Authoritative money uses exact scale-2 Decimal and `Numeric(20,2)`; excessive scale, unrepresentable exponent, binary float, NaN/infinity, Boolean, object/list, formatted/comma/whitespace string are rejected without rounding. |
-| AC-010-012 | `-0.00`, `0`, `0.0`, and `0.00` become canonical non-negative `0.00`; `0.500` and `0.499` reject while `-0.01` retains sign and creates the negative warning. |
+| AC-010-011 | Canonical persisted M02 `Numeric(20,2)` values, including `declared_total_balance_amount`, are consumed as exact predecessor Decimal facts when non-null/finite/in-range and ILS-confirmed; M05 neither reconstructs original representation nor rounds/reparses the canonical value, and magnitude above `999999999999999999.99` fails closed. |
+| AC-010-012 | Observable M02 component strings and M05-authored monetary intents receive strict representation validation: `"0.50"` succeeds, `"0.500"`/`"0.499"` and binary-float mutation input reject, canonical `-0.00` becomes non-negative `0.00`, and `-0.01` retains sign and creates the warning. |
 | AC-010-013 | Source, derived, and exactly one current effective value per identity remain distinct; source and adjusted values are never counted together. |
 | AC-010-014 | The five normative persistence structures enforce stable IDs, same-client/account integrity, unique sequence/candidate/value, one child per predecessor, deterministic leaf, and immutable snapshots. |
 | AC-010-015 | The complete lifecycle matrix is enforced exactly, including terminal `superseded`, draft-only reconcile/review, rejected repeated block/start, current-leaf intent, and no empty/partial successor. |
@@ -707,8 +736,8 @@ Acceptance criteria count: `33`.
 | NAC-010-006 | Trimming, case folding, Unicode normalization, punctuation/whitespace change, transliteration, alias/provider-code mapping, fuzzy matching, or other provider/account normalization. |
 | NAC-010-007 | Latest-created/updated, M02 timestamps, M04 acceptance time, or insertion order selecting authoritative candidate. |
 | NAC-010-008 | Silent zero coercion or silent ILS inference from locale/provider/product/filename/package/target scope. |
-| NAC-010-009 | Implicit rounding, excessive scale, unrepresentable exponent, binary float, NaN/infinity, formatted/comma/whitespace monetary string. |
-| NAC-010-010 | Boolean, list, or object accepted as monetary input. |
+| NAC-010-009 | Reparsing/reconstructing unavailable original M02 Numeric representation, claiming to distinguish original `0.50` from `0.500` after canonical persistence, or rounding/changing the canonical predecessor Decimal value. |
+| NAC-010-010 | Binary-float/Boolean/list/object monetary input at an M05 mutation boundary, or excessive-scale/exponent/NaN/infinity/formatted/comma/whitespace representation accepted where an M02 component string or M05-authored value remains observable. |
 | NAC-010-011 | Negative-value discard or canonical `0.00` treated as negative. |
 | NAC-010-012 | Empty M04 component set, total-only reconciliation, or component/effective sum creating a missing source total. |
 | NAC-010-013 | `_find_balance`, primary tagmul, tag priority, weighted fallback, period inference, or snapshot latest/meaningful selection. |
@@ -746,6 +775,12 @@ No AC/NAC may be claimed without deterministic executable evidence. Browser
 E2E, CI, deployment, and production verification may be claimed only if
 actually available and executed.
 
+Expected corrected-definition reaudit targets are:
+
+- AC: `33 PASS / 0 FAIL / 0 NOT_PROVEN`;
+- NAC: `24 PASS / 0 FAIL / 0 NOT_PROVEN`; and
+- stop conditions: `24 PASS / 0 FAIL / 0 NOT_PROVEN`.
+
 ## 29. Included, deferred, and excluded scope
 
 Included:
@@ -754,7 +789,8 @@ Included:
 - exact M01/M02/M03/M04 predecessor revalidation;
 - exact provider/account identity;
 - source-snapshot-specific ILS confirmation;
-- scale-2 Decimal/Numeric monetary values and canonical zero;
+- canonical persisted M02 Numeric predecessor facts, strict observable-string
+  and M05-authored scale-2 validation, range enforcement, and canonical zero;
 - strict indexed M02-M04-M05 component mapping;
 - immutable source/derived/effective values;
 - exact effective-value reconciliation;
@@ -788,7 +824,7 @@ Deferred or excluded:
 | `D-010-001` | Exact M01 derived mutation predicate and M02 `accepted_for_review` vocabulary | `CLOSED_IN_DEFINITION` |
 | `D-010-002` | Explicit source-snapshot-specific server-controlled ILS confirmation | `CLOSED_IN_DEFINITION` |
 | `D-010-003` | Exact persisted provider/account byte identity and manual target kind | `CLOSED_IN_DEFINITION` |
-| `D-010-004` | Scale-2 Decimal/Numeric, reject-not-round, canonical zero | `CLOSED_IN_DEFINITION` |
+| `D-010-004` | Canonical persisted M02 values distinguished from representation-sensitive M02 strings and M05-authored inputs | `CLOSED_IN_DEFINITION` |
 | `D-010-005` | Total-only reconciliation removed; non-empty complete component mapping required | `CLOSED_IN_DEFINITION` |
 | `D-010-006` | Deterministic indexed one-to-one M02-M04-M05 component mapping | `CLOSED_IN_DEFINITION` |
 | `D-010-007` | Reconciliation uses exactly one current effective value per identity | `CLOSED_IN_DEFINITION` |
@@ -796,6 +832,7 @@ Deferred or excluded:
 | `D-010-009` | Stable mandatory/informational warning catalogue and exact-set disposition | `CLOSED_IN_DEFINITION` |
 | `D-010-010` | Date-only calendar-month stale threshold and examples | `CLOSED_IN_DEFINITION` |
 | `D-010-011` | Expanded enforcement, concurrency, offline migration, frontend, stop, and AC/NAC evidence | `CLOSED_IN_DEFINITION` |
+| `D-010-012` | Authoritative business-plan M05 vocabulary and effective-value reconciliation aligned with M04/PKG-010 | `CLOSED_IN_DEFINITION` |
 
 ## 31. Authorization boundary and final gate
 

@@ -24,7 +24,12 @@ from app.models.m05_ledger import (
     M05LedgerValue,
 )
 from app.services.m05_ledger_service import (
+    ELIGIBILITY_REASON_ORDER,
+    CandidateEvaluation,
+    _leaf_integrity_reasons,
+    _ordered_eligibility_reasons,
     _reconcile,
+    _upstream_eligibility_reasons,
     is_stale,
     parse_authored_money,
     parse_component_money,
@@ -857,6 +862,112 @@ def test_archived_case_is_read_only_and_m06_ineligible(api) -> None:
     )
     assert mutation.status_code == 409
     assert mutation.json()["detail"]["code"] == "archived_case"
+
+
+def test_complete_eligibility_vocabulary_has_deterministic_order(api) -> None:
+    required = [
+        "archived_case",
+        "ledger_chain_inconsistent",
+        "no_authoritative_candidate",
+        "authoritative_candidate_tie",
+        "upstream_source_ineligible",
+        "m03_ineligible",
+        "m04_ineligible",
+        "upstream_revalidation_required",
+        "ledger_draft",
+        "ledger_blocked",
+        "ledger_superseded",
+        "required_value_missing",
+        "currency_or_unit_invalid",
+        "component_mapping_invalid",
+        "component_set_incomplete",
+        "reconciliation_unresolved",
+        "negative_value_review_required",
+        "warning_disposition_invalid",
+        "warning_not_reviewed",
+        "provenance_invalid",
+        "statement_date_invalid",
+    ]
+    assert list(ELIGIBILITY_REASON_ORDER) == required
+    assert _ordered_eligibility_reasons(list(reversed(required)) + required) == required
+
+    client, sessions = api
+    unconfirmed = _start(client, "A-001", confirm=False)
+    gate = client.get(
+        f"/api/clients/1/m05/subjects/{unconfirmed['subject_id']}/m06-eligibility"
+    ).json()
+    assert gate["exclusion_reasons"] == ["ledger_draft", "currency_or_unit_invalid"]
+    assert gate["informational_warnings"] == []
+
+    with sessions() as db:
+        leaf = db.get(M05LedgerRevision, unconfirmed["revision_id"])
+        intake = db.get(M02IntakeRecord, "manual-ok")
+        assert _upstream_eligibility_reasons([], leaf) == (
+            ["no_authoritative_candidate"],
+            [],
+        )
+        for reason in (
+            "authoritative_candidate_tie",
+            "upstream_source_ineligible",
+            "m03_ineligible",
+            "m04_ineligible",
+            "required_value_missing",
+            "component_mapping_invalid",
+            "component_set_incomplete",
+            "statement_date_invalid",
+        ):
+            row = CandidateEvaluation(
+                candidate_id=leaf.candidate_id,
+                intake=intake,
+                context=None,
+                exclusion_reason=reason,
+            )
+            assert _upstream_eligibility_reasons([row], leaf)[0] == [reason]
+        stale_authority = CandidateEvaluation(
+            candidate_id=leaf.candidate_id,
+            intake=intake,
+            context=object(),
+            exclusion_reason="no_authoritative_candidate",
+            authoritative=False,
+        )
+        assert _upstream_eligibility_reasons([stale_authority], leaf)[0] == [
+            "upstream_revalidation_required"
+        ]
+
+        with db.no_autoflush:
+            leaf.source_total_value = None
+            assert "required_value_missing" in _leaf_integrity_reasons(db, leaf)[0]
+            db.rollback()
+
+    # Each remaining leaf-level exclusion is produced independently without
+    # persisting the synthetic invalid state.
+    mutations = {
+        "currency_or_unit_invalid": lambda leaf, values: setattr(leaf, "currency_confirmed", False),
+        "component_mapping_invalid": lambda leaf, values: setattr(values[1], "evidence_identity", values[0].evidence_identity),
+        "component_set_incomplete": lambda leaf, values: [setattr(value, "included_in_reconciliation", False) for value in values],
+        "reconciliation_unresolved": lambda leaf, values: setattr(leaf, "tolerance_satisfied", False),
+        "negative_value_review_required": lambda leaf, values: setattr(leaf, "warnings", [{"warning_id": "negative_value_review_required", "classification": "mandatory"}]),
+        "warning_disposition_invalid": lambda leaf, values: setattr(leaf, "warning_dispositions", [{"warning_id": "unknown_warning"}]),
+        "warning_not_reviewed": lambda leaf, values: setattr(leaf, "warnings", [{"warning_id": "reconciliation_difference_review_required", "classification": "mandatory"}]),
+        "provenance_invalid": lambda leaf, values: setattr(leaf, "provenance", {**leaf.provenance, "client_id": 999}),
+        "statement_date_invalid": lambda leaf, values: setattr(leaf, "statement_date", leaf.evaluation_date + timedelta(days=1)),
+    }
+    for expected, mutate in mutations.items():
+        with sessions() as db:
+            leaf = db.get(M05LedgerRevision, unconfirmed["revision_id"])
+            values = list(
+                db.scalars(
+                    select(M05LedgerValue).where(
+                        M05LedgerValue.revision_id == leaf.revision_id
+                    )
+                ).all()
+            )
+            with db.no_autoflush:
+                mutate(leaf, values)
+                reasons, informational = _leaf_integrity_reasons(db, leaf)
+                assert expected in reasons
+                assert informational == []
+            db.rollback()
 
 
 def test_concurrent_start_has_one_winner_and_clean_retry(api) -> None:

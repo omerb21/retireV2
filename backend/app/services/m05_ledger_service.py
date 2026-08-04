@@ -60,8 +60,35 @@ MANDATORY_WARNINGS = {
     "negative_value_review_required",
 }
 INFORMATIONAL_WARNINGS = {"stale_warning", "newer_ineligible_candidate_exists"}
+INFORMATIONAL_WARNING_ORDER = (
+    "stale_warning",
+    "newer_ineligible_candidate_exists",
+)
 REVISION_PATTERN = re.compile(r"^M05-R-[0-9a-f]{32}$")
 CANDIDATE_PATTERN = re.compile(r"^M05-CAND-[0-9a-f]{40}$")
+ELIGIBILITY_REASON_ORDER = (
+    "archived_case",
+    "ledger_chain_inconsistent",
+    "no_authoritative_candidate",
+    "authoritative_candidate_tie",
+    "upstream_source_ineligible",
+    "m03_ineligible",
+    "m04_ineligible",
+    "upstream_revalidation_required",
+    "ledger_draft",
+    "ledger_blocked",
+    "ledger_superseded",
+    "required_value_missing",
+    "currency_or_unit_invalid",
+    "component_mapping_invalid",
+    "component_set_incomplete",
+    "reconciliation_unresolved",
+    "negative_value_review_required",
+    "warning_disposition_invalid",
+    "warning_not_reviewed",
+    "provenance_invalid",
+    "statement_date_invalid",
+)
 
 
 class M05LedgerError(Exception):
@@ -1309,6 +1336,112 @@ def history(db: Session, client_id: int, subject_id: str) -> list[M05RevisionRes
     return [revision_response(db, row) for row in _history(db, subject)]
 
 
+def _ordered_eligibility_reasons(reasons: list[str]) -> list[str]:
+    unique = set(reasons)
+    known = [reason for reason in ELIGIBILITY_REASON_ORDER if reason in unique]
+    return known + sorted(unique.difference(ELIGIBILITY_REASON_ORDER))
+
+
+def _leaf_integrity_reasons(
+    db: Session, leaf: M05LedgerRevision
+) -> tuple[list[str], list[str]]:
+    reasons: list[str] = []
+    values = _values(db, leaf.revision_id)
+    if (
+        not leaf.provider_name
+        or not leaf.account_reference
+        or leaf.source_total_value is None
+        or leaf.effective_total_value is None
+    ):
+        reasons.append("required_value_missing")
+    evidence = leaf.currency_confirmation_evidence
+    if not leaf.currency_confirmed:
+        reasons.append("currency_or_unit_invalid")
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("currency") != M05_CURRENCY
+        or evidence.get("candidate_id") != leaf.candidate_id
+        or evidence.get("intake_id") != leaf.intake_id
+        or evidence.get("source_snapshot_digest") != leaf.source_snapshot_digest
+        or evidence.get("actor") != M05_WORKFLOW_ACTOR
+        or bool(evidence.get("confirmed")) != leaf.currency_confirmed
+        or (leaf.currency_confirmed and not evidence.get("confirmed_at"))
+    ):
+        reasons.append("provenance_invalid")
+    expected_provenance = {
+        "client_id": leaf.client_id,
+        "intake_id": leaf.intake_id,
+        "target_kind": leaf.target_kind,
+        "m03_revision_id": leaf.m03_revision_id,
+        "m04_revision_id": leaf.m04_revision_id,
+        "source_snapshot_digest": leaf.source_snapshot_digest,
+        "mapping_digest": leaf.mapping_digest,
+    }
+    if any(leaf.provenance.get(key) != value for key, value in expected_provenance.items()):
+        reasons.append("provenance_invalid")
+    if leaf.statement_date > leaf.evaluation_date:
+        reasons.append("statement_date_invalid")
+    identities = [value.evidence_identity for value in values]
+    included = [value for value in values if value.included_in_reconciliation]
+    if len(identities) != len(set(identities)):
+        reasons.append("component_mapping_invalid")
+    if not included:
+        reasons.append("component_set_incomplete")
+    if leaf.tolerance_satisfied is False and leaf.state != "warning_reviewed":
+        reasons.append("reconciliation_unresolved")
+    mandatory = [
+        item.get("warning_id")
+        for item in leaf.warnings
+        if item.get("classification") == "mandatory"
+    ]
+    dispositions = [item.get("warning_id") for item in leaf.warning_dispositions]
+    mandatory_set = set(mandatory)
+    disposition_set = set(dispositions)
+    if "negative_value_review_required" in mandatory_set - disposition_set:
+        reasons.append("negative_value_review_required")
+    if (
+        len(dispositions) != len(disposition_set)
+        or bool(disposition_set.difference(mandatory_set))
+        or any(warning_id not in MANDATORY_WARNINGS for warning_id in mandatory_set)
+    ):
+        reasons.append("warning_disposition_invalid")
+    if mandatory_set != disposition_set:
+        reasons.append("warning_not_reviewed")
+    informational = [
+        item.get("warning_id")
+        for item in leaf.warnings
+        if item.get("classification") == "informational"
+        and item.get("warning_id") in INFORMATIONAL_WARNINGS
+    ]
+    return reasons, [item for item in informational if isinstance(item, str)]
+
+
+def _upstream_eligibility_reasons(
+    evaluations: list[CandidateEvaluation], leaf: M05LedgerRevision
+) -> tuple[list[str], list[str]]:
+    matching = next(
+        (row for row in evaluations if row.candidate_id == leaf.candidate_id), None
+    )
+    same_intake = next(
+        (row for row in evaluations if row.intake.intake_id == leaf.intake_id), None
+    )
+    row = matching or same_intake
+    if row is None:
+        return ["no_authoritative_candidate"], []
+    informational = list(row.informational_warnings)
+    if matching is None:
+        if row.context is None and row.exclusion_reason:
+            return [row.exclusion_reason], informational
+        return ["upstream_revalidation_required"], informational
+    if row.exclusion_reason == "authoritative_candidate_tie":
+        return ["authoritative_candidate_tie"], informational
+    if row.context is None:
+        return [row.exclusion_reason or "upstream_source_ineligible"], informational
+    if not row.authoritative or row.exclusion_reason is not None:
+        return ["upstream_revalidation_required"], informational
+    return [], informational
+
+
 def eligibility(db: Session, client_id: int, subject_id: str) -> M05EligibilityResponse:
     try:
         subject = _subject(db, client_id, subject_id)
@@ -1343,29 +1476,33 @@ def eligibility(db: Session, client_id: int, subject_id: str) -> M05EligibilityR
             reasons.append("ledger_superseded")
         elif leaf.state not in {"reconciled", "warning_reviewed"}:
             reasons.append("ledger_chain_inconsistent")
-        if not leaf.currency_confirmed:
-            reasons.append("currency_or_unit_invalid")
-        if leaf.tolerance_satisfied is False and leaf.state != "warning_reviewed":
-            reasons.append("reconciliation_unresolved")
-        mandatory = {item["warning_id"] for item in leaf.warnings if item.get("classification") == "mandatory"}
-        disposed = {item["warning_id"] for item in leaf.warning_dispositions}
-        if mandatory != disposed:
-            reasons.append("warning_not_reviewed")
-        informational = [item["warning_id"] for item in leaf.warnings if item.get("classification") == "informational"]
+        leaf_reasons, leaf_informational = _leaf_integrity_reasons(db, leaf)
+        reasons.extend(leaf_reasons)
+        informational.extend(leaf_informational)
         try:
             evaluations = _evaluate_candidates(db, client_id)
-            matching = next((row for row in evaluations if row.candidate_id == leaf.candidate_id), None)
-            if matching is None or not matching.authoritative or matching.exclusion_reason is not None:
-                reasons.append("upstream_revalidation_required")
+            upstream_reasons, upstream_informational = _upstream_eligibility_reasons(
+                evaluations, leaf
+            )
+            reasons.extend(upstream_reasons)
+            informational.extend(upstream_informational)
         except M05LedgerError as error:
-            reasons.append(error.code if error.code in {"archived_case", "m03_ineligible", "m04_ineligible", "upstream_source_ineligible"} else "upstream_source_ineligible")
-    unique_reasons = list(dict.fromkeys(reasons))
+            reasons.append(
+                error.code
+                if error.code in ELIGIBILITY_REASON_ORDER
+                else "upstream_source_ineligible"
+            )
+    unique_reasons = _ordered_eligibility_reasons(reasons)
     return M05EligibilityResponse(
         subject_id=subject_id,
         eligible_for_m06=not unique_reasons,
         current_revision_id=leaf.revision_id if leaf else None,
         exclusion_reasons=unique_reasons,
-        informational_warnings=list(dict.fromkeys(informational)),
+        informational_warnings=[
+            warning
+            for warning in INFORMATIONAL_WARNING_ORDER
+            if warning in set(informational)
+        ],
     )
 
 

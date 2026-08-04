@@ -339,19 +339,44 @@ describe("M05LedgerScreen", () => {
     },
   );
 
-  it("unmount invalidates pending mutation success, error, and finally", async () => {
+  it.each(mutations)("unmount invalidates pending %s mutation success, error, and finally", async (button, endpoint) => {
     const pending = deferred<Response>();
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = path(input);
-      if (url.endsWith("/subjects/subject-1/reconcile")) return pending.promise;
+      if ((init?.method ?? "GET") === "POST" && url.endsWith(endpoint)) return pending.promise;
       return defaultResponse(url);
     }));
     const view = renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reconcile" }));
+    await launchMutation(button);
     view.unmount();
     await act(async () => pending.resolve(json(revision(1), 201)));
   });
+
+  it.each(["candidates", "detail", "history", "provenance", "warnings", "eligibility"])(
+    "unmount invalidates pending %s read success, rejection, and finally",
+    async (unit) => {
+      const pending = deferred<Response>(); let delayed = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        const matches = unit === "candidates" ? url.endsWith("/m05/candidates")
+          : unit === "detail" ? url.endsWith("/subjects/subject-1")
+          : unit === "history" ? url.endsWith("/subjects/subject-1/history")
+          : unit === "provenance" ? url.endsWith("/subjects/subject-1/provenance")
+          : unit === "warnings" ? url.endsWith("/subjects/subject-1/warnings")
+          : url.endsWith("/subjects/subject-1/m06-eligibility");
+        if (matches && !delayed) { delayed = true; return pending.promise; }
+        return defaultResponse(url);
+      }));
+      const view = renderPage();
+      if (unit !== "candidates") {
+        fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      } else {
+        await waitFor(() => expect(delayed).toBe(true));
+      }
+      view.unmount();
+      await act(async () => pending.reject(new Error("settled after unmount")));
+    },
+  );
 
   it.each(mutations)("%s mutation is current-context bound and uses %s", async (button, endpoint) => {
     const posts: string[] = [];

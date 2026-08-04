@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from threading import Barrier
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,10 +28,15 @@ from app.models.m05_ledger import (
 from app.services.m05_ledger_service import (
     ELIGIBILITY_REASON_ORDER,
     CandidateEvaluation,
+    M05LedgerError,
+    _candidate_context,
+    _identity_digest,
     _leaf_integrity_reasons,
     _ordered_eligibility_reasons,
     _reconcile,
+    _transition,
     _upstream_eligibility_reasons,
+    _warnings,
     is_stale,
     parse_authored_money,
     parse_component_money,
@@ -1020,6 +1027,137 @@ def test_concurrent_same_leaf_successor_has_one_winner(api) -> None:
     assert history[1]["predecessor_revision_id"] == started["revision_id"]
 
 
+def test_barrier_race_reconcile_vs_adjust_and_retry(api) -> None:
+    client, _ = api
+    started = _start(client, "A-001")
+    component = next(
+        row for row in started["values"] if row["component_kind"] == "contribution_component"
+    )
+    barrier = Barrier(2)
+
+    def reconcile() -> tuple[str, int]:
+        barrier.wait()
+        return "reconcile", client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/reconcile",
+            json={"expected_current_revision_id": started["revision_id"]},
+        ).status_code
+
+    def adjust() -> tuple[str, int]:
+        barrier.wait()
+        return "adjust", client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+            json={
+                "expected_current_revision_id": started["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": "59.99",
+                "reason_code": "race",
+                "explanation": "barrier synchronized race",
+                "confirmed": True,
+            },
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(operation) for operation in (reconcile, adjust)]
+        outcomes = dict(future.result() for future in futures)
+    assert sorted(outcomes.values()) == [201, 409]
+    current = client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}"
+    ).json()["current_revision"]
+    if current["action_type"] == "adjust":
+        retry = client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/reconcile",
+            json={"expected_current_revision_id": current["revision_id"]},
+        )
+    else:
+        retry = client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": "59.99",
+                "reason_code": "retry",
+                "explanation": "retry against the new current leaf",
+                "confirmed": True,
+            },
+        )
+    assert retry.status_code == 201, retry.text
+    history = client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
+    ).json()
+    assert [row["revision_sequence"] for row in history] == [1, 2, 3]
+
+
+@pytest.mark.parametrize("race", ["review_vs_supersede", "blocked_adjust_vs_supersede"])
+def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race) -> None:
+    client, sessions = api
+    started = _start(client, "A-002" if race == "review_vs_supersede" else "A-001")
+    current = started
+    if race == "blocked_adjust_vs_supersede":
+        current = client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/mark-blocked",
+            json={
+                "expected_current_revision_id": started["revision_id"],
+                "reason_code": "blocked_before_race",
+                "explanation": "prepare blocked state",
+            },
+        ).json()
+    barrier = Barrier(2)
+    component = next(
+        row for row in current["values"] if row["component_kind"] == "contribution_component"
+    )
+
+    def first() -> int:
+        barrier.wait()
+        if race == "review_vs_supersede":
+            return client.post(
+                f"/api/clients/1/m05/subjects/{started['subject_id']}/review-warning",
+                json={
+                    "expected_current_revision_id": current["revision_id"],
+                    "mandatory_warning_ids": ["reconciliation_difference_review_required"],
+                    "reason_code": "race_review",
+                    "explanation": "exact warning review",
+                    "confirmed": True,
+                },
+            ).status_code
+        return client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": "59.99",
+                "reason_code": "race_adjust",
+                "explanation": "blocked adjustment race",
+                "confirmed": True,
+            },
+        ).status_code
+
+    def second() -> int:
+        barrier.wait()
+        return client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/supersede",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "reason_code": "race_supersede",
+                "explanation": "supersession race",
+            },
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(first), pool.submit(second)]
+        statuses = [future.result() for future in futures]
+    assert sorted(statuses) == [201, 409]
+    with sessions() as db:
+        rows = list(
+            db.scalars(
+                select(M05LedgerRevision).where(
+                    M05LedgerRevision.subject_id == started["subject_id"]
+                )
+            ).all()
+        )
+        assert len(rows) == (3 if race == "blocked_adjust_vs_supersede" else 2)
+        assert len({row.revision_sequence for row in rows}) == len(rows)
+
+
 @pytest.mark.parametrize(
     ("statement", "evaluation", "expected"),
     [
@@ -1085,3 +1223,480 @@ def test_exact_reconciliation_tolerance_boundaries(
         {"evidence_identity": "component:0", "effective_value": "100.00"}
     ]
     assert excluded == []
+
+
+@pytest.mark.parametrize(
+    ("status", "mutation_allowed"),
+    [
+        ("draft", True),
+        ("intake", True),
+        ("analysis", True),
+        ("review", True),
+        ("delivered", True),
+        ("archived", False),
+    ],
+)
+def test_every_m01_lifecycle_state_is_enforced(api, status, mutation_allowed) -> None:
+    client, sessions = api
+    with sessions() as db:
+        db.get(Client, 1).status = status
+        db.commit()
+    candidate = _candidate(client, "A-001")
+    response = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": candidate["candidate_id"], "confirm_currency_ils": True},
+    )
+    if mutation_allowed:
+        assert response.status_code == 201
+    else:
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "archived_case"
+
+
+def test_archived_reopen_requires_explicit_revalidation_after_upstream_change(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    with sessions() as db:
+        db.get(Client, 1).status = "archived"
+        db.add(
+            _intake(
+                "manual-reopen-current",
+                1,
+                provider="Exact Provider",
+                account="A-001",
+                total="101.00",
+                contribution="61.00",
+                severance="40.00",
+                statement_date=date(2026, 7, 2),
+            )
+        )
+        db.commit()
+    assert client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/m06-eligibility"
+    ).json()["exclusion_reasons"][0] == "archived_case"
+    with sessions() as db:
+        db.get(Client, 1).status = "delivered"
+        db.commit()
+    _accept_upstream(client, 1, "manual-reopen-current")
+    gate = client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/m06-eligibility"
+    ).json()
+    assert gate["eligible_for_m06"] is False
+    assert "m04_ineligible" in gate["exclusion_reasons"]
+    assert client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
+    ).json()[-1]["revision_id"] == started["revision_id"]
+    candidate_rows = client.get("/api/clients/1/m05/candidates").json()
+    old = next(row for row in candidate_rows if row["intake_id"] == "manual-ok")
+    assert old["authoritative_current"] is False
+    newer = next(
+        row
+        for row in candidate_rows
+        if row["intake_id"] == "manual-reopen-current"
+    )
+    response = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/revalidate",
+        json={
+            "expected_current_revision_id": started["revision_id"],
+            "candidate_id": newer["candidate_id"],
+            "reason_code": "explicit_reopen_revalidation",
+            "explanation": "revalidate only after explicit planner action",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["action_type"] == "revalidate"
+
+
+def test_m02_fail_closed_input_matrix(api) -> None:
+    _, sessions = api
+    with sessions() as db:
+        client_one = db.get(Client, 1)
+        client_two = db.get(Client, 2)
+        intake = db.get(M02IntakeRecord, "manual-ok")
+        cases = [
+            ("record_kind", "uploaded", client_one, "upstream_source_ineligible"),
+            ("lifecycle_status", "draft", client_one, "upstream_source_ineligible"),
+            ("declared_provider_name", None, client_one, "required_value_missing"),
+            ("declared_provider_name", "", client_one, "required_value_missing"),
+            ("declared_account_reference", None, client_one, "required_value_missing"),
+            ("declared_account_reference", "", client_one, "required_value_missing"),
+            ("declared_statement_date", None, client_one, "required_value_missing"),
+            ("declared_total_balance_amount", None, client_one, "required_value_missing"),
+        ]
+        for field, value, owner, code in cases:
+            original = getattr(intake, field)
+            with db.no_autoflush:
+                setattr(intake, field, value)
+                with pytest.raises(M05LedgerError) as raised:
+                    _candidate_context(db, owner, intake)
+                assert raised.value.code == code
+                setattr(intake, field, original)
+        with db.no_autoflush:
+            with pytest.raises(M05LedgerError) as raised:
+                _candidate_context(db, client_two, intake)
+            assert raised.value.code == "upstream_source_ineligible"
+        db.rollback()
+
+
+def test_m03_m04_authority_state_matrix_is_revalidated(api) -> None:
+    client, sessions = api
+    intake_ids = ("m03-none", "m03-rejected", "m03-reopened", "m04-unresolved", "m04-rejected")
+    with sessions() as db:
+        for index, intake_id in enumerate(intake_ids, start=10):
+            db.add(
+                _intake(
+                    intake_id,
+                    1,
+                    provider=f"Authority Provider {index}",
+                    account=f"AUTH-{index}",
+                    total="100.00",
+                    contribution="60.00",
+                    severance="40.00",
+                )
+            )
+        db.commit()
+
+    rejected_start = client.post("/api/clients/1/m03/targets/m03-rejected/start").json()
+    assert client.post(
+        "/api/clients/1/m03/targets/m03-rejected/reject",
+        json={"reason": "rejected", "expected_current_revision_id": rejected_start["revision_id"]},
+    ).status_code == 201
+
+    reopened_start = client.post("/api/clients/1/m03/targets/m03-reopened/start").json()
+    reopened_accepted = client.post(
+        "/api/clients/1/m03/targets/m03-reopened/accept",
+        json={"reason": "accepted", "expected_current_revision_id": reopened_start["revision_id"]},
+    ).json()
+    assert client.post(
+        "/api/clients/1/m03/targets/m03-reopened/reopen",
+        json={"reason": "reopen", "expected_current_revision_id": reopened_accepted["revision_id"]},
+    ).status_code == 201
+
+    for intake_id in ("m04-unresolved", "m04-rejected"):
+        m03_started = client.post(f"/api/clients/1/m03/targets/{intake_id}/start").json()
+        assert client.post(
+            f"/api/clients/1/m03/targets/{intake_id}/accept",
+            json={"reason": "accepted", "expected_current_revision_id": m03_started["revision_id"]},
+        ).status_code == 201
+    m04_started = client.post("/api/clients/1/m04/targets/m04-unresolved/start").json()
+    assert m04_started["state"] == "under_review"
+    rejected_m04_start = client.post("/api/clients/1/m04/targets/m04-rejected/start").json()
+    rejected_proposal = client.post(
+        "/api/clients/1/m04/targets/m04-rejected/proposal",
+        json={"expected_current_revision_id": rejected_m04_start["revision_id"]},
+    ).json()
+    rejected = client.post(
+        "/api/clients/1/m04/targets/m04-rejected/reject",
+        json={
+            "expected_current_revision_id": rejected_proposal["revision_id"],
+            "reason_code": "rejected",
+            "explanation": "not accepted for M05",
+        },
+    )
+    assert rejected.status_code == 201, rejected.text
+
+    rows = {row["intake_id"]: row for row in client.get("/api/clients/1/m05/candidates").json()}
+    assert rows["m03-none"]["exclusion_reason"] == "m03_ineligible"
+    assert rows["m03-rejected"]["exclusion_reason"] == "m03_ineligible"
+    assert rows["m03-reopened"]["exclusion_reason"] == "m03_ineligible"
+    assert rows["m04-unresolved"]["exclusion_reason"] == "m04_ineligible"
+    assert rows["m04-rejected"]["exclusion_reason"] == "m04_ineligible"
+
+    forged = client.post(
+        "/api/clients/1/m05/start",
+        json={
+            "candidate_id": rows["m04-rejected"]["candidate_id"],
+            "confirm_currency_ils": True,
+            "m03_revision_id": "forged",
+            "m04_revision_id": "forged",
+        },
+    )
+    assert forged.status_code == 422
+
+
+def test_exact_identity_matrix_has_no_normalization_or_concatenation_collision() -> None:
+    values = [
+        "Provider",
+        "provider",
+        " Provider",
+        "Provider ",
+        "Pro  vider",
+        "Pro-vider",
+        "é",
+        "e\u0301",
+        "א",
+        "A",
+    ]
+    assert len({_identity_digest(value) for value in values}) == len(values)
+    assert _identity_digest("ab") + _identity_digest("c") != _identity_digest("a") + _identity_digest("bc")
+    assert _identity_digest("same") == _identity_digest("same")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "999999999999999999.99",
+        "0",
+        "0.00",
+        "0.50",
+        "-0.00",
+        "-0.01",
+    ],
+)
+def test_complete_valid_monetary_parser_matrix(value) -> None:
+    parsed = parse_component_money(value)
+    assert parsed == (Decimal("0.00") if Decimal(value) == 0 else Decimal(value))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "1000000000000000000.00",
+        "999999999999999999999999999999999999999",
+        "1e2",
+        "+1.00",
+        ".50",
+        "1.",
+        "",
+        " 1.00",
+        "1.00 ",
+        "\t1.00",
+        "1.00\n",
+        "١.٠٠",
+        1.0,
+        True,
+        [],
+        {},
+        "NaN",
+        "Infinity",
+        "1,00",
+        "₪1.00",
+        "0.500",
+        "0.499",
+    ],
+)
+def test_complete_invalid_monetary_parser_matrix(value) -> None:
+    with pytest.raises(M05LedgerError):
+        parse_component_money(value)
+
+
+def test_complete_lifecycle_transition_matrix() -> None:
+    states = {"draft", "reconciled", "warning_reviewed", "blocked", "superseded"}
+    allowed = {
+        ("draft", "reconcile", "reconciled"),
+        ("draft", "review_warning", "warning_reviewed"),
+        ("draft", "mark_blocked", "blocked"),
+        ("reconciled", "mark_blocked", "blocked"),
+        ("warning_reviewed", "mark_blocked", "blocked"),
+        ("draft", "adjust", "draft"),
+        ("reconciled", "adjust", "draft"),
+        ("warning_reviewed", "adjust", "draft"),
+        ("blocked", "adjust", "draft"),
+        ("draft", "supersede", "superseded"),
+        ("reconciled", "supersede", "superseded"),
+        ("warning_reviewed", "supersede", "superseded"),
+        ("blocked", "supersede", "superseded"),
+        ("draft", "revalidate", "draft"),
+        ("reconciled", "revalidate", "draft"),
+        ("warning_reviewed", "revalidate", "draft"),
+        ("blocked", "revalidate", "draft"),
+    }
+    actions = {"reconcile", "review_warning", "mark_blocked", "adjust", "supersede", "revalidate"}
+    for previous_state in states:
+        previous = SimpleNamespace(state=previous_state, revision_id="M05-R-previous", revision_sequence=1)
+        for action in actions:
+            for next_state in states:
+                current = SimpleNamespace(
+                    action_type=action,
+                    state=next_state,
+                    revision_sequence=2,
+                    predecessor_revision_id="M05-R-previous",
+                )
+                assert _transition(previous, current) is (
+                    (previous_state, action, next_state) in allowed
+                )
+    assert _transition(None, SimpleNamespace(
+        action_type="start", state="draft", revision_sequence=1,
+        predecessor_revision_id=None,
+    )) is True
+
+
+def test_reconciliation_and_warning_negative_location_matrices() -> None:
+    total = {
+        "evidence_identity": "total_balance", "component_kind": "total_balance",
+        "effective_value": Decimal("100.00"), "source_value": Decimal("100.00"),
+        "included_in_reconciliation": False, "exclusion_reason": "reconciliation_total",
+    }
+    contribution = {
+        "evidence_identity": "component:0", "component_kind": "contribution_component",
+        "effective_value": Decimal("60.00"), "source_value": Decimal("60.00"),
+        "included_in_reconciliation": True, "exclusion_reason": None,
+    }
+    unknown = {
+        "evidence_identity": "component:1", "component_kind": "unknown_component",
+        "effective_value": Decimal("999.00"), "source_value": Decimal("999.00"),
+        "included_in_reconciliation": False, "exclusion_reason": "unknown_component_not_reconcilable",
+    }
+    discrepancy, _, _, included, excluded = _reconcile([total, contribution, unknown])
+    assert discrepancy == Decimal("40.00")
+    assert included == [{"evidence_identity": "component:0", "effective_value": "60.00"}]
+    assert excluded == [{"evidence_identity": "component:1", "reason": "unknown_component_not_reconcilable"}]
+    with pytest.raises(M05LedgerError, match="non-empty"):
+        _reconcile([total, unknown])
+    with pytest.raises(M05LedgerError, match="identities"):
+        _reconcile([total, contribution, {**contribution}])
+    with pytest.raises(M05LedgerError, match="incomplete"):
+        _reconcile([total, {**contribution, "effective_value": None}])
+
+    for field in ("source_value", "effective_value"):
+        for component in (
+            total,
+            contribution,
+            {
+                **contribution,
+                "evidence_identity": "severance",
+                "component_kind": "severance_component",
+            },
+        ):
+            negative = [
+                {**total},
+                {**(component if component["component_kind"] != "total_balance" else contribution)},
+            ]
+            target = negative[0] if component["component_kind"] == "total_balance" else negative[1]
+            target[field] = Decimal("-0.01")
+            warning_ids = {item["warning_id"] for item in _warnings(negative, Decimal("0.00"), stale=False, newer_ineligible=False)}
+            assert "negative_value_review_required" in warning_ids
+    both = _warnings(
+        [{**total, "source_value": Decimal("-1.00")}, contribution],
+        Decimal("0.51"), stale=True, newer_ineligible=True,
+    )
+    assert both == [
+        {"warning_id": "reconciliation_difference_review_required", "classification": "mandatory"},
+        {"warning_id": "negative_value_review_required", "classification": "mandatory"},
+        {"warning_id": "stale_warning", "classification": "informational"},
+        {"warning_id": "newer_ineligible_candidate_exists", "classification": "informational"},
+    ]
+
+
+def test_currency_confirmation_renewal_retention_and_anti_forgery(api) -> None:
+    client, _ = api
+    started = _start(client, "A-001", confirm=True)
+    component = next(
+        row for row in started["values"] if row["component_kind"] == "contribution_component"
+    )
+    adjusted = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": started["revision_id"],
+            "evidence_identity": component["evidence_identity"],
+            "new_effective_value": "59.99",
+            "reason_code": "currency_retention",
+            "explanation": "non-source-changing adjustment",
+            "confirmed": True,
+        },
+    ).json()
+    assert adjusted["currency_confirmed"] is True
+    assert adjusted["currency_confirmation_evidence"] == started["currency_confirmation_evidence"]
+
+    forged = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/reconcile",
+        json={
+            "expected_current_revision_id": adjusted["revision_id"],
+            "confirm_currency_ils": True,
+            "currency": "USD",
+            "actor": "human",
+            "confirmed_at": "2026-01-01T00:00:00Z",
+            "source_snapshot_digest": "forged",
+        },
+    )
+    assert forged.status_code == 422
+
+    warning = _start(client, "A-002", confirm=False)
+    reviewed = client.post(
+        f"/api/clients/1/m05/subjects/{warning['subject_id']}/review-warning",
+        json={
+            "expected_current_revision_id": warning["revision_id"],
+            "mandatory_warning_ids": ["reconciliation_difference_review_required"],
+            "reason_code": "currency_at_review",
+            "explanation": "confirm current ILS snapshot while reviewing",
+            "confirmed": True,
+            "confirm_currency_ils": True,
+        },
+    )
+    assert reviewed.status_code == 201
+    assert reviewed.json()["currency_confirmed"] is True
+
+
+def test_warning_exact_set_negative_and_mismatch_combination(api) -> None:
+    client, _ = api
+    started = _start(client, "A-003")
+    component = next(
+        row for row in started["values"] if row["component_kind"] == "contribution_component"
+    )
+    adjusted = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": started["revision_id"],
+            "evidence_identity": component["evidence_identity"],
+            "new_effective_value": "-2.00",
+            "reason_code": "combined_warning_fixture",
+            "explanation": "create both locked mandatory warnings",
+            "confirmed": True,
+        },
+    ).json()
+    expected = {
+        "negative_value_review_required",
+        "reconciliation_difference_review_required",
+    }
+    assert {row["warning_id"] for row in adjusted["warnings"]} == expected
+    endpoint = f"/api/clients/1/m05/subjects/{started['subject_id']}/review-warning"
+    base = {
+        "expected_current_revision_id": adjusted["revision_id"],
+        "reason_code": "combined_review",
+        "explanation": "review exact simultaneous warning set",
+        "confirmed": True,
+    }
+    for submitted in (
+        ["negative_value_review_required"],
+        [*expected, "unknown_warning"],
+        [*expected, "stale_warning"],
+        ["negative_value_review_required", "negative_value_review_required"],
+    ):
+        response = client.post(endpoint, json={**base, "mandatory_warning_ids": submitted})
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "warning_disposition_invalid"
+    reviewed = client.post(endpoint, json={**base, "mandatory_warning_ids": sorted(expected)})
+    assert reviewed.status_code == 201
+    body = reviewed.json()
+    assert body["state"] == "warning_reviewed"
+    without_ids = lambda rows: [
+        {key: value for key, value in row.items() if key != "value_id"} for row in rows
+    ]
+    assert without_ids(body["values"]) == without_ids(adjusted["values"])
+    assert {row["warning_id"] for row in body["warning_dispositions"]} == expected
+
+
+def test_required_reason_explanation_and_confirmation_fields_are_strict(api) -> None:
+    client, _ = api
+    started = _start(client, "A-001")
+    endpoint = f"/api/clients/1/m05/subjects/{started['subject_id']}/mark-blocked"
+    for payload in (
+        {"expected_current_revision_id": started["revision_id"], "reason_code": "", "explanation": "valid"},
+        {"expected_current_revision_id": started["revision_id"], "reason_code": "valid", "explanation": "   "},
+        {"expected_current_revision_id": started["revision_id"], "reason_code": "valid"},
+    ):
+        assert client.post(endpoint, json=payload).status_code == 422
+    component = next(
+        row for row in started["values"] if row["component_kind"] == "contribution_component"
+    )
+    adjustment = {
+        "expected_current_revision_id": started["revision_id"],
+        "evidence_identity": component["evidence_identity"],
+        "new_effective_value": "59.00",
+        "reason_code": "valid",
+        "explanation": "valid",
+    }
+    assert client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json=adjustment,
+    ).status_code == 422

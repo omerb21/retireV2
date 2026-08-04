@@ -562,7 +562,12 @@ def list_candidates(db: Session, client_id: int) -> list[M05CandidateResponse]:
 def _resolve_candidate(db: Session, client_id: int, candidate_id: str) -> CandidateContext:
     for row in _evaluate_candidates(db, client_id):
         if row.candidate_id == candidate_id:
-            if row.context is None or row.exclusion_reason is not None or not row.authoritative:
+            if row.context is None:
+                raise _conflict(
+                    row.exclusion_reason or "no_authoritative_candidate",
+                    "Candidate is not currently authoritative",
+                )
+            if row.exclusion_reason is not None or not row.authoritative:
                 raise _conflict("no_authoritative_candidate", "Candidate is not currently authoritative")
             return row.context
     raise _not_found()
@@ -779,10 +784,19 @@ def _state(value: Decimal) -> str:
 
 
 def _reconcile(values: list[dict[str, Any]]) -> tuple[Decimal, Decimal, bool, list[dict[str, Any]], list[dict[str, Any]]]:
-    total = next(item for item in values if item["component_kind"] == "total_balance")
+    identities = [item.get("evidence_identity") for item in values]
+    totals = [item for item in values if item.get("component_kind") == "total_balance"]
+    if len(identities) != len(set(identities)) or len(totals) != 1:
+        raise _conflict("component_mapping_invalid", "Reconciliation identities are invalid")
+    total = totals[0]
     component_rows = [item for item in values if item["included_in_reconciliation"]]
     if not component_rows:
         raise _conflict("component_set_incomplete", "A non-empty reconcilable component set is required")
+    if (
+        not isinstance(total.get("effective_value"), Decimal)
+        or any(not isinstance(item.get("effective_value"), Decimal) for item in component_rows)
+    ):
+        raise _conflict("component_set_incomplete", "Effective reconciliation values are incomplete")
     component_sum = sum((item["effective_value"] for item in component_rows), Decimal("0.00"))
     discrepancy = total["effective_value"] - component_sum
     absolute = abs(discrepancy)

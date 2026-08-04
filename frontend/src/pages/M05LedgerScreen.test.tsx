@@ -191,6 +191,85 @@ describe("M05LedgerScreen", () => {
     expect(screen.getAllByText(/Provider X/).length).toBeGreaterThan(0);
   });
 
+  it("guards candidate-list A-B-A success, error, and finally with distinct generations", async () => {
+    const old = deferred<Response>(); let oldIssued = false;
+    const staleCandidate = { ...candidate(1), provider_name: "STALE_EVIDENCE" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = path(input);
+      if (url.includes("/clients/1/") && url.endsWith("/m05/candidates") && !oldIssued) {
+        oldIssued = true; return old.promise;
+      }
+      return defaultResponse(url);
+    }));
+    renderNavigable();
+    fireEvent.click(screen.getByRole("button", { name: "B" }));
+    expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "A" }));
+    expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
+    await act(async () => old.resolve(json([staleCandidate])));
+    await act(async () => Promise.resolve());
+    expect(screen.queryByText("STALE_EVIDENCE")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each(["detail", "history", "provenance", "warnings", "eligibility"])(
+    "guards stale %s read after A-B-A including finally ownership",
+    async (unit) => {
+      const old = deferred<Response>(); let delayed = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        const matches = unit === "detail" ? url.endsWith("/subjects/subject-1")
+          : unit === "history" ? url.endsWith("/subjects/subject-1/history")
+          : unit === "provenance" ? url.endsWith("/subjects/subject-1/provenance")
+          : unit === "warnings" ? url.endsWith("/subjects/subject-1/warnings")
+          : url.endsWith("/subjects/subject-1/m06-eligibility");
+        if (matches && !delayed) { delayed = true; return old.promise; }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      fireEvent.click(screen.getByRole("button", { name: "B" }));
+      expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "A" }));
+      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      const stale = unit === "detail"
+        ? json({ ...subject(1), provider_name: "STALE_EVIDENCE" })
+        : unit === "history"
+          ? json([{ ...revision(1), product_context: { product_name: "STALE_EVIDENCE" } }])
+          : unit === "provenance"
+            ? json({ marker: "STALE_EVIDENCE" })
+            : unit === "warnings"
+              ? json([{ warning_id: "STALE_EVIDENCE", classification: "informational" }])
+              : json({ ...subject(1).eligibility, exclusion_reasons: ["STALE_EVIDENCE"] });
+      await act(async () => old.resolve(stale));
+      await act(async () => Promise.resolve());
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Current ledger/)).not.toBeInTheDocument();
+    },
+  );
+
+  it("a current mutation launches every independently guarded refresh unit", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = path(input); calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/subjects/subject-1/reconcile")) return json(revision(1, "reconciled"), 201);
+      return defaultResponse(url);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+    await screen.findByText(/Current ledger/);
+    calls.length = 0;
+    fireEvent.click(screen.getByRole("button", { name: "Reconcile" }));
+    await waitFor(() => expect(calls.some((call) => call.startsWith("POST ") && call.endsWith("/reconcile"))).toBe(true));
+    for (const suffix of [
+      "/api/clients/1", "/m05/candidates", "/m05/subjects",
+      "/subjects/subject-1", "/history", "/provenance", "/warnings", "/m06-eligibility",
+    ]) {
+      await waitFor(() => expect(calls.some((call) => call.startsWith("GET ") && call.endsWith(suffix))).toBe(true));
+    }
+  });
+
   it.each(["success", "rejection", "api-error"])(
     "A-B-A stale mutation %s launches zero refresh and cannot change current context",
     async (outcome) => {

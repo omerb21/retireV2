@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.sql.dml import Delete, Update
+from sqlalchemy.sql.elements import TextClause
 
 from app.db.base import Base
 
@@ -430,6 +431,7 @@ _M05_CLASSES = (
     M05AdjustmentEvidence,
 )
 _M05_TABLE_NAMES = {item.__tablename__ for item in _M05_CLASSES}
+_TEXT_MUTATION_ERROR = "M05 append-only records cannot be updated or deleted"
 
 
 def authorize_m05_insert(target: object) -> None:
@@ -484,11 +486,107 @@ def _statement_table_name(statement: object) -> str | None:
     return None
 
 
+def _sql_tokens(sql: str) -> list[str]:
+    """Tokenize executable SQL while discarding comments and string literals.
+
+    This is intentionally a small lexical guard, not a SQL parser. It recognizes
+    identifiers, quoted identifiers, and punctuation needed to locate UPDATE and
+    DELETE targets, including mutations following a CTE.
+    """
+    tokens: list[str] = []
+    index = 0
+    length = len(sql)
+    while index < length:
+        char = sql[index]
+        if char.isspace():
+            index += 1
+            continue
+        if sql.startswith("--", index):
+            newline = sql.find("\n", index + 2)
+            index = length if newline < 0 else newline + 1
+            continue
+        if sql.startswith("/*", index):
+            end = sql.find("*/", index + 2)
+            index = length if end < 0 else end + 2
+            continue
+        if char == "'":
+            index += 1
+            while index < length:
+                if sql[index] == "'":
+                    if index + 1 < length and sql[index + 1] == "'":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            tokens.append("<string>")
+            continue
+        if char in {'"', "`", "["}:
+            closing = "]" if char == "[" else char
+            index += 1
+            value: list[str] = []
+            while index < length:
+                if sql[index] == closing:
+                    if closing != "]" and index + 1 < length and sql[index + 1] == closing:
+                        value.append(closing)
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                value.append(sql[index])
+                index += 1
+            tokens.append("".join(value).lower())
+            continue
+        if char.isalpha() or char == "_":
+            end = index + 1
+            while end < length and (sql[end].isalnum() or sql[end] in {"_", "$"}):
+                end += 1
+            tokens.append(sql[index:end].lower())
+            index = end
+            continue
+        if char in {".", ",", "(", ")", ";"}:
+            tokens.append(char)
+        index += 1
+    return tokens
+
+
+def _qualified_identifier(tokens: list[str], index: int) -> tuple[str | None, int]:
+    if index >= len(tokens) or tokens[index] in {".", ",", "(", ")", ";", "<string>"}:
+        return None, index
+    parts = [tokens[index]]
+    index += 1
+    while index + 1 < len(tokens) and tokens[index] == ".":
+        part = tokens[index + 1]
+        if part in {".", ",", "(", ")", ";", "<string>"}:
+            break
+        parts.append(part)
+        index += 2
+    return parts[-1], index
+
+
+def _text_mutates_m05(statement: TextClause) -> bool:
+    tokens = _sql_tokens(statement.text)
+    for index, token in enumerate(tokens):
+        target_index: int | None = None
+        if token == "update":
+            target_index = index + 1
+        elif token == "delete" and index + 1 < len(tokens) and tokens[index + 1] == "from":
+            target_index = index + 2
+        if target_index is None:
+            continue
+        target, _ = _qualified_identifier(tokens, target_index)
+        if target in _M05_TABLE_NAMES:
+            return True
+    return False
+
+
 @event.listens_for(Session, "do_orm_execute")
 def _prevent_m05_bulk_mutation(orm_execute_state) -> None:
     statement = orm_execute_state.statement
     if isinstance(statement, (Update, Delete)) and _statement_table_name(statement):
-        raise ValueError("M05 append-only records cannot be bulk updated or deleted")
+        raise ValueError(_TEXT_MUTATION_ERROR)
+    if isinstance(statement, TextClause) and _text_mutates_m05(statement):
+        raise ValueError(_TEXT_MUTATION_ERROR)
 
 
 for _model in _M05_CLASSES:

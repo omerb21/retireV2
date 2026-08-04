@@ -16,7 +16,13 @@ from app.db.session import get_db
 from app.main import app
 from app.models.client import Client
 from app.models.m02_intake import M02IntakeRecord
-from app.models.m05_ledger import M05LedgerRevision, M05LedgerSubject, M05LedgerValue
+from app.models.m05_ledger import (
+    M05AdjustmentEvidence,
+    M05CandidateLink,
+    M05LedgerRevision,
+    M05LedgerSubject,
+    M05LedgerValue,
+)
 from app.services.m05_ledger_service import (
     _reconcile,
     is_stale,
@@ -488,7 +494,7 @@ def test_append_only_instance_and_bulk_mutation_are_blocked(api) -> None:
         with pytest.raises(ValueError, match="immutable"):
             db.commit()
         db.rollback()
-        with pytest.raises(ValueError, match="bulk"):
+        with pytest.raises(ValueError, match="append-only"):
             db.execute(update(M05LedgerRevision).values(state="blocked"))
         db.rollback()
         value = db.scalar(select(M05LedgerValue).where(M05LedgerValue.revision_id == started["revision_id"]))
@@ -501,8 +507,90 @@ def test_append_only_instance_and_bulk_mutation_are_blocked(api) -> None:
             db.delete(subject)
             db.flush()
         db.rollback()
-        with pytest.raises(ValueError, match="bulk"):
+        with pytest.raises(ValueError, match="append-only"):
             db.execute(delete(M05LedgerValue))
+
+
+def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    component = next(
+        row for row in started["values"] if row["component_kind"] == "contribution_component"
+    )
+    adjusted = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": started["revision_id"],
+            "evidence_identity": component["evidence_identity"],
+            "new_effective_value": "59.00",
+            "reason_code": "guard_fixture",
+            "explanation": "create adjustment evidence for guard coverage",
+            "confirmed": True,
+        },
+    ).json()
+    mutations = {
+        "m05_ledger_subjects": "provider_name = 'mutated'",
+        "m05_candidate_links": "statement_date = '2000-01-01'",
+        "m05_ledger_revisions": "state = 'blocked'",
+        "m05_ledger_values": "effective_value = 1.00",
+        "m05_adjustment_evidence": "reason_code = 'mutated'",
+    }
+    with sessions() as db:
+        for table, assignment in mutations.items():
+            statements = [
+                f"update {table} set {assignment}",
+                f"UPDATE {table.upper()} SET {assignment.upper()}",
+                f"UpDaTe {table} SeT {assignment}",
+                f'DELETE FROM "{table}"',
+                f'UPDATE "{table}" SET {assignment}',
+                f'UPDATE "main"."{table}" SET {assignment}',
+                f"UPDATE\n{table}\nSET {assignment}",
+                f"-- protected mutation\nUPDATE {table} SET {assignment}",
+                f"WITH bounded AS (SELECT 1) UPDATE {table} SET {assignment}",
+            ]
+            for statement in statements:
+                with pytest.raises(ValueError, match="M05 append-only"):
+                    db.execute(text(statement))
+                db.rollback()
+        with pytest.raises(ValueError, match="M05 append-only"):
+            db.execute(
+                text(
+                    "UPDATE m05_ledger_revisions SET reason_code = :reason "
+                    "WHERE revision_id = :revision_id"
+                ),
+                {"reason": "parameterized", "revision_id": adjusted["revision_id"]},
+            )
+        db.rollback()
+
+        assert db.execute(text("SELECT COUNT(*) FROM m05_ledger_revisions")).scalar_one() == 2
+        assert db.execute(
+            text("SELECT 'm05_ledger_revisions UPDATE DELETE' AS harmless")
+        ).scalar_one() == "m05_ledger_revisions UPDATE DELETE"
+        db.execute(
+            text("UPDATE clients SET display_name = :name WHERE client_id = 1"),
+            {"name": "unrelated allowed"},
+        )
+        assert db.get(Client, 1).display_name == "unrelated allowed"
+        db.rollback()
+
+        assert db.get(M05LedgerSubject, started["subject_id"]).provider_name == "Exact Provider"
+        assert db.get(M05LedgerRevision, adjusted["revision_id"]).state == "draft"
+        assert db.scalar(
+            select(M05CandidateLink).where(
+                M05CandidateLink.candidate_id == adjusted["candidate_id"]
+            )
+        ).statement_date == date(2026, 7, 1)
+        assert db.scalar(
+            select(M05LedgerValue).where(
+                M05LedgerValue.revision_id == adjusted["revision_id"],
+                M05LedgerValue.evidence_identity == component["evidence_identity"],
+            )
+        ).effective_value == Decimal("59.00")
+        assert db.scalar(
+            select(M05AdjustmentEvidence).where(
+                M05AdjustmentEvidence.revision_id == adjusted["revision_id"]
+            )
+        ).reason_code == "guard_fixture"
 
 
 def test_database_corruption_fails_closed_without_history_rewrite(api) -> None:

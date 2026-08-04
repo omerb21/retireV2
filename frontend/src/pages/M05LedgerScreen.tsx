@@ -13,12 +13,25 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 const text = (value: unknown) => value === null || value === undefined || value === ""
   ? "not present" : typeof value === "string" ? value : JSON.stringify(value);
 
+function ProductContextView({ context, label }: { context: Record<string, unknown>; label: string }) {
+  const entries = Object.entries(context).filter(([, value]) =>
+    value !== null && value !== undefined && value !== ""
+  );
+  return <div aria-label={label}>
+    <strong>Persisted product context (source values; no inference):</strong>
+    {entries.length ? <dl>{entries.map(([key, value]) => <div key={key}>
+      <dt>{key}</dt><dd>{text(value)}</dd>
+    </div>)}</dl> : <p>Product context unavailable.</p>}
+  </div>;
+}
+
 function RevisionView({ revision, current }: { revision: M05Revision; current: boolean }) {
   return <li>
     <h4>Revision #{revision.revision_sequence} — {current ? "current" : "historical"}</h4>
     <p>State: {revision.state}; action: {revision.action_type}; revision: {revision.revision_id}; predecessor: {revision.predecessor_revision_id ?? "root"}.</p>
     <p>Server actor: {revision.actor}; timestamp: {revision.created_at}. This is operational provenance, not authentication or professional approval.</p>
     <p>Candidate: {revision.candidate_id}; M02: {revision.intake_id}; M03: {revision.m03_revision_id}; M04: {revision.m04_revision_id}.</p>
+    <ProductContextView context={revision.product_context} label={`Revision ${revision.revision_sequence} product context`} />
     <p>Statement date: {revision.statement_date}; evaluation date: {revision.evaluation_date}; stale: {String(revision.is_stale)}.</p>
     <p>Currency: {revision.currency}; explicit confirmation: {String(revision.currency_confirmed)}.</p>
     <p>Source total: {text(revision.source_total_value)} ({revision.source_total_state}); effective total: {text(revision.effective_total_value)} ({revision.effective_total_state}).</p>
@@ -165,6 +178,7 @@ export function M05LedgerScreen() {
   if (clientId === null) return <p role="alert">Invalid client ID.</p>;
   const current = subject?.current_revision ?? null;
   const currentEligibility = subject?.eligibility ?? null;
+  const selectedCandidateRow = candidates.find((row) => row.candidate_id === selectedCandidateId) ?? null;
   const mandatory = current?.warnings.filter((item) => item.classification === "mandatory").map((item) => item.warning_id) ?? [];
   const reasonPayload = current ? {
     expected_current_revision_id: current.revision_id,
@@ -185,9 +199,10 @@ export function M05LedgerScreen() {
           {candidate.provider_name ?? "missing provider"} / {candidate.account_reference ?? "missing account"} / {candidate.statement_date ?? "missing date"}
         </button>
         <span> — eligible: {String(candidate.eligible)}; authoritative: {String(candidate.authoritative_current)}; exclusion: {candidate.exclusion_reason ?? "none"}; warnings: {candidate.informational_warnings.join(", ") || "none"}</span>
+        <ProductContextView context={candidate.product_context} label={`Candidate ${candidate.candidate_id} product context`} />
       </li>)}</ul> : <p>No manual M05 candidates.</p>}
       <label><input type="checkbox" checked={confirmCurrency} onChange={(event) => setConfirmCurrency(event.target.checked)} /> Confirm currency ILS for this current candidate</label>
-      <button type="button" disabled={!selectedCandidateId || submitting} onClick={() => void mutate(() => startM05(clientId, selectedCandidateId, confirmCurrency))}>Start ledger</button>
+      <button type="button" disabled={!selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current || submitting} onClick={() => void mutate(() => startM05(clientId, selectedCandidateId, confirmCurrency))}>Start ledger</button>
     </section>
 
     <section><h3>Ledger subjects</h3>
@@ -206,16 +221,16 @@ export function M05LedgerScreen() {
       <h4>Action intent</h4>
       <label>Reason code <input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} /></label>
       <label>Explanation <textarea value={explanation} onChange={(event) => setExplanation(event.target.value)} /></label>
-      <button type="button" disabled={submitting} onClick={() => void mutate(() => reconcileM05(clientId, current.subject_id, current.revision_id, confirmCurrency))}>Reconcile</button>
-      <button type="button" disabled={submitting || !reasonPayload || !mandatory.length} onClick={() => reasonPayload && void mutate(() => reviewWarningsM05(clientId, current.subject_id, { ...reasonPayload, mandatory_warning_ids: mandatory, confirmed: true, ...(confirmCurrency ? { confirm_currency_ils: true as const } : {}) }))}>Review exact mandatory warning set</button>
-      <button type="button" disabled={submitting || !reasonPayload} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "mark-blocked", reasonPayload))}>Mark blocked</button>
-      <button type="button" disabled={submitting || !reasonPayload} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "supersede", reasonPayload))}>Supersede</button>
+      <button type="button" disabled={submitting || current.state !== "draft"} onClick={() => void mutate(() => reconcileM05(clientId, current.subject_id, current.revision_id, confirmCurrency))}>Reconcile</button>
+      <button type="button" disabled={submitting || !reasonPayload || current.state !== "draft" || !mandatory.length} onClick={() => reasonPayload && void mutate(() => reviewWarningsM05(clientId, current.subject_id, { ...reasonPayload, mandatory_warning_ids: mandatory, confirmed: true, ...(confirmCurrency ? { confirm_currency_ils: true as const } : {}) }))}>Review exact mandatory warning set</button>
+      <button type="button" disabled={submitting || !reasonPayload || !["draft", "reconciled", "warning_reviewed"].includes(current.state)} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "mark-blocked", reasonPayload))}>Mark blocked</button>
+      <button type="button" disabled={submitting || !reasonPayload || current.state === "superseded"} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "supersede", reasonPayload))}>Supersede</button>
       <h4>Single-value adjustment</h4>
       <select value={adjustIdentity} onChange={(event) => setAdjustIdentity(event.target.value)}><option value="">Select value</option>{current.values.map((value) => <option key={value.value_id} value={value.evidence_identity}>{value.evidence_identity}</option>)}</select>
       <input aria-label="New effective value" value={adjustValue} onChange={(event) => setAdjustValue(event.target.value)} placeholder="0.00" />
-      <button type="button" disabled={submitting || !reasonPayload || !adjustIdentity || !adjustValue} onClick={() => reasonPayload && void mutate(() => adjustM05(clientId, current.subject_id, { ...reasonPayload, evidence_identity: adjustIdentity, new_effective_value: adjustValue, confirmed: true }))}>Adjust one value</button>
+      <button type="button" disabled={submitting || !reasonPayload || current.state === "superseded" || !adjustIdentity || !adjustValue} onClick={() => reasonPayload && void mutate(() => adjustM05(clientId, current.subject_id, { ...reasonPayload, evidence_identity: adjustIdentity, new_effective_value: adjustValue, confirmed: true }))}>Adjust one value</button>
       <h4>Revalidate</h4>
-      <button type="button" disabled={submitting || !reasonPayload || !selectedCandidateId} onClick={() => reasonPayload && void mutate(() => revalidateM05(clientId, current.subject_id, { ...reasonPayload, candidate_id: selectedCandidateId }))}>Revalidate against selected current candidate</button>
+      <button type="button" disabled={submitting || !reasonPayload || current.state === "superseded" || !selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current} onClick={() => reasonPayload && void mutate(() => revalidateM05(clientId, current.subject_id, { ...reasonPayload, candidate_id: selectedCandidateId }))}>Revalidate against selected current candidate</button>
       <h4>Current provenance and warnings</h4><p>{JSON.stringify(provenance)}</p><p>{JSON.stringify(warnings)}</p>
     </section> : null}
 

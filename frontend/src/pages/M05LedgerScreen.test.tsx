@@ -113,6 +113,49 @@ describe("M05LedgerScreen", () => {
     expect(screen.getByText(/warning_not_reviewed/)).toBeInTheDocument();
     expect(screen.getByText(/does not authorize conversion, coefficients, tax, fixation/i)).toBeInTheDocument();
     expect(screen.getAllByText(/operational provenance, not authentication or professional approval/i).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Candidate candidate-1 product context")).toHaveTextContent("product_nameProduct");
+    expect(screen.getAllByLabelText("Revision 1 product context")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Revision 1 product context")[0]).toHaveTextContent("m04_product_familyprovident_fund");
+    expect(screen.getAllByText(/source values; no inference/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders explicit unavailable product context without inventing a fallback", async () => {
+    const missingCandidate = { ...candidate(1), product_context: {} };
+    const missingRevision = { ...revision(1), product_context: {} };
+    const missingSubject = { ...subject(1), current_revision: missingRevision };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = path(input);
+      if (url.endsWith("/m05/candidates")) return json([missingCandidate]);
+      if (url.endsWith("/m05/subjects")) return json([missingSubject]);
+      if (url.endsWith("/subjects/subject-1")) return json(missingSubject);
+      if (url.endsWith("/history")) return json([missingRevision]);
+      return defaultResponse(url);
+    }));
+    renderPage();
+    expect(await screen.findByLabelText("Candidate candidate-1 product context")).toHaveTextContent("Product context unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Provider 1 / Account 1" }));
+    await waitFor(() => expect(screen.getAllByText("Product context unavailable.")).toHaveLength(3));
+    expect(screen.queryByText(/unknown product|assumed product/i)).not.toBeInTheDocument();
+  });
+
+  it("disables lifecycle-invalid actions for a superseded revision", async () => {
+    const terminalRevision = revision(1, "superseded");
+    const terminalSubject = { ...subject(1), current_revision: terminalRevision };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = path(input);
+      if (url.endsWith("/m05/subjects")) return json([terminalSubject]);
+      if (url.endsWith("/subjects/subject-1")) return json(terminalSubject);
+      if (url.endsWith("/history")) return json([terminalRevision]);
+      return defaultResponse(url);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+    expect(await screen.findByRole("button", { name: "Reconcile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Review exact mandatory warning set" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark blocked" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Supersede" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Adjust one value" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Revalidate against selected current candidate" })).toBeDisabled();
   });
 
   it("sends start intent without actor, authority tuple, timestamp, or eligibility", async () => {

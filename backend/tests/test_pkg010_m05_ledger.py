@@ -4,6 +4,7 @@ from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import json
 from pathlib import Path
 import sqlite3
 from threading import Barrier
@@ -30,13 +31,16 @@ from app.services.m05_ledger_service import (
     ELIGIBILITY_REASON_ORDER,
     CandidateEvaluation,
     M05LedgerError,
+    _canonical_numeric,
     _candidate_context,
     _identity_digest,
     _leaf_integrity_reasons,
     _ordered_eligibility_reasons,
     _reconcile,
+    _revision_digest,
     _transition,
     _upstream_eligibility_reasons,
+    _values,
     _warnings,
     is_stale,
     parse_authored_money,
@@ -91,7 +95,7 @@ def _accept_upstream(client: TestClient, client_id: int, intake_id: str) -> None
             "expected_current_revision_id": started["revision_id"],
         },
     )
-    assert accepted.status_code == 201
+    assert accepted.status_code == 201, accepted.text
     m04_started = client.post(
         f"/api/clients/{client_id}/m04/targets/{intake_id}/start"
     ).json()
@@ -212,6 +216,22 @@ def _external_sql(
             connection.execute("PRAGMA foreign_keys=OFF")
             connection.execute("PRAGMA ignore_check_constraints=ON")
         connection.execute(statement, parameters or {})
+
+
+def _resign_revision(
+    sessions: sessionmaker[Session], revision_id: str
+) -> None:
+    """Sign a deliberately constructed persisted read-state test fixture."""
+    with sessions() as db:
+        revision = db.get(M05LedgerRevision, revision_id)
+        assert revision is not None
+        digest = _revision_digest(revision, _values(db, revision_id))
+    _external_sql(
+        sessions,
+        "UPDATE m05_ledger_revisions SET evidence_digest = :digest "
+        "WHERE revision_id = :revision_id",
+        {"digest": digest, "revision_id": revision_id},
+    )
 
 
 def test_candidate_start_reconcile_and_m06_gate(api) -> None:
@@ -1783,3 +1803,1154 @@ def test_required_reason_explanation_and_confirmation_fields_are_strict(api) -> 
         f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
         json=adjustment,
     ).status_code == 422
+
+
+def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations(
+    api, monkeypatch
+) -> None:
+    client, sessions = api
+
+    def create_source(
+        suffix: str,
+        *,
+        total: str = "100.00",
+        contribution: str = "60.00",
+        severance: str = "40.00",
+        statement_date: date = date(2026, 7, 1),
+        confirm: bool = True,
+        provider: str | None = None,
+        account: str | None = None,
+    ) -> dict:
+        intake_id = f"elig-{suffix}"
+        with sessions() as db:
+            db.add(
+                _intake(
+                    intake_id,
+                    1,
+                    provider=provider or f"Eligibility Provider {suffix}",
+                    account=account or f"ELIG-{suffix}",
+                    total=total,
+                    contribution=contribution,
+                    severance=severance,
+                    statement_date=statement_date,
+                )
+            )
+            db.commit()
+        _accept_upstream(client, 1, intake_id)
+        candidate = next(
+            row
+            for row in client.get("/api/clients/1/m05/candidates").json()
+            if row["intake_id"] == intake_id
+        )
+        response = client.post(
+            "/api/clients/1/m05/start",
+            json={
+                "candidate_id": candidate["candidate_id"],
+                **({"confirm_currency_ils": True} if confirm else {}),
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def gate(started: dict) -> dict:
+        response = client.get(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/m06-eligibility"
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["eligible_for_m06"] is (not body["exclusion_reasons"])
+        assert "result" not in body
+        assert "professional_authority" not in body
+        return body
+
+    observed: set[str] = set()
+
+    draft = create_source("draft")
+    assert gate(draft)["exclusion_reasons"] == ["ledger_draft"]
+    observed.add("ledger_draft")
+
+    no_currency = create_source("currency", confirm=False)
+    currency_gate = gate(no_currency)
+    assert currency_gate["exclusion_reasons"] == [
+        "ledger_draft",
+        "currency_or_unit_invalid",
+    ]
+    observed.update(currency_gate["exclusion_reasons"])
+
+    blocked = create_source("blocked")
+    blocked_response = client.post(
+        f"/api/clients/1/m05/subjects/{blocked['subject_id']}/mark-blocked",
+        json={
+            "expected_current_revision_id": blocked["revision_id"],
+            "reason_code": "eligibility_fixture",
+            "explanation": "prove blocked exclusion through the public route",
+        },
+    )
+    assert blocked_response.status_code == 201
+    blocked = blocked_response.json()
+    assert gate(blocked)["exclusion_reasons"] == ["ledger_blocked"]
+    observed.add("ledger_blocked")
+
+    superseded = create_source("superseded")
+    superseded_response = client.post(
+        f"/api/clients/1/m05/subjects/{superseded['subject_id']}/supersede",
+        json={
+            "expected_current_revision_id": superseded["revision_id"],
+            "reason_code": "eligibility_fixture",
+            "explanation": "prove superseded exclusion through the public route",
+        },
+    )
+    assert superseded_response.status_code == 201
+    superseded = superseded_response.json()
+    assert gate(superseded)["exclusion_reasons"] == ["ledger_superseded"]
+    observed.add("ledger_superseded")
+
+    mismatch = create_source(
+        "mismatch", total="100.00", contribution="50.00", severance="49.00"
+    )
+    mismatch_gate = gate(mismatch)
+    assert mismatch_gate["exclusion_reasons"] == [
+        "ledger_draft",
+        "reconciliation_unresolved",
+        "warning_not_reviewed",
+    ]
+    observed.update(mismatch_gate["exclusion_reasons"])
+
+    negative = create_source(
+        "negative", total="-1.00", contribution="-1.00", severance="0.00"
+    )
+    negative_gate = gate(negative)
+    assert negative_gate["exclusion_reasons"] == [
+        "ledger_draft",
+        "negative_value_review_required",
+        "warning_not_reviewed",
+    ]
+    observed.update(negative_gate["exclusion_reasons"])
+
+    future = create_source("future")
+    with sessions() as db:
+        db.get(M02IntakeRecord, "elig-future").declared_statement_date = (
+            date.today() + timedelta(days=1)
+        )
+        db.commit()
+    future_gate = gate(future)
+    assert future_gate["exclusion_reasons"] == ["ledger_draft", "statement_date_invalid"]
+    observed.update(future_gate["exclusion_reasons"])
+
+    for suffix, field, value, expected in (
+        ("required", "declared_provider_name", None, "required_value_missing"),
+        (
+            "mapping",
+            "declared_component_values",
+            [
+                {"label": "Changed", "code": "contribution_component", "value": "60.00"},
+                {"label": "Severance", "code": "severance_component", "value": "40.00"},
+            ],
+            "component_mapping_invalid",
+        ),
+        ("incomplete", "declared_component_values", [], "component_set_incomplete"),
+        ("source", "lifecycle_status", "rejected", "upstream_source_ineligible"),
+    ):
+        started = create_source(suffix)
+        with sessions() as db:
+            intake = db.get(M02IntakeRecord, f"elig-{suffix}")
+            setattr(intake, field, value)
+            db.commit()
+        reasons = gate(started)["exclusion_reasons"]
+        assert reasons == _ordered_eligibility_reasons(["ledger_draft", expected])
+        observed.update(reasons)
+
+    m03 = create_source("m03")
+    m03_target = client.get("/api/clients/1/m03/targets/elig-m03").json()
+    response = client.post(
+        "/api/clients/1/m03/targets/elig-m03/reopen",
+        json={
+            "reason": "public eligibility fixture",
+            "expected_current_revision_id": m03_target["current_revision"]["revision_id"],
+        },
+    )
+    assert response.status_code == 201
+    m03_gate = gate(m03)
+    assert m03_gate["exclusion_reasons"] == ["m03_ineligible", "ledger_draft"]
+    observed.update(m03_gate["exclusion_reasons"])
+
+    m04 = create_source("m04")
+    m04_target = client.get("/api/clients/1/m04/targets/elig-m04").json()
+    response = client.post(
+        "/api/clients/1/m04/targets/elig-m04/reopen",
+        json={
+            "expected_current_revision_id": m04_target["current_revision"]["revision_id"],
+            "reason_code": "public_fixture",
+            "explanation": "prove M04 current authority is revalidated",
+        },
+    )
+    assert response.status_code == 201, response.text
+    m04_gate = gate(m04)
+    assert m04_gate["exclusion_reasons"] == ["m04_ineligible", "ledger_draft"]
+    observed.update(m04_gate["exclusion_reasons"])
+
+    revalidation = create_source(
+        "revalidation", provider="Revalidation Provider", account="REVALIDATE"
+    )
+    with sessions() as db:
+        db.add(
+            _intake(
+                "elig-revalidation-new",
+                1,
+                provider="Revalidation Provider",
+                account="REVALIDATE",
+                total="101.00",
+                contribution="61.00",
+                severance="40.00",
+                statement_date=date(2026, 7, 2),
+            )
+        )
+        db.commit()
+    _accept_upstream(client, 1, "elig-revalidation-new")
+    revalidation_gate = gate(revalidation)
+    assert revalidation_gate["exclusion_reasons"] == [
+        "upstream_revalidation_required",
+        "ledger_draft",
+    ]
+    observed.update(revalidation_gate["exclusion_reasons"])
+
+    no_candidate = create_source("none")
+    _external_sql(
+        sessions,
+        "UPDATE m02_intake_records SET client_id = 2 WHERE intake_id = :intake_id",
+        {"intake_id": "elig-none"},
+        bypass_constraints=True,
+    )
+    no_candidate_gate = gate(no_candidate)
+    assert no_candidate_gate["exclusion_reasons"] == [
+        "no_authoritative_candidate",
+        "ledger_draft",
+    ]
+    observed.update(no_candidate_gate["exclusion_reasons"])
+
+    provenance = create_source("provenance")
+    altered = dict(provenance["provenance"])
+    altered["client_id"] = 999
+    _external_sql(
+        sessions,
+        "UPDATE m05_ledger_revisions SET provenance = :provenance "
+        "WHERE revision_id = :revision_id",
+        {"provenance": json.dumps(altered), "revision_id": provenance["revision_id"]},
+    )
+    _resign_revision(sessions, provenance["revision_id"])
+    provenance_gate = gate(provenance)
+    assert provenance_gate["exclusion_reasons"] == ["ledger_draft", "provenance_invalid"]
+    observed.update(provenance_gate["exclusion_reasons"])
+
+    invalid_disposition = create_source(
+        "disposition", total="100.00", contribution="50.00", severance="49.00"
+    )
+    _external_sql(
+        sessions,
+        "UPDATE m05_ledger_revisions SET warning_dispositions = :value "
+        "WHERE revision_id = :revision_id",
+        {
+            "value": json.dumps([{"warning_id": "unknown_warning"}]),
+            "revision_id": invalid_disposition["revision_id"],
+        },
+    )
+    _resign_revision(sessions, invalid_disposition["revision_id"])
+    disposition_gate = gate(invalid_disposition)
+    assert disposition_gate["exclusion_reasons"] == [
+        "ledger_draft",
+        "reconciliation_unresolved",
+        "warning_disposition_invalid",
+        "warning_not_reviewed",
+    ]
+    observed.update(disposition_gate["exclusion_reasons"])
+
+    corrupted = create_source("corrupted")
+    _external_sql(
+        sessions,
+        "UPDATE m05_ledger_revisions SET reason_code = 'corrupted' "
+        "WHERE revision_id = :revision_id",
+        {"revision_id": corrupted["revision_id"]},
+    )
+    with sessions() as db:
+        db.get(Client, 1).status = "archived"
+        db.commit()
+    corrupted_gate = gate(corrupted)
+    assert corrupted_gate["exclusion_reasons"] == ["ledger_chain_inconsistent"]
+    assert corrupted_gate["informational_warnings"] == []
+    observed.add("ledger_chain_inconsistent")
+    with sessions() as db:
+        db.get(Client, 1).status = "delivered"
+        db.commit()
+
+    fixed = datetime.now(timezone.utc) + timedelta(seconds=1)
+    monkeypatch.setattr("app.models.m03_review.m03_server_timestamp", lambda: fixed)
+    tie = create_source(
+        "tie-one", provider="Tie Gate Provider", account="TIE-GATE"
+    )
+    with sessions() as db:
+        db.add_all(
+            [
+                _intake(
+                    "elig-tie-two",
+                    1,
+                    provider="Tie Gate Provider",
+                    account="TIE-GATE",
+                    total="100.00",
+                    contribution="60.00",
+                    severance="40.00",
+                ),
+                _intake(
+                    "elig-tie-newer-ineligible",
+                    1,
+                    provider="Tie Gate Provider",
+                    account="TIE-GATE",
+                    total="101.00",
+                    contribution="61.00",
+                    severance="40.00",
+                    statement_date=date(2026, 7, 2),
+                ),
+            ]
+        )
+        db.commit()
+    _accept_upstream(client, 1, "elig-tie-two")
+    tie_gate = gate(tie)
+    assert tie_gate["exclusion_reasons"] == ["authoritative_candidate_tie", "ledger_draft"]
+    assert tie_gate["informational_warnings"] == [
+        "newer_ineligible_candidate_exists"
+    ]
+    observed.update(tie_gate["exclusion_reasons"])
+    monkeypatch.undo()
+
+    stale = create_source(
+        "stale",
+        statement_date=date.today() - timedelta(days=400),
+    )
+    reconciled = client.post(
+        f"/api/clients/1/m05/subjects/{stale['subject_id']}/reconcile",
+        json={"expected_current_revision_id": stale["revision_id"]},
+    )
+    assert reconciled.status_code == 201
+    stale_gate = gate(reconciled.json())
+    assert stale_gate["eligible_for_m06"] is True
+    assert stale_gate["exclusion_reasons"] == []
+    assert stale_gate["informational_warnings"] == ["stale_warning"]
+    with sessions() as db:
+        db.get(Client, 1).status = "archived"
+        db.commit()
+    archived_stale_gate = gate(reconciled.json())
+    assert archived_stale_gate["exclusion_reasons"] == ["archived_case"]
+    assert archived_stale_gate["informational_warnings"] == ["stale_warning"]
+    observed.add("archived_case")
+
+    assert observed == set(ELIGIBILITY_REASON_ORDER)
+
+
+def _public_state(client: TestClient, state: str, *, warning: bool = False) -> dict:
+    current = _start(client, "A-002" if warning else "A-001")
+    subject_id = current["subject_id"]
+    if state == "draft":
+        return current
+    if state == "reconciled":
+        response = client.post(
+            f"/api/clients/1/m05/subjects/{subject_id}/reconcile",
+            json={"expected_current_revision_id": current["revision_id"]},
+        )
+    elif state == "warning_reviewed":
+        response = client.post(
+            f"/api/clients/1/m05/subjects/{subject_id}/review-warning",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "mandatory_warning_ids": ["reconciliation_difference_review_required"],
+                "reason_code": "matrix_review",
+                "explanation": "review the complete mandatory warning set",
+                "confirmed": True,
+            },
+        )
+    elif state == "blocked":
+        response = client.post(
+            f"/api/clients/1/m05/subjects/{subject_id}/mark-blocked",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "reason_code": "matrix_block",
+                "explanation": "create the blocked matrix state",
+            },
+        )
+    elif state == "superseded":
+        response = client.post(
+            f"/api/clients/1/m05/subjects/{subject_id}/supersede",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "reason_code": "matrix_supersede",
+                "explanation": "create the terminal matrix state",
+            },
+        )
+    else:
+        raise AssertionError(f"unsupported fixture state: {state}")
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _complete_successor(previous: dict, current: dict, expected_state: str) -> None:
+    assert current["state"] == expected_state
+    assert current["predecessor_revision_id"] == previous["revision_id"]
+    assert current["revision_sequence"] == previous["revision_sequence"] + 1
+    assert current["candidate_id"]
+    assert current["intake_id"]
+    assert current["m03_revision_id"]
+    assert current["m04_revision_id"]
+    assert current["source_snapshot_digest"]
+    assert current["mapping_digest"]
+    assert current["values"]
+    assert current["source_total_state"] in {"recorded_value", "recorded_zero"}
+    assert current["effective_total_state"] in {"recorded_value", "recorded_zero"}
+    assert current["currency"] == "ILS"
+    assert current["currency_confirmation_evidence"]
+    assert current["actor"] == "system:m05-ledger-ui:M05 ledger workflow"
+    assert current["created_at"]
+    assert current["provenance"]["client_id"] == 1
+    assert current["provenance"]["candidate_link"]["candidate_id"] == current["candidate_id"]
+
+
+@pytest.mark.parametrize(
+    ("previous_state", "action", "expected_state", "warning"),
+    [
+        ("draft", "reconcile", "reconciled", False),
+        ("draft", "review_warning", "warning_reviewed", True),
+        ("draft", "mark_blocked", "blocked", False),
+        ("reconciled", "mark_blocked", "blocked", False),
+        ("warning_reviewed", "mark_blocked", "blocked", True),
+        ("draft", "adjust", "draft", False),
+        ("reconciled", "adjust", "draft", False),
+        ("warning_reviewed", "adjust", "draft", True),
+        ("blocked", "adjust", "draft", False),
+        ("draft", "supersede", "superseded", False),
+        ("reconciled", "supersede", "superseded", False),
+        ("warning_reviewed", "supersede", "superseded", True),
+        ("blocked", "supersede", "superseded", False),
+        ("draft", "revalidate", "draft", False),
+        ("reconciled", "revalidate", "draft", False),
+        ("warning_reviewed", "revalidate", "draft", True),
+        ("blocked", "revalidate", "draft", False),
+    ],
+)
+def test_ac010_015_016_every_allowed_transition_is_public_and_complete(
+    api, previous_state, action, expected_state, warning
+) -> None:
+    client, sessions = api
+    previous = _public_state(client, previous_state, warning=warning)
+    subject_id = previous["subject_id"]
+    endpoint = action.replace("_", "-")
+    payload: dict = {"expected_current_revision_id": previous["revision_id"]}
+    if action == "review_warning":
+        payload.update(
+            mandatory_warning_ids=["reconciliation_difference_review_required"],
+            reason_code="allowed_review",
+            explanation="execute the public lifecycle matrix",
+            confirmed=True,
+        )
+    elif action in {"mark_blocked", "supersede"}:
+        payload.update(
+            reason_code=f"allowed_{action}",
+            explanation="execute the public lifecycle matrix",
+        )
+    elif action == "adjust":
+        component = next(
+            value
+            for value in previous["values"]
+            if value["component_kind"] == "contribution_component"
+        )
+        payload.update(
+            evidence_identity=component["evidence_identity"],
+            new_effective_value="59.00",
+            reason_code="allowed_adjust",
+            explanation="execute a single-identity public adjustment",
+            confirmed=True,
+        )
+    elif action == "revalidate":
+        intake_id = f"revalidate-{previous_state}"
+        with sessions() as db:
+            source = db.get(M02IntakeRecord, previous["intake_id"])
+            db.add(
+                _intake(
+                    intake_id,
+                    1,
+                    provider=source.declared_provider_name,
+                    account=source.declared_account_reference,
+                    total="101.00",
+                    contribution="61.00",
+                    severance="40.00",
+                    statement_date=source.declared_statement_date + timedelta(days=1),
+                )
+            )
+            db.commit()
+        _accept_upstream(client, 1, intake_id)
+        candidate = next(
+            row
+            for row in client.get("/api/clients/1/m05/candidates").json()
+            if row["intake_id"] == intake_id
+        )
+        payload.update(
+            candidate_id=candidate["candidate_id"],
+            reason_code="allowed_revalidate",
+            explanation="bind a complete successor to current upstream authority",
+        )
+    response = client.post(
+        f"/api/clients/1/m05/subjects/{subject_id}/{endpoint}", json=payload
+    )
+    assert response.status_code == 201, response.text
+    current = response.json()
+    _complete_successor(previous, current, expected_state)
+    history_rows = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/history"
+    ).json()
+    assert history_rows[-1] == current
+    assert history_rows[-2]["revision_id"] == previous["revision_id"]
+
+
+@pytest.mark.parametrize(
+    ("state", "action", "warning"),
+    [
+        ("reconciled", "reconcile", False),
+        ("reconciled", "review_warning", False),
+        ("warning_reviewed", "reconcile", True),
+        ("warning_reviewed", "review_warning", True),
+        ("blocked", "reconcile", False),
+        ("blocked", "review_warning", False),
+        ("blocked", "mark_blocked", False),
+        ("superseded", "reconcile", False),
+        ("superseded", "review_warning", False),
+        ("superseded", "mark_blocked", False),
+        ("superseded", "adjust", False),
+        ("superseded", "supersede", False),
+        ("superseded", "revalidate", False),
+    ],
+)
+def test_ac010_015_every_prohibited_transition_fails_without_partial_successor(
+    api, state, action, warning
+) -> None:
+    client, _ = api
+    previous = _public_state(client, state, warning=warning)
+    subject_id = previous["subject_id"]
+    endpoint = action.replace("_", "-")
+    payload: dict = {"expected_current_revision_id": previous["revision_id"]}
+    if action == "review_warning":
+        payload.update(
+            mandatory_warning_ids=[],
+            reason_code="prohibited_review",
+            explanation="must not create a successor",
+            confirmed=True,
+        )
+    elif action in {"mark_blocked", "supersede", "revalidate"}:
+        payload.update(
+            reason_code=f"prohibited_{action}",
+            explanation="must not create a successor",
+        )
+        if action == "revalidate":
+            payload["candidate_id"] = previous["candidate_id"]
+    elif action == "adjust":
+        component = next(
+            value
+            for value in previous["values"]
+            if value["component_kind"] == "contribution_component"
+        )
+        payload.update(
+            evidence_identity=component["evidence_identity"],
+            new_effective_value="59.00",
+            reason_code="prohibited_adjust",
+            explanation="must not create a successor",
+            confirmed=True,
+        )
+    before = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/history"
+    ).json()
+    response = client.post(
+        f"/api/clients/1/m05/subjects/{subject_id}/{endpoint}", json=payload
+    )
+    assert response.status_code == 409
+    after = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/history"
+    ).json()
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    ("statement", "evaluation", "expected_stale"),
+    [
+        (date(2025, 1, 31), date(2026, 1, 31), False),
+        (date(2025, 1, 30), date(2026, 1, 31), True),
+        (date(2024, 2, 29), date(2025, 2, 28), False),
+        (date(2024, 2, 28), date(2025, 2, 28), False),
+        (date(2024, 2, 27), date(2025, 2, 28), True),
+        (date(2025, 3, 31), date(2026, 3, 30), False),
+        (date(2025, 3, 29), date(2026, 3, 30), True),
+    ],
+)
+def test_ac010_025_locked_calendar_examples_execute_through_public_start(
+    api, monkeypatch, statement, evaluation, expected_stale
+) -> None:
+    client, sessions = api
+
+    class ServerDate(date):
+        @classmethod
+        def today(cls):
+            return cls(evaluation.year, evaluation.month, evaluation.day)
+
+    monkeypatch.setattr("app.services.m05_ledger_service.date", ServerDate)
+    with sessions() as db:
+        db.get(M02IntakeRecord, "manual-ok").declared_statement_date = statement
+        db.commit()
+    started = _start(client, "A-001")
+    assert started["statement_date"] == statement.isoformat()
+    assert started["evaluation_date"] == evaluation.isoformat()
+    assert started["is_stale"] is expected_stale
+    warning_ids = {warning["warning_id"] for warning in started["warnings"]}
+    assert ("stale_warning" in warning_ids) is expected_stale
+    forged = client.post(
+        "/api/clients/1/m05/start",
+        json={
+            "candidate_id": started["candidate_id"],
+            "confirm_currency_ils": True,
+            "evaluation_date": evaluation.isoformat(),
+        },
+    )
+    assert forged.status_code == 422
+    historical = client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
+    ).json()
+    assert historical[0]["evaluation_date"] == evaluation.isoformat()
+    assert historical[0]["is_stale"] is expected_stale
+
+
+def test_ac010_023_adjustment_public_matrix_and_immutable_source(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    original_by_identity = {
+        row["evidence_identity"]: row for row in started["values"]
+    }
+    total = original_by_identity["total_balance"]
+    response = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": started["revision_id"],
+            "evidence_identity": total["evidence_identity"],
+            "new_effective_value": "99.00",
+            "reason_code": "total_adjustment",
+            "explanation": "adjust exactly one total identity",
+            "confirmed": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    adjusted = response.json()
+    adjusted_by_identity = {
+        row["evidence_identity"]: row for row in adjusted["values"]
+    }
+    assert adjusted_by_identity["total_balance"]["source_value"] == "100.00"
+    assert adjusted_by_identity["total_balance"]["effective_value"] == "99.00"
+    assert adjusted_by_identity["total_balance"]["source_state"] == "recorded_value"
+    assert adjusted["adjustment"]["previous_effective_value"] == "100.00"
+    assert adjusted["adjustment"]["new_effective_value"] == "99.00"
+    assert adjusted["currency_confirmation_evidence"] == started["currency_confirmation_evidence"]
+    assert {item["warning_id"] for item in adjusted["warnings"]} == {
+        "reconciliation_difference_review_required"
+    }
+    for identity, original in original_by_identity.items():
+        if identity != "total_balance":
+            assert adjusted_by_identity[identity]["source_value"] == original["source_value"]
+            assert adjusted_by_identity[identity]["effective_value"] == original["effective_value"]
+
+    history_before = client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
+    ).json()
+    stale_leaf = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": started["revision_id"],
+            "evidence_identity": "total_balance",
+            "new_effective_value": "98.00",
+            "reason_code": "stale_leaf",
+            "explanation": "must resolve only the current leaf",
+            "confirmed": True,
+        },
+    )
+    assert stale_leaf.status_code == 409
+    batch = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": adjusted["revision_id"],
+            "evidence_identity": "total_balance",
+            "new_effective_value": "98.00",
+            "reason_code": "batch_attempt",
+            "explanation": "batch input is not part of the contract",
+            "confirmed": True,
+            "adjustments": [{"evidence_identity": "component:forged"}],
+        },
+    )
+    assert batch.status_code == 422
+    assert client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
+    ).json() == history_before
+
+    with sessions() as db:
+        db.get(M02IntakeRecord, "manual-ok").declared_total_balance_amount = None
+        db.commit()
+    missing_source = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+        json={
+            "expected_current_revision_id": adjusted["revision_id"],
+            "evidence_identity": "total_balance",
+            "new_effective_value": "98.00",
+            "reason_code": "missing_source",
+            "explanation": "missing predecessor authority must fail closed",
+            "confirmed": True,
+        },
+    )
+    assert missing_source.status_code == 409
+    assert missing_source.json()["detail"]["code"] == "required_value_missing"
+
+
+def test_ac010_007_008_009_019_public_component_mapping_contract(api) -> None:
+    client, sessions = api
+    intake_id = "component-contract"
+    with sessions() as db:
+        intake = _intake(
+            intake_id,
+            1,
+            provider="Component Contract Provider",
+            account="COMPONENT-CONTRACT",
+            total="40.00",
+            contribution="0.00",
+            severance="40.00",
+        )
+        intake.declared_component_values = [
+            {"label": "Duplicate label", "code": "source-contribution", "value": "0.00"},
+            {"label": "Duplicate label", "code": "source-unknown", "value": "40.00"},
+        ]
+        db.add(intake)
+        db.commit()
+    m03_started = client.post(f"/api/clients/1/m03/targets/{intake_id}/start").json()
+    assert client.post(
+        f"/api/clients/1/m03/targets/{intake_id}/accept",
+        json={"reason": "accepted", "expected_current_revision_id": m03_started["revision_id"]},
+    ).status_code == 201
+    m04_started = client.post(f"/api/clients/1/m04/targets/{intake_id}/start").json()
+    proposal = client.post(
+        f"/api/clients/1/m04/targets/{intake_id}/proposal",
+        json={"expected_current_revision_id": m04_started["revision_id"]},
+    ).json()
+    assert len(proposal["components"]) == 2
+    assert proposal["components"][0]["original_label"] == proposal["components"][1]["original_label"]
+    assert proposal["components"][0]["evidence_identity"] != proposal["components"][1]["evidence_identity"]
+
+    base_component = {
+        "evidence_identity": proposal["components"][0]["evidence_identity"],
+        "interpretation": "pension",
+        "current_employer_related": "unknown",
+        "explanation": "prohibited vocabulary must not enter persistence",
+    }
+    for prohibited in (
+        "compensation_component",
+        "capital",
+        "pension",
+        "arbitrary_component_kind",
+    ):
+        rejected = client.post(
+            f"/api/clients/1/m04/targets/{intake_id}/override",
+            json={
+                "expected_current_revision_id": proposal["revision_id"],
+                "reason_code": "prohibited_vocabulary",
+                "explanation": "reject non-enum component vocabulary",
+                "confirmed": True,
+                "product_family": "provident_fund",
+                "pension_subtype": None,
+                "components": [
+                    {**base_component, "component_kind": prohibited},
+                    {
+                        **base_component,
+                        "evidence_identity": proposal["components"][1]["evidence_identity"],
+                        "component_kind": "severance_component",
+                    },
+                ],
+            },
+        )
+        assert rejected.status_code == 422
+
+    overridden = client.post(
+        f"/api/clients/1/m04/targets/{intake_id}/override",
+        json={
+            "expected_current_revision_id": proposal["revision_id"],
+            "reason_code": "exact_mapping",
+            "explanation": "preserve indexed identities and bounded vocabulary",
+            "confirmed": True,
+            "product_family": "provident_fund",
+            "pension_subtype": None,
+            "components": [
+                {**base_component, "component_kind": "contribution_component"},
+                {
+                    **base_component,
+                    "evidence_identity": proposal["components"][1]["evidence_identity"],
+                    "component_kind": "severance_component",
+                },
+            ],
+        },
+    )
+    assert overridden.status_code == 201, overridden.text
+    accepted = client.post(
+        f"/api/clients/1/m04/targets/{intake_id}/accept",
+        json={
+            "expected_current_revision_id": overridden.json()["revision_id"],
+            "reason_code": "accept_mapping",
+            "explanation": "accept exact indexed mapping",
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    candidate_row = next(
+        row
+        for row in client.get("/api/clients/1/m05/candidates").json()
+        if row["intake_id"] == intake_id
+    )
+    started_response = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": candidate_row["candidate_id"], "confirm_currency_ils": True},
+    )
+    assert started_response.status_code == 201, started_response.text
+    started = started_response.json()
+    components = [row for row in started["values"] if row["component_index"] is not None]
+    assert [row["component_index"] for row in components] == [0, 1]
+    assert components[0]["original_label"] == components[1]["original_label"]
+    assert components[0]["evidence_identity"] != components[1]["evidence_identity"]
+    assert components[0]["source_state"] == "recorded_zero"
+    assert components[0]["source_value"] == "0.00"
+    assert components[0]["included_in_reconciliation"] is True
+    assert components[1]["component_kind"] == "severance_component"
+    assert components[1]["source_value"] == "40.00"
+    assert components[1]["included_in_reconciliation"] is True
+    assert components[1]["exclusion_reason"] is None
+    reconciled = client.post(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}/reconcile",
+        json={"expected_current_revision_id": started["revision_id"]},
+    )
+    assert reconciled.status_code == 201, reconciled.text
+    body = reconciled.json()
+    assert body["signed_discrepancy"] == "0.00"
+    assert body["included_evidence"] == [
+        {"evidence_identity": components[0]["evidence_identity"], "effective_value": "0.00"},
+        {"evidence_identity": components[1]["evidence_identity"], "effective_value": "40.00"},
+    ]
+    assert body["excluded_evidence"] == []
+
+    forged = client.post(
+        "/api/clients/1/m05/start",
+        json={
+            "candidate_id": candidate_row["candidate_id"],
+            "confirm_currency_ils": True,
+            "component_kind": "compensation_component",
+            "mapping": [{"component_kind": "capital"}],
+        },
+    )
+    assert forged.status_code == 422
+
+
+def test_ac010_028_complete_public_foreign_missing_non_leakage(api) -> None:
+    client, _ = api
+    local = _start(client, "A-001")
+    foreign_candidate = _candidate(client, "A-001", client_id=2)
+    foreign_started_response = client.post(
+        "/api/clients/2/m05/start",
+        json={"candidate_id": foreign_candidate["candidate_id"], "confirm_currency_ils": True},
+    )
+    assert foreign_started_response.status_code == 201
+    foreign_started = foreign_started_response.json()
+
+    def same_public(left, right) -> None:
+        assert left.status_code == right.status_code
+        assert left.json() == right.json()
+        assert left.headers.get("content-type") == right.headers.get("content-type")
+        assert left.headers.get("content-length") == right.headers.get("content-length")
+
+    foreign_candidate_attempt = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": foreign_candidate["candidate_id"], "confirm_currency_ils": True},
+    )
+    missing_candidate_attempt = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": "M05-CAND-0000000000000000000000000000000000000000", "confirm_currency_ils": True},
+    )
+    same_public(foreign_candidate_attempt, missing_candidate_attempt)
+
+    for suffix in ("", "/history", "/provenance", "/warnings", "/m06-eligibility"):
+        same_public(
+            client.get(
+                f"/api/clients/1/m05/subjects/{foreign_started['subject_id']}{suffix}"
+            ),
+            client.get(f"/api/clients/1/m05/subjects/M05-S-missing{suffix}"),
+        )
+
+    reason_payload = {
+        "expected_current_revision_id": foreign_started["revision_id"],
+        "reason_code": "non_leakage",
+        "explanation": "foreign and missing identifiers are indistinguishable",
+    }
+    for endpoint, payload in (
+        ("reconcile", {"expected_current_revision_id": foreign_started["revision_id"]}),
+        ("mark-blocked", reason_payload),
+        ("supersede", reason_payload),
+        (
+            "review-warning",
+            {**reason_payload, "mandatory_warning_ids": [], "confirmed": True},
+        ),
+        (
+            "adjust",
+            {
+                **reason_payload,
+                "evidence_identity": "total_balance",
+                "new_effective_value": "99.00",
+                "confirmed": True,
+            },
+        ),
+        (
+            "revalidate",
+            {**reason_payload, "candidate_id": foreign_candidate["candidate_id"]},
+        ),
+    ):
+        same_public(
+            client.post(
+                f"/api/clients/1/m05/subjects/{foreign_started['subject_id']}/{endpoint}",
+                json=payload,
+            ),
+            client.post(
+                f"/api/clients/1/m05/subjects/M05-S-missing/{endpoint}",
+                json=payload,
+            ),
+        )
+
+    foreign_revision = foreign_started["revision_id"]
+    missing_revision = "M05-R-00000000000000000000000000000000"
+    same_public(
+        client.post(
+            f"/api/clients/1/m05/subjects/{local['subject_id']}/reconcile",
+            json={"expected_current_revision_id": foreign_revision},
+        ),
+        client.post(
+            f"/api/clients/1/m05/subjects/{local['subject_id']}/reconcile",
+            json={"expected_current_revision_id": missing_revision},
+        ),
+    )
+    same_public(
+        client.post(
+            f"/api/clients/1/m05/subjects/{local['subject_id']}/revalidate",
+            json={
+                "expected_current_revision_id": local["revision_id"],
+                "candidate_id": foreign_candidate["candidate_id"],
+                "reason_code": "non_leakage",
+                "explanation": "foreign candidate",
+            },
+        ),
+        client.post(
+            f"/api/clients/1/m05/subjects/{local['subject_id']}/revalidate",
+            json={
+                "expected_current_revision_id": local["revision_id"],
+                "candidate_id": "M05-CAND-0000000000000000000000000000000000000000",
+                "reason_code": "non_leakage",
+                "explanation": "missing candidate",
+            },
+        ),
+    )
+
+
+def test_ac010_006_candidate_tuple_is_server_resolved_current_and_unique(api) -> None:
+    client, _ = api
+    original = _candidate(client, "A-001")
+    started = _start(client, "A-001")
+    duplicate = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": original["candidate_id"], "confirm_currency_ils": True},
+    )
+    assert duplicate.status_code == 409
+    assert len(
+        client.get(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
+        ).json()
+    ) == 1
+
+    m03_target = client.get("/api/clients/1/m03/targets/manual-ok").json()
+    reopened = client.post(
+        "/api/clients/1/m03/targets/manual-ok/reopen",
+        json={
+            "reason": "new current review revision",
+            "expected_current_revision_id": m03_target["current_revision"]["revision_id"],
+        },
+    )
+    assert reopened.status_code == 201
+    accepted = client.post(
+        "/api/clients/1/m03/targets/manual-ok/accept",
+        json={
+            "reason": "new accepted current review revision",
+            "expected_current_revision_id": reopened.json()["revision_id"],
+        },
+    )
+    assert accepted.status_code == 201
+    m04_target = client.get("/api/clients/1/m04/targets/manual-ok").json()
+    revalidation = client.post(
+        "/api/clients/1/m04/targets/manual-ok/reopen",
+        json={
+            "expected_current_revision_id": m04_target["current_revision"]["revision_id"],
+            "reason_code": "upstream_revision_changed",
+            "explanation": "bind classification to the current M03 revision",
+        },
+    )
+    assert revalidation.status_code == 201, revalidation.text
+    proposal = client.post(
+        "/api/clients/1/m04/targets/manual-ok/proposal",
+        json={"expected_current_revision_id": revalidation.json()["revision_id"]},
+    )
+    assert proposal.status_code == 201, proposal.text
+    components = [
+        {
+            "evidence_identity": component["evidence_identity"],
+            "component_kind": component["original_code"],
+            "interpretation": "pension",
+            "current_employer_related": "unknown",
+            "explanation": "exact current component mapping",
+        }
+        for component in proposal.json()["components"]
+    ]
+    overridden = client.post(
+        "/api/clients/1/m04/targets/manual-ok/override",
+        json={
+            "expected_current_revision_id": proposal.json()["revision_id"],
+            "reason_code": "current_tuple",
+            "explanation": "create current accepted M04 evidence",
+            "confirmed": True,
+            "product_family": "provident_fund",
+            "pension_subtype": None,
+            "components": components,
+        },
+    )
+    assert overridden.status_code == 201
+    m04_accepted = client.post(
+        "/api/clients/1/m04/targets/manual-ok/accept",
+        json={
+            "expected_current_revision_id": overridden.json()["revision_id"],
+            "reason_code": "current_tuple",
+            "explanation": "accept current tuple evidence",
+        },
+    )
+    assert m04_accepted.status_code == 201, m04_accepted.text
+    current = _candidate(client, "A-001")
+    assert current["candidate_id"] != original["candidate_id"]
+    assert current["m03_revision_id"] == accepted.json()["revision_id"]
+    assert current["m04_revision_id"] == m04_accepted.json()["revision_id"]
+    stale = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": original["candidate_id"], "confirm_currency_ils": True},
+    )
+    assert stale.status_code == 404
+    forged = client.post(
+        "/api/clients/1/m05/start",
+        json={
+            "candidate_id": current["candidate_id"],
+            "confirm_currency_ils": True,
+            "client_id": 1,
+            "intake_id": "manual-ok",
+            "target_kind": "manual_record_review",
+            "m03_revision_id": accepted.json()["revision_id"],
+            "m04_revision_id": m04_accepted.json()["revision_id"],
+        },
+    )
+    assert forged.status_code == 422
+
+
+def test_ac010_011_canonical_numeric_is_exact_and_publicly_consumed(api) -> None:
+    client, sessions = api
+    maximum = Decimal("999999999999999999.99")
+    assert _canonical_numeric(Decimal("0.50")) == Decimal("0.50")
+    assert _canonical_numeric(Decimal("0.00")) == Decimal("0.00")
+    assert _canonical_numeric(maximum) == maximum
+    assert _canonical_numeric(-maximum) == -maximum
+    with pytest.raises(M05LedgerError, match="range"):
+        _canonical_numeric(Decimal("1000000000000000000.00"))
+
+    with sessions() as db:
+        db.add(
+            _intake(
+                "canonical-half",
+                1,
+                provider="Canonical Provider",
+                account="CANONICAL-HALF",
+                total="0.50",
+                contribution="0.50",
+                severance="0.00",
+            )
+        )
+        db.commit()
+    _accept_upstream(client, 1, "canonical-half")
+    candidate_row = next(
+        row
+        for row in client.get("/api/clients/1/m05/candidates").json()
+        if row["intake_id"] == "canonical-half"
+    )
+    response = client.post(
+        "/api/clients/1/m05/start",
+        json={"candidate_id": candidate_row["candidate_id"], "confirm_currency_ils": True},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["source_total_value"] == "0.50"
+    assert body["effective_total_value"] == "0.50"
+    values = {row["component_kind"]: row for row in body["values"]}
+    assert values["contribution_component"]["source_value"] == "0.50"
+    assert values["severance_component"]["source_state"] == "recorded_zero"
+    assert values["severance_component"]["source_value"] == "0.00"
+
+
+def test_ac010_024_precedence_ignores_insertion_and_m02_timestamps(api) -> None:
+    client, sessions = api
+    provider = "Precedence Provider"
+    account = "PRECEDENCE-ACCOUNT"
+    with sessions() as db:
+        db.add_all(
+            [
+                _intake(
+                    "precedence-newer",
+                    1,
+                    provider=provider,
+                    account=account,
+                    total="101.00",
+                    contribution="61.00",
+                    severance="40.00",
+                    statement_date=date(2026, 7, 2),
+                ),
+                _intake(
+                    "precedence-older",
+                    1,
+                    provider=provider,
+                    account=account,
+                    total="100.00",
+                    contribution="60.00",
+                    severance="40.00",
+                    statement_date=date(2026, 7, 1),
+                ),
+            ]
+        )
+        db.commit()
+    _accept_upstream(client, 1, "precedence-newer")
+    _accept_upstream(client, 1, "precedence-older")
+
+    def selected() -> str:
+        rows = [
+            row
+            for row in client.get("/api/clients/1/m05/candidates").json()
+            if row["intake_id"] in {"precedence-newer", "precedence-older"}
+        ]
+        return next(row["intake_id"] for row in rows if row["authoritative_current"])
+
+    assert selected() == "precedence-newer"
+    with sessions() as db:
+        older = db.get(M02IntakeRecord, "precedence-older")
+        newer = db.get(M02IntakeRecord, "precedence-newer")
+        older.created_at = datetime.now(timezone.utc) + timedelta(days=100)
+        older.updated_at = datetime.now(timezone.utc) + timedelta(days=200)
+        newer.created_at = datetime.now(timezone.utc) - timedelta(days=200)
+        newer.updated_at = datetime.now(timezone.utc) - timedelta(days=100)
+        db.commit()
+    assert selected() == "precedence-newer"

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+import sqlite3
 from threading import Barrier
 from types import SimpleNamespace
 
@@ -201,16 +202,16 @@ def _external_sql(
     *,
     bypass_constraints: bool = False,
 ) -> None:
-    """Simulate corruption outside the guarded application Session boundary."""
+    """Simulate corruption outside the guarded SQLAlchemy application boundary."""
     with sessions() as db:
         engine = db.get_bind()
-    with engine.connect() as connection:
+        database_path = engine.url.database
+    assert database_path is not None
+    with sqlite3.connect(database_path) as connection:
         if bypass_constraints:
-            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
-            connection.exec_driver_sql("PRAGMA ignore_check_constraints=ON")
-            connection.commit()
-        connection.exec_driver_sql(statement, parameters or {})
-        connection.commit()
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(statement, parameters or {})
 
 
 def test_candidate_start_reconcile_and_m06_gate(api) -> None:
@@ -566,8 +567,24 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
         "m05_ledger_values": "effective_value = 1.00",
         "m05_adjustment_evidence": "reason_code = 'mutated'",
     }
+    primary_keys = {
+        "m05_ledger_subjects": "subject_id",
+        "m05_candidate_links": "candidate_link_id",
+        "m05_ledger_revisions": "revision_id",
+        "m05_ledger_values": "value_id",
+        "m05_adjustment_evidence": "adjustment_id",
+    }
+
+    def snapshot(db: Session, table: str) -> list[tuple]:
+        return list(
+            db.execute(
+                text(f'SELECT * FROM "{table}" ORDER BY "{primary_keys[table]}"')
+            ).all()
+        )
+
     with sessions() as db:
         for table, assignment in mutations.items():
+            before = snapshot(db, table)
             statements = [
                 f"update {table} set {assignment}",
                 f"UPDATE {table.upper()} SET {assignment.upper()}",
@@ -575,14 +592,32 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
                 f'DELETE FROM "{table}"',
                 f'UPDATE "{table}" SET {assignment}',
                 f'UPDATE "main"."{table}" SET {assignment}',
+                f'UPDATE app.{table} SET {assignment}',
+                f'UPDATE OR IGNORE {table} SET {assignment}',
+                f'UPDATE OR ABORT {table} SET {assignment}',
+                f'UPDATE ONLY {table} AS guarded SET {assignment}',
+                f'DELETE FROM ONLY {table} AS guarded',
                 f"UPDATE\n{table}\nSET {assignment}",
                 f"-- protected mutation\nUPDATE {table} SET {assignment}",
+                f"UPDATE/* bounded */OR/* dialect */IGNORE/* target */{table} SET {assignment}",
                 f"WITH bounded AS (SELECT 1) UPDATE {table} SET {assignment}",
+                f"WITH bounded AS (SELECT 1) DELETE FROM {table}",
+                f"SELECT 1; UPDATE {table} SET {assignment}",
+                f"UPDATE\n{table}\nSET {assignment} WHERE 1 = :enabled",
             ]
             for statement in statements:
                 with pytest.raises(ValueError, match="M05 append-only"):
-                    db.execute(text(statement))
+                    db.execute(text(statement), {"enabled": 1})
                 db.rollback()
+                assert snapshot(db, table) == before
+                assert db.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar_one() == len(before)
+            for conflict_action in ("ROLLBACK", "FAIL", "REPLACE"):
+                with pytest.raises(ValueError, match="M05 append-only"):
+                    db.execute(
+                        text(f"UPDATE OR {conflict_action} {table} SET {assignment}")
+                    )
+                db.rollback()
+                assert snapshot(db, table) == before
         with pytest.raises(ValueError, match="M05 append-only"):
             db.execute(
                 text(
@@ -590,18 +625,40 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
                     "WHERE revision_id = :revision_id"
                 ),
                 {"reason": "parameterized", "revision_id": adjusted["revision_id"]},
-            )
+        )
         db.rollback()
 
         assert db.execute(text("SELECT COUNT(*) FROM m05_ledger_revisions")).scalar_one() == 2
         assert db.execute(
             text("SELECT 'm05_ledger_revisions UPDATE DELETE' AS harmless")
         ).scalar_one() == "m05_ledger_revisions UPDATE DELETE"
+        assert db.execute(
+            text("SELECT 1 /* UPDATE m05_ledger_subjects SET provider_name = 'x' */")
+        ).scalar_one() == 1
         db.execute(
-            text("UPDATE clients SET display_name = :name WHERE client_id = 1"),
-            {"name": "unrelated allowed"},
+            text(
+                "CREATE TABLE pkg010_unrelated "
+                "(id INTEGER PRIMARY KEY, m05_ledger_subjects TEXT)"
+            )
         )
-        assert db.get(Client, 1).display_name == "unrelated allowed"
+        db.execute(
+            text(
+                "INSERT INTO pkg010_unrelated (id, m05_ledger_subjects) "
+                "VALUES (1, 'original'), (2, 'second')"
+            )
+        )
+        db.execute(
+            text(
+                "WITH source AS (SELECT subject_id FROM m05_ledger_subjects) "
+                "UPDATE pkg010_unrelated SET m05_ledger_subjects = :value WHERE id = 1"
+            ),
+            {"value": "m05_ledger_revisions"},
+        )
+        db.execute(text("DELETE FROM pkg010_unrelated WHERE id = 2"))
+        assert db.execute(
+            text("SELECT m05_ledger_subjects FROM pkg010_unrelated WHERE id = 1")
+        ).scalar_one() == "m05_ledger_revisions"
+        assert db.execute(text("SELECT COUNT(*) FROM pkg010_unrelated")).scalar_one() == 1
         db.rollback()
 
         assert db.get(M05LedgerSubject, started["subject_id"]).provider_name == "Exact Provider"
@@ -622,6 +679,32 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
                 M05AdjustmentEvidence.revision_id == adjusted["revision_id"]
             )
         ).reason_code == "guard_fixture"
+
+    # The application-process boundary includes Session.connection(), an Engine
+    # Connection, and driver SQL. Corruption tests intentionally use sqlite3 to
+    # represent access outside that supported SQLAlchemy boundary.
+    with sessions() as db:
+        for execute in (
+            lambda: db.connection().execute(
+                text("UPDATE OR IGNORE m05_ledger_subjects SET provider_name = 'x'")
+            ),
+            lambda: db.connection().exec_driver_sql(
+                "DELETE FROM ONLY m05_ledger_revisions"
+            ),
+        ):
+            with pytest.raises(ValueError, match="M05 append-only"):
+                execute()
+            db.rollback()
+    engine = sessions.kw["bind"]
+    with engine.connect() as connection:
+        with pytest.raises(ValueError, match="M05 append-only"):
+            connection.execute(
+                text("UPDATE ONLY m05_candidate_links SET statement_date = '2000-01-01'")
+            )
+        with pytest.raises(ValueError, match="M05 append-only"):
+            connection.exec_driver_sql(
+                "WITH x AS (SELECT 1) DELETE FROM m05_adjustment_evidence"
+            )
 
 
 def test_database_corruption_fails_closed_without_history_rewrite(api) -> None:

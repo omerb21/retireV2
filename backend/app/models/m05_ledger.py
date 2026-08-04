@@ -24,6 +24,7 @@ from sqlalchemy import (
     inspect,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.engine import Engine
 from sqlalchemy.sql.dml import Delete, Update
 from sqlalchemy.sql.elements import TextClause
 
@@ -566,20 +567,51 @@ def _qualified_identifier(tokens: list[str], index: int) -> tuple[str | None, in
     return parts[-1], index
 
 
-def _text_mutates_m05(statement: TextClause) -> bool:
-    tokens = _sql_tokens(statement.text)
+_SQLITE_UPDATE_CONFLICT_ACTIONS = {"rollback", "abort", "fail", "ignore", "replace"}
+
+
+def _statement_end(tokens: list[str], index: int) -> int:
+    try:
+        return tokens.index(";", index)
+    except ValueError:
+        return len(tokens)
+
+
+def _plausibly_targets_m05(tokens: list[str], start: int) -> bool:
+    """Fail closed only for an unparsed mutation prefix containing an M05 identifier."""
+    return any(token in _M05_TABLE_NAMES for token in tokens[start:_statement_end(tokens, start)])
+
+
+def _sql_mutates_m05(sql: str) -> bool:
+    tokens = _sql_tokens(sql)
     for index, token in enumerate(tokens):
         target_index: int | None = None
         if token == "update":
             target_index = index + 1
+            if (
+                target_index + 1 < len(tokens)
+                and tokens[target_index] == "or"
+                and tokens[target_index + 1] in _SQLITE_UPDATE_CONFLICT_ACTIONS
+            ):
+                target_index += 2
+            if target_index < len(tokens) and tokens[target_index] == "only":
+                target_index += 1
         elif token == "delete" and index + 1 < len(tokens) and tokens[index + 1] == "from":
             target_index = index + 2
+            if target_index < len(tokens) and tokens[target_index] == "only":
+                target_index += 1
         if target_index is None:
             continue
         target, _ = _qualified_identifier(tokens, target_index)
         if target in _M05_TABLE_NAMES:
             return True
+        if target is None and _plausibly_targets_m05(tokens, target_index):
+            return True
     return False
+
+
+def _text_mutates_m05(statement: TextClause) -> bool:
+    return _sql_mutates_m05(statement.text)
 
 
 @event.listens_for(Session, "do_orm_execute")
@@ -588,6 +620,20 @@ def _prevent_m05_bulk_mutation(orm_execute_state) -> None:
     if isinstance(statement, (Update, Delete)) and _statement_table_name(statement):
         raise ValueError(_TEXT_MUTATION_ERROR)
     if isinstance(statement, TextClause) and _text_mutates_m05(statement):
+        raise ValueError(_TEXT_MUTATION_ERROR)
+
+
+@event.listens_for(Engine, "before_cursor_execute")
+def _prevent_m05_connection_mutation(
+    _connection,
+    _cursor,
+    statement: str,
+    _parameters,
+    _context,
+    _executemany: bool,
+) -> None:
+    """Cover repository-supported SQLAlchemy Connection and driver SQL paths."""
+    if _sql_mutates_m05(statement):
         raise ValueError(_TEXT_MUTATION_ERROR)
 
 

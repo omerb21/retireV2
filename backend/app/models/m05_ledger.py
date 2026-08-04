@@ -462,9 +462,11 @@ def _before_insert(_mapper, _connection, target: object) -> None:
     elif isinstance(target, M05LedgerValue):
         target.value_id = _new("M05-V")
     elif isinstance(target, M05AdjustmentEvidence):
-        target.adjustment_id = _new("M05-A")
+        if not target.adjustment_id:
+            target.adjustment_id = _new("M05-A")
         target.actor = M05_WORKFLOW_ACTOR
-        target.created_at = m05_server_timestamp()
+        if target.created_at is None:
+            target.created_at = m05_server_timestamp()
 
 
 def _prevent_update(_mapper, _connection, target: object) -> None:

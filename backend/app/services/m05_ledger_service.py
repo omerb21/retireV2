@@ -61,6 +61,7 @@ MANDATORY_WARNINGS = {
 }
 INFORMATIONAL_WARNINGS = {"stale_warning", "newer_ineligible_candidate_exists"}
 REVISION_PATTERN = re.compile(r"^M05-R-[0-9a-f]{32}$")
+CANDIDATE_PATTERN = re.compile(r"^M05-CAND-[0-9a-f]{40}$")
 
 
 class M05LedgerError(Exception):
@@ -196,6 +197,49 @@ def _client(db: Session, client_id: int) -> Client:
 
 def _generic_candidate_id(client_id: int, intake_id: str) -> str:
     return f"M05-CAND-{_digest({'client_id': client_id, 'intake_id': intake_id})[:40]}"
+
+
+def _candidate_identity_payload(
+    client_id: int,
+    intake_id: str,
+    target_kind: str,
+    m03_revision_id: str,
+    m04_revision_id: str,
+) -> dict[str, Any]:
+    return {
+        "client_id": client_id,
+        "intake_id": intake_id,
+        "target_kind": target_kind,
+        "m03_revision_id": m03_revision_id,
+        "m04_revision_id": m04_revision_id,
+    }
+
+
+def _candidate_snapshot(
+    candidate: M05CandidateLink, subject: M05LedgerSubject
+) -> dict[str, Any]:
+    identity = _candidate_identity_payload(
+        candidate.client_id,
+        candidate.intake_id,
+        candidate.target_kind,
+        candidate.m03_revision_id,
+        candidate.m04_revision_id,
+    )
+    return {
+        "candidate_id": candidate.candidate_id,
+        "candidate_identity_digest": _digest(identity),
+        "client_id": candidate.client_id,
+        "subject_id": candidate.subject_id,
+        "intake_id": candidate.intake_id,
+        "target_kind": candidate.target_kind,
+        "m03_revision_id": candidate.m03_revision_id,
+        "m04_revision_id": candidate.m04_revision_id,
+        "provider_identity_digest": subject.provider_identity_digest,
+        "account_identity_digest": subject.account_identity_digest,
+        "statement_date": candidate.statement_date.isoformat(),
+        "m03_decided_at": _utc(candidate.m03_decided_at).isoformat(),
+        "source_snapshot_digest": candidate.source_snapshot_digest,
+    }
 
 
 def _candidate_context(
@@ -343,13 +387,13 @@ def _candidate_context(
             for item in values
         ]
     )
-    candidate_tuple = {
-        "client_id": client.client_id,
-        "intake_id": intake.intake_id,
-        "target_kind": M05_TARGET_KIND,
-        "m03_revision_id": m03.accepted_revision_id,
-        "m04_revision_id": revision.revision_id,
-    }
+    candidate_tuple = _candidate_identity_payload(
+        client.client_id,
+        intake.intake_id,
+        M05_TARGET_KIND,
+        m03.accepted_revision_id,
+        revision.revision_id,
+    )
     return CandidateContext(
         client=client,
         intake=intake,
@@ -453,7 +497,7 @@ def _subject_for_context(db: Session, context: CandidateContext) -> M05LedgerSub
         subject.provider_name.encode("utf-8") != context.provider_name.encode("utf-8")
         or subject.account_reference.encode("utf-8") != context.account_reference.encode("utf-8")
     ):
-        raise _conflict("ledger_chain_inconsistent", "Ledger subject identity is inconsistent")
+        raise _conflict("ledger_chain_inconsistent", "Ledger chain is inconsistent")
     return subject
 
 
@@ -511,6 +555,23 @@ def _adjustment(db: Session, revision_id: str) -> M05AdjustmentEvidence | None:
     return db.scalar(
         select(M05AdjustmentEvidence).where(M05AdjustmentEvidence.revision_id == revision_id)
     )
+
+
+def _adjustment_snapshot(row: M05AdjustmentEvidence) -> dict[str, Any]:
+    return _json_value({
+        "adjustment_id": row.adjustment_id,
+        "revision_id": row.revision_id,
+        "subject_id": row.subject_id,
+        "client_id": row.client_id,
+        "evidence_identity": row.evidence_identity,
+        "previous_effective_value": row.previous_effective_value,
+        "new_effective_value": row.new_effective_value,
+        "reason_code": row.reason_code,
+        "explanation": row.explanation,
+        "confirmed": row.confirmed,
+        "actor": row.actor,
+        "created_at": _utc(row.created_at).isoformat(),
+    })
 
 
 def _revision_digest(row: M05LedgerRevision, values: list[M05LedgerValue | dict[str, Any]]) -> str:
@@ -608,9 +669,12 @@ def _history(db: Session, subject: M05LedgerSubject) -> list[M05LedgerRevision]:
             .order_by(M05LedgerRevision.revision_sequence)
         ).all()
     )
+    if not rows:
+        raise _conflict("ledger_chain_inconsistent", "Ledger chain is inconsistent")
     previous: M05LedgerRevision | None = None
     for row in rows:
         values = _values(db, row.revision_id)
+        adjustment = _adjustment(db, row.revision_id)
         candidate = db.scalar(
             select(M05CandidateLink).where(
                 M05CandidateLink.candidate_id == row.candidate_id,
@@ -620,6 +684,14 @@ def _history(db: Session, subject: M05LedgerSubject) -> list[M05LedgerRevision]:
         )
         identities = [value.evidence_identity for value in values]
         total_values = [value for value in values if value.component_kind == "total_balance"]
+        candidate_snapshot = (
+            _candidate_snapshot(candidate, subject) if candidate is not None else None
+        )
+        expected_candidate_id = (
+            f"M05-CAND-{candidate_snapshot['candidate_identity_digest'][:40]}"
+            if candidate_snapshot is not None
+            else None
+        )
         if (
             REVISION_PATTERN.fullmatch(row.revision_id) is None
             or row.client_id != subject.client_id
@@ -631,10 +703,20 @@ def _history(db: Session, subject: M05LedgerSubject) -> list[M05LedgerRevision]:
             or row.currency != M05_CURRENCY
             or not _transition(previous, row)
             or candidate is None
+            or CANDIDATE_PATTERN.fullmatch(candidate.candidate_id) is None
+            or candidate.candidate_id != expected_candidate_id
             or candidate.intake_id != row.intake_id
+            or candidate.target_kind != row.target_kind
             or candidate.m03_revision_id != row.m03_revision_id
             or candidate.m04_revision_id != row.m04_revision_id
+            or candidate.statement_date != row.statement_date
             or candidate.source_snapshot_digest != row.source_snapshot_digest
+            or row.provenance.get("candidate_link") != candidate_snapshot
+            or (
+                row.provenance.get("adjustment_evidence")
+                != (_adjustment_snapshot(adjustment) if adjustment is not None else None)
+            )
+            or ((row.action_type == "adjust") != (adjustment is not None))
             or not values
             or len(identities) != len(set(identities))
             or len(total_values) != 1
@@ -661,7 +743,7 @@ def _subject(db: Session, client_id: int, subject_id: str) -> M05LedgerSubject:
         _identity_digest(row.provider_name) != row.provider_identity_digest
         or _identity_digest(row.account_reference) != row.account_identity_digest
     ):
-        raise _conflict("ledger_chain_inconsistent", "Ledger subject is inconsistent")
+        raise _conflict("ledger_chain_inconsistent", "Ledger chain is inconsistent")
     return row
 
 
@@ -731,11 +813,16 @@ def _candidate_link(db: Session, subject: M05LedgerSubject, context: CandidateCo
             existing.client_id != context.client.client_id
             or existing.subject_id != subject.subject_id
             or existing.intake_id != context.intake.intake_id
+            or existing.target_kind != M05_TARGET_KIND
             or existing.m03_revision_id != context.m03_revision_id
             or existing.m04_revision_id != context.m04_revision_id
+            or existing.statement_date != context.statement_date
+            or _utc(existing.m03_decided_at) != _utc(context.m03_decided_at)
             or existing.source_snapshot_digest != context.source_snapshot_digest
+            or existing.candidate_id
+            != f"M05-CAND-{_digest(_candidate_identity_payload(existing.client_id, existing.intake_id, existing.target_kind, existing.m03_revision_id, existing.m04_revision_id))[:40]}"
         ):
-            raise _conflict("ledger_chain_inconsistent", "Candidate link is inconsistent")
+            raise _conflict("ledger_chain_inconsistent", "Ledger chain is inconsistent")
         return existing
     row = M05CandidateLink(
         candidate_id=context.candidate_id,
@@ -799,8 +886,19 @@ def _append(
     )
     total = next(item for item in values if item["component_kind"] == "total_balance")
     created_at = m05_server_timestamp()
+    revision_id = f"M05-R-{uuid4().hex}"
+    adjustment_row: M05AdjustmentEvidence | None = None
+    if adjustment is not None:
+        adjustment_row = M05AdjustmentEvidence(
+            adjustment_id=f"M05-A-{uuid4().hex}",
+            revision_id=revision_id,
+            subject_id=subject.subject_id,
+            client_id=subject.client_id,
+            created_at=created_at,
+            **adjustment,
+        )
     revision = M05LedgerRevision(
-        revision_id=f"M05-R-{uuid4().hex}",
+        revision_id=revision_id,
         subject_id=subject.subject_id,
         client_id=subject.client_id,
         candidate_id=candidate.candidate_id,
@@ -843,6 +941,12 @@ def _append(
             "m04_revision_id": context.m04_revision_id,
             "source_snapshot_digest": context.source_snapshot_digest,
             "mapping_digest": context.mapping_digest,
+            "candidate_link": _candidate_snapshot(candidate, subject),
+            "adjustment_evidence": (
+                _adjustment_snapshot(adjustment_row)
+                if adjustment_row is not None
+                else None
+            ),
         },
         evidence_digest="",
         reason_code=reason_code,
@@ -864,15 +968,9 @@ def _append(
             )
             authorize_m05_insert(value)
             db.add(value)
-        if adjustment is not None:
-            row = M05AdjustmentEvidence(
-                revision_id=revision.revision_id,
-                subject_id=subject.subject_id,
-                client_id=subject.client_id,
-                **adjustment,
-            )
-            authorize_m05_insert(row)
-            db.add(row)
+        if adjustment_row is not None:
+            authorize_m05_insert(adjustment_row)
+            db.add(adjustment_row)
         db.commit()
     except (IntegrityError, OperationalError) as error:
         db.rollback()
@@ -893,7 +991,7 @@ def start_ledger(
     if subject is not None:
         if _history(db, subject):
             raise _conflict("M05_LEDGER_ALREADY_STARTED", "Ledger chain already exists")
-        raise _conflict("ledger_chain_inconsistent", "Ledger subject has no history")
+        raise _conflict("ledger_chain_inconsistent", "Ledger chain is inconsistent")
     subject = M05LedgerSubject(
         client_id=client_id,
         provider_name=context.provider_name,
@@ -943,7 +1041,7 @@ def _current(db: Session, client_id: int, subject_id: str, expected: str | None 
     subject = _subject(db, client_id, subject_id)
     rows = _history(db, subject)
     if not rows:
-        raise _conflict("ledger_chain_inconsistent", "Ledger chain is empty")
+        raise _conflict("ledger_chain_inconsistent", "Ledger chain is inconsistent")
     leaf = rows[-1]
     if expected is not None and leaf.revision_id != expected:
         raise _conflict("M05_STALE_CURRENT_REVISION", "Ledger changed before this action")
@@ -1212,7 +1310,18 @@ def history(db: Session, client_id: int, subject_id: str) -> list[M05RevisionRes
 
 
 def eligibility(db: Session, client_id: int, subject_id: str) -> M05EligibilityResponse:
-    subject = _subject(db, client_id, subject_id)
+    try:
+        subject = _subject(db, client_id, subject_id)
+    except M05LedgerError as error:
+        if error.code != "ledger_chain_inconsistent":
+            raise
+        return M05EligibilityResponse(
+            subject_id=subject_id,
+            eligible_for_m06=False,
+            current_revision_id=None,
+            exclusion_reasons=["ledger_chain_inconsistent"],
+            informational_warnings=[],
+        )
     informational: list[str] = []
     try:
         rows = _history(db, subject)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, event, select, text, update
+from sqlalchemy import create_engine, delete, event, func, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base, load_all_models
@@ -180,6 +180,25 @@ def _start(client: TestClient, account: str, *, confirm: bool = True) -> dict:
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def _external_sql(
+    sessions: sessionmaker[Session],
+    statement: str,
+    parameters: dict | None = None,
+    *,
+    bypass_constraints: bool = False,
+) -> None:
+    """Simulate corruption outside the guarded application Session boundary."""
+    with sessions() as db:
+        engine = db.get_bind()
+    with engine.connect() as connection:
+        if bypass_constraints:
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.exec_driver_sql("PRAGMA ignore_check_constraints=ON")
+            connection.commit()
+        connection.exec_driver_sql(statement, parameters or {})
+        connection.commit()
 
 
 def test_candidate_start_reconcile_and_m06_gate(api) -> None:
@@ -596,15 +615,12 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
 def test_database_corruption_fails_closed_without_history_rewrite(api) -> None:
     client, sessions = api
     started = _start(client, "A-001")
-    with sessions() as db:
-        db.execute(
-            text(
-                "UPDATE m05_ledger_values SET effective_value = 99.99 "
-                "WHERE revision_id = :revision_id AND component_kind = 'contribution_component'"
-            ),
-            {"revision_id": started["revision_id"]},
-        )
-        db.commit()
+    _external_sql(
+        sessions,
+        "UPDATE m05_ledger_values SET effective_value = 99.99 "
+        "WHERE revision_id = :revision_id AND component_kind = 'contribution_component'",
+        {"revision_id": started["revision_id"]},
+    )
 
     detail = client.get(f"/api/clients/1/m05/subjects/{started['subject_id']}")
     assert detail.status_code == 409
@@ -615,6 +631,212 @@ def test_database_corruption_fails_closed_without_history_rewrite(api) -> None:
     assert gate.status_code == 200
     assert gate.json()["eligible_for_m06"] is False
     assert gate.json()["exclusion_reasons"] == ["ledger_chain_inconsistent"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "candidate_statement_date",
+        "candidate_m03_decided_at",
+        "candidate_intake_id",
+        "candidate_m03_revision_id",
+        "candidate_m04_revision_id",
+        "candidate_target_kind",
+        "subject_provider_digest",
+        "subject_account_digest",
+        "candidate_source_snapshot_digest",
+        "candidate_identity",
+        "candidate_subject_linkage",
+        "candidate_client_linkage",
+        "revision_predecessor",
+        "revision_sequence",
+        "value_row",
+        "warning_snapshot",
+        "adjustment_evidence",
+        "deleted_value_row",
+        "broken_chain",
+    ],
+)
+def test_complete_candidate_and_chain_corruption_fails_closed(api, corruption) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    current = started
+    if corruption == "adjustment_evidence":
+        component = next(
+            row
+            for row in started["values"]
+            if row["component_kind"] == "contribution_component"
+        )
+        current = client.post(
+            f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
+            json={
+                "expected_current_revision_id": started["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": "59.00",
+                "reason_code": "corruption_fixture",
+                "explanation": "create immutable adjustment evidence",
+                "confirmed": True,
+            },
+        ).json()
+    candidate_id = started["candidate_id"]
+    subject_id = started["subject_id"]
+    revision_id = current["revision_id"]
+    statements = {
+        "candidate_statement_date": (
+            "UPDATE m05_candidate_links SET statement_date='2000-01-01' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_m03_decided_at": (
+            "UPDATE m05_candidate_links SET m03_decided_at='2000-01-01 00:00:00' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_intake_id": (
+            "UPDATE m05_candidate_links SET intake_id='corrupt-intake' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_m03_revision_id": (
+            "UPDATE m05_candidate_links SET m03_revision_id='M03-R-corrupt' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_m04_revision_id": (
+            "UPDATE m05_candidate_links SET m04_revision_id='M04-R-corrupt' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_target_kind": (
+            "UPDATE m05_candidate_links SET target_kind='source_evidence_review' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "subject_provider_digest": (
+            "UPDATE m05_ledger_subjects SET provider_identity_digest='" + "0" * 64 + "' WHERE subject_id=:id",
+            subject_id,
+        ),
+        "subject_account_digest": (
+            "UPDATE m05_ledger_subjects SET account_identity_digest='" + "1" * 64 + "' WHERE subject_id=:id",
+            subject_id,
+        ),
+        "candidate_source_snapshot_digest": (
+            "UPDATE m05_candidate_links SET source_snapshot_digest='" + "2" * 64 + "' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_identity": (
+            "UPDATE m05_candidate_links SET candidate_id='M05-CAND-" + "f" * 40 + "' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_subject_linkage": (
+            "UPDATE m05_candidate_links SET subject_id='M05-S-corrupt' WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "candidate_client_linkage": (
+            "UPDATE m05_candidate_links SET client_id=2 WHERE candidate_id=:id",
+            candidate_id,
+        ),
+        "revision_predecessor": (
+            "UPDATE m05_ledger_revisions SET predecessor_revision_id='M05-R-corrupt', revision_sequence=2 WHERE revision_id=:id",
+            revision_id,
+        ),
+        "revision_sequence": (
+            "UPDATE m05_ledger_revisions SET revision_sequence=99 WHERE revision_id=:id",
+            revision_id,
+        ),
+        "value_row": (
+            "UPDATE m05_ledger_values SET effective_value=99.99 WHERE revision_id=:id AND component_kind='contribution_component'",
+            revision_id,
+        ),
+        "warning_snapshot": (
+            "UPDATE m05_ledger_revisions SET warnings='[{\"warning_id\":\"negative_value_review_required\",\"classification\":\"mandatory\"}]' WHERE revision_id=:id",
+            revision_id,
+        ),
+        "adjustment_evidence": (
+            "UPDATE m05_adjustment_evidence SET reason_code='corrupt' WHERE revision_id=:id",
+            revision_id,
+        ),
+        "deleted_value_row": (
+            "DELETE FROM m05_ledger_values WHERE value_id=(SELECT value_id FROM m05_ledger_values WHERE revision_id=:id LIMIT 1)",
+            revision_id,
+        ),
+        "broken_chain": (
+            "DELETE FROM m05_ledger_revisions WHERE subject_id=:id",
+            subject_id,
+        ),
+    }
+    statement, identifier = statements[corruption]
+    with sessions() as db:
+        before = db.scalar(
+            select(func.count()).select_from(M05LedgerRevision).where(
+                M05LedgerRevision.subject_id == subject_id
+            )
+        )
+    _external_sql(
+        sessions,
+        statement,
+        {"id": identifier},
+        bypass_constraints=True,
+    )
+
+    for suffix in ("", "/history", "/provenance", "/warnings"):
+        response = client.get(f"/api/clients/1/m05/subjects/{subject_id}{suffix}")
+        assert response.status_code == 409
+        assert response.json()["detail"] == {
+            "code": "ledger_chain_inconsistent",
+            "message": "Ledger chain is inconsistent",
+        }
+    gate = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/m06-eligibility"
+    )
+    assert gate.status_code == 200
+    assert gate.json()["eligible_for_m06"] is False
+    assert gate.json()["exclusion_reasons"] == ["ledger_chain_inconsistent"]
+    mutation = client.post(
+        f"/api/clients/1/m05/subjects/{subject_id}/reconcile",
+        json={"expected_current_revision_id": revision_id},
+    )
+    assert mutation.status_code == 409
+    assert mutation.json()["detail"]["code"] == "ledger_chain_inconsistent"
+    with sessions() as db:
+        after = db.scalar(
+            select(func.count()).select_from(M05LedgerRevision).where(
+                M05LedgerRevision.subject_id == subject_id
+            )
+        )
+    assert after == (0 if corruption == "broken_chain" else before)
+
+
+def test_duplicate_leaf_is_rejected_by_database_constraint(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    with sessions() as db:
+        row = db.get(M05LedgerRevision, started["revision_id"])
+        duplicate = M05LedgerRevision(
+            **{
+                column.name: getattr(row, column.name)
+                for column in M05LedgerRevision.__table__.columns
+                if column.name != "revision_id"
+            }
+        )
+        duplicate.revision_id = "M05-R-" + "f" * 32
+        duplicate.predecessor_revision_id = row.revision_id
+        duplicate.revision_sequence = 2
+        duplicate.action_type = "adjust"
+        duplicate.state = "draft"
+        duplicate.evidence_digest = "0" * 64
+        from app.models.m05_ledger import authorize_m05_insert
+
+        authorize_m05_insert(duplicate)
+        db.add(duplicate)
+        db.flush()
+        second = M05LedgerRevision(
+            **{
+                column.name: getattr(duplicate, column.name)
+                for column in M05LedgerRevision.__table__.columns
+                if column.name != "revision_id"
+            }
+        )
+        second.revision_id = "M05-R-" + "e" * 32
+        second.evidence_digest = "1" * 64
+        authorize_m05_insert(second)
+        db.add(second)
+        with pytest.raises(Exception):
+            db.flush()
 
 
 def test_archived_case_is_read_only_and_m06_ineligible(api) -> None:

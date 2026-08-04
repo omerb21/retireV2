@@ -101,6 +101,31 @@ function renderNavigable() {
     <Route path="/clients/:clientId/pension-ledger" element={<M05LedgerScreen />} />
   </Routes></MemoryRouter>);
 }
+const mutations = [
+  ["Start ledger", "/m05/start"],
+  ["Reconcile", "/reconcile"],
+  ["Review exact mandatory warning set", "/review-warning"],
+  ["Mark blocked", "/mark-blocked"],
+  ["Adjust one value", "/adjust"],
+  ["Supersede", "/supersede"],
+  ["Revalidate against selected current candidate", "/revalidate"],
+] as const;
+async function launchMutation(button: string, launch = true) {
+  fireEvent.click(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ }));
+  if (button === "Start ledger") {
+    fireEvent.click(screen.getByLabelText(/Confirm currency ILS/));
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "Provider 1 / Account 1" }));
+    await screen.findByText(/Current ledger/);
+  }
+  if (button === "Adjust one value") {
+    fireEvent.change(await screen.findByRole("combobox"), { target: { value: "component:0" } });
+    fireEvent.change(screen.getByLabelText("New effective value"), { target: { value: "99.50" } });
+  }
+  const control = await screen.findByRole("button", { name: button });
+  if (launch) fireEvent.click(control);
+  return control;
+}
 afterEach(() => vi.restoreAllMocks());
 
 describe("M05LedgerScreen", () => {
@@ -191,7 +216,8 @@ describe("M05LedgerScreen", () => {
     expect(screen.getAllByText(/Provider X/).length).toBeGreaterThan(0);
   });
 
-  it("guards candidate-list A-B-A success, error, and finally with distinct generations", async () => {
+  it.each(["success", "rejection", "api-error"])(
+  "guards candidate-list A-B-A stale %s and finally with distinct generations", async (outcome) => {
     const old = deferred<Response>(); let oldIssued = false;
     const staleCandidate = { ...candidate(1), provider_name: "STALE_EVIDENCE" };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -207,15 +233,23 @@ describe("M05LedgerScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "A" }));
     expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
-    await act(async () => old.resolve(json([staleCandidate])));
+    await act(async () => {
+      if (outcome === "success") old.resolve(json([staleCandidate]));
+      else if (outcome === "api-error") old.resolve(json({ detail: { code: "STALE_EVIDENCE" } }, 409));
+      else old.reject(new Error("STALE_EVIDENCE"));
+    });
     await act(async () => Promise.resolve());
     expect(screen.queryByText("STALE_EVIDENCE")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it.each(["detail", "history", "provenance", "warnings", "eligibility"])(
-    "guards stale %s read after A-B-A including finally ownership",
-    async (unit) => {
+  it.each(
+    ["detail", "history", "provenance", "warnings", "eligibility"].flatMap(
+      (unit) => ["success", "rejection", "api-error"].map((outcome) => [unit, outcome]),
+    ),
+  )(
+    "guards stale %s read %s after A-B-A including finally ownership",
+    async (unit, outcome) => {
       const old = deferred<Response>(); let delayed = false;
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
         const url = path(input);
@@ -242,26 +276,29 @@ describe("M05LedgerScreen", () => {
             : unit === "warnings"
               ? json([{ warning_id: "STALE_EVIDENCE", classification: "informational" }])
               : json({ ...subject(1).eligibility, exclusion_reasons: ["STALE_EVIDENCE"] });
-      await act(async () => old.resolve(stale));
+      await act(async () => {
+        if (outcome === "success") old.resolve(stale);
+        else if (outcome === "api-error") old.resolve(json({ detail: { code: "STALE_EVIDENCE" } }, 409));
+        else old.reject(new Error("STALE_EVIDENCE"));
+      });
       await act(async () => Promise.resolve());
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByText(/Current ledger/)).not.toBeInTheDocument();
     },
   );
 
-  it("a current mutation launches every independently guarded refresh unit", async () => {
+  it.each(mutations)("current %s launches every independently guarded refresh unit", async (button, endpoint) => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = path(input); calls.push(`${init?.method ?? "GET"} ${url}`);
-      if (url.endsWith("/subjects/subject-1/reconcile")) return json(revision(1, "reconciled"), 201);
+      if ((init?.method ?? "GET") === "POST" && url.endsWith(endpoint)) return json(revision(1, "reconciled"), 201);
       return defaultResponse(url);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
-    await screen.findByText(/Current ledger/);
+    const control = await launchMutation(button, false);
     calls.length = 0;
-    fireEvent.click(screen.getByRole("button", { name: "Reconcile" }));
-    await waitFor(() => expect(calls.some((call) => call.startsWith("POST ") && call.endsWith("/reconcile"))).toBe(true));
+    fireEvent.click(control);
+    await waitFor(() => expect(calls.some((call) => call.startsWith("POST ") && call.endsWith(endpoint))).toBe(true));
     for (const suffix of [
       "/api/clients/1", "/m05/candidates", "/m05/subjects",
       "/subjects/subject-1", "/history", "/provenance", "/warnings", "/m06-eligibility",
@@ -270,19 +307,22 @@ describe("M05LedgerScreen", () => {
     }
   });
 
-  it.each(["success", "rejection", "api-error"])(
-    "A-B-A stale mutation %s launches zero refresh and cannot change current context",
-    async (outcome) => {
+  it.each(
+    mutations.flatMap(([button, endpoint]) =>
+      ["success", "rejection", "api-error"].map((outcome) => [button, endpoint, outcome] as const),
+    ),
+  )(
+    "A-B-A stale %s mutation %s launches zero refresh and cannot change current context",
+    async (button, endpoint, outcome) => {
       const pending = deferred<Response>(); let aGets = 0;
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = path(input);
         if (url.includes("/clients/1/") && (init?.method ?? "GET") === "GET") aGets += 1;
-        if (url.endsWith("/subjects/subject-1/reconcile")) return pending.promise;
+        if ((init?.method ?? "GET") === "POST" && url.endsWith(endpoint)) return pending.promise;
         return defaultResponse(url);
       }));
       renderNavigable();
-      fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
-      fireEvent.click(await screen.findByRole("button", { name: "Reconcile" }));
+      await launchMutation(button);
       fireEvent.click(screen.getByRole("button", { name: "B" }));
       expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "A" }));
@@ -313,15 +353,7 @@ describe("M05LedgerScreen", () => {
     await act(async () => pending.resolve(json(revision(1), 201)));
   });
 
-  it.each([
-    ["Start ledger", "/m05/start"],
-    ["Reconcile", "/reconcile"],
-    ["Review exact mandatory warning set", "/review-warning"],
-    ["Mark blocked", "/mark-blocked"],
-    ["Adjust one value", "/adjust"],
-    ["Supersede", "/supersede"],
-    ["Revalidate against selected current candidate", "/revalidate"],
-  ])("%s mutation is current-context bound and uses %s", async (button, endpoint) => {
+  it.each(mutations)("%s mutation is current-context bound and uses %s", async (button, endpoint) => {
     const posts: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = path(input);
@@ -329,14 +361,7 @@ describe("M05LedgerScreen", () => {
       return defaultResponse(url);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ }));
-    if (button !== "Start ledger") fireEvent.click(screen.getByRole("button", { name: "Provider 1 / Account 1" }));
-    if (button === "Adjust one value") {
-      fireEvent.change(await screen.findByRole("combobox"), { target: { value: "component:0" } });
-      fireEvent.change(screen.getByLabelText("New effective value"), { target: { value: "99.50" } });
-    }
-    const control = await screen.findByRole("button", { name: button });
-    fireEvent.click(control);
+    await launchMutation(button);
     await waitFor(() => expect(posts.some((url) => url.endsWith(endpoint))).toBe(true));
   });
 });

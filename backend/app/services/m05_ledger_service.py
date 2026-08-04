@@ -484,22 +484,26 @@ def _evaluate_candidates(db: Session, client_id: int) -> list[CandidateEvaluatio
         date_indices = [index for index in indices if rows[index].context and rows[index].context.statement_date == best_date]
         best_decided = max(rows[index].context.m03_decided_at for index in date_indices if rows[index].context)
         winners = [index for index in date_indices if rows[index].context and rows[index].context.m03_decided_at == best_decided]
+        newer_ineligible = any(
+            row.context is None
+            and row.intake.declared_provider_name == key[0].decode("utf-8")
+            and row.intake.declared_account_reference == key[1].decode("utf-8")
+            and row.intake.declared_statement_date is not None
+            and row.intake.declared_statement_date > best_date
+            for row in rows
+        )
+        warnings = ("newer_ineligible_candidate_exists",) if newer_ineligible else ()
         if len(winners) != 1:
             for index in winners:
-                rows[index] = replace(rows[index], exclusion_reason="authoritative_candidate_tie")
+                rows[index] = replace(
+                    rows[index],
+                    exclusion_reason="authoritative_candidate_tie",
+                    informational_warnings=warnings,
+                )
             continue
         winner = winners[0]
         context = rows[winner].context
         assert context is not None
-        newer_ineligible = any(
-            row.context is None
-            and row.intake.declared_provider_name == context.provider_name
-            and row.intake.declared_account_reference == context.account_reference
-            and row.intake.declared_statement_date is not None
-            and row.intake.declared_statement_date > context.statement_date
-            for row in rows
-        )
-        warnings = ("newer_ineligible_candidate_exists",) if newer_ineligible else ()
         rows[winner] = replace(
             rows[winner],
             context=replace(context, newer_ineligible=newer_ineligible),

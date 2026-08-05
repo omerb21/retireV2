@@ -117,7 +117,7 @@ export function M05LedgerScreen() {
     } finally {
       if (owned()) setLoading(false);
     }
-  }, [captureClientContext, clientId, isCurrentClientContext]);
+  }, [captureClientContext, clientId, isCurrentClientContext, location.key]);
   useEffect(() => { void loadOverview(); }, [loadOverview]);
 
   const loadSubject = useCallback(async (subjectId: string) => {

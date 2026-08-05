@@ -94,7 +94,7 @@ function renderPage() {
 }
 function Navigation() {
   const navigate = useNavigate();
-  return <><button onClick={() => navigate("/clients/1/pension-ledger")}>A</button><button onClick={() => navigate("/clients/2/pension-ledger")}>B</button></>;
+  return <><button onClick={() => navigate("/clients/1/pension-ledger")}>A</button><button onClick={() => navigate("/clients/2/pension-ledger")}>B</button><button onClick={() => navigate("/clients/1/pension-ledger", { state: { revisit: Math.random() } })}>A revisit</button></>;
 }
 function renderNavigable() {
   return render(<MemoryRouter initialEntries={["/clients/1/pension-ledger"]}><Navigation /><Routes>
@@ -110,6 +110,34 @@ const mutations = [
   ["Supersede", "/supersede"],
   ["Revalidate against selected current candidate", "/revalidate"],
 ] as const;
+const settlements = ["success", "rejection", "api-error"] as const;
+type Settlement = typeof settlements[number];
+const detailUnits = ["detail", "history", "provenance", "warnings", "eligibility"] as const;
+type DetailUnit = typeof detailUnits[number];
+const transitions = ["direct A-B", "A-B-A", "same-context revisit"] as const;
+const matchesDetailUnit = (unit: DetailUnit, url: string, subjectId = "subject-1") =>
+  unit === "detail" ? url.endsWith(`/subjects/${subjectId}`)
+    : unit === "history" ? url.endsWith(`/subjects/${subjectId}/history`)
+    : unit === "provenance" ? url.endsWith(`/subjects/${subjectId}/provenance`)
+    : unit === "warnings" ? url.endsWith(`/subjects/${subjectId}/warnings`)
+    : url.endsWith(`/subjects/${subjectId}/m06-eligibility`);
+const staleReadResponse = (unit: DetailUnit) => unit === "detail"
+  ? json({ ...subject(1), provider_name: "STALE_EVIDENCE" })
+  : unit === "history"
+    ? json([{ ...revision(1), product_context: { product_name: "STALE_EVIDENCE" } }])
+    : unit === "provenance"
+      ? json({ marker: "STALE_EVIDENCE" })
+      : unit === "warnings"
+        ? json([{ warning_id: "STALE_EVIDENCE", classification: "informational" }])
+        : json({ ...subject(1).eligibility, exclusion_reasons: ["STALE_EVIDENCE"] });
+const settle = async (pending: Deferred<Response>, outcome: Settlement, response = json({ marker: "STALE_EVIDENCE" })) => {
+  await act(async () => {
+    if (outcome === "success") pending.resolve(response);
+    else if (outcome === "api-error") pending.resolve(json({ detail: { code: "STALE_EVIDENCE" } }, 409));
+    else pending.reject(new Error("STALE_EVIDENCE"));
+  });
+  await act(async () => Promise.resolve());
+};
 async function launchMutation(button: string, launch = true) {
   fireEvent.click(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ }));
   if (button === "Start ledger") {
@@ -216,8 +244,8 @@ describe("M05LedgerScreen", () => {
     expect(screen.getAllByText(/Provider X/).length).toBeGreaterThan(0);
   });
 
-  it.each(["success", "rejection", "api-error"])(
-  "guards candidate-list A-B-A stale %s and finally with distinct generations", async (outcome) => {
+  it.each(transitions.flatMap((transition) => settlements.map((outcome) => [transition, outcome] as const)))(
+  "guards candidate-list stale settlement across %s: %s and finally", async (transition, outcome) => {
     const old = deferred<Response>(); let oldIssued = false;
     const staleCandidate = { ...candidate(1), provider_name: "STALE_EVIDENCE" };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -228,36 +256,93 @@ describe("M05LedgerScreen", () => {
       return defaultResponse(url);
     }));
     renderNavigable();
-    fireEvent.click(screen.getByRole("button", { name: "B" }));
-    expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "A" }));
-    expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
-    await act(async () => {
-      if (outcome === "success") old.resolve(json([staleCandidate]));
-      else if (outcome === "api-error") old.resolve(json({ detail: { code: "STALE_EVIDENCE" } }, 409));
-      else old.reject(new Error("STALE_EVIDENCE"));
-    });
-    await act(async () => Promise.resolve());
+    if (transition === "same-context revisit") {
+      fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "B" }));
+      expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+      if (transition === "A-B-A") fireEvent.click(screen.getByRole("button", { name: "A" }));
+    }
+    if (transition !== "direct A-B") {
+      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
+    }
+    await settle(old, outcome, json([staleCandidate]));
     expect(screen.queryByText("STALE_EVIDENCE")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each(
-    ["detail", "history", "provenance", "warnings", "eligibility"].flatMap(
-      (unit) => ["success", "rejection", "api-error"].map((outcome) => [unit, outcome]),
-    ),
+    detailUnits.flatMap((unit) => transitions.flatMap(
+      (transition) => settlements.map((outcome) => [unit, transition, outcome] as const),
+    )),
   )(
-    "guards stale %s read %s after A-B-A including finally ownership",
-    async (unit, outcome) => {
+    "guards stale %s read across %s: %s and finally",
+    async (unit, transition, outcome) => {
       const old = deferred<Response>(); let delayed = false;
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
         const url = path(input);
-        const matches = unit === "detail" ? url.endsWith("/subjects/subject-1")
-          : unit === "history" ? url.endsWith("/subjects/subject-1/history")
-          : unit === "provenance" ? url.endsWith("/subjects/subject-1/provenance")
-          : unit === "warnings" ? url.endsWith("/subjects/subject-1/warnings")
-          : url.endsWith("/subjects/subject-1/m06-eligibility");
+        if (matchesDetailUnit(unit, url) && !delayed) { delayed = true; return old.promise; }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      if (transition === "same-context revisit") {
+        fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: "B" }));
+        expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+        if (transition === "A-B-A") fireEvent.click(screen.getByRole("button", { name: "A" }));
+      }
+      if (transition !== "direct A-B") expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      await settle(old, outcome, staleReadResponse(unit));
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Current ledger/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(
+    detailUnits.flatMap((unit) => settlements.map((outcome) => [unit, outcome] as const)),
+  )(
+    "guards same-client subject X-Y stale %s read: %s and finally",
+    async (unit, outcome) => {
+      const old = deferred<Response>(); let delayed = false;
+      const yRevision = { ...revision(2), subject_id: "subject-2", provider_name: "Provider Y", account_reference: "Account Y" };
+      const ySubject = { ...subject(1), subject_id: "subject-2", provider_name: "Provider Y", account_reference: "Account Y", current_revision: yRevision };
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        if (url.endsWith("/m05/subjects")) return json([subject(1), ySubject]);
+        if (matchesDetailUnit(unit, url) && !delayed) { delayed = true; return old.promise; }
+        if (url.endsWith("/subjects/subject-2")) return json(ySubject);
+        if (url.endsWith("/subjects/subject-2/history")) return json([yRevision]);
+        if (url.endsWith("/subjects/subject-2/provenance")) return json({ marker: "CURRENT_Y" });
+        if (url.endsWith("/subjects/subject-2/warnings")) return json([]);
+        if (url.endsWith("/subjects/subject-2/m06-eligibility")) return json({ ...ySubject.eligibility, subject_id: "subject-2" });
+        return defaultResponse(url);
+      }));
+      renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      fireEvent.click(screen.getByRole("button", { name: "Provider Y / Account Y" }));
+      expect(await screen.findByText(/Current ledger/)).toBeInTheDocument();
+      await settle(old, outcome, staleReadResponse(unit));
+      expect(screen.getAllByText(/Provider Y/).length).toBeGreaterThan(0);
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(
+    detailUnits.flatMap(
+      (unit) => settlements.map((outcome) => [unit, outcome] as const),
+    ),
+  )(
+    "guards stale %s read %s after A-B-A including finally ownership (legacy explicit proof)",
+    async (unit: DetailUnit, outcome: Settlement) => {
+      const old = deferred<Response>(); let delayed = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        const matches = matchesDetailUnit(unit, url);
         if (matches && !delayed) { delayed = true; return old.promise; }
         return defaultResponse(url);
       }));
@@ -267,21 +352,7 @@ describe("M05LedgerScreen", () => {
       expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "A" }));
       expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
-      const stale = unit === "detail"
-        ? json({ ...subject(1), provider_name: "STALE_EVIDENCE" })
-        : unit === "history"
-          ? json([{ ...revision(1), product_context: { product_name: "STALE_EVIDENCE" } }])
-          : unit === "provenance"
-            ? json({ marker: "STALE_EVIDENCE" })
-            : unit === "warnings"
-              ? json([{ warning_id: "STALE_EVIDENCE", classification: "informational" }])
-              : json({ ...subject(1).eligibility, exclusion_reasons: ["STALE_EVIDENCE"] });
-      await act(async () => {
-        if (outcome === "success") old.resolve(stale);
-        else if (outcome === "api-error") old.resolve(json({ detail: { code: "STALE_EVIDENCE" } }, 409));
-        else old.reject(new Error("STALE_EVIDENCE"));
-      });
-      await act(async () => Promise.resolve());
+      await settle(old, outcome, staleReadResponse(unit));
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByText(/Current ledger/)).not.toBeInTheDocument();
     },
@@ -308,12 +379,12 @@ describe("M05LedgerScreen", () => {
   });
 
   it.each(
-    mutations.flatMap(([button, endpoint]) =>
-      ["success", "rejection", "api-error"].map((outcome) => [button, endpoint, outcome] as const),
-    ),
+    mutations.flatMap(([button, endpoint]) => transitions.flatMap((transition) =>
+      settlements.map((outcome) => [button, endpoint, transition, outcome] as const),
+    )),
   )(
-    "A-B-A stale %s mutation %s launches zero refresh and cannot change current context",
-    async (button, endpoint, outcome) => {
+    "%s mutation %s across %s with stale %s launches zero refresh and cannot change current context",
+    async (button, endpoint, transition, outcome) => {
       const pending = deferred<Response>(); let aGets = 0;
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = path(input);
@@ -323,23 +394,59 @@ describe("M05LedgerScreen", () => {
       }));
       renderNavigable();
       await launchMutation(button);
-      fireEvent.click(screen.getByRole("button", { name: "B" }));
-      expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "A" }));
-      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      if (transition === "same-context revisit") {
+        fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: "B" }));
+        expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+        if (transition === "A-B-A") fireEvent.click(screen.getByRole("button", { name: "A" }));
+      }
+      if (transition !== "direct A-B") expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
       const before = aGets;
-      await act(async () => {
-        if (outcome === "success") pending.resolve(json(revision(1), 201));
-        else if (outcome === "api-error") pending.resolve(json({ detail: { code: "OLD" } }, 409));
-        else pending.reject(new Error("old rejection"));
-      });
-      await act(async () => Promise.resolve());
+      await settle(pending, outcome, json(revision(1), 201));
       expect(aGets).toBe(before);
-      expect(screen.queryByText(/OLD|old rejection/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
 
-  it.each(mutations)("unmount invalidates pending %s mutation success, error, and finally", async (button, endpoint) => {
+  it.each(
+    mutations.slice(1).flatMap(([button, endpoint]) =>
+      settlements.map((outcome) => [button, endpoint, outcome] as const),
+    ),
+  )("same-client X-Y invalidates pending %s mutation %s: %s and finally", async (button, endpoint, outcome) => {
+    const pending = deferred<Response>(); let aGets = 0;
+    const yRevision = { ...revision(2), subject_id: "subject-2", provider_name: "Provider Y", account_reference: "Account Y" };
+    const ySubject = { ...subject(1), subject_id: "subject-2", provider_name: "Provider Y", account_reference: "Account Y", current_revision: yRevision };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = path(input);
+      if ((init?.method ?? "GET") === "GET") aGets += 1;
+      if ((init?.method ?? "GET") === "POST" && url.endsWith(endpoint)) return pending.promise;
+      if (url.endsWith("/m05/subjects")) return json([subject(1), ySubject]);
+      if (url.endsWith("/subjects/subject-2")) return json(ySubject);
+      if (url.endsWith("/subjects/subject-2/history")) return json([yRevision]);
+      if (url.endsWith("/subjects/subject-2/provenance")) return json({ marker: "CURRENT_Y" });
+      if (url.endsWith("/subjects/subject-2/warnings")) return json([]);
+      if (url.endsWith("/subjects/subject-2/m06-eligibility")) return json({ ...ySubject.eligibility, subject_id: "subject-2" });
+      return defaultResponse(url);
+    }));
+    renderPage();
+    await launchMutation(button);
+    fireEvent.click(screen.getByRole("button", { name: "Provider Y / Account Y" }));
+    expect(await screen.findByText(/Current ledger/)).toBeInTheDocument();
+    const before = aGets;
+    await settle(pending, outcome, json(revision(1), 201));
+    expect(aGets).toBe(before);
+    expect(screen.getAllByText(/Provider Y/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each(
+    mutations.flatMap(([button, endpoint]) =>
+      settlements.map((outcome) => [button, endpoint, outcome] as const),
+    ),
+  )("unmount invalidates pending %s mutation %s, %s and finally", async (button, endpoint, outcome) => {
     const pending = deferred<Response>();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = path(input);
@@ -349,21 +456,21 @@ describe("M05LedgerScreen", () => {
     const view = renderPage();
     await launchMutation(button);
     view.unmount();
-    await act(async () => pending.resolve(json(revision(1), 201)));
+    await settle(pending, outcome, json(revision(1), 201));
   });
 
-  it.each(["candidates", "detail", "history", "provenance", "warnings", "eligibility"])(
-    "unmount invalidates pending %s read success, rejection, and finally",
-    async (unit) => {
+  it.each(
+    (["candidates", ...detailUnits] as const).flatMap((unit) =>
+      settlements.map((outcome) => [unit, outcome] as const),
+    ),
+  )(
+    "unmount invalidates pending %s read %s and finally",
+    async (unit, outcome) => {
       const pending = deferred<Response>(); let delayed = false;
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
         const url = path(input);
         const matches = unit === "candidates" ? url.endsWith("/m05/candidates")
-          : unit === "detail" ? url.endsWith("/subjects/subject-1")
-          : unit === "history" ? url.endsWith("/subjects/subject-1/history")
-          : unit === "provenance" ? url.endsWith("/subjects/subject-1/provenance")
-          : unit === "warnings" ? url.endsWith("/subjects/subject-1/warnings")
-          : url.endsWith("/subjects/subject-1/m06-eligibility");
+          : matchesDetailUnit(unit, url);
         if (matches && !delayed) { delayed = true; return pending.promise; }
         return defaultResponse(url);
       }));
@@ -374,9 +481,66 @@ describe("M05LedgerScreen", () => {
         await waitFor(() => expect(delayed).toBe(true));
       }
       view.unmount();
-      await act(async () => pending.reject(new Error("settled after unmount")));
+      const response = unit === "candidates" ? json([candidate(1)]) : staleReadResponse(unit);
+      await settle(pending, outcome, response);
     },
   );
+
+  it.each(
+    (["overview", ...detailUnits] as const).flatMap((unit) =>
+      settlements.map((outcome) => [unit, outcome] as const),
+    ),
+  )(
+    "independently owns delayed stale %s refresh settlement: %s and finally",
+    async (unit, outcome) => {
+      const pending = deferred<Response>(); let mutationCompleted = false; let delayed = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = path(input);
+        if ((init?.method ?? "GET") === "POST" && url.endsWith("/reconcile")) {
+          mutationCompleted = true; return json(revision(1, "reconciled"), 201);
+        }
+        const matches = unit === "overview" ? url.endsWith("/m05/candidates") : matchesDetailUnit(unit, url);
+        if (mutationCompleted && matches && !delayed) { delayed = true; return pending.promise; }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      await launchMutation("Reconcile");
+      await waitFor(() => expect(delayed).toBe(true));
+      fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
+      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
+      const response = unit === "overview" ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }]) : staleReadResponse(unit);
+      await settle(pending, outcome, response);
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+    },
+  );
+
+  it("a stale refresh cannot clear a newer generation's loading owner", async () => {
+    const stale = deferred<Response>(); const current = deferred<Response>(); let candidateCall = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = path(input);
+      if ((init?.method ?? "GET") === "POST" && url.endsWith("/reconcile")) return json(revision(1, "reconciled"), 201);
+      if (url.endsWith("/m05/candidates")) {
+        candidateCall += 1;
+        if (candidateCall === 2) return stale.promise;
+        if (candidateCall === 3) return current.promise;
+      }
+      return defaultResponse(url);
+    }));
+    renderNavigable();
+    await launchMutation("Reconcile");
+    await waitFor(() => expect(candidateCall).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
+    await waitFor(() => expect(candidateCall).toBe(3));
+    await act(async () => stale.resolve(json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])));
+    expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+    await act(async () => current.resolve(json([candidate(1)])));
+    expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
+    expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+  });
 
   it.each(mutations)("%s mutation is current-context bound and uses %s", async (button, endpoint) => {
     const posts: string[] = [];

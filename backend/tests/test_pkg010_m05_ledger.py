@@ -7,7 +7,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
-from threading import Barrier
+from threading import Barrier, Lock, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -233,6 +233,107 @@ def _resign_revision(
         "WHERE revision_id = :revision_id",
         {"digest": digest, "revision_id": revision_id},
     )
+
+
+def _overlap_at_insert(
+    sessions: sessionmaker[Session],
+    table: str,
+    operations,
+):
+    """Release two independent SQLAlchemy connections at the same pre-write point."""
+    engine = sessions.kw["bind"]
+    barrier = Barrier(2)
+    lock = Lock()
+    arrivals: list[tuple[int, int]] = []
+    prefix = f"insert into {table}"
+
+    def synchronize(connection, _cursor, statement, _parameters, _context, _many):
+        normalized = " ".join(statement.lower().split())
+        if not normalized.startswith(prefix):
+            return
+        worker = get_ident()
+        should_wait = False
+        with lock:
+            if worker not in {item[0] for item in arrivals} and len(arrivals) < 2:
+                arrivals.append((worker, id(connection)))
+                should_wait = True
+        if should_wait:
+            barrier.wait(timeout=20)
+
+    event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(operation) for operation in operations]
+            responses = [future.result(timeout=30) for future in futures]
+    finally:
+        event.remove(engine, "before_cursor_execute", synchronize)
+    assert len(arrivals) == 2
+    assert len({worker for worker, _ in arrivals}) == 2
+    assert len({connection for _, connection in arrivals}) == 2
+    return responses
+
+
+def _assert_stable_race_outcome(responses) -> tuple[object, object]:
+    winner = next(response for response in responses if response.status_code == 201)
+    loser = next(response for response in responses if response.status_code == 409)
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    assert loser.json()["detail"] == {
+        "code": "M05_CONCURRENT_MODIFICATION",
+        "message": "Ledger changed before this action",
+    }
+    return winner, loser
+
+
+def _assert_no_race_residue(
+    sessions: sessionmaker[Session], subject_id: str, expected_revisions: int
+) -> None:
+    with sessions() as db:
+        revisions = list(
+            db.scalars(
+                select(M05LedgerRevision)
+                .where(M05LedgerRevision.subject_id == subject_id)
+                .order_by(M05LedgerRevision.revision_sequence)
+            ).all()
+        )
+        assert len(revisions) == expected_revisions
+        assert [row.revision_sequence for row in revisions] == list(
+            range(1, expected_revisions + 1)
+        )
+        assert len({row.revision_sequence for row in revisions}) == len(revisions)
+        predecessor_ids = [
+            row.predecessor_revision_id
+            for row in revisions
+            if row.predecessor_revision_id is not None
+        ]
+        assert len(predecessor_ids) == len(set(predecessor_ids))
+        candidate_links = list(
+            db.scalars(
+                select(M05CandidateLink).where(M05CandidateLink.subject_id == subject_id)
+            ).all()
+        )
+        assert len({row.candidate_id for row in candidate_links}) == len(candidate_links)
+        values = list(
+            db.scalars(
+                select(M05LedgerValue).where(M05LedgerValue.subject_id == subject_id)
+            ).all()
+        )
+        assert len({(row.revision_id, row.evidence_identity) for row in values}) == len(values)
+        assert {row.revision_id for row in values} == {
+            row.revision_id for row in revisions
+        }
+        adjustments = list(
+            db.scalars(
+                select(M05AdjustmentEvidence).where(
+                    M05AdjustmentEvidence.subject_id == subject_id
+                )
+            ).all()
+        )
+        assert len(adjustments) == sum(
+            row.action_type == "adjust" for row in revisions
+        )
+        for row in revisions:
+            assert isinstance(row.warnings, list)
+            assert isinstance(row.warning_dispositions, list)
 
 
 def test_candidate_start_reconcile_and_m06_gate(api) -> None:
@@ -1122,33 +1223,37 @@ def test_complete_eligibility_vocabulary_has_deterministic_order(api) -> None:
 
 
 def test_concurrent_start_has_one_winner_and_clean_retry(api) -> None:
-    client, _ = api
+    client, sessions = api
     candidate_id = _candidate(client, "A-001")["candidate_id"]
 
-    def start() -> int:
+    def start():
         return client.post(
             "/api/clients/1/m05/start",
             json={"candidate_id": candidate_id, "confirm_currency_ils": True},
-        ).status_code
+        )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        statuses = list(pool.map(lambda _: start(), range(2)))
-    assert sorted(statuses) == [201, 409]
-    assert start() == 409
+    responses = _overlap_at_insert(
+        sessions, "m05_ledger_subjects", [start, start]
+    )
+    _assert_stable_race_outcome(responses)
+    retry = start()
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "M05_LEDGER_ALREADY_STARTED"
     subjects = client.get("/api/clients/1/m05/subjects").json()
     assert len(subjects) == 1
     assert len(client.get(f"/api/clients/1/m05/subjects/{subjects[0]['subject_id']}/history").json()) == 1
+    _assert_no_race_residue(sessions, subjects[0]["subject_id"], 1)
 
 
 def test_concurrent_same_leaf_successor_has_one_winner(api) -> None:
-    client, _ = api
+    client, sessions = api
     started = _start(client, "A-001")
     endpoint = f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust"
     values = [
         row for row in started["values"] if row["component_kind"] != "total_balance"
     ]
 
-    def adjust(index: int) -> int:
+    def adjust(index: int):
         return client.post(
             endpoint,
             json={
@@ -1159,35 +1264,51 @@ def test_concurrent_same_leaf_successor_has_one_winner(api) -> None:
                 "explanation": "one immutable successor may win",
                 "confirmed": True,
             },
-        ).status_code
+        )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        statuses = list(pool.map(adjust, range(2)))
-    assert sorted(statuses) == [201, 409]
+    responses = _overlap_at_insert(
+        sessions,
+        "m05_ledger_revisions",
+        [lambda: adjust(0), lambda: adjust(1)],
+    )
+    _assert_stable_race_outcome(responses)
     history = client.get(
         f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
     ).json()
     assert [row["revision_sequence"] for row in history] == [1, 2]
     assert history[1]["predecessor_revision_id"] == started["revision_id"]
+    _assert_no_race_residue(sessions, started["subject_id"], 2)
+    loser_index = next(
+        index for index, response in enumerate(responses) if response.status_code == 409
+    )
+    retry = client.post(
+        endpoint,
+        json={
+            "expected_current_revision_id": history[-1]["revision_id"],
+            "evidence_identity": values[loser_index]["evidence_identity"],
+            "new_effective_value": "58.00" if loser_index == 0 else "38.00",
+            "reason_code": "concurrent_retry",
+            "explanation": "retry against the refreshed current leaf",
+            "confirmed": True,
+        },
+    )
+    assert retry.status_code == 201, retry.text
+    _assert_no_race_residue(sessions, started["subject_id"], 3)
 
 
 def test_barrier_race_reconcile_vs_adjust_and_retry(api) -> None:
-    client, _ = api
+    client, sessions = api
     started = _start(client, "A-001")
     component = next(
         row for row in started["values"] if row["component_kind"] == "contribution_component"
     )
-    barrier = Barrier(2)
-
-    def reconcile() -> tuple[str, int]:
-        barrier.wait()
+    def reconcile():
         return "reconcile", client.post(
             f"/api/clients/1/m05/subjects/{started['subject_id']}/reconcile",
             json={"expected_current_revision_id": started["revision_id"]},
-        ).status_code
+        )
 
-    def adjust() -> tuple[str, int]:
-        barrier.wait()
+    def adjust():
         return "adjust", client.post(
             f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
             json={
@@ -1198,12 +1319,14 @@ def test_barrier_race_reconcile_vs_adjust_and_retry(api) -> None:
                 "explanation": "barrier synchronized race",
                 "confirmed": True,
             },
-        ).status_code
+        )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(operation) for operation in (reconcile, adjust)]
-        outcomes = dict(future.result() for future in futures)
-    assert sorted(outcomes.values()) == [201, 409]
+    outcomes = _overlap_at_insert(
+        sessions, "m05_ledger_revisions", [reconcile, adjust]
+    )
+    responses = [response for _, response in outcomes]
+    _assert_stable_race_outcome(responses)
+    _assert_no_race_residue(sessions, started["subject_id"], 2)
     current = client.get(
         f"/api/clients/1/m05/subjects/{started['subject_id']}"
     ).json()["current_revision"]
@@ -1229,6 +1352,7 @@ def test_barrier_race_reconcile_vs_adjust_and_retry(api) -> None:
         f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
     ).json()
     assert [row["revision_sequence"] for row in history] == [1, 2, 3]
+    _assert_no_race_residue(sessions, started["subject_id"], 3)
 
 
 @pytest.mark.parametrize("race", ["review_vs_supersede", "blocked_adjust_vs_supersede"])
@@ -1245,13 +1369,11 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
                 "explanation": "prepare blocked state",
             },
         ).json()
-    barrier = Barrier(2)
     component = next(
         row for row in current["values"] if row["component_kind"] == "contribution_component"
     )
 
-    def first() -> int:
-        barrier.wait()
+    def first():
         if race == "review_vs_supersede":
             return client.post(
                 f"/api/clients/1/m05/subjects/{started['subject_id']}/review-warning",
@@ -1262,7 +1384,7 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
                     "explanation": "exact warning review",
                     "confirmed": True,
                 },
-            ).status_code
+            )
         return client.post(
             f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust",
             json={
@@ -1273,10 +1395,9 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
                 "explanation": "blocked adjustment race",
                 "confirmed": True,
             },
-        ).status_code
+        )
 
-    def second() -> int:
-        barrier.wait()
+    def second():
         return client.post(
             f"/api/clients/1/m05/subjects/{started['subject_id']}/supersede",
             json={
@@ -1284,12 +1405,12 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
                 "reason_code": "race_supersede",
                 "explanation": "supersession race",
             },
-        ).status_code
+        )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(first), pool.submit(second)]
-        statuses = [future.result() for future in futures]
-    assert sorted(statuses) == [201, 409]
+    responses = _overlap_at_insert(
+        sessions, "m05_ledger_revisions", [first, second]
+    )
+    _assert_stable_race_outcome(responses)
     with sessions() as db:
         rows = list(
             db.scalars(
@@ -1300,6 +1421,202 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
         )
         assert len(rows) == (3 if race == "blocked_adjust_vs_supersede" else 2)
         assert len({row.revision_sequence for row in rows}) == len(rows)
+    _assert_no_race_residue(
+        sessions,
+        started["subject_id"],
+        3 if race == "blocked_adjust_vs_supersede" else 2,
+    )
+
+
+def test_deterministic_duplicate_candidate_tuple_collision_is_isolated(api) -> None:
+    client, sessions = api
+    candidate_id = _candidate(client, "A-001")["candidate_id"]
+
+    def start():
+        return client.post(
+            "/api/clients/1/m05/start",
+            json={"candidate_id": candidate_id, "confirm_currency_ils": True},
+        )
+
+    responses = _overlap_at_insert(
+        sessions, "m05_ledger_subjects", [start, start]
+    )
+    winner, _ = _assert_stable_race_outcome(responses)
+    subject_id = winner.json()["subject_id"]
+    with sessions() as db:
+        links = list(
+            db.scalars(
+                select(M05CandidateLink).where(
+                    M05CandidateLink.candidate_id == candidate_id
+                )
+            ).all()
+        )
+        assert len(links) == 1
+        assert links[0].subject_id == subject_id
+    _assert_no_race_residue(sessions, subject_id, 1)
+
+
+def test_deterministic_duplicate_value_identity_collision_is_isolated(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    component = next(
+        value
+        for value in started["values"]
+        if value["component_kind"] == "contribution_component"
+    )
+    endpoint = f"/api/clients/1/m05/subjects/{started['subject_id']}/adjust"
+
+    def adjust(value: str):
+        return client.post(
+            endpoint,
+            json={
+                "expected_current_revision_id": started["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": value,
+                "reason_code": "duplicate_value_identity_race",
+                "explanation": "isolate one value identity collision",
+                "confirmed": True,
+            },
+        )
+
+    responses = _overlap_at_insert(
+        sessions,
+        "m05_ledger_revisions",
+        [lambda: adjust("59.00"), lambda: adjust("58.00")],
+    )
+    _assert_stable_race_outcome(responses)
+    _assert_no_race_residue(sessions, started["subject_id"], 2)
+    current = client.get(
+        f"/api/clients/1/m05/subjects/{started['subject_id']}"
+    ).json()["current_revision"]
+    retry = client.post(
+        endpoint,
+        json={
+            "expected_current_revision_id": current["revision_id"],
+            "evidence_identity": component["evidence_identity"],
+            "new_effective_value": "57.00",
+            "reason_code": "duplicate_value_identity_retry",
+            "explanation": "retry against the refreshed leaf",
+            "confirmed": True,
+        },
+    )
+    assert retry.status_code == 201, retry.text
+    _assert_no_race_residue(sessions, started["subject_id"], 3)
+
+
+def test_deterministic_revision_sequence_collision_is_isolated(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    component = next(
+        value
+        for value in started["values"]
+        if value["component_kind"] == "contribution_component"
+    )
+    subject = f"/api/clients/1/m05/subjects/{started['subject_id']}"
+
+    def block():
+        return client.post(
+            f"{subject}/mark-blocked",
+            json={
+                "expected_current_revision_id": started["revision_id"],
+                "reason_code": "sequence_race_block",
+                "explanation": "isolate revision sequence uniqueness",
+            },
+        )
+
+    def adjust():
+        return client.post(
+            f"{subject}/adjust",
+            json={
+                "expected_current_revision_id": started["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": "59.00",
+                "reason_code": "sequence_race_adjust",
+                "explanation": "isolate revision sequence uniqueness",
+                "confirmed": True,
+            },
+        )
+
+    responses = _overlap_at_insert(
+        sessions, "m05_ledger_revisions", [block, adjust]
+    )
+    winner, _ = _assert_stable_race_outcome(responses)
+    _assert_no_race_residue(sessions, started["subject_id"], 2)
+    current = winner.json()
+    if current["action_type"] == "mark_blocked":
+        retry = client.post(
+            f"{subject}/adjust",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "evidence_identity": component["evidence_identity"],
+                "new_effective_value": "58.00",
+                "reason_code": "sequence_race_retry",
+                "explanation": "retry from the refreshed current leaf",
+                "confirmed": True,
+            },
+        )
+    else:
+        retry = client.post(
+            f"{subject}/mark-blocked",
+            json={
+                "expected_current_revision_id": current["revision_id"],
+                "reason_code": "sequence_race_retry",
+                "explanation": "retry from the refreshed current leaf",
+            },
+        )
+    assert retry.status_code == 201, retry.text
+    _assert_no_race_residue(sessions, started["subject_id"], 3)
+
+
+def test_deterministic_one_child_predecessor_collision_is_isolated(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    subject = f"/api/clients/1/m05/subjects/{started['subject_id']}"
+
+    def reconcile():
+        return client.post(
+            f"{subject}/reconcile",
+            json={"expected_current_revision_id": started["revision_id"]},
+        )
+
+    def block(expected: str):
+        return client.post(
+            f"{subject}/mark-blocked",
+            json={
+                "expected_current_revision_id": expected,
+                "reason_code": "predecessor_child_race",
+                "explanation": "isolate one-child predecessor uniqueness",
+            },
+        )
+
+    responses = _overlap_at_insert(
+        sessions,
+        "m05_ledger_revisions",
+        [reconcile, lambda: block(started["revision_id"])],
+    )
+    winner, _ = _assert_stable_race_outcome(responses)
+    with sessions() as db:
+        children = list(
+            db.scalars(
+                select(M05LedgerRevision).where(
+                    M05LedgerRevision.predecessor_revision_id
+                    == started["revision_id"]
+                )
+            ).all()
+        )
+        assert len(children) == 1
+        assert children[0].revision_id == winner.json()["revision_id"]
+    _assert_no_race_residue(sessions, started["subject_id"], 2)
+    if winner.json()["action_type"] == "reconcile":
+        retry = block(winner.json()["revision_id"])
+        assert retry.status_code == 201, retry.text
+        _assert_no_race_residue(sessions, started["subject_id"], 3)
+    else:
+        retry = client.post(
+            f"{subject}/reconcile",
+            json={"expected_current_revision_id": winner.json()["revision_id"]},
+        )
+        assert retry.status_code == 409
 
 
 @pytest.mark.parametrize(

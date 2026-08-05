@@ -26,6 +26,7 @@ from app.models.m05_ledger import (
     M05LedgerRevision,
     M05LedgerSubject,
     M05LedgerValue,
+    _sql_tokens,
 )
 from app.services.m05_ledger_service import (
     ELIGIBILITY_REASON_ORDER,
@@ -603,6 +604,19 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
         )
 
     with sessions() as db:
+        db.execute(
+            text(
+                'CREATE TABLE pkg010_unrelated '
+                '(id INTEGER PRIMARY KEY, "update" TEXT, "delete" TEXT, "from" TEXT)'
+            )
+        )
+        db.execute(
+            text(
+                'INSERT INTO pkg010_unrelated (id, "update", "delete", "from") '
+                "VALUES (1, 'u', 'd', 'f'), (2, 'u2', 'd2', 'f2')"
+            )
+        )
+        db.commit()
         for table, assignment in mutations.items():
             before = snapshot(db, table)
             statements = [
@@ -649,6 +663,21 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
         db.rollback()
 
         assert db.execute(text("SELECT COUNT(*) FROM m05_ledger_revisions")).scalar_one() == 2
+        legitimate_reads = [
+            "SELECT 'x' AS \"update\" FROM m05_ledger_subjects",
+            'SELECT subject_id AS "delete" FROM m05_ledger_subjects',
+            'SELECT subject_id AS "from" FROM m05_ledger_subjects',
+            'SELECT subject_id AS "only" FROM m05_ledger_subjects',
+            'SELECT "update", "delete", "from" FROM pkg010_unrelated',
+            'SELECT "update" FROM pkg010_unrelated',
+            'SELECT "update".subject_id FROM m05_ledger_subjects AS "update"',
+            'SELECT "from".subject_id FROM "main"."m05_ledger_subjects" AS "from"',
+            'WITH "update" AS (SELECT subject_id FROM m05_ledger_subjects) '
+            'SELECT subject_id FROM "update"',
+            'SELECT subject_id AS "m05_ledger_subjects" FROM m05_ledger_subjects',
+        ]
+        for statement in legitimate_reads:
+            assert db.execute(text(statement)).all()
         assert db.execute(
             text("SELECT 'm05_ledger_revisions UPDATE DELETE' AS harmless")
         ).scalar_one() == "m05_ledger_revisions UPDATE DELETE"
@@ -657,26 +686,14 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
         ).scalar_one() == 1
         db.execute(
             text(
-                "CREATE TABLE pkg010_unrelated "
-                "(id INTEGER PRIMARY KEY, m05_ledger_subjects TEXT)"
-            )
-        )
-        db.execute(
-            text(
-                "INSERT INTO pkg010_unrelated (id, m05_ledger_subjects) "
-                "VALUES (1, 'original'), (2, 'second')"
-            )
-        )
-        db.execute(
-            text(
                 "WITH source AS (SELECT subject_id FROM m05_ledger_subjects) "
-                "UPDATE pkg010_unrelated SET m05_ledger_subjects = :value WHERE id = 1"
+                'UPDATE pkg010_unrelated SET "update" = :value WHERE id = 1'
             ),
             {"value": "m05_ledger_revisions"},
         )
         db.execute(text("DELETE FROM pkg010_unrelated WHERE id = 2"))
         assert db.execute(
-            text("SELECT m05_ledger_subjects FROM pkg010_unrelated WHERE id = 1")
+            text('SELECT "update" FROM pkg010_unrelated WHERE id = 1')
         ).scalar_one() == "m05_ledger_revisions"
         assert db.execute(text("SELECT COUNT(*) FROM pkg010_unrelated")).scalar_one() == 1
         db.rollback()
@@ -725,6 +742,30 @@ def test_textual_core_dml_is_blocked_for_every_m05_table(api) -> None:
             connection.exec_driver_sql(
                 "WITH x AS (SELECT 1) DELETE FROM m05_adjustment_evidence"
             )
+
+
+def test_sql_tokenizer_preserves_quoted_identifier_and_literal_classes() -> None:
+    tokens = _sql_tokens(
+        'SELECT \'it\'\'s update m05_ledger_subjects\' AS "up""date", '
+        '"update", "delete", "from", "only", "or" '
+        '/* DELETE FROM m05_ledger_subjects */'
+    )
+    assert [(token.kind, token.value) for token in tokens] == [
+        ("identifier", "select"),
+        ("string_literal", "it's update m05_ledger_subjects"),
+        ("identifier", "as"),
+        ("identifier", 'up"date'),
+        ("punctuation", ","),
+        ("identifier", "update"),
+        ("punctuation", ","),
+        ("identifier", "delete"),
+        ("punctuation", ","),
+        ("identifier", "from"),
+        ("punctuation", ","),
+        ("identifier", "only"),
+        ("punctuation", ","),
+        ("identifier", "or"),
+    ]
 
 
 def test_database_corruption_fails_closed_without_history_rewrite(api) -> None:

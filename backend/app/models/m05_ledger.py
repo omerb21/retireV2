@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -489,14 +490,41 @@ def _statement_table_name(statement: object) -> str | None:
     return None
 
 
-def _sql_tokens(sql: str) -> list[str]:
+_SQL_KEYWORDS = {
+    "update",
+    "delete",
+    "from",
+    "only",
+    "or",
+    "rollback",
+    "abort",
+    "fail",
+    "ignore",
+    "replace",
+}
+
+
+@dataclass(frozen=True)
+class _SqlToken:
+    kind: Literal[
+        "keyword",
+        "identifier",
+        "string_literal",
+        "punctuation",
+        "operator",
+        "separator",
+    ]
+    value: str
+
+
+def _sql_tokens(sql: str) -> list[_SqlToken]:
     """Tokenize executable SQL while discarding comments and string literals.
 
     This is intentionally a small lexical guard, not a SQL parser. It recognizes
     identifiers, quoted identifiers, and punctuation needed to locate UPDATE and
     DELETE targets, including mutations following a CTE.
     """
-    tokens: list[str] = []
+    tokens: list[_SqlToken] = []
     index = 0
     length = len(sql)
     while index < length:
@@ -514,15 +542,18 @@ def _sql_tokens(sql: str) -> list[str]:
             continue
         if char == "'":
             index += 1
+            value: list[str] = []
             while index < length:
                 if sql[index] == "'":
                     if index + 1 < length and sql[index + 1] == "'":
+                        value.append("'")
                         index += 2
                         continue
                     index += 1
                     break
+                value.append(sql[index])
                 index += 1
-            tokens.append("<string>")
+            tokens.append(_SqlToken("string_literal", "".join(value)))
             continue
         if char in {'"', "`", "["}:
             closing = "]" if char == "[" else char
@@ -538,31 +569,47 @@ def _sql_tokens(sql: str) -> list[str]:
                     break
                 value.append(sql[index])
                 index += 1
-            tokens.append("".join(value).lower())
+            tokens.append(_SqlToken("identifier", "".join(value).lower()))
             continue
         if char.isalpha() or char == "_":
             end = index + 1
             while end < length and (sql[end].isalnum() or sql[end] in {"_", "$"}):
                 end += 1
-            tokens.append(sql[index:end].lower())
+            value = sql[index:end].lower()
+            tokens.append(
+                _SqlToken(
+                    "keyword" if value in _SQL_KEYWORDS else "identifier",
+                    value,
+                )
+            )
             index = end
             continue
-        if char in {".", ",", "(", ")", ";"}:
-            tokens.append(char)
+        if char == ";":
+            tokens.append(_SqlToken("separator", char))
+        elif char in {".", ",", "(", ")"}:
+            tokens.append(_SqlToken("punctuation", char))
+        else:
+            tokens.append(_SqlToken("operator", char))
         index += 1
     return tokens
 
 
-def _qualified_identifier(tokens: list[str], index: int) -> tuple[str | None, int]:
-    if index >= len(tokens) or tokens[index] in {".", ",", "(", ")", ";", "<string>"}:
+def _qualified_identifier(
+    tokens: list[_SqlToken], index: int
+) -> tuple[str | None, int]:
+    if index >= len(tokens) or tokens[index].kind != "identifier":
         return None, index
-    parts = [tokens[index]]
+    parts = [tokens[index].value]
     index += 1
-    while index + 1 < len(tokens) and tokens[index] == ".":
+    while (
+        index + 1 < len(tokens)
+        and tokens[index].kind == "punctuation"
+        and tokens[index].value == "."
+    ):
         part = tokens[index + 1]
-        if part in {".", ",", "(", ")", ";", "<string>"}:
+        if part.kind != "identifier":
             break
-        parts.append(part)
+        parts.append(part.value)
         index += 2
     return parts[-1], index
 
@@ -570,35 +617,59 @@ def _qualified_identifier(tokens: list[str], index: int) -> tuple[str | None, in
 _SQLITE_UPDATE_CONFLICT_ACTIONS = {"rollback", "abort", "fail", "ignore", "replace"}
 
 
-def _statement_end(tokens: list[str], index: int) -> int:
-    try:
-        return tokens.index(";", index)
-    except ValueError:
-        return len(tokens)
+def _statement_end(tokens: list[_SqlToken], index: int) -> int:
+    return next(
+        (
+            position
+            for position in range(index, len(tokens))
+            if tokens[position].kind == "separator"
+        ),
+        len(tokens),
+    )
 
 
-def _plausibly_targets_m05(tokens: list[str], start: int) -> bool:
+def _plausibly_targets_m05(tokens: list[_SqlToken], start: int) -> bool:
     """Fail closed only for an unparsed mutation prefix containing an M05 identifier."""
-    return any(token in _M05_TABLE_NAMES for token in tokens[start:_statement_end(tokens, start)])
+    return any(
+        token.kind == "identifier" and token.value in _M05_TABLE_NAMES
+        for token in tokens[start:_statement_end(tokens, start)]
+    )
 
 
 def _sql_mutates_m05(sql: str) -> bool:
     tokens = _sql_tokens(sql)
     for index, token in enumerate(tokens):
         target_index: int | None = None
-        if token == "update":
+        if token.kind == "keyword" and token.value == "update":
             target_index = index + 1
             if (
                 target_index + 1 < len(tokens)
-                and tokens[target_index] == "or"
-                and tokens[target_index + 1] in _SQLITE_UPDATE_CONFLICT_ACTIONS
+                and tokens[target_index].kind == "keyword"
+                and tokens[target_index].value == "or"
+                and tokens[target_index + 1].kind == "keyword"
+                and tokens[target_index + 1].value
+                in _SQLITE_UPDATE_CONFLICT_ACTIONS
             ):
                 target_index += 2
-            if target_index < len(tokens) and tokens[target_index] == "only":
+            if (
+                target_index < len(tokens)
+                and tokens[target_index].kind == "keyword"
+                and tokens[target_index].value == "only"
+            ):
                 target_index += 1
-        elif token == "delete" and index + 1 < len(tokens) and tokens[index + 1] == "from":
+        elif (
+            token.kind == "keyword"
+            and token.value == "delete"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "keyword"
+            and tokens[index + 1].value == "from"
+        ):
             target_index = index + 2
-            if target_index < len(tokens) and tokens[target_index] == "only":
+            if (
+                target_index < len(tokens)
+                and tokens[target_index].kind == "keyword"
+                and tokens[target_index].value == "only"
+            ):
                 target_index += 1
         if target_index is None:
             continue

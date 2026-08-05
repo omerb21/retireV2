@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { M05Candidate, M05Revision, M05Subject } from "../api/m05LedgerApi";
 import { M05LedgerScreen } from "./M05LedgerScreen";
@@ -94,12 +94,18 @@ function renderPage() {
 }
 function Navigation() {
   const navigate = useNavigate();
-  return <><button onClick={() => navigate("/clients/1/pension-ledger")}>A</button><button onClick={() => navigate("/clients/2/pension-ledger")}>B</button><button onClick={() => navigate("/clients/1/pension-ledger", { state: { revisit: Math.random() } })}>A revisit</button></>;
+  const location = useLocation();
+  return <><button onClick={() => navigate("/clients/1/pension-ledger")}>A</button><button onClick={() => navigate("/clients/2/pension-ledger")}>B</button><button onClick={() => navigate("/clients/1/pension-ledger", { state: { revisit: Math.random() } })}>A revisit</button><output aria-label="route generation">{location.key}</output></>;
 }
 function renderNavigable() {
   return render(<MemoryRouter initialEntries={["/clients/1/pension-ledger"]}><Navigation /><Routes>
     <Route path="/clients/:clientId/pension-ledger" element={<M05LedgerScreen />} />
   </Routes></MemoryRouter>);
+}
+async function revisitRoute() {
+  const previous = screen.getByLabelText("route generation").textContent;
+  fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
+  await waitFor(() => expect(screen.getByLabelText("route generation").textContent).not.toBe(previous));
 }
 const mutations = [
   ["Start ledger", "/m05/start"],
@@ -130,6 +136,22 @@ const staleReadResponse = (unit: DetailUnit) => unit === "detail"
       : unit === "warnings"
         ? json([{ warning_id: "STALE_EVIDENCE", classification: "informational" }])
         : json({ ...subject(1).eligibility, exclusion_reasons: ["STALE_EVIDENCE"] });
+const ownedReadResponse = (unit: DetailUnit, marker = "ACTIVE_NEW_OWNER") => unit === "detail"
+  ? json({
+      ...subject(1), provider_name: marker,
+      current_revision: {
+        ...revision(1),
+        provider_name: marker,
+        product_context: { ...revision(1).product_context, active_owner_marker: marker },
+      },
+    })
+  : unit === "history"
+    ? json([{ ...revision(1), product_context: { product_name: marker } }])
+    : unit === "provenance"
+      ? json({ marker })
+      : unit === "warnings"
+        ? json([{ warning_id: marker, classification: "informational" }])
+        : json({ ...subject(1).eligibility, exclusion_reasons: [marker] });
 const settle = async (pending: Deferred<Response>, outcome: Settlement, response = json({ marker: "STALE_EVIDENCE" })) => {
   await act(async () => {
     if (outcome === "success") pending.resolve(response);
@@ -358,6 +380,102 @@ describe("M05LedgerScreen", () => {
     },
   );
 
+  it.each(settlements)(
+    "keeps newer overview owner pending while stale candidate %s and finally settle",
+    async (outcome) => {
+      const old = deferred<Response>(); const current = deferred<Response>(); let calls = 0;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        if (url.endsWith("/m05/candidates")) {
+          calls += 1;
+          if (calls === 1) return old.promise;
+          if (calls === 2) return current.promise;
+        }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      await waitFor(() => expect(calls).toBe(1));
+      await revisitRoute();
+      await waitFor(() => expect(calls).toBe(2));
+      await settle(old, outcome, json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }]));
+      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await act(async () => current.resolve(json([{ ...candidate(1), provider_name: "ACTIVE_NEW_OWNER" }])));
+      expect(await screen.findByRole("button", { name: /ACTIVE_NEW_OWNER/ })).toBeInTheDocument();
+      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(
+    detailUnits.flatMap((unit) => settlements.map((outcome) => [unit, outcome] as const)),
+  )(
+    "keeps newer %s read owner pending while stale %s and finally settle",
+    async (unit, outcome) => {
+      const old = deferred<Response>(); const current = deferred<Response>(); let calls = 0; let overviews = 0; let currentGeneration = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        if (url.endsWith("/m05/candidates")) overviews += 1;
+        if (matchesDetailUnit(unit, url)) {
+          calls += 1;
+          return currentGeneration ? current.promise : old.promise;
+        }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      await waitFor(() => expect(calls).toBe(1));
+      currentGeneration = true;
+      await revisitRoute();
+      await waitFor(() => expect(overviews).toBe(2));
+      fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      await waitFor(() => expect(calls).toBe(2));
+      await settle(old, outcome, staleReadResponse(unit));
+      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await act(async () => current.resolve(ownedReadResponse(unit)));
+      expect((await screen.findAllByText(/ACTIVE_NEW_OWNER/)).length).toBeGreaterThan(0);
+      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["overview", ...detailUnits] as const)(
+    "preserves newer %s error after an older success and finally settle",
+    async (unit) => {
+      const old = deferred<Response>(); let calls = 0; let overviews = 0; let currentGeneration = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = path(input);
+        if (url.endsWith("/m05/candidates")) overviews += 1;
+        const matches = unit === "overview" ? url.endsWith("/m05/candidates") : matchesDetailUnit(unit, url);
+        if (matches) {
+          calls += 1;
+          if (!currentGeneration) return old.promise;
+          throw new Error("ACTIVE_NEW_ERROR");
+        }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      if (unit !== "overview") {
+        fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      } else await waitFor(() => expect(calls).toBe(1));
+      currentGeneration = true;
+      await revisitRoute();
+      if (unit !== "overview") {
+        await waitFor(() => expect(overviews).toBe(2));
+        fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      }
+      expect(await screen.findByRole("alert")).toHaveTextContent("ACTIVE_NEW_ERROR");
+      const response = unit === "overview"
+        ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])
+        : staleReadResponse(unit);
+      await settle(old, "success", response);
+      expect(screen.getByRole("alert")).toHaveTextContent("ACTIVE_NEW_ERROR");
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+    },
+  );
+
   it.each(mutations)("current %s launches every independently guarded refresh unit", async (button, endpoint) => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -411,6 +529,79 @@ describe("M05LedgerScreen", () => {
   );
 
   it.each(
+    mutations.flatMap(([button, endpoint]) =>
+      settlements.map((outcome) => [button, endpoint, outcome] as const),
+    ),
+  )(
+    "keeps newer %s mutation owner pending while stale %s settles on %s",
+    async (button, endpoint, outcome) => {
+      const old = deferred<Response>(); const current = deferred<Response>();
+      let posts = 0; let gets = 0;
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = path(input); const method = init?.method ?? "GET";
+        calls.push(`${method} ${url}`);
+        if (method === "GET") gets += 1;
+        if (method === "POST" && url.endsWith(endpoint)) {
+          posts += 1;
+          return posts === 1 ? old.promise : current.promise;
+        }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      await launchMutation(button);
+      await revisitRoute();
+      await launchMutation(button);
+      expect(posts).toBe(2);
+      const currentControl = screen.getByRole("button", { name: button });
+      expect(currentControl).toBeDisabled();
+      const beforeStale = gets;
+      await settle(old, outcome, json(revision(1), 201));
+      expect(gets).toBe(beforeStale);
+      expect(currentControl).toBeDisabled();
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      calls.length = 0;
+      await act(async () => current.resolve(json(revision(1, "reconciled"), 201)));
+      for (const suffix of [
+        "/api/clients/1", "/m05/candidates", "/m05/subjects",
+        "/subjects/subject-1", "/history", "/provenance", "/warnings", "/m06-eligibility",
+      ]) {
+        await waitFor(() => expect(calls.some((call) => call.startsWith("GET ") && call.endsWith(suffix))).toBe(true));
+      }
+      await waitFor(() => expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument());
+    },
+  );
+
+  it.each(mutations)(
+    "preserves newer %s mutation error when older success/finally settle on %s",
+    async (button, endpoint) => {
+      const old = deferred<Response>(); const current = deferred<Response>();
+      let posts = 0; let gets = 0;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = path(input); const method = init?.method ?? "GET";
+        if (method === "GET") gets += 1;
+        if (method === "POST" && url.endsWith(endpoint)) {
+          posts += 1;
+          return posts === 1 ? old.promise : current.promise;
+        }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      await launchMutation(button);
+      await revisitRoute();
+      await launchMutation(button);
+      await act(async () => current.reject(new Error("ACTIVE_NEW_ERROR")));
+      expect(await screen.findByRole("alert")).toHaveTextContent("ACTIVE_NEW_ERROR");
+      const beforeStale = gets;
+      await settle(old, "success", json(revision(1), 201));
+      expect(gets).toBe(beforeStale);
+      expect(screen.getByRole("alert")).toHaveTextContent("ACTIVE_NEW_ERROR");
+      expect(screen.getByRole("button", { name: button })).not.toBeDisabled();
+    },
+  );
+
+  it.each(
     mutations.slice(1).flatMap(([button, endpoint]) =>
       settlements.map((outcome) => [button, endpoint, outcome] as const),
     ),
@@ -447,16 +638,26 @@ describe("M05LedgerScreen", () => {
       settlements.map((outcome) => [button, endpoint, outcome] as const),
     ),
   )("unmount invalidates pending %s mutation %s, %s and finally", async (button, endpoint, outcome) => {
-    const pending = deferred<Response>();
+    const pending = deferred<Response>(); let gets = 0;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = path(input);
+      if ((init?.method ?? "GET") === "GET") gets += 1;
       if ((init?.method ?? "GET") === "POST" && url.endsWith(endpoint)) return pending.promise;
       return defaultResponse(url);
     }));
     const view = renderPage();
     await launchMutation(button);
     view.unmount();
+    const remounted = renderPage();
+    expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
+    const beforeStale = gets;
     await settle(pending, outcome, json(revision(1), 201));
+    expect(gets).toBe(beforeStale);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+    expect(consoleError).not.toHaveBeenCalled();
+    remounted.unmount();
   });
 
   it.each(
@@ -467,6 +668,7 @@ describe("M05LedgerScreen", () => {
     "unmount invalidates pending %s read %s and finally",
     async (unit, outcome) => {
       const pending = deferred<Response>(); let delayed = false;
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
         const url = path(input);
         const matches = unit === "candidates" ? url.endsWith("/m05/candidates")
@@ -481,8 +683,19 @@ describe("M05LedgerScreen", () => {
         await waitFor(() => expect(delayed).toBe(true));
       }
       view.unmount();
+      const remounted = renderPage();
+      if (unit !== "candidates") {
+        fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+        expect(await screen.findByText(/Current ledger/)).toBeInTheDocument();
+      } else {
+        expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
+      }
       const response = unit === "candidates" ? json([candidate(1)]) : staleReadResponse(unit);
       await settle(pending, outcome, response);
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(consoleError).not.toHaveBeenCalled();
+      remounted.unmount();
     },
   );
 
@@ -514,6 +727,56 @@ describe("M05LedgerScreen", () => {
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(
+    (["overview", ...detailUnits] as const).flatMap((unit) =>
+      settlements.map((outcome) => [unit, outcome] as const),
+    ),
+  )(
+    "keeps newer %s refresh owner pending while stale refresh %s/finally settle",
+    async (unit, outcome) => {
+      const old = deferred<Response>(); const current = deferred<Response>();
+      let afterPost = false; let refreshCalls = 0; let overviewCalls = 0; let currentGeneration = false;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = path(input);
+        if (url.endsWith("/m05/candidates")) overviewCalls += 1;
+        if ((init?.method ?? "GET") === "POST" && url.endsWith("/reconcile")) {
+          afterPost = true;
+          return json(revision(1, "reconciled"), 201);
+        }
+        const matches = unit === "overview" ? url.endsWith("/m05/candidates") : matchesDetailUnit(unit, url);
+        if (afterPost && matches) {
+          refreshCalls += 1;
+          return currentGeneration ? current.promise : old.promise;
+        }
+        return defaultResponse(url);
+      }));
+      renderNavigable();
+      await launchMutation("Reconcile");
+      await waitFor(() => expect(refreshCalls).toBe(1));
+      currentGeneration = true;
+      await revisitRoute();
+      if (unit !== "overview") {
+        await waitFor(() => expect(overviewCalls).toBe(3));
+        fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
+      }
+      await waitFor(() => expect(refreshCalls).toBe(2));
+      const staleResponse = unit === "overview"
+        ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])
+        : staleReadResponse(unit);
+      await settle(old, outcome, staleResponse);
+      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      const activeResponse = unit === "overview"
+        ? json([{ ...candidate(1), provider_name: "ACTIVE_REFRESH_OWNER" }])
+        : ownedReadResponse(unit, "ACTIVE_REFRESH_OWNER");
+      await act(async () => current.resolve(activeResponse));
+      expect((await screen.findAllByText(/ACTIVE_REFRESH_OWNER/)).length).toBeGreaterThan(0);
+      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
 

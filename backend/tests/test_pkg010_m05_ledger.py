@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, delete, event, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base, load_all_models
@@ -27,6 +28,7 @@ from app.models.m05_ledger import (
     M05LedgerSubject,
     M05LedgerValue,
     _sql_tokens,
+    authorize_m05_insert,
 )
 from app.services.m05_ledger_service import (
     ELIGIBILITY_REASON_ORDER,
@@ -336,6 +338,135 @@ def _assert_no_race_residue(
             assert isinstance(row.warning_dispositions, list)
 
 
+def _persisted_constraint_race(
+    sessions: sessionmaker[Session], table: str, row_factories
+) -> tuple[list[dict[str, str | None]], list[tuple[int, int]]]:
+    """Race two real flushes and normalize the dialect-specific integrity loser."""
+    engine = sessions.kw["bind"]
+    barrier = Barrier(2)
+    lock = Lock()
+    arrivals: list[tuple[int, int]] = []
+    prefix = f"insert into {table}"
+
+    def synchronize(connection, _cursor, statement, _parameters, _context, _many):
+        if not " ".join(statement.lower().split()).startswith(prefix):
+            return
+        worker = get_ident()
+        with lock:
+            if worker in {item[0] for item in arrivals} or len(arrivals) >= 2:
+                return
+            arrivals.append((worker, id(connection)))
+        barrier.wait(timeout=20)
+
+    def persist(factory):
+        with sessions() as db:
+            row = factory()
+            authorize_m05_insert(row)
+            db.add(row)
+            try:
+                db.flush()
+                db.commit()
+                return {"outcome": "winner", "message": None}
+            except IntegrityError as error:
+                db.rollback()
+                return {
+                    "outcome": "M05_CONCURRENT_MODIFICATION",
+                    "message": str(error.orig).lower(),
+                }
+
+    event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(persist, factory) for factory in row_factories]
+            outcomes = [future.result(timeout=30) for future in futures]
+    finally:
+        event.remove(engine, "before_cursor_execute", synchronize)
+    assert len(arrivals) == 2
+    assert len({worker for worker, _ in arrivals}) == 2
+    assert len({connection for _, connection in arrivals}) == 2
+    assert sorted(item["outcome"] for item in outcomes) == [
+        "M05_CONCURRENT_MODIFICATION",
+        "winner",
+    ]
+    return outcomes, arrivals
+
+
+def _isolated_subject(
+    sessions: sessionmaker[Session], suffix: str
+) -> M05LedgerSubject:
+    row = M05LedgerSubject(
+        subject_id=f"M05-S-ISOLATED-{suffix}",
+        client_id=1,
+        provider_name=f"Isolated Provider {suffix}",
+        account_reference=f"ISOLATED-{suffix}",
+        provider_identity_digest=_identity_digest(f"Isolated Provider {suffix}"),
+        account_identity_digest=_identity_digest(f"ISOLATED-{suffix}"),
+    )
+    with sessions() as db:
+        authorize_m05_insert(row)
+        db.add(row)
+        db.commit()
+    return row
+
+
+def _candidate_row(context, subject_id: str, candidate_id: str) -> M05CandidateLink:
+    return M05CandidateLink(
+        candidate_id=candidate_id,
+        subject_id=subject_id,
+        client_id=1,
+        intake_id=context.intake.intake_id,
+        target_kind="manual_record_review",
+        m03_revision_id=context.m03_revision_id,
+        m04_revision_id=context.m04_revision_id,
+        statement_date=context.statement_date,
+        m03_decided_at=context.m03_decided_at,
+        source_snapshot_digest=context.source_snapshot_digest,
+    )
+
+
+def _persist_isolated_candidate(
+    sessions: sessionmaker[Session], subject_id: str, suffix: str
+) -> tuple[M05CandidateLink, object]:
+    with sessions() as db:
+        context = _candidate_context(
+            db, db.get(Client, 1), db.get(M02IntakeRecord, "manual-warning")
+        )
+        row = _candidate_row(context, subject_id, f"M05-C-ISOLATED-{suffix}")
+        authorize_m05_insert(row)
+        db.add(row)
+        db.commit()
+        return row, context
+
+
+def _revision_row(
+    template: M05LedgerRevision,
+    *,
+    revision_id: str,
+    subject_id: str,
+    candidate_id: str,
+    sequence: int,
+    predecessor_id: str | None,
+) -> M05LedgerRevision:
+    values = {
+        column.name: getattr(template, column.name)
+        for column in M05LedgerRevision.__table__.columns
+        if column.name
+        not in {
+            "revision_id", "subject_id", "candidate_id",
+            "revision_sequence", "predecessor_revision_id", "evidence_digest",
+        }
+    }
+    values.update(
+        revision_id=revision_id,
+        subject_id=subject_id,
+        candidate_id=candidate_id,
+        revision_sequence=sequence,
+        predecessor_revision_id=predecessor_id,
+        evidence_digest=(revision_id[-1].lower() if revision_id[-1].lower() in "abcdef0123456789" else "a") * 64,
+    )
+    return M05LedgerRevision(**values)
+
+
 def test_candidate_start_reconcile_and_m06_gate(api) -> None:
     client, _ = api
     candidate = _candidate(client, "A-001")
@@ -413,7 +544,7 @@ def test_precedence_newer_ineligible_and_revalidation(api) -> None:
 
 def test_exact_precedence_tie_fails_closed(api, monkeypatch) -> None:
     client, sessions = api
-    fixed = datetime.now(timezone.utc) + timedelta(seconds=1)
+    fixed = datetime.now(timezone.utc) + timedelta(minutes=1)
     monkeypatch.setattr(
         "app.models.m03_review.m03_server_timestamp", lambda: fixed
     )
@@ -1428,6 +1559,260 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
     )
 
 
+def test_ac010_030_isolates_candidate_tuple_uniqueness(api) -> None:
+    _client, sessions = api
+    isolated = _isolated_subject(sessions, "CANDIDATE")
+    with sessions() as db:
+        context = _candidate_context(
+            db, db.get(Client, 1), db.get(M02IntakeRecord, "manual-warning")
+        )
+        before = {
+            column.name: getattr(db.get(M05LedgerSubject, isolated.subject_id), column.name)
+            for column in M05LedgerSubject.__table__.columns
+        }
+
+    outcomes, _ = _persisted_constraint_race(
+        sessions,
+        "m05_candidate_links",
+        [
+            lambda: _candidate_row(context, isolated.subject_id, "M05-C-RACE-A"),
+            lambda: _candidate_row(context, isolated.subject_id, "M05-C-RACE-B"),
+        ],
+    )
+    loser = next(item for item in outcomes if item["outcome"] != "winner")
+    assert all(
+        column in loser["message"]
+        for column in (
+            "client_id", "intake_id", "target_kind",
+            "m03_revision_id", "m04_revision_id",
+        )
+    ), loser
+    with sessions() as db:
+        links = list(
+            db.scalars(
+                select(M05CandidateLink).where(
+                    M05CandidateLink.subject_id == isolated.subject_id
+                )
+            ).all()
+        )
+        assert len(links) == 1
+        assert links[0].candidate_id in {"M05-C-RACE-A", "M05-C-RACE-B"}
+        after = {
+            column.name: getattr(db.get(M05LedgerSubject, isolated.subject_id), column.name)
+            for column in M05LedgerSubject.__table__.columns
+        }
+        assert after == before
+        assert db.scalar(
+            select(func.count()).select_from(M05LedgerRevision).where(
+                M05LedgerRevision.subject_id == isolated.subject_id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count()).select_from(M05LedgerValue).where(
+                M05LedgerValue.subject_id == isolated.subject_id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count()).select_from(M05AdjustmentEvidence).where(
+                M05AdjustmentEvidence.subject_id == isolated.subject_id
+            )
+        ) == 0
+
+
+def test_ac010_030_isolates_value_revision_identity_uniqueness(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    revision_id = started["revision_id"]
+    subject_id = started["subject_id"]
+    with sessions() as db:
+        before_revision = {
+            column.name: getattr(db.get(M05LedgerRevision, revision_id), column.name)
+            for column in M05LedgerRevision.__table__.columns
+        }
+        before_values = db.scalar(
+            select(func.count()).select_from(M05LedgerValue).where(
+                M05LedgerValue.revision_id == revision_id
+            )
+        )
+
+    def value_row(value_id: str) -> M05LedgerValue:
+        return M05LedgerValue(
+            value_id=value_id,
+            revision_id=revision_id,
+            subject_id=subject_id,
+            client_id=1,
+            evidence_identity="isolated:value-identity",
+            component_index=99,
+            original_label="Isolated value identity",
+            original_code="unknown_component",
+            component_kind="unknown_component",
+            source_state="recorded_value",
+            source_value=Decimal("1.00"),
+            effective_state="recorded_value",
+            effective_value=Decimal("1.00"),
+            included_in_reconciliation=False,
+            exclusion_reason="isolated_constraint_evidence",
+        )
+
+    outcomes, _ = _persisted_constraint_race(
+        sessions,
+        "m05_ledger_values",
+        [lambda: value_row("M05-V-RACE-A"), lambda: value_row("M05-V-RACE-B")],
+    )
+    loser = next(item for item in outcomes if item["outcome"] != "winner")
+    assert "revision_id" in loser["message"]
+    assert "evidence_identity" in loser["message"]
+    with sessions() as db:
+        values = list(
+            db.scalars(
+                select(M05LedgerValue).where(
+                    M05LedgerValue.revision_id == revision_id,
+                    M05LedgerValue.evidence_identity == "isolated:value-identity",
+                )
+            ).all()
+        )
+        assert len(values) == 1
+        assert values[0].value_id.startswith("M05-V-")
+        assert db.scalar(
+            select(func.count()).select_from(M05LedgerValue).where(
+                M05LedgerValue.revision_id == revision_id
+            )
+        ) == before_values + 1
+        after_revision = {
+            column.name: getattr(db.get(M05LedgerRevision, revision_id), column.name)
+            for column in M05LedgerRevision.__table__.columns
+        }
+        assert after_revision == before_revision
+        assert db.scalar(
+            select(func.count()).select_from(M05AdjustmentEvidence).where(
+                M05AdjustmentEvidence.revision_id == revision_id
+            )
+        ) == 0
+
+
+def test_ac010_030_isolates_revision_subject_sequence_uniqueness(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    isolated = _isolated_subject(sessions, "SEQUENCE")
+    candidate, _ = _persist_isolated_candidate(sessions, isolated.subject_id, "SEQUENCE")
+    with sessions() as db:
+        template = db.get(M05LedgerRevision, started["revision_id"])
+        template_values = {
+            column.name: getattr(template, column.name)
+            for column in M05LedgerRevision.__table__.columns
+        }
+    template = M05LedgerRevision(**template_values)
+
+    outcomes, _ = _persisted_constraint_race(
+        sessions,
+        "m05_ledger_revisions",
+        [
+            lambda: _revision_row(
+                template, revision_id="M05-R-SEQUENCE-A", subject_id=isolated.subject_id,
+                candidate_id=candidate.candidate_id, sequence=1, predecessor_id=None,
+            ),
+            lambda: _revision_row(
+                template, revision_id="M05-R-SEQUENCE-B", subject_id=isolated.subject_id,
+                candidate_id=candidate.candidate_id, sequence=1, predecessor_id=None,
+            ),
+        ],
+    )
+    loser = next(item for item in outcomes if item["outcome"] != "winner")
+    assert "subject_id" in loser["message"]
+    assert "revision_sequence" in loser["message"]
+    assert "predecessor_revision_id" not in loser["message"]
+    with sessions() as db:
+        rows = list(
+            db.scalars(
+                select(M05LedgerRevision).where(
+                    M05LedgerRevision.subject_id == isolated.subject_id
+                )
+            ).all()
+        )
+        assert len(rows) == 1
+        assert rows[0].revision_sequence == 1
+        assert rows[0].predecessor_revision_id is None
+        assert db.scalar(
+            select(func.count()).select_from(M05LedgerValue).where(
+                M05LedgerValue.subject_id == isolated.subject_id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count()).select_from(M05AdjustmentEvidence).where(
+                M05AdjustmentEvidence.subject_id == isolated.subject_id
+            )
+        ) == 0
+
+
+def test_ac010_030_isolates_one_child_per_predecessor_uniqueness(api) -> None:
+    client, sessions = api
+    started = _start(client, "A-001")
+    isolated = _isolated_subject(sessions, "PREDECESSOR")
+    candidate, _ = _persist_isolated_candidate(sessions, isolated.subject_id, "PREDECESSOR")
+    with sessions() as db:
+        source = db.get(M05LedgerRevision, started["revision_id"])
+        template_values = {
+            column.name: getattr(source, column.name)
+            for column in M05LedgerRevision.__table__.columns
+        }
+    template = M05LedgerRevision(**template_values)
+    root = _revision_row(
+        template,
+        revision_id="M05-R-PREDECESSOR-ROOT",
+        subject_id=isolated.subject_id,
+        candidate_id=candidate.candidate_id,
+        sequence=1,
+        predecessor_id=None,
+    )
+    with sessions() as db:
+        authorize_m05_insert(root)
+        db.add(root)
+        db.commit()
+
+    outcomes, _ = _persisted_constraint_race(
+        sessions,
+        "m05_ledger_revisions",
+        [
+            lambda: _revision_row(
+                template, revision_id="M05-R-PREDECESSOR-A", subject_id=isolated.subject_id,
+                candidate_id=candidate.candidate_id, sequence=2,
+                predecessor_id=root.revision_id,
+            ),
+            lambda: _revision_row(
+                template, revision_id="M05-R-PREDECESSOR-B", subject_id=isolated.subject_id,
+                candidate_id=candidate.candidate_id, sequence=3,
+                predecessor_id=root.revision_id,
+            ),
+        ],
+    )
+    loser = next(item for item in outcomes if item["outcome"] != "winner")
+    assert "predecessor_revision_id" in loser["message"]
+    assert "revision_sequence" not in loser["message"]
+    with sessions() as db:
+        children = list(
+            db.scalars(
+                select(M05LedgerRevision).where(
+                    M05LedgerRevision.predecessor_revision_id == root.revision_id
+                )
+            ).all()
+        )
+        assert len(children) == 1
+        assert children[0].revision_id in {
+            "M05-R-PREDECESSOR-A", "M05-R-PREDECESSOR-B"
+        }
+        assert children[0].revision_sequence in {2, 3}
+        assert db.scalar(
+            select(func.count()).select_from(M05LedgerValue).where(
+                M05LedgerValue.subject_id == isolated.subject_id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count()).select_from(M05AdjustmentEvidence).where(
+                M05AdjustmentEvidence.subject_id == isolated.subject_id
+            )
+        ) == 0
+
+
 def test_deterministic_duplicate_candidate_tuple_collision_is_isolated(api) -> None:
     client, sessions = api
     candidate_id = _candidate(client, "A-001")["candidate_id"]
@@ -2440,7 +2825,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
         db.get(Client, 1).status = "delivered"
         db.commit()
 
-    fixed = datetime.now(timezone.utc) + timedelta(seconds=1)
+    fixed = datetime.now(timezone.utc) + timedelta(minutes=1)
     monkeypatch.setattr("app.models.m03_review.m03_server_timestamp", lambda: fixed)
     tie = create_source(
         "tie-one", provider="Tie Gate Provider", account="TIE-GATE"

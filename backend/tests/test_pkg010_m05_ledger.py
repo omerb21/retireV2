@@ -7,7 +7,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
-from threading import Barrier, Lock, get_ident
+from threading import Barrier, Event, Lock, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -241,15 +241,19 @@ def _overlap_at_insert(
     sessions: sessionmaker[Session],
     table: str,
     operations,
+    *,
+    ordered_winner_index: int | None = None,
+    ordered_winner_marker: str | None = None,
 ):
     """Release two independent SQLAlchemy connections at the same pre-write point."""
     engine = sessions.kw["bind"]
     barrier = Barrier(2)
     lock = Lock()
     arrivals: list[tuple[int, int]] = []
+    ordered_winner_finished = Event()
     prefix = f"insert into {table}"
 
-    def synchronize(connection, _cursor, statement, _parameters, _context, _many):
+    def synchronize(connection, _cursor, statement, parameters, _context, _many):
         normalized = " ".join(statement.lower().split())
         if not normalized.startswith(prefix):
             return
@@ -261,11 +265,26 @@ def _overlap_at_insert(
                 should_wait = True
         if should_wait:
             barrier.wait(timeout=20)
+            if (
+                ordered_winner_marker is not None
+                and ordered_winner_marker not in repr(parameters)
+            ):
+                assert ordered_winner_finished.wait(timeout=20)
+
+    def run(index, operation):
+        try:
+            return operation()
+        finally:
+            if index == ordered_winner_index:
+                ordered_winner_finished.set()
 
     event.listen(engine, "before_cursor_execute", synchronize)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(operation) for operation in operations]
+            futures = [
+                pool.submit(run, index, operation)
+                for index, operation in enumerate(operations)
+            ]
             responses = [future.result(timeout=30) for future in futures]
     finally:
         event.remove(engine, "before_cursor_execute", synchronize)
@@ -339,16 +358,19 @@ def _assert_no_race_residue(
 
 
 def _persisted_constraint_race(
-    sessions: sessionmaker[Session], table: str, row_factories
+    sessions: sessionmaker[Session], table: str, row_factories,
+    *, ordered_winner_index: int | None = None,
+    ordered_winner_marker: str | None = None,
 ) -> tuple[list[dict[str, str | None]], list[tuple[int, int]]]:
     """Race two real flushes and normalize the dialect-specific integrity loser."""
     engine = sessions.kw["bind"]
     barrier = Barrier(2)
     lock = Lock()
     arrivals: list[tuple[int, int]] = []
+    ordered_winner_finished = Event()
     prefix = f"insert into {table}"
 
-    def synchronize(connection, _cursor, statement, _parameters, _context, _many):
+    def synchronize(connection, _cursor, statement, parameters, _context, _many):
         if not " ".join(statement.lower().split()).startswith(prefix):
             return
         worker = get_ident()
@@ -357,12 +379,19 @@ def _persisted_constraint_race(
                 return
             arrivals.append((worker, id(connection)))
         barrier.wait(timeout=20)
+        if (
+            ordered_winner_marker is not None
+            and ordered_winner_marker not in repr(parameters)
+        ):
+            assert ordered_winner_finished.wait(timeout=20)
 
-    def persist(factory):
+    def persist(index, factory):
         with sessions() as db:
-            row = factory()
-            authorize_m05_insert(row)
-            db.add(row)
+            produced = factory()
+            rows = list(produced) if isinstance(produced, (list, tuple)) else [produced]
+            for row in rows:
+                authorize_m05_insert(row)
+            db.add_all(rows)
             try:
                 db.flush()
                 db.commit()
@@ -373,11 +402,17 @@ def _persisted_constraint_race(
                     "outcome": "M05_CONCURRENT_MODIFICATION",
                     "message": str(error.orig).lower(),
                 }
+            finally:
+                if index == ordered_winner_index:
+                    ordered_winner_finished.set()
 
     event.listen(engine, "before_cursor_execute", synchronize)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(persist, factory) for factory in row_factories]
+            futures = [
+                pool.submit(persist, index, factory)
+                for index, factory in enumerate(row_factories)
+            ]
             outcomes = [future.result(timeout=30) for future in futures]
     finally:
         event.remove(engine, "before_cursor_execute", synchronize)
@@ -1486,8 +1521,18 @@ def test_barrier_race_reconcile_vs_adjust_and_retry(api) -> None:
     _assert_no_race_residue(sessions, started["subject_id"], 3)
 
 
-@pytest.mark.parametrize("race", ["review_vs_supersede", "blocked_adjust_vs_supersede"])
-def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race) -> None:
+@pytest.mark.parametrize(
+    ("race", "winner_index"),
+    [
+        ("review_vs_supersede", 0),
+        ("review_vs_supersede", 1),
+        ("blocked_adjust_vs_supersede", 0),
+        ("blocked_adjust_vs_supersede", 1),
+    ],
+)
+def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(
+    api, race, winner_index
+) -> None:
     client, sessions = api
     started = _start(client, "A-002" if race == "review_vs_supersede" else "A-001")
     current = started
@@ -1539,24 +1584,79 @@ def test_barrier_simultaneous_lifecycle_actions_have_one_clean_winner(api, race)
         )
 
     responses = _overlap_at_insert(
-        sessions, "m05_ledger_revisions", [first, second]
+        sessions,
+        "m05_ledger_revisions",
+        [first, second],
+        ordered_winner_index=winner_index,
+        ordered_winner_marker=(
+            "'review_warning'" if race == "review_vs_supersede" else "'adjust'"
+        ) if winner_index == 0 else "'supersede'",
     )
     _assert_stable_race_outcome(responses)
-    with sessions() as db:
-        rows = list(
-            db.scalars(
-                select(M05LedgerRevision).where(
-                    M05LedgerRevision.subject_id == started["subject_id"]
-                )
-            ).all()
+    assert responses[winner_index].status_code == 201
+    expected_action = (
+        "review_warning" if race == "review_vs_supersede" else "adjust"
+    ) if winner_index == 0 else "supersede"
+    assert responses[winner_index].json()["action_type"] == expected_action
+
+    subject_url = f"/api/clients/1/m05/subjects/{started['subject_id']}"
+    race_leaf = client.get(subject_url).json()["current_revision"]
+    assert race_leaf["revision_id"] == responses[winner_index].json()["revision_id"]
+    base_revisions = 2 if race == "blocked_adjust_vs_supersede" else 1
+    _assert_no_race_residue(sessions, started["subject_id"], base_revisions + 1)
+
+    if winner_index == 0:
+        retry = client.post(
+            f"{subject_url}/supersede",
+            json={
+                "expected_current_revision_id": race_leaf["revision_id"],
+                "reason_code": "conditional_retry",
+                "explanation": "retry valid supersession against refreshed leaf",
+            },
         )
-        assert len(rows) == (3 if race == "blocked_adjust_vs_supersede" else 2)
-        assert len({row.revision_sequence for row in rows}) == len(rows)
-    _assert_no_race_residue(
-        sessions,
-        started["subject_id"],
-        3 if race == "blocked_adjust_vs_supersede" else 2,
-    )
+        assert retry.status_code == 201, retry.text
+        assert retry.json()["state"] == "superseded"
+        assert retry.json()["predecessor_revision_id"] == race_leaf["revision_id"]
+        _assert_no_race_residue(
+            sessions, started["subject_id"], base_revisions + 2
+        )
+    else:
+        if race == "review_vs_supersede":
+            retry = client.post(
+                f"{subject_url}/review-warning",
+                json={
+                    "expected_current_revision_id": race_leaf["revision_id"],
+                    "mandatory_warning_ids": [
+                        "reconciliation_difference_review_required"
+                    ],
+                    "reason_code": "invalid_retry",
+                    "explanation": "terminal superseded leaf rejects warning review",
+                    "confirmed": True,
+                },
+            )
+            expected_message = "Warning review is allowed only from draft"
+        else:
+            retry = client.post(
+                f"{subject_url}/adjust",
+                json={
+                    "expected_current_revision_id": race_leaf["revision_id"],
+                    "evidence_identity": component["evidence_identity"],
+                    "new_effective_value": "59.98",
+                    "reason_code": "invalid_retry",
+                    "explanation": "terminal superseded leaf rejects adjustment",
+                    "confirmed": True,
+                },
+            )
+            expected_message = "Superseded ledgers are terminal"
+        assert retry.status_code == 409
+        assert retry.json()["detail"] == {
+            "code": "M05_INVALID_LIFECYCLE_TRANSITION",
+            "message": expected_message,
+        }
+        assert client.get(subject_url).json()["current_revision"]["revision_id"] == race_leaf["revision_id"]
+        _assert_no_race_residue(
+            sessions, started["subject_id"], base_revisions + 1
+        )
 
 
 def test_ac010_030_isolates_candidate_tuple_uniqueness(api) -> None:
@@ -1747,43 +1847,57 @@ def test_ac010_030_isolates_revision_subject_sequence_uniqueness(api) -> None:
 def test_ac010_030_isolates_one_child_per_predecessor_uniqueness(api) -> None:
     client, sessions = api
     started = _start(client, "A-001")
-    isolated = _isolated_subject(sessions, "PREDECESSOR")
-    candidate, _ = _persist_isolated_candidate(sessions, isolated.subject_id, "PREDECESSOR")
+    subject_id = started["subject_id"]
+    root_id = started["revision_id"]
     with sessions() as db:
-        source = db.get(M05LedgerRevision, started["revision_id"])
+        source = db.get(M05LedgerRevision, root_id)
         template_values = {
             column.name: getattr(source, column.name)
             for column in M05LedgerRevision.__table__.columns
         }
+        value_templates = [
+            {
+                column.name: getattr(value, column.name)
+                for column in M05LedgerValue.__table__.columns
+                if column.name not in {"value_id", "revision_id"}
+            }
+            for value in _values(db, root_id)
+        ]
     template = M05LedgerRevision(**template_values)
-    root = _revision_row(
-        template,
-        revision_id="M05-R-PREDECESSOR-ROOT",
-        subject_id=isolated.subject_id,
-        candidate_id=candidate.candidate_id,
-        sequence=1,
-        predecessor_id=None,
-    )
-    with sessions() as db:
-        authorize_m05_insert(root)
-        db.add(root)
-        db.commit()
+    winner_revision_id = "M05-R-" + "a" * 32
+    loser_revision_id = "M05-R-" + "b" * 32
+
+    def child_bundle(revision_id: str, sequence: int):
+        revision = _revision_row(
+            template,
+            revision_id=revision_id,
+            subject_id=subject_id,
+            candidate_id=started["candidate_id"],
+            sequence=sequence,
+            predecessor_id=root_id,
+        )
+        revision.state = "reconciled"
+        revision.action_type = "reconcile"
+        values = [
+            M05LedgerValue(
+                value_id=f"M05-V-{revision_id[-1]}-{index}",
+                revision_id=revision_id,
+                **value,
+            )
+            for index, value in enumerate(value_templates)
+        ]
+        revision.evidence_digest = _revision_digest(revision, values)
+        return [revision, *values]
 
     outcomes, _ = _persisted_constraint_race(
         sessions,
         "m05_ledger_revisions",
         [
-            lambda: _revision_row(
-                template, revision_id="M05-R-PREDECESSOR-A", subject_id=isolated.subject_id,
-                candidate_id=candidate.candidate_id, sequence=2,
-                predecessor_id=root.revision_id,
-            ),
-            lambda: _revision_row(
-                template, revision_id="M05-R-PREDECESSOR-B", subject_id=isolated.subject_id,
-                candidate_id=candidate.candidate_id, sequence=3,
-                predecessor_id=root.revision_id,
-            ),
+            lambda: child_bundle(winner_revision_id, 2),
+            lambda: child_bundle(loser_revision_id, 3),
         ],
+        ordered_winner_index=0,
+        ordered_winner_marker=winner_revision_id,
     )
     loser = next(item for item in outcomes if item["outcome"] != "winner")
     assert "predecessor_revision_id" in loser["message"]
@@ -1792,25 +1906,63 @@ def test_ac010_030_isolates_one_child_per_predecessor_uniqueness(api) -> None:
         children = list(
             db.scalars(
                 select(M05LedgerRevision).where(
-                    M05LedgerRevision.predecessor_revision_id == root.revision_id
+                    M05LedgerRevision.predecessor_revision_id == root_id
                 )
             ).all()
         )
         assert len(children) == 1
-        assert children[0].revision_id in {
-            "M05-R-PREDECESSOR-A", "M05-R-PREDECESSOR-B"
-        }
-        assert children[0].revision_sequence in {2, 3}
+        assert children[0].revision_id == winner_revision_id
+        assert children[0].revision_sequence == 2
         assert db.scalar(
             select(func.count()).select_from(M05LedgerValue).where(
-                M05LedgerValue.subject_id == isolated.subject_id
+                M05LedgerValue.subject_id == subject_id
             )
-        ) == 0
+        ) == len(value_templates) * 2
         assert db.scalar(
             select(func.count()).select_from(M05AdjustmentEvidence).where(
-                M05AdjustmentEvidence.subject_id == isolated.subject_id
+                M05AdjustmentEvidence.subject_id == subject_id
             )
         ) == 0
+
+    history = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/history"
+    )
+    assert history.status_code == 200, history.text
+    assert [row["revision_sequence"] for row in history.json()] == [1, 2]
+    detail = client.get(f"/api/clients/1/m05/subjects/{subject_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["current_revision"]["revision_id"] == winner_revision_id
+    provenance = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/provenance"
+    )
+    assert provenance.status_code == 200, provenance.text
+    eligibility = client.get(
+        f"/api/clients/1/m05/subjects/{subject_id}/m06-eligibility"
+    )
+    assert eligibility.status_code == 200, eligibility.text
+    assert "ledger_chain_inconsistent" not in eligibility.json()["exclusion_reasons"]
+    _assert_no_race_residue(sessions, subject_id, 2)
+
+    component = next(
+        value
+        for value in detail.json()["current_revision"]["values"]
+        if value["component_kind"] == "contribution_component"
+    )
+    retry = client.post(
+        f"/api/clients/1/m05/subjects/{subject_id}/adjust",
+        json={
+            "expected_current_revision_id": winner_revision_id,
+            "evidence_identity": component["evidence_identity"],
+            "new_effective_value": "59.99",
+            "reason_code": "post_race_retry",
+            "explanation": "legitimate retry against the contiguous current leaf",
+            "confirmed": True,
+        },
+    )
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["revision_sequence"] == 3
+    assert retry.json()["predecessor_revision_id"] == winner_revision_id
+    _assert_no_race_residue(sessions, subject_id, 3)
 
 
 def test_deterministic_duplicate_candidate_tuple_collision_is_isolated(api) -> None:

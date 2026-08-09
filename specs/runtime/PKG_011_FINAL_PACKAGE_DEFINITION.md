@@ -16,7 +16,7 @@
 
 ## Locked Professional Decisions
 
-| DecisionLocked answerDefinition consequenceRemaining ambiguity |                                                                                             |                                                                                                                                                                                 |      |
+| Decision | Locked answer | Definition consequence | Remaining ambiguity |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
 | M06-D01                                                        | Only `pension_fund` and `insurance_policy`; only current M05 `contribution_component`       | Exact fail-closed allowlist; unsupported families, components, mixed/unresolved classification, current-employer-related, and restricted inputs produce no authoritative result | None |
 | M06-D02                                                        | Explicit source-linked documentary or planner-declared coefficient only                     | No default, lookup, inference, V1 `200.0`, or caller authority flag; planner declaration always requires review                                                                 | None |
@@ -81,7 +81,7 @@ Predecessor IDs and digests are copied into the immutable M06 manifest as observ
 
 ## Final supported conversion matrix
 
-| ModeFormulaAuthoritative amountRequired subject anchorOutput unit |                                 |                                                                               |                                                                                                 |                        |
+| Mode | Formula | Authoritative amount | Required subject anchor | Output unit |
 | ----------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------- |
 | `balance_to_monthly_pension`                                      | `balance / coefficient`         | Current M05 effective value of the selected eligible `contribution_component` | Exact M05 subject, revision, candidate, component/evidence identity                             | ILS per month          |
 | `monthly_pension_to_capital_equivalent`                           | `monthly_pension * coefficient` | Same-chain M02 `declared_monthly_pension_amount`                              | Exact M02 intake plus the same eligible M05 subject and selected contribution-component context | ILS capital equivalent |
@@ -232,7 +232,7 @@ No coefficient catalogue, automatic table, provider lookup, or global coefficien
 
 ## Date/applicability contract
 
-| ModeRelevant input date                 |                                                                                   |
+| Mode | Relevant input date |
 | --------------------------------------- | --------------------------------------------------------------------------------- |
 | `balance_to_monthly_pension`            | M05 authoritative source `statement_date` captured by the current ledger revision |
 | `monthly_pension_to_capital_equivalent` | Same-chain M02 `declared_statement_date`                                          |
@@ -262,7 +262,7 @@ Persisted states are exactly:
 - `blocked`
 - `superseded`
 
-| Current stateActionSuccessorConditions |                       |                    |                                                      |
+| Current state | Action | Successor | Conditions |
 | -------------------------------------- | --------------------- | ------------------ | ---------------------------------------------------- |
 | none                                   | `start`               | `draft`            | Subject and client context safely resolve            |
 | `draft`                                | `resolve`             | `resolved`         | All gates pass and mandatory-warning set is empty    |
@@ -289,14 +289,14 @@ Every successful action appends one complete immutable successor. No row is upda
 
 ### Mandatory warnings
 
-| CodeTriggerDispositionDownstream consequence |                                                                                          |                           |                                                  |
+| Code | Trigger | Disposition | Downstream consequence |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------ |
 | `planner_declared_coefficient_authority`     | Coefficient authority class is `planner_declared`                                        | Exact-set review required | Draft cannot become authoritative until reviewed |
 | `coefficient_applicability_not_documented`   | No documentary applicability period exists and planner applicability declaration is used | Exact-set review required | Draft cannot become authoritative until reviewed |
 
 ### Informational inherited warnings
 
-| CodeTriggerDispositionDownstream consequence |                                 |             |                                                        |
+| Code | Trigger | Disposition | Downstream consequence |
 | -------------------------------------------- | ------------------------------- | ----------- | ------------------------------------------------------ |
 | `stale_warning`                              | Present in current M05 evidence | None in M06 | Preserved as information; does not independently block |
 | `newer_ineligible_candidate_exists`          | Present in current M05 evidence | None in M06 | Preserved as information; does not independently block |
@@ -305,7 +305,7 @@ No other first-stage M06 warning is authorized. In particular, there is no round
 
 ## Blocking reason catalogue
 
-| CodeTrigger                            |                                                                            |
+| Code | Trigger |
 | -------------------------------------- | -------------------------------------------------------------------------- |
 | `archived_case`                        | M01 is archived or otherwise mutation-ineligible                           |
 | `predecessor_not_current`              | A referenced M02-M05 revision is not current                               |
@@ -451,7 +451,7 @@ Historical M06 revisions remain immutable and readable.
 
 Read-time current eligibility compares the manifest against current authoritative predecessor state:
 
-| Later changeHistorical recordCurrent downstream eligibility |                               |                                          |
+| Later change | Historical record | Current downstream eligibility |
 | ----------------------------------------------------------- | ----------------------------- | ---------------------------------------- |
 | M03 controlling revision changes                            | Unchanged and readable        | False                                    |
 | M04 current leaf changes                                    | Unchanged and readable        | False                                    |
@@ -602,7 +602,7 @@ No historical M01-M05 conversion record is inferred or backfilled.
 
 ## Concurrency contract
 
-| RaceRequired behavior                     |                                                                                                 |
+| Race | Required behavior |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Two starts for same semantic subject/mode | One subject and draft winner; loser gets `conversion_subject_conflict`; no orphan rows          |
 | Two resolves from same draft              | One successor winner; loser gets `conversion_revision_stale`; no partial manifest               |

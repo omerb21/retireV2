@@ -60,6 +60,11 @@ ACCEPTED_ADDITIVE_TABLES = {
     "m05_ledger_revisions",
     "m05_ledger_values",
     "m05_adjustment_evidence",
+    "m06_conversion_subjects",
+    "m06_conversion_revisions",
+    "m06_coefficient_evidence",
+    "m06_calculation_manifests",
+    "m06_warning_dispositions",
 }
 
 _M07_REVISION_ID: str | None = None

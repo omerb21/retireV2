@@ -40,9 +40,9 @@ def _tables(database: Path) -> set[str]:
         }
 
 
-def test_pkg010_is_the_single_additive_head() -> None:
-    result = _run("sqlite:///:memory:", "heads")
-    assert result.stdout.strip() == f"{REVISION} (head)"
+def test_pkg010_remains_in_the_single_additive_history() -> None:
+    result = _run("sqlite:///:memory:", "history")
+    assert REVISION in result.stdout
 
 
 def test_pkg010_sqlite_upgrade_downgrade_reupgrade_is_bounded(tmp_path: Path) -> None:

@@ -111,6 +111,27 @@ APPROVED_PKG_007_PATHS = {
     "frontend/src/pages/M02PensionIntakeScreen.tsx",
     "frontend/src/routes/AppRoutes.tsx",
 }
+APPROVED_PKG_011_PATHS = {
+    "backend/alembic/versions/d7e3a6b9c204_pkg011_m06_conversion.py",
+    "backend/app/api/m06_conversion_routes.py",
+    "backend/app/db/base.py",
+    "backend/app/main.py",
+    "backend/app/models/m06_conversion.py",
+    "backend/app/schemas/m06_conversion.py",
+    "backend/app/services/m06_conversion_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_phase6_schema.py",
+    "backend/tests/test_phase7_persistence.py",
+    "backend/tests/test_phase9_api.py",
+    "backend/tests/test_pkg010_migration.py",
+    "backend/tests/test_pkg011_m06_conversion.py",
+    "backend/tests/test_pkg011_migration.py",
+    "frontend/src/api/m06ConversionApi.ts",
+    "frontend/src/pages/ClientDetailScreen.tsx",
+    "frontend/src/pages/M06ConversionScreen.test.tsx",
+    "frontend/src/pages/M06ConversionScreen.tsx",
+    "frontend/src/routes/AppRoutes.tsx",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -142,6 +163,7 @@ def _allowed_untracked_paths() -> set[str]:
         "backend/alembic/versions/b7e4c2d9a105_pkg001_fixation_run_statuses.py",
         *APPROVED_PKG_002_PATHS,
         *APPROVED_PKG_007_PATHS,
+        *APPROVED_PKG_011_PATHS,
     }
 
 
@@ -162,6 +184,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PKG_001_PATHS,
         *APPROVED_PKG_002_PATHS,
         *APPROVED_PKG_007_PATHS,
+        *APPROVED_PKG_011_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",

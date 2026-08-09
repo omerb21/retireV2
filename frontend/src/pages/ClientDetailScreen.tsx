@@ -1430,6 +1430,12 @@ export function ClientDetailScreen() {
         >
           M05 Pension Balance Ledger
         </Link>
+        <Link
+          className="button-link"
+          to={`/clients/${validRouteClientId}/pension-conversion`}
+        >
+          M06 Pension/Capital Conversion
+        </Link>
       </p>
       <p>
         <Link

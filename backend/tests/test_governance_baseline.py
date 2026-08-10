@@ -113,9 +113,12 @@ APPROVED_PKG_007_PATHS = {
 }
 APPROVED_PKG_011_PATHS = {
     "backend/alembic/versions/d7e3a6b9c204_pkg011_m06_conversion.py",
+    "backend/alembic/versions/e8f4b7c2d305_pkg011_predecessor_ownership.py",
     "backend/app/api/m06_conversion_routes.py",
     "backend/app/db/base.py",
     "backend/app/main.py",
+    "backend/app/models/m04_classification.py",
+    "backend/app/models/m05_ledger.py",
     "backend/app/models/m06_conversion.py",
     "backend/app/schemas/m06_conversion.py",
     "backend/app/services/m06_conversion_service.py",

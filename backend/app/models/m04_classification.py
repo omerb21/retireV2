@@ -211,6 +211,7 @@ class M04ClassificationRevision(Base):
             "target_kind",
             name="uq_m04_revision_identity_target",
         ),
+        UniqueConstraint("revision_id", "client_id", name="uq_m04_revision_identity_client"),
         Index(
             "ix_m04_revision_client_target",
             "client_id",

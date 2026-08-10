@@ -258,6 +258,7 @@ class M05LedgerRevision(Base):
             "subject_id",
             name="uq_m05_revision_identity_subject",
         ),
+        UniqueConstraint("revision_id", "client_id", name="uq_m05_revision_identity_client"),
         Index(
             "ix_m05_revision_client_subject",
             "client_id",

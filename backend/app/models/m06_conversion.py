@@ -117,6 +117,21 @@ class M06ConversionRevision(Base):
             ["m03_review_revisions.revision_id", "m03_review_revisions.client_id"],
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["m04_revision_id", "client_id"],
+            [
+                "m04_classification_revisions.revision_id",
+                "m04_classification_revisions.client_id",
+            ],
+            name="fk_m06_revision_m04_client",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["m05_revision_id", "client_id"],
+            ["m05_ledger_revisions.revision_id", "m05_ledger_revisions.client_id"],
+            name="fk_m06_revision_m05_client",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint(
             "subject_id", "revision_sequence", name="uq_m06_revision_subject_sequence"
         ),

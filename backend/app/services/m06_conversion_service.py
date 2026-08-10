@@ -108,9 +108,32 @@ def _digest(value: Any) -> str:
     ).hexdigest()
 
 
+def _semantic_list_key(value: Any) -> str:
+    return json.dumps(
+        _canonical(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+
+
+def _canonical_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    result = _canonical(manifest)
+    for key in ("warnings", "informational_warnings", "blocking_reasons"):
+        values = result.get(key)
+        if isinstance(values, list):
+            result[key] = sorted(values, key=_semantic_list_key)
+    predecessors = result.get("predecessors")
+    if isinstance(predecessors, dict):
+        for key in ("m05_warning_snapshot", "m05_warning_dispositions"):
+            values = predecessors.get(key)
+            if isinstance(values, list):
+                predecessors[key] = sorted(values, key=_semantic_list_key)
+    return result
+
+
 def _manifest_fingerprint(manifest: dict[str, Any]) -> str:
     return _digest(
-        {key: value for key, value in manifest.items() if key != "fingerprint"}
+        _canonical_manifest(
+            {key: value for key, value in manifest.items() if key != "fingerprint"}
+        )
     )
 
 
@@ -881,7 +904,7 @@ def _manifest(
         "actor": M06_WORKFLOW_ACTOR,
         "timestamp": revision.created_at,
     }
-    manifest = _canonical(manifest)
+    manifest = _canonical_manifest(manifest)
     fingerprint = _manifest_fingerprint(manifest)
     manifest["fingerprint"] = fingerprint
     row = M06CalculationManifest(
@@ -1254,31 +1277,61 @@ def _revalidation_reasons(
     )
 
 
-def eligibility(db: Session, client_id: int, subject_id: str) -> M06EligibilityResponse:
-    subject = _subject(db, client_id, subject_id)
-    leaf = _current(db, subject)
+def _eligibility_response(
+    db: Session,
+    subject: M06ConversionSubject,
+    assessed: M06ConversionRevision,
+    current: M06ConversionRevision,
+) -> M06EligibilityResponse:
+    if assessed.revision_id != current.revision_id:
+        return M06EligibilityResponse(
+            subject_id=subject.subject_id,
+            assessed_revision_id=assessed.revision_id,
+            eligible_for_downstream=False,
+            current_revision_id=current.revision_id,
+            exclusion_reasons=["conversion_not_current"],
+            informational_warnings=assessed.informational_warnings,
+        )
     reasons: list[str] = []
-    if leaf.state == "draft":
+    if assessed.state == "draft":
         reasons.append("conversion_draft")
-        if leaf.action_type == "resolve" and any(
-            item.get("classification") == "mandatory" for item in leaf.warnings
+        if assessed.action_type == "resolve" and any(
+            item.get("classification") == "mandatory" for item in assessed.warnings
         ):
             reasons.append("warning_not_reviewed")
-    elif leaf.state == "blocked":
+    elif assessed.state == "blocked":
         reasons.append("conversion_blocked")
-    elif leaf.state == "superseded":
+    elif assessed.state == "superseded":
         reasons.append("conversion_superseded")
-    elif leaf.state not in {"resolved", "warning_reviewed"}:
+    elif assessed.state not in {"resolved", "warning_reviewed"}:
         reasons.append("conversion_chain_inconsistent")
-    upstream, info = _revalidation_reasons(db, subject, leaf)
+    upstream, info = _revalidation_reasons(db, subject, assessed)
     reasons.extend(upstream)
     return M06EligibilityResponse(
-        subject_id=subject_id,
+        subject_id=subject.subject_id,
+        assessed_revision_id=assessed.revision_id,
         eligible_for_downstream=not reasons,
-        current_revision_id=leaf.revision_id,
+        current_revision_id=current.revision_id,
         exclusion_reasons=list(dict.fromkeys(reasons)),
         informational_warnings=info,
     )
+
+
+def eligibility(db: Session, client_id: int, subject_id: str) -> M06EligibilityResponse:
+    subject = _subject(db, client_id, subject_id)
+    leaf = _current(db, subject)
+    return _eligibility_response(db, subject, leaf, leaf)
+
+
+def revision_eligibility(
+    db: Session, client_id: int, subject_id: str, revision_id: str
+) -> M06EligibilityResponse:
+    subject = _subject(db, client_id, subject_id)
+    rows = _history(db, subject)
+    assessed = next((row for row in rows if row.revision_id == revision_id), None)
+    if assessed is None or not rows:
+        raise _unavailable()
+    return _eligibility_response(db, subject, assessed, rows[-1])
 
 
 def revision_response(db: Session, row: M06ConversionRevision) -> M06RevisionResponse:

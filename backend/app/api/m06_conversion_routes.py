@@ -23,6 +23,7 @@ from app.services.m06_conversion_service import (
     list_candidates,
     list_subjects,
     resolve_conversion,
+    revision_eligibility,
     revision_response,
     start_conversion,
     subject_response,
@@ -68,6 +69,19 @@ def downstream_eligibility(
     client_id: int, subject_id: str, db: Session = Depends(get_db)
 ):
     return _run(lambda: eligibility(db, client_id, subject_id))
+
+
+@router.get(
+    "/subjects/{subject_id}/revisions/{revision_id}/eligibility",
+    response_model=M06EligibilityResponse,
+)
+def revision_downstream_eligibility(
+    client_id: int,
+    subject_id: str,
+    revision_id: str,
+    db: Session = Depends(get_db),
+):
+    return _run(lambda: revision_eligibility(db, client_id, subject_id, revision_id))
 
 
 @router.post("/start", response_model=M06RevisionResponse, status_code=201)

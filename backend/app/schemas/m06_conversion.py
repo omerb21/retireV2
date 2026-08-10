@@ -167,6 +167,7 @@ class M06RevisionResponse(BaseModel):
 
 class M06EligibilityResponse(BaseModel):
     subject_id: str
+    assessed_revision_id: str
     eligible_for_downstream: bool
     current_revision_id: str | None
     exclusion_reasons: list[str]

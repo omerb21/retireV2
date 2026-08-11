@@ -1436,6 +1436,13 @@ export function ClientDetailScreen() {
         >
           M06 Pension/Capital Conversion
         </Link>
+        <Link
+          className="button-link"
+          to={`/clients/${validRouteClientId}/monthly-cashflow`}
+          state={{ clientName: client.full_name }}
+        >
+          M09 Deterministic Monthly Cashflow
+        </Link>
       </p>
       <p>
         <Link

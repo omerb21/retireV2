@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import re
 from typing import Any
 
@@ -21,6 +21,7 @@ from app.schemas.fixation_contracts import (
 
 
 IDF_MONTHLY_CAP_FACTOR = 0.35
+PKG012_GRANT_FORMULA_VERSION = "pkg-012-m08d-v1"
 
 
 def _round2(value: float) -> float:
@@ -144,20 +145,37 @@ def _calculate_legacy_payload_non_authoritative(
 
 
 def _is_grant_excluded_15_year_rule(grant_date: date, eligibility_date: date) -> bool:
-    threshold = _shift_years(eligibility_date, -15)
-    return grant_date <= threshold
+    return _grant_years_difference(grant_date, eligibility_date) > 15
+
+
+def _grant_years_difference(grant_date: date, eligibility_date: date) -> float:
+    return (
+        eligibility_date.year
+        - grant_date.year
+        + (eligibility_date.month - grant_date.month) / 12
+        + (eligibility_date.day - grant_date.day) / 365.25
+    )
+
+
+def _grant_ratio_evidence(grant: GrantInput, eligibility_date: date) -> dict[str, Any]:
+    window_start = eligibility_date - timedelta(days=11_688)
+    total_employment_days = (grant.work_end_date - grant.work_start_date).days
+    overlap_start = max(grant.work_start_date, window_start)
+    overlap_end = min(grant.work_end_date, eligibility_date)
+    overlap_days = max((overlap_end - overlap_start).days, 0)
+    ratio = min(max(overlap_days / total_employment_days, 0.0), 1.0)
+    return {
+        "window_start": window_start,
+        "total_employment_days": total_employment_days,
+        "overlap_start": overlap_start,
+        "overlap_end": overlap_end,
+        "overlap_days": overlap_days,
+        "ratio": ratio,
+    }
 
 
 def _compute_grant_ratio(grant: GrantInput, eligibility_date: date) -> float:
-    window_start = _shift_years(eligibility_date, -32)
-    total_work_days = max((grant.work_end_date - grant.work_start_date).days, 0)
-    total_days_in_32_year_window = (eligibility_date - window_start).days
-
-    if total_days_in_32_year_window <= 0:
-        return 0.0
-
-    ratio = total_work_days / total_days_in_32_year_window
-    return min(max(ratio, 0.0), 1.0)
+    return float(_grant_ratio_evidence(grant, eligibility_date)["ratio"])
 
 
 def _full_calendar_months(start_date: date, end_date: date) -> int:
@@ -245,6 +263,8 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
     all_grants_15y: list[dict[str, Any]] = []
 
     for grant in input_data.grants:
+        years_difference = _grant_years_difference(grant.grant_date, input_data.eligibility_date)
+        ratio_evidence = _grant_ratio_evidence(grant, input_data.eligibility_date)
         is_excluded = _is_grant_excluded_15_year_rule(grant.grant_date, input_data.eligibility_date)
         if is_excluded:
             work_years_ratio = 0.0
@@ -252,10 +272,11 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
             grant_impact_raw = 0.0
             exclusion_reason = "excluded_15_year_rule"
         else:
-            work_years_ratio = _compute_grant_ratio(grant, input_data.eligibility_date)
-            limited_indexed_amount_raw = grant.indexed_amount * work_years_ratio
-            grant_impact_raw = (
-                grant.indexed_amount * input_data.grant_impact_multiplier * work_years_ratio
+            work_years_ratio = float(ratio_evidence["ratio"])
+            indexed_full = _round2(grant.indexed_amount)
+            limited_indexed_amount_raw = _round2(indexed_full * work_years_ratio)
+            grant_impact_raw = _round2(
+                limited_indexed_amount_raw * input_data.grant_impact_multiplier
             )
             exclusion_reason = None
 
@@ -263,10 +284,29 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         grant_results.append(
             GrantResult(
                 grant_id=grant.grant_id,
+                client_id=grant.client_id,
+                employer_name=grant.employer_name,
+                employer_withholding_file_number=grant.employer_withholding_file_number,
+                employment_start_date=grant.work_start_date,
+                employment_end_date=grant.work_end_date,
+                grant_receipt_date=grant.grant_date,
+                exempt_grant_amount=grant.nominal_amount,
                 indexed_amount=_round2(grant.indexed_amount),
                 limited_indexed_amount=_round2(limited_indexed_amount_raw),
                 impact_amount=_round2(grant_impact_raw),
                 exclusion_reason=exclusion_reason,
+                years_difference=years_difference,
+                relevant=not is_excluded,
+                window_start=ratio_evidence["window_start"],
+                total_employment_days=ratio_evidence["total_employment_days"],
+                overlap_start=ratio_evidence["overlap_start"],
+                overlap_end=ratio_evidence["overlap_end"],
+                overlap_days=ratio_evidence["overlap_days"],
+                ratio=work_years_ratio,
+                formula_contract_version=PKG012_GRANT_FORMULA_VERSION,
+                parameter_set_id=grant.parameter_set_id,
+                cbs_request_evidence=grant.cbs_request_evidence,
+                cbs_response_evidence=grant.cbs_response_evidence,
             )
         )
 
@@ -275,6 +315,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 "source_id": grant.grant_id,
                 "grant_date": grant.grant_date.isoformat(),
                 "included": not is_excluded,
+                "years_difference": years_difference,
             }
         )
 
@@ -288,6 +329,12 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                     "work_start_date": grant.work_start_date.isoformat(),
                     "work_end_date": grant.work_end_date.isoformat(),
                     "impact_amount": grant_impact_raw,
+                    "window_start": ratio_evidence["window_start"].isoformat(),
+                    "total_employment_days": ratio_evidence["total_employment_days"],
+                    "overlap_start": ratio_evidence["overlap_start"].isoformat(),
+                    "overlap_end": ratio_evidence["overlap_end"].isoformat(),
+                    "overlap_days": ratio_evidence["overlap_days"],
+                    "formula_contract_version": PKG012_GRANT_FORMULA_VERSION,
                 }
             )
 
@@ -568,6 +615,12 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         capital_exemption_percentage=_round2(capital_exemption_percentage_raw),
         pension_exemption_percentage=_round2(pension_exemption_percentage_raw),
         grant_results=grant_results,
+        grant_offset_handoff={
+            "aggregate_grant_offset": _round2(grant_impact_total_raw),
+            "per_grant_breakdown": [item.model_dump(mode="json") for item in grant_results],
+            "eligibility_date": input_data.eligibility_date.isoformat(),
+            "formula_contract_version": PKG012_GRANT_FORMULA_VERSION,
+        },
         actual_capitalization_results=actual_capitalization_results,
         idf_result=idf_result,
         audit_rows=audit_rows,

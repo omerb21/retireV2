@@ -151,6 +151,8 @@ class AdmissibleGrantItem(AcceptedItemEvidence):
     client_id: int
     item_type: str
     employer_name: str | None = None
+    employer_withholding_file_number: str | None = None
+    parameter_set_id: str | None = None
     nominal_amount: float | None = None
     indexed_amount: float | None = None
     grant_date: date

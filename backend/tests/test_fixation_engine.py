@@ -80,10 +80,8 @@ def test_fixation_engine_grant_included_day_based_ratio() -> None:
 
     result = calculate_fixation(FixationInput(**payload))
 
-    eligibility_date = date(2025, 1, 1)
-    window_start = date(1993, 1, 1)
-    expected_ratio = (date(2024, 1, 1) - date(2020, 1, 1)).days / (eligibility_date - window_start).days
-    expected_impact = round(100000 * 1.35 * expected_ratio, 2)
+    expected_ratio = 1.0
+    expected_impact = 135000.0
 
     assert result.grant_results is not None
     assert result.grant_results[0].impact_amount == expected_impact
@@ -181,7 +179,7 @@ def test_fixation_engine_idf_full_months() -> None:
     assert idf_rows[0].impact_amount == 0.0
 
 
-def test_fixation_engine_15_year_boundary_exactly_on_boundary_is_excluded() -> None:
+def test_fixation_engine_15_year_boundary_exactly_on_boundary_is_included() -> None:
     payload = valid_payload()
     payload["eligibility_date"] = "2026-01-01"
     payload["eligibility_year"] = 2026
@@ -197,9 +195,9 @@ def test_fixation_engine_15_year_boundary_exactly_on_boundary_is_excluded() -> N
 
     result = calculate_fixation(FixationInput(**payload))
 
-    assert result.grant_impact_total == 0.0
+    assert result.grant_impact_total == 135000.0
     assert result.grant_results is not None
-    assert result.grant_results[0].exclusion_reason == "excluded_15_year_rule"
+    assert result.grant_results[0].exclusion_reason is None
 
 
 def test_fixation_engine_zero_entitlement() -> None:

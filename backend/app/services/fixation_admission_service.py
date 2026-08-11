@@ -5,9 +5,11 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.engines.fixation_engine import AdmittedFixationInput, _admit_fixation_input
+from app.models.grant import Grant
 from app.schemas.cbs_indexation import CbsIndexationFailure
 from app.schemas.fixation_admissibility import (
     FixationAdmissionRequest,
@@ -37,6 +39,7 @@ from app.services.m07_calculation_input_resolver import (
 
 
 CBS_SERVER_CONTROLLED_INPUT_FIELDS = (
+    "parameter_set_id",
     "system_calculated_amount",
     "selected_calculation_amount",
     "resolved_base_date",
@@ -99,14 +102,49 @@ def parse_and_admit_fixation_payload(
     client_id: int,
     db_session: Session,
     cbs_calculator=None,
+    use_persisted_grants: bool = False,
 ) -> tuple[
     FixationAdmissionRequest | ResolvedFixationAdmissionInput | None,
     AdmittedFixationInput | None,
     list[ValidationError],
     CalculationInputResolutionResult | None,
 ]:
+    caller_evidence_paths = caller_supplied_cbs_system_evidence_paths(payload)
+    effective_payload = dict(payload)
+    if use_persisted_grants:
+        rows = db_session.scalars(
+            select(Grant).where(Grant.client_id == client_id).order_by(Grant.grant_id)
+        ).all()
+        effective_payload["grants_collection_state"] = (
+            "items_recorded" if rows else "confirmed_none"
+        )
+        effective_payload["grants"] = [
+            {
+                "grant_id": row.grant_id,
+                "client_id": client_id,
+                "item_type": "exempt_grant",
+                "employer_name": row.employer_name,
+                "employer_withholding_file_number": row.employer_withholding_file_number,
+                "nominal_amount": row.nominal_amount,
+                "indexed_amount": None,
+                "grant_date": row.grant_date,
+                "work_start_date": row.work_start_date,
+                "work_end_date": row.work_end_date,
+                "inclusion_decision": "include",
+                "support_status": "supported",
+                "conflict_indicator": False,
+                "accepted_value": None,
+                "indexation_mode": "cbs_system_calculation_required",
+                "source_basis": "direct_m08c_grant_record",
+                "status": "recorded",
+                "accepted_for_use": True,
+                "actor": "system:pkg-012",
+                "decision_timestamp": row.updated_at or row.created_at,
+            }
+            for row in rows
+        ]
     try:
-        request_context = FixationAdmissionRequest(**payload)
+        request_context = FixationAdmissionRequest(**effective_payload)
     except PydanticValidationError as exc:
         return None, None, map_contract_validation_errors(exc), None
 
@@ -263,6 +301,12 @@ def parse_and_admit_fixation_payload(
         m07_resolution=resolution,
     )
 
+    if use_persisted_grants:
+        for path in caller_evidence_paths:
+            errors.append(
+                _error(path, "CBS indexation evidence is server-produced and cannot be supplied")
+            )
+
     if not parameter_set.accepted_for_use:
         errors.append(_error("parameter_set.accepted_for_use", "parameter set was not accepted for use"))
     if parameter_set.tax_year != context.eligibility_year:
@@ -271,6 +315,13 @@ def parse_and_admit_fixation_payload(
         errors.append(_error("parameter_set.effective_from", "parameter set is not yet effective"))
     if parameter_set.effective_to and context.eligibility_date > parameter_set.effective_to:
         errors.append(_error("parameter_set.effective_to", "parameter set is no longer effective"))
+    if Decimal(str(parameter_set.values.grant_impact_multiplier)) != Decimal("1.35"):
+        errors.append(
+            _error(
+                "parameter_set.values.grant_impact_multiplier",
+                "PKG-012 requires accepted grant_impact_multiplier 1.35",
+            )
+        )
 
     for path, state in (
         ("grants_collection_state", context.grants_collection_state),
@@ -281,7 +332,11 @@ def parse_and_admit_fixation_payload(
 
     for index, item in enumerate(context.grants):
         path = f"grants[{index}]"
-        raw_item = payload.get("grants", [])[index]
+        raw_item = (
+            {}
+            if use_persisted_grants
+            else payload.get("grants", [])[index]
+        )
         caller_system_fields = caller_supplied_cbs_system_evidence_fields(raw_item)
         for field_name in caller_system_fields:
             errors.append(
@@ -312,6 +367,31 @@ def parse_and_admit_fixation_payload(
             errors.append(
                 _error(f"{path}.client_id", "grant indexation context belongs to another client", item.grant_id)
             )
+        if use_persisted_grants:
+            required_values = {
+                "employer_name": item.employer_name,
+                "employer_withholding_file_number": item.employer_withholding_file_number,
+                "nominal_amount": item.nominal_amount,
+            }
+            for field_name, value in required_values.items():
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    errors.append(
+                        _error(
+                            f"{path}.{field_name}",
+                            "legacy grant is incomplete for PKG-012 calculation",
+                            item.grant_id,
+                            code="MISSING_REQUIRED_VALUE",
+                        )
+                    )
+            if item.grant_date > context.eligibility_date:
+                errors.append(
+                    _error(
+                        f"{path}.grant_date",
+                        "grant receipt date cannot be after eligibility date",
+                        item.grant_id,
+                        code="INVALID_DATE",
+                    )
+                )
         if item.inclusion_decision == "exclude":
             continue
         if not item.accepted_for_use:
@@ -400,6 +480,31 @@ def parse_and_admit_fixation_payload(
             accepted_amount = item.accepted_value if item.conflict_indicator else item.nominal_amount
             assert accepted_amount is not None
             item.asserted_indexed_amount = item.indexed_amount
+            if Decimal(str(accepted_amount)) == Decimal("0"):
+                item.indexation_mode = "cbs_system_calculated"
+                item.system_calculated_amount = 0
+                item.selected_calculation_amount = 0
+                item.resolved_base_date = item.grant_date
+                item.base_date_source = "grant_date"
+                item.target_date = context.eligibility_date
+                item.cpi_code = "120010"
+                item.indexation_calculation_status = "calculated"
+                selected_amount = 0
+                admitted_grants.append(
+                    {
+                        "grant_id": item.grant_id,
+                        "client_id": item.client_id,
+                        "employer_name": item.employer_name,
+                        "employer_withholding_file_number": item.employer_withholding_file_number,
+                        "nominal_amount": item.nominal_amount,
+                        "indexed_amount": selected_amount,
+                        "grant_date": item.grant_date,
+                        "work_start_date": item.work_start_date,
+                        "work_end_date": item.work_end_date,
+                        "parameter_set_id": parameter_set.parameter_set_id,
+                    }
+                )
+                continue
             outcome = calculator(
                 amount=Decimal(str(accepted_amount)),
                 grant_date=item.grant_date,
@@ -450,12 +555,25 @@ def parse_and_admit_fixation_payload(
         admitted_grants.append(
             {
                 "grant_id": item.grant_id,
+                "client_id": item.client_id,
                 "employer_name": item.employer_name,
+                "employer_withholding_file_number": item.employer_withholding_file_number,
                 "nominal_amount": item.nominal_amount,
                 "indexed_amount": selected_amount,
                 "grant_date": item.grant_date,
                 "work_start_date": item.work_start_date,
                 "work_end_date": item.work_end_date,
+                "parameter_set_id": parameter_set.parameter_set_id,
+                "cbs_request_evidence": (
+                    item.cbs_request_evidence.model_dump(mode="json")
+                    if item.cbs_request_evidence is not None
+                    else None
+                ),
+                "cbs_response_evidence": (
+                    item.cbs_response_evidence.model_dump(mode="json")
+                    if item.cbs_response_evidence is not None
+                    else None
+                ),
             }
         )
 

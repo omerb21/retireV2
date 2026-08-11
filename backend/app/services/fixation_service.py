@@ -105,12 +105,14 @@ def calculate_fixation_payload(
     client_id: int,
     db_session: Session,
     cbs_calculator=None,
+    use_persisted_grants: bool = False,
 ) -> FixationResult:
     _, engine_input, errors, resolution = parse_and_admit_fixation_payload(
         input_payload,
         client_id=client_id,
         db_session=db_session,
         cbs_calculator=cbs_calculator,
+        use_persisted_grants=use_persisted_grants,
     )
     if errors:
         status = _failure_status(errors)
@@ -281,6 +283,7 @@ def run_fixation(
     db_session: Session,
     planner_review_context: PlannerReviewContextEnvelope | None = None,
     cbs_calculator=None,
+    use_persisted_grants: bool = False,
 ) -> int:
     client_key = int(client_id)
 
@@ -307,6 +310,7 @@ def run_fixation(
             client_id=client_key,
             db_session=db_session,
             cbs_calculator=cbs_calculator,
+            use_persisted_grants=use_persisted_grants,
         )
         snapshot_payload = (
             admitted_context.model_dump(mode="json")

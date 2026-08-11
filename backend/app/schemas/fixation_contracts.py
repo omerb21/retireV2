@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import math
 from typing import Any, Literal
 
 from pydantic import (
@@ -123,12 +124,17 @@ def map_contract_validation_errors(exc: PydanticValidationError) -> list["Valida
 
 class GrantInput(BaseModel):
     grant_id: str
+    client_id: int | None = None
     employer_name: str | None = None
+    employer_withholding_file_number: str | None = None
     nominal_amount: float | None = None
     indexed_amount: float
     grant_date: date
     work_start_date: date
     work_end_date: date
+    parameter_set_id: str | None = None
+    cbs_request_evidence: dict[str, Any] | None = None
+    cbs_response_evidence: dict[str, Any] | None = None
 
     @field_validator("grant_id")
     @classmethod
@@ -147,14 +153,14 @@ class GrantInput(BaseModel):
     def validate_nominal_amount(cls, value: float | None) -> float | None:
         if value is None:
             return value
-        if value < 0:
+        if not math.isfinite(value) or value < 0:
             raise ValueError("nominal_amount must be >= 0")
         return value
 
     @field_validator("indexed_amount")
     @classmethod
     def validate_indexed_amount(cls, value: float) -> float:
-        if value < 0:
+        if not math.isfinite(value) or value < 0:
             raise ValueError("indexed_amount must be >= 0")
         return value
 
@@ -568,10 +574,29 @@ class FixationInput(BaseModel):
 
 class GrantResult(BaseModel):
     grant_id: str
+    client_id: int | None = None
+    employer_name: str | None = None
+    employer_withholding_file_number: str | None = None
+    employment_start_date: date | None = None
+    employment_end_date: date | None = None
+    grant_receipt_date: date | None = None
+    exempt_grant_amount: float | None = None
     indexed_amount: float
     limited_indexed_amount: float
     impact_amount: float
     exclusion_reason: str | None
+    years_difference: float | None = None
+    relevant: bool | None = None
+    window_start: date | None = None
+    total_employment_days: int | None = None
+    overlap_start: date | None = None
+    overlap_end: date | None = None
+    overlap_days: int | None = None
+    ratio: float | None = None
+    formula_contract_version: str | None = None
+    parameter_set_id: str | None = None
+    cbs_request_evidence: dict[str, Any] | None = None
+    cbs_response_evidence: dict[str, Any] | None = None
 
     @field_validator("grant_id")
     @classmethod
@@ -758,6 +783,7 @@ class FixationResult(BaseModel):
     capital_exemption_percentage: float | None = None
     pension_exemption_percentage: float | None = None
     grant_results: list[GrantResult] | None = None
+    grant_offset_handoff: dict[str, Any] | None = None
     actual_capitalization_results: list[ActualCapitalizationResult] | None = None
     idf_result: IDFResult | None = None
     audit_rows: list[AuditRow] | None = None
@@ -799,6 +825,7 @@ class FixationResult(BaseModel):
                 "capital_exemption_percentage",
                 "pension_exemption_percentage",
                 "grant_results",
+                "grant_offset_handoff",
                 "actual_capitalization_results",
                 "idf_result",
                 "audit_rows",

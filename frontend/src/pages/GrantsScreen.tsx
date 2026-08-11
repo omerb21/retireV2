@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 
 import {
@@ -24,50 +24,42 @@ function getErrorMessage(error: unknown): string {
 }
 
 interface FormState {
-  employmentRecordId: string;
   employerName: string;
-  nominalAmount: string;
-  indexedAmount: string;
-  grantDate: string;
-  workStartDate: string;
-  workEndDate: string;
-  notes: string;
+  employerWithholdingFileNumber: string;
+  employmentStartDate: string;
+  employmentEndDate: string;
+  grantReceiptDate: string;
+  exemptGrantAmount: string;
 }
 
 const emptyFormState: FormState = {
-  employmentRecordId: "",
   employerName: "",
-  nominalAmount: "",
-  indexedAmount: "",
-  grantDate: "",
-  workStartDate: "",
-  workEndDate: "",
-  notes: ""
+  employerWithholdingFileNumber: "",
+  employmentStartDate: "",
+  employmentEndDate: "",
+  grantReceiptDate: "",
+  exemptGrantAmount: ""
 };
 
 function formStateFromGrant(grant: GrantItem): FormState {
   return {
-    employmentRecordId: grant.employment_record_id ?? "",
     employerName: grant.employer_name ?? "",
-    nominalAmount: grant.nominal_amount === null ? "" : String(grant.nominal_amount),
-    indexedAmount: String(grant.indexed_amount),
-    grantDate: grant.grant_date,
-    workStartDate: grant.work_start_date,
-    workEndDate: grant.work_end_date,
-    notes: grant.notes ?? ""
+    employerWithholdingFileNumber: grant.employer_withholding_file_number ?? "",
+    employmentStartDate: grant.employment_start_date,
+    employmentEndDate: grant.employment_end_date,
+    grantReceiptDate: grant.grant_receipt_date,
+    exemptGrantAmount: grant.exempt_grant_amount === null ? "" : String(grant.exempt_grant_amount)
   };
 }
 
 function payloadFromForm(formState: FormState): GrantPayload {
   return {
-    employment_record_id: formState.employmentRecordId.trim() === "" ? null : formState.employmentRecordId,
-    employer_name: formState.employerName.trim() === "" ? null : formState.employerName,
-    nominal_amount: formState.nominalAmount.trim() === "" ? null : formState.nominalAmount,
-    indexed_amount: formState.indexedAmount,
-    grant_date: formState.grantDate,
-    work_start_date: formState.workStartDate,
-    work_end_date: formState.workEndDate,
-    notes: formState.notes.trim() === "" ? null : formState.notes
+    employer_name: formState.employerName.trim(),
+    employer_withholding_file_number: formState.employerWithholdingFileNumber.trim(),
+    employment_start_date: formState.employmentStartDate,
+    employment_end_date: formState.employmentEndDate,
+    grant_receipt_date: formState.grantReceiptDate,
+    exempt_grant_amount: formState.exemptGrantAmount
   };
 }
 
@@ -90,9 +82,15 @@ export function GrantsScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [mutationErrorMessage, setMutationErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const generationRef = useRef(0);
 
-  async function refreshGrants() {
-    const nextGrants = await getGrants(parsedClientId);
+  function ownsRequest(ownerClientId: number, generation: number): boolean {
+    return parsedClientId === ownerClientId && generationRef.current === generation;
+  }
+
+  async function refreshGrants(ownerClientId: number, generation: number) {
+    const nextGrants = await getGrants(ownerClientId);
+    if (!ownsRequest(ownerClientId, generation)) return;
     setGrants(nextGrants);
     setIsNotFound(false);
     setErrorMessage(null);
@@ -100,6 +98,16 @@ export function GrantsScreen() {
 
   useEffect(() => {
     let isActive = true;
+    const generation = ++generationRef.current;
+    const ownerClientId = parsedClientId;
+    setGrants([]);
+    setIsLoading(true);
+    setIsNotFound(false);
+    setErrorMessage(null);
+    setFormState(emptyFormState);
+    setEditingId(null);
+    setMutationErrorMessage(null);
+    setIsSubmitting(false);
 
     async function loadGrants() {
       if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
@@ -112,15 +120,15 @@ export function GrantsScreen() {
       }
 
       try {
-        const nextGrants = await getGrants(parsedClientId);
-        if (!isActive) {
+        const nextGrants = await getGrants(ownerClientId);
+        if (!isActive || !ownsRequest(ownerClientId, generation)) {
           return;
         }
         setGrants(nextGrants);
         setIsNotFound(false);
         setErrorMessage(null);
       } catch (error) {
-        if (!isActive) {
+        if (!isActive || !ownsRequest(ownerClientId, generation)) {
           return;
         }
         if (error instanceof ApiTransportError && error.status === 404) {
@@ -133,7 +141,7 @@ export function GrantsScreen() {
           setErrorMessage(getErrorMessage(error));
         }
       } finally {
-        if (isActive) {
+        if (isActive && ownsRequest(ownerClientId, generation)) {
           setIsLoading(false);
         }
       }
@@ -173,39 +181,48 @@ export function GrantsScreen() {
       return;
     }
 
+    const ownerClientId = parsedClientId;
+    const generation = generationRef.current;
+
     setIsSubmitting(true);
     setMutationErrorMessage(null);
 
     try {
       const payload = payloadFromForm(formState);
       if (editingId === null) {
-        await createGrant(parsedClientId, payload);
+        await createGrant(ownerClientId, payload);
       } else {
-        await updateGrant(parsedClientId, editingId, payload);
+        await updateGrant(ownerClientId, editingId, payload);
       }
-      await refreshGrants();
+      await refreshGrants(ownerClientId, generation);
+      if (!ownsRequest(ownerClientId, generation)) return;
       resetForm();
     } catch (error) {
+      if (!ownsRequest(ownerClientId, generation)) return;
       setMutationErrorMessage(getErrorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      if (ownsRequest(ownerClientId, generation)) setIsSubmitting(false);
     }
   }
 
   async function handleDelete(grant: GrantItem) {
+    const ownerClientId = parsedClientId;
+    const generation = generationRef.current;
     setIsSubmitting(true);
     setMutationErrorMessage(null);
 
     try {
-      await deleteGrant(parsedClientId, grant.grant_id);
-      await refreshGrants();
+      await deleteGrant(ownerClientId, grant.grant_id);
+      await refreshGrants(ownerClientId, generation);
+      if (!ownsRequest(ownerClientId, generation)) return;
       if (editingId === grant.grant_id) {
         resetForm();
       }
     } catch (error) {
+      if (!ownsRequest(ownerClientId, generation)) return;
       setMutationErrorMessage(getErrorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      if (ownsRequest(ownerClientId, generation)) setIsSubmitting(false);
     }
   }
 
@@ -268,14 +285,12 @@ export function GrantsScreen() {
               <article>
                 <h3>{grant.employer_name ?? "Grant"}</h3>
                 <p>Grant ID: {grant.grant_id}</p>
-                {grant.employment_record_id ? <p>Employment Record ID: {grant.employment_record_id}</p> : null}
                 {grant.employer_name ? <p>Employer Name: {grant.employer_name}</p> : null}
-                {grant.nominal_amount !== null ? <p>Nominal Amount: {grant.nominal_amount}</p> : null}
-                <p>Indexed Amount: {grant.indexed_amount}</p>
-                <p>Grant Date: {grant.grant_date}</p>
-                <p>Work Start Date: {grant.work_start_date}</p>
-                <p>Work End Date: {grant.work_end_date}</p>
-                {grant.notes ? <p>Notes: {grant.notes}</p> : null}
+                <p>Employer Withholding File Number: {grant.employer_withholding_file_number}</p>
+                <p>Exempt Grant Amount: {grant.exempt_grant_amount}</p>
+                <p>Grant Receipt Date: {grant.grant_receipt_date}</p>
+                <p>Employment Start Date: {grant.employment_start_date}</p>
+                <p>Employment End Date: {grant.employment_end_date}</p>
                 <p>
                   <button type="button" onClick={() => startEditing(grant)} disabled={isSubmitting}>
                     Edit Grant
@@ -294,88 +309,65 @@ export function GrantsScreen() {
         <h3>{editingId === null ? "Add Grant" : "Edit Grant"}</h3>
         <p>
           <label>
-            Employment Record ID
-            <input
-              type="text"
-              value={formState.employmentRecordId}
-              onChange={(event) => setFormState((current) => ({ ...current, employmentRecordId: event.target.value }))}
-            />
-          </label>
-        </p>
-        <p>
-          <label>
             Employer Name
             <input
               type="text"
               value={formState.employerName}
               onChange={(event) => setFormState((current) => ({ ...current, employerName: event.target.value }))}
+              required
             />
           </label>
         </p>
         <p>
           <label>
-            Nominal Amount
+            Employer Withholding File Number
+            <input type="text" value={formState.employerWithholdingFileNumber}
+              onChange={(event) => setFormState((current) => ({ ...current, employerWithholdingFileNumber: event.target.value }))} required />
+          </label>
+        </p>
+        <p>
+          <label>
+            Exempt Grant Amount
             <input
               type="number"
               min="0"
               step="0.01"
-              value={formState.nominalAmount}
-              onChange={(event) => setFormState((current) => ({ ...current, nominalAmount: event.target.value }))}
-            />
-          </label>
-        </p>
-        <p>
-          <label>
-            Indexed Amount
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={formState.indexedAmount}
-              onChange={(event) => setFormState((current) => ({ ...current, indexedAmount: event.target.value }))}
+              value={formState.exemptGrantAmount}
+              onChange={(event) => setFormState((current) => ({ ...current, exemptGrantAmount: event.target.value }))}
               required
             />
           </label>
         </p>
         <p>
           <label>
-            Grant Date
+            Grant Receipt Date
             <input
               type="date"
-              value={formState.grantDate}
-              onChange={(event) => setFormState((current) => ({ ...current, grantDate: event.target.value }))}
+              value={formState.grantReceiptDate}
+              onChange={(event) => setFormState((current) => ({ ...current, grantReceiptDate: event.target.value }))}
               required
             />
           </label>
         </p>
         <p>
           <label>
-            Work Start Date
+            Employment Start Date
             <input
               type="date"
-              value={formState.workStartDate}
-              onChange={(event) => setFormState((current) => ({ ...current, workStartDate: event.target.value }))}
+              value={formState.employmentStartDate}
+              onChange={(event) => setFormState((current) => ({ ...current, employmentStartDate: event.target.value }))}
               required
             />
           </label>
         </p>
         <p>
           <label>
-            Work End Date
+            Employment End Date
             <input
               type="date"
-              value={formState.workEndDate}
-              onChange={(event) => setFormState((current) => ({ ...current, workEndDate: event.target.value }))}
+              value={formState.employmentEndDate}
+              onChange={(event) => setFormState((current) => ({ ...current, employmentEndDate: event.target.value }))}
               required
-            />
-          </label>
-        </p>
-        <p>
-          <label>
-            Notes
-            <textarea
-              value={formState.notes}
-              onChange={(event) => setFormState((current) => ({ ...current, notes: event.target.value }))}
             />
           </label>
         </p>

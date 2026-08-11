@@ -205,6 +205,16 @@ function ResultDiagnostics({
           <p>Remaining exempt capital: {result.remaining_exempt_capital}</p>
           <p>Monthly exempt pension: {result.monthly_exempt_pension}</p>
           <p>Grant impact: {result.grant_impact_total}</p>
+          {(result.grant_results ?? []).map((grant, index) => (
+            <div key={String(grant.grant_id ?? index)}>
+              <p>Grant {String(grant.grant_id ?? index + 1)} relevance: {String(grant.relevant)}</p>
+              <p>Ratio: {String(grant.ratio)}</p>
+              <p>Indexed result: {String(grant.indexed_amount)}</p>
+              <p>Proportional result: {String(grant.limited_indexed_amount)}</p>
+              <p>Per-grant offset: {String(grant.impact_amount)}</p>
+            </div>
+          ))}
+          <p>Aggregate grant offset: {result.grant_impact_total}</p>
           <p>Capitalization impact: {result.actual_capitalization_impact}</p>
         </>
       ) : null}
@@ -317,7 +327,7 @@ export function FixationInputScreen() {
         setCapitalizations(loadedCapitalizations);
         setRevisions(revisionList.items);
         setGrantDecisions(
-          Object.fromEntries(loadedGrants.map((grant) => [grant.grant_id, initialDecision(grant.notes)])),
+          Object.fromEntries(loadedGrants.map((grant) => [grant.grant_id, initialDecision(null)])),
         );
         setCapitalizationDecisions(
           Object.fromEntries(
@@ -385,15 +395,6 @@ export function FixationInputScreen() {
       form.grantImpactMultiplier,
     ];
     if (numeric.some((value) => finiteNumber(value) === null)) return "Parameter values must be valid numbers.";
-    if (grantCollectionState === "items_recorded") {
-      if (grants.length === 0) return "Grant collection says items recorded but no grants were loaded.";
-      for (const grant of grants) {
-        const decision = grantDecisions[grant.grant_id];
-        const error = requiredDecisionError(decision, `Grant ${grant.grant_id}`);
-        if (error) return error;
-        if (!decision.indexationMode) return `Grant ${grant.grant_id} requires an explicit indexation mode.`;
-      }
-    }
     if (capitalizationCollectionState === "items_recorded") {
       if (capitalizations.length === 0) return "Capitalization collection says items recorded but no items were loaded.";
       for (const item of capitalizations) {
@@ -419,33 +420,7 @@ export function FixationInputScreen() {
   }
 
   function buildPayload(): FixationInputPayload {
-    const grantPayloads: AdmissibleGrantPayload[] =
-      grantCollectionState === "items_recorded"
-        ? grants.map((grant) => {
-            const decision = grantDecisions[grant.grant_id];
-            return {
-              grant_id: grant.grant_id,
-              client_id: clientId as number,
-              item_type: "grant",
-              employer_name: grant.employer_name,
-              nominal_amount: grant.nominal_amount === null ? null : Number(grant.nominal_amount),
-              indexed_amount: grant.indexed_amount === null ? null : Number(grant.indexed_amount),
-              grant_date: grant.grant_date,
-              work_start_date: grant.work_start_date,
-              work_end_date: grant.work_end_date,
-              inclusion_decision: decision.inclusion as FixationInclusionDecision,
-              support_status: decision.support as FixationSupportStatus,
-              conflict_indicator: decision.conflict,
-              accepted_value: decision.conflict ? Number(decision.acceptedValue) : null,
-              indexation_mode: decision.indexationMode as AdmissibleGrantPayload["indexation_mode"],
-              source_basis: decision.sourceBasis,
-              status: decision.status,
-              accepted_for_use: decision.acceptedForUse,
-              actor: decision.actor,
-              decision_timestamp: decision.decisionTimestamp,
-            };
-          })
-        : [];
+    const grantPayloads: AdmissibleGrantPayload[] = [];
     const capitalizationPayloads: AdmissibleActualCapitalizationPayload[] =
       capitalizationCollectionState === "items_recorded"
         ? capitalizations.map((item) => {
@@ -494,7 +469,7 @@ export function FixationInputScreen() {
         accepted_by: form.parameterAcceptedBy,
         decision_timestamp: form.parameterDecisionTimestamp,
       },
-      grants_collection_state: grantCollectionState,
+      grants_collection_state: "confirmed_none",
       grants: grantPayloads,
       future_grant_reservation: form.futureReservationEnabled
         ? {
@@ -519,7 +494,10 @@ export function FixationInputScreen() {
             source_label: form.idfSourceLabel || null,
           }
         : null,
-      metadata: { source_data_version_label: "pkg005-fixation-ui" },
+      metadata: {
+        source_data_version_label: "pkg005-fixation-ui",
+        grant_contract: "pkg-012-direct-v1",
+      },
     };
   }
 
@@ -714,28 +692,8 @@ export function FixationInputScreen() {
 
       <section>
         <h3>M08C grants</h3>
-        <label>Grant Collection State
-          <select value={grantCollectionState} onChange={(event) => setGrantCollectionState(event.target.value as FixationCollectionState)}>
-            <option value="unknown">unknown</option><option value="not_collected">not_collected</option>
-            <option value="confirmed_none">confirmed_none</option><option value="items_recorded">items_recorded</option>
-          </select>
-        </label>
-        {grantCollectionState === "items_recorded" ? grants.map((grant) => {
-          const decision = grantDecisions[grant.grant_id];
-          return <fieldset key={grant.grant_id}><legend>Grant {grant.grant_id}</legend>
-            <p>{grant.employer_name} — indexed amount {grant.indexed_amount}</p>
-            <label>Grant Inclusion <select value={decision.inclusion} onChange={(event) => updateGrant(grant.grant_id, { inclusion: event.target.value as ItemDecision["inclusion"] })}><option value="">Select</option><option value="include">include</option><option value="exclude">exclude</option></select></label>
-            <label>Grant Support <select value={decision.support} onChange={(event) => updateGrant(grant.grant_id, { support: event.target.value as ItemDecision["support"] })}><option value="">Select</option><option value="supported">supported</option><option value="unsupported">unsupported</option><option value="requires_special_handling">requires_special_handling</option></select></label>
-            <label>Indexation Mode <select value={decision.indexationMode} onChange={(event) => updateGrant(grant.grant_id, { indexationMode: event.target.value as ItemDecision["indexationMode"] })}><option value="">Select mode</option><option value="asserted_indexed_amount">asserted indexed amount</option><option value="cbs_system_calculation_required">CBS system calculation required</option></select></label>
-            <label>Source Basis <input value={decision.sourceBasis} onChange={(event) => updateGrant(grant.grant_id, { sourceBasis: event.target.value })} /></label>
-            <label>Evidence Status <input value={decision.status} onChange={(event) => updateGrant(grant.grant_id, { status: event.target.value })} /></label>
-            <label>Decision Actor <input value={decision.actor} onChange={(event) => updateGrant(grant.grant_id, { actor: event.target.value })} /></label>
-            <label>Decision Timestamp <input type="datetime-local" value={decision.decisionTimestamp} onChange={(event) => updateGrant(grant.grant_id, { decisionTimestamp: event.target.value })} /></label>
-            <label><input type="checkbox" checked={decision.acceptedForUse} onChange={(event) => updateGrant(grant.grant_id, { acceptedForUse: event.target.checked })} /> Accepted for use</label>
-            <label><input type="checkbox" checked={decision.conflict} onChange={(event) => updateGrant(grant.grant_id, { conflict: event.target.checked })} /> Conflict</label>
-            {decision.conflict ? <label>Accepted Value <input type="number" step="any" value={decision.acceptedValue} onChange={(event) => updateGrant(grant.grant_id, { acceptedValue: event.target.value })} /></label> : null}
-          </fieldset>;
-        }) : null}
+        <p>Current direct grant records: {grants.length}. CBS indexation is calculated by the server.</p>
+        {grants.map((grant) => <p key={grant.grant_id}>{grant.employer_name} — {grant.exempt_grant_amount}</p>)}
       </section>
 
       <section>

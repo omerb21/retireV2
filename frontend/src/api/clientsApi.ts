@@ -132,25 +132,21 @@ export interface EmploymentRecordPayload {
 export interface GrantItem {
   grant_id: string;
   client_id: number;
-  employment_record_id: string | null;
   employer_name: string | null;
-  nominal_amount: number | string | null;
-  indexed_amount: number | string;
-  grant_date: string;
-  work_start_date: string;
-  work_end_date: string;
-  notes: string | null;
+  employer_withholding_file_number: string | null;
+  employment_start_date: string;
+  employment_end_date: string;
+  grant_receipt_date: string;
+  exempt_grant_amount: number | string | null;
 }
 
 export interface GrantPayload {
-  employment_record_id: string | null;
-  employer_name: string | null;
-  nominal_amount: string | null;
-  indexed_amount: string;
-  grant_date: string;
-  work_start_date: string;
-  work_end_date: string;
-  notes: string | null;
+  employer_name: string;
+  employer_withholding_file_number: string;
+  employment_start_date: string;
+  employment_end_date: string;
+  grant_receipt_date: string;
+  exempt_grant_amount: string;
 }
 
 export interface ActualCapitalizationItem {

@@ -111,7 +111,6 @@ function fillValidM08Inputs() {
   fireEvent.change(screen.getByLabelText("Parameter Decision Timestamp"), {
     target: { value: "2026-01-01T08:00" },
   });
-  fireEvent.change(screen.getByLabelText("Grant Collection State"), { target: { value: "confirmed_none" } });
   fireEvent.change(screen.getByLabelText("Actual Capitalization Collection State"), {
     target: { value: "confirmed_none" },
   });
@@ -591,18 +590,16 @@ describe("PKG-005 fixation input workflow", () => {
     expect(screen.getByRole("button", { name: "Run Calculation" })).toBeDisabled();
   });
 
-  it("constructs explicit full M08C item evidence and preserves the CBS mode boundary", async () => {
+  it("uses current direct M08C records without browser-supplied grant evidence", async () => {
     const grant = {
       grant_id: "G-1",
       client_id: 1,
-      employment_record_id: null,
       employer_name: "Employer",
-      nominal_amount: "1000",
-      indexed_amount: "1100",
-      grant_date: "2020-01-01",
-      work_start_date: "2010-01-01",
-      work_end_date: "2020-01-01",
-      notes: null,
+      employer_withholding_file_number: "WF-1",
+      exempt_grant_amount: "1000",
+      grant_receipt_date: "2020-01-01",
+      employment_start_date: "2010-01-01",
+      employment_end_date: "2020-01-01",
     };
     const capitalization = {
       capitalization_id: "C-1",
@@ -632,24 +629,9 @@ describe("PKG-005 fixation input workflow", () => {
     await waitForLoaded();
     fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-resolved" } });
     fillValidM08Inputs();
-    fireEvent.change(screen.getByLabelText("Grant Collection State"), { target: { value: "items_recorded" } });
     fireEvent.change(screen.getByLabelText("Actual Capitalization Collection State"), {
       target: { value: "items_recorded" },
     });
-
-    const grantGroup = screen.getByRole("group", { name: "Grant G-1" });
-    fireEvent.change(within(grantGroup).getByLabelText("Grant Inclusion"), { target: { value: "include" } });
-    fireEvent.change(within(grantGroup).getByLabelText("Grant Support"), { target: { value: "supported" } });
-    fireEvent.change(within(grantGroup).getByLabelText("Indexation Mode"), {
-      target: { value: "cbs_system_calculation_required" },
-    });
-    fireEvent.change(within(grantGroup).getByLabelText("Source Basis"), { target: { value: "grant record" } });
-    fireEvent.change(within(grantGroup).getByLabelText("Evidence Status"), { target: { value: "accepted" } });
-    fireEvent.change(within(grantGroup).getByLabelText("Decision Actor"), { target: { value: "planner" } });
-    fireEvent.change(within(grantGroup).getByLabelText("Decision Timestamp"), {
-      target: { value: "2026-01-01T08:00" },
-    });
-    fireEvent.click(within(grantGroup).getByLabelText("Accepted for use"));
 
     const capitalizationGroup = screen.getByRole("group", { name: "Capitalization C-1" });
     fireEvent.change(within(capitalizationGroup).getByLabelText("Capitalization Inclusion"), {
@@ -678,16 +660,9 @@ describe("PKG-005 fixation input workflow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
     await screen.findByText(/Server validation passed/);
     const payload = requestBody(fetchMock, 3);
-    expect(payload.grants).toEqual([expect.objectContaining({
-      grant_id: "G-1",
-      client_id: 1,
-      inclusion_decision: "include",
-      support_status: "supported",
-      accepted_for_use: true,
-      indexation_mode: "cbs_system_calculation_required",
-    })]);
-    expect(JSON.stringify(payload.grants)).not.toContain("cbs_request_evidence");
-    expect(JSON.stringify(payload.grants)).not.toContain("system_calculated_amount");
+    expect(payload.grants).toEqual([]);
+    expect(payload.grants_collection_state).toBe("confirmed_none");
+    expect(payload.metadata).toEqual(expect.objectContaining({ grant_contract: "pkg-012-direct-v1" }));
     expect(payload.actual_capitalizations).toEqual([expect.objectContaining({
       capitalization_id: "C-1",
       recorded_meaning: "actual capitalization",

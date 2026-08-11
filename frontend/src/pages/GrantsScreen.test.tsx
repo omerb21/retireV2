@@ -103,6 +103,7 @@ describe("GrantsScreen", () => {
   });
 
   it.each([
+    ["A-to-B", "success"],
     ["A-to-B", "structured error"],
     ["A-to-B", "rejection"],
     ["A-to-B-to-A", "structured error"],
@@ -134,7 +135,8 @@ describe("GrantsScreen", () => {
     }
     await act(async () => {
       if (settlement === "rejection") oldA.reject(new Error("stale load rejection"));
-      else oldA.resolve(errorResponse({ detail: "stale structured error" }) as ReturnType<typeof jsonResponse>);
+      else if (settlement === "structured error") oldA.resolve(errorResponse({ detail: "stale structured error" }) as ReturnType<typeof jsonResponse>);
+      else oldA.resolve(jsonResponse([grant("A-old stale", 7)]));
       await oldA.promise.catch(() => undefined);
     });
     expect(screen.queryByText(/stale load rejection|stale structured error/)).not.toBeInTheDocument();

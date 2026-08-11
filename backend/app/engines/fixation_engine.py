@@ -24,7 +24,6 @@ from app.schemas.fixation_contracts import (
 IDF_MONTHLY_CAP_FACTOR = 0.35
 PKG012_GRANT_FORMULA_VERSION = "pkg-012-m08d-v1"
 MONEY_QUANTUM = Decimal("0.01")
-PKG012_GRANT_MULTIPLIER = Decimal("1.35")
 
 
 def _round2(value: float) -> float:
@@ -268,6 +267,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
     )
 
     grant_impact_total_decimal = Decimal("0.00")
+    admitted_grant_multiplier = Decimal(str(input_data.grant_impact_multiplier))
     grant_boundary_date = _shift_years(input_data.eligibility_date, -15)
     included_grants: list[dict[str, Any]] = []
     all_grants_15y: list[dict[str, Any]] = []
@@ -286,7 +286,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
             indexed_full = _money(grant.indexed_amount)
             limited_indexed_amount_raw = _money(indexed_full * work_years_ratio)
             grant_impact_raw = _money(
-                limited_indexed_amount_raw * PKG012_GRANT_MULTIPLIER
+                limited_indexed_amount_raw * admitted_grant_multiplier
             )
             exclusion_reason = None
 
@@ -355,7 +355,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
             stage3_input = only_included["qualifying_amount"] if only_included is not None else only.indexed_amount
             stage3_details: dict[str, Any] = {
                 "component_type": "historical_grant",
-                "multiplier": input_data.grant_impact_multiplier,
+                "multiplier": admitted_grant_multiplier,
                 "post_multiplier_impact": grant_impact_total_decimal,
             }
             if only_included is not None:
@@ -398,7 +398,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 output_amount=float(grant_impact_total_decimal),
                 impact_amount=float(grant_impact_total_decimal),
                 details={
-                    "multiplier": input_data.grant_impact_multiplier,
+                    "multiplier": admitted_grant_multiplier,
                     "grants": [
                         {
                             "source_id": item["source_id"],

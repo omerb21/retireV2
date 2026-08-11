@@ -494,14 +494,14 @@ def parse_and_admit_fixation_payload(
             item.asserted_indexed_amount = item.indexed_amount
             if Decimal(str(accepted_amount)) == Decimal("0"):
                 item.indexation_mode = "cbs_system_calculated"
-                item.system_calculated_amount = 0
-                item.selected_calculation_amount = 0
+                item.system_calculated_amount = Decimal("0.00")
+                item.selected_calculation_amount = Decimal("0.00")
                 item.resolved_base_date = item.grant_date
                 item.base_date_source = "grant_date"
                 item.target_date = context.eligibility_date
                 item.cpi_code = "120010"
                 item.indexation_calculation_status = "calculated"
-                selected_amount = 0
+                selected_amount = Decimal("0.00")
                 admitted_grants.append(
                     {
                         "grant_id": item.grant_id,
@@ -605,7 +605,7 @@ def parse_and_admit_fixation_payload(
         capital_multiplier=values.capital_multiplier,
         grant_impact_multiplier=values.grant_impact_multiplier,
         grants=admitted_grants,
-        future_grant_reserved=0 if future_reserve is None else future_reserve.amount,
+        future_grant_reserved=Decimal("0.00") if future_reserve is None else future_reserve.amount,
         actual_capitalizations=admitted_capitalizations,
         idf=None,
         metadata=context.metadata,

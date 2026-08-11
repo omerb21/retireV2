@@ -208,6 +208,9 @@ def create_client_source_data(
                     else None
                 ),
                 employer_name=grant_data.get("employer_name"),
+                employer_withholding_file_number=grant_data.get(
+                    "employer_withholding_file_number"
+                ),
                 nominal_amount=grant_data.get("nominal_amount"),
                 indexed_amount=grant_data["indexed_amount"],
                 grant_date=grant_data["grant_date"],
@@ -294,7 +297,6 @@ def run_fixation(
     db_session: Session,
     planner_review_context: PlannerReviewContextEnvelope | None = None,
     cbs_calculator=None,
-    use_persisted_grants: bool = False,
 ) -> int:
     client_key = int(client_id)
 
@@ -321,7 +323,7 @@ def run_fixation(
             client_id=client_key,
             db_session=db_session,
             cbs_calculator=cbs_calculator,
-            use_persisted_grants=use_persisted_grants,
+            use_persisted_grants=True,
         )
         snapshot_payload = (
             admitted_context.model_dump(mode="json")

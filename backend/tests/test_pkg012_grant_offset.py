@@ -7,6 +7,7 @@ import pytest
 
 from app.engines.fixation_engine import _calculate_formula_non_authoritative
 from app.main import app
+from app.models.fixation_run import FixationRun
 from app.schemas.fixation_contracts import FixationInput
 from app.schemas.cbs_indexation import (
     CbsIndexationFailure,
@@ -16,6 +17,7 @@ from app.schemas.cbs_indexation import (
     CbsIndexationSuccess,
 )
 from app.services import fixation_admission_service
+from app.services.fixation_service import run_fixation
 from tests.pkg004d_test_support import resolver_payload, seed_eligibility_revision
 from tests.test_phase9_api import _build_client, _create_client
 
@@ -61,9 +63,13 @@ def _calculate(grants: list[dict], eligibility: date = date(2025, 1, 1)):
 
 def test_zero_grants_produces_zero_handoff() -> None:
     result = _calculate([])
-    assert result.grant_impact_total == 0
-    assert result.grant_offset_handoff["aggregate_grant_offset"] == 0
+    assert result.grant_impact_total == Decimal("0.00")
+    assert isinstance(result.grant_impact_total, Decimal)
+    assert result.grant_offset_handoff["aggregate_grant_offset"] == Decimal("0.00")
     assert result.grant_offset_handoff["per_grant_breakdown"] == []
+    serialized = result.model_dump(mode="json")
+    assert serialized["grant_impact_total"] == "0.00"
+    assert serialized["grant_offset_handoff"]["aggregate_grant_offset"] == "0.00"
 
 
 def test_exact_fifteen_year_boundary_is_included() -> None:
@@ -149,6 +155,14 @@ def test_decimal_half_up_checkpoints_and_serialization_are_exact() -> None:
     assert serialized["grant_results"][0]["indexed_amount"] == "2.68"
     assert serialized["grant_results"][0]["ratio"] == "1"
     assert serialized["grant_impact_total"] == "3.62"
+
+
+def test_engine_uses_supplied_multiplier_while_admission_owns_contract_validation() -> None:
+    payload = _payload(grants=[_grant(indexed=Decimal("2.675"))])
+    payload["grant_impact_multiplier"] = Decimal("9.99")
+    result = _calculate_formula_non_authoritative(FixationInput(**payload))
+    assert result.grant_results[0].impact_amount == Decimal("26.77")
+    assert result.audit_rows[2].details["multiplier"] == Decimal("9.99")
 
 
 def test_fractional_grants_round_per_grant_before_decimal_aggregation() -> None:
@@ -309,7 +323,26 @@ def test_direct_calculation_uses_persisted_grants_and_freezes_saved_evidence(
         assert result["grant_results"][0]["indexed_amount"] == "2.68"
         assert result["grant_results"][0]["limited_indexed_amount"] == "1.34"
         assert result["grant_results"][0]["impact_amount"] == "1.81"
+        assert result["grant_results"][0]["parameter_set_id"] == "params-2025"
         assert result["grant_results"][0]["cbs_response_evidence"]["raw_to_value"] == "2.675"
+        grant_audit = next(
+            row for row in detail_before["audit_rows"] if row["category"] == "grant"
+        )
+        assert grant_audit["details"]["multiplier"] == "1.35"
+
+        with session_local() as db:
+            direct_run_id = run_fixation(
+                client_id=client_id, input_data=payload, db_session=db
+            )
+            direct_run = db.get(FixationRun, direct_run_id)
+            assert direct_run.status == "success"
+            assert direct_run.fixation_input_snapshot.input_payload["grants"][0]["grant_id"] == grant_id
+            assert direct_run.fixation_result.result_payload["grant_results"][0]["parameter_set_id"] == "params-2025"
+            assert any(
+                row.details_payload["multiplier"] == "1.35"
+                for row in direct_run.fixation_audit_rows
+                if row.category == "grant"
+            )
 
         changed = dict(grant_payload, exempt_grant_amount="1")
         assert client.put(f"/api/clients/{client_id}/grants/{grant_id}", json=changed).status_code == 200
@@ -435,6 +468,50 @@ def test_authoritative_routes_reject_caller_grants_and_cannot_be_switched_by_met
             assert response.json()["status"] == "success"
             assert response.json()["grant_impact_total"] == "0.00"
             assert response.json()["grant_results"] == []
+
+        missing_multiplier = request_payload()
+        del missing_multiplier["parameter_set"]["values"]["grant_impact_multiplier"]
+        missing_response = client.post(
+            f"/api/clients/{client_id}/fixation/calculate", json=missing_multiplier
+        ).json()
+        assert missing_response["status"] == "validation_failed"
+        assert any(
+            item["path"] == "parameter_set.values.grant_impact_multiplier"
+            for item in missing_response["validation_errors"]
+        )
+
+        incompatible_multiplier = request_payload()
+        incompatible_multiplier["parameter_set"]["values"]["grant_impact_multiplier"] = 9.99
+        incompatible_response = client.post(
+            f"/api/clients/{client_id}/fixation/calculate", json=incompatible_multiplier
+        ).json()
+        assert incompatible_response["status"] == "validation_failed"
+        assert any(
+            item["path"] == "parameter_set.values.grant_impact_multiplier"
+            for item in incompatible_response["validation_errors"]
+        )
+
+        direct_legacy_payload = request_payload(
+            grants=[caller_grant], metadata={"grant_contract": "legacy"}
+        )
+        with session_local() as db:
+            direct_run_id = run_fixation(
+                client_id=client_id,
+                input_data=direct_legacy_payload,
+                db_session=db,
+            )
+            direct_run = db.get(FixationRun, direct_run_id)
+            assert direct_run is not None
+            assert direct_run.status == "validation_failed"
+            assert direct_run.fixation_result is None
+            assert direct_run.fixation_audit_rows == []
+        with pytest.raises(TypeError):
+            run_fixation(
+                client_id=client_id,
+                input_data=direct_legacy_payload,
+                db_session=None,
+                use_persisted_grants=False,
+            )
     finally:
         app.dependency_overrides.clear()
 
@@ -486,6 +563,11 @@ def test_persisted_future_grant_and_cbs_failure_are_fail_closed(tmp_path, monkey
         future = client.post(f"/api/clients/{client_id}/fixation/calculate", json=payload).json()
         assert future["status"] == "validation_failed"
         assert any(item["path"].endswith(".grant_date") for item in future["validation_errors"])
+        with session_local() as db:
+            future_run_id = run_fixation(
+                client_id=client_id, input_data=payload, db_session=db
+            )
+            assert db.get(FixationRun, future_run_id).status == "validation_failed"
 
         grant_payload["grant_receipt_date"] = "2020-01-01"
         client.put(f"/api/clients/{client_id}/grants/{created['grant_id']}", json=grant_payload)
@@ -504,5 +586,12 @@ def test_persisted_future_grant_and_cbs_failure_are_fail_closed(tmp_path, monkey
         failed = client.post(f"/api/clients/{client_id}/fixation/calculate", json=payload).json()
         assert failed["status"] == "calculation_failed"
         assert failed["validation_errors"][0]["code"] == "CBS_CALCULATION_FAILED"
+        with session_local() as db:
+            failed_run_id = run_fixation(
+                client_id=client_id, input_data=payload, db_session=db
+            )
+            failed_run = db.get(FixationRun, failed_run_id)
+            assert failed_run.status == "calculation_failed"
+            assert failed_run.fixation_result is None
     finally:
         app.dependency_overrides.clear()

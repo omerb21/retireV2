@@ -210,7 +210,6 @@ def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -
         input_data=payload.input_data,
         db_session=db,
         planner_review_context=payload.planner_review_context,
-        use_persisted_grants=True,
     )
     run = db.get(FixationRun, run_id)
     if run is None:

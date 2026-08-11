@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import warnings
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -83,8 +84,9 @@ def _seed_source_data(session: Session, *, client_id: int = 1) -> int:
                 "grant_id": f"G-{client_id}",
                 "employment_record_id": f"E-{client_id}",
                 "employer_name": "Employer",
-                "nominal_amount": Decimal("10000.00"),
-                "indexed_amount": Decimal("10000.00"),
+                "employer_withholding_file_number": "WF-1",
+                "nominal_amount": Decimal("0.00"),
+                "indexed_amount": Decimal("0.00"),
                 "grant_date": date(2020, 1, 1),
                 "work_start_date": date(2010, 1, 1),
                 "work_end_date": date(2020, 1, 1),
@@ -156,24 +158,8 @@ def _admissible_payload(
             "accepted_by": "test-planner",
             "decision_timestamp": "2025-01-01T00:00:00Z",
         },
-        "grants_collection_state": "items_recorded" if input_model.grants else "confirmed_none",
-        "grants": [
-            {
-                **grant.model_dump(mode="json"),
-                "client_id": client_id,
-                "item_type": "severance_grant",
-                "indexation_mode": "asserted_indexed_amount",
-                "source_basis": "grant fixture",
-                "status": "reviewed",
-                "accepted_for_use": True,
-                "inclusion_decision": "include",
-                "support_status": "supported",
-                "conflict_indicator": False,
-                "actor": "test-planner",
-                "decision_timestamp": "2025-01-01T00:00:00Z",
-            }
-            for grant in input_model.grants
-        ],
+        "grants_collection_state": "confirmed_none",
+        "grants": [],
         "future_grant_reservation": {
             "amount": input_model.future_grant_reserved,
             "source_basis": "reserve fixture",
@@ -271,10 +257,17 @@ def test_run_fixation_success_persists_run_snapshot_result_and_audit(tmp_path: P
             explicit_parameters=_explicit_parameters(calc_id="calc-success", monthly_cap=1000.0),
         )
 
-        run_id = run_fixation(
-            client_id=client_id,
-            input_data=_admissible_payload(client_id, input_model, session),
-            db_session=session,
+        with warnings.catch_warnings(record=True) as captured_warnings:
+            warnings.simplefilter("always")
+            run_id = run_fixation(
+                client_id=client_id,
+                input_data=_admissible_payload(client_id, input_model, session),
+                db_session=session,
+            )
+        assert not any(
+            "PydanticSerializationUnexpectedValue" in str(item.message)
+            or "Expected `decimal`" in str(item.message)
+            for item in captured_warnings
         )
 
         run = session.get(FixationRun, run_id)
@@ -284,6 +277,15 @@ def test_run_fixation_success_persists_run_snapshot_result_and_audit(tmp_path: P
         assert run.fixation_result is not None
         assert len(run.fixation_audit_rows) > 0
         assert len(run.fixation_validation_errors) == 0
+        saved_grant = run.fixation_input_snapshot.input_payload["grants"][0]
+        assert saved_grant["grant_id"] == "G-1"
+        assert saved_grant["system_calculated_amount"] == "0.00"
+        assert saved_grant["selected_calculation_amount"] == "0.00"
+        assert run.fixation_result.result_payload["grant_impact_total"] == "0.00"
+        assert run.fixation_input_snapshot.input_payload["parameter_set"]["parameter_set_id"] == "PARAMS-1-2025"
+        assert Decimal(
+            str(run.fixation_input_snapshot.input_payload["parameter_set"]["values"]["grant_impact_multiplier"])
+        ) == Decimal("1.35")
 
 
 def test_run_fixation_validation_failed_persists_errors_without_result(tmp_path: Path) -> None:

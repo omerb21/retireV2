@@ -9,6 +9,7 @@ from app.api.m03_review_routes import router as m03_review_router
 from app.api.m04_classification_routes import router as m04_classification_router
 from app.api.m05_ledger_routes import router as m05_ledger_router
 from app.api.m06_conversion_routes import router as m06_conversion_router
+from app.api.m09_cashflow_routes import router as m09_cashflow_router
 from app.api.official_parameter_routes import router as official_parameter_router
 from app.services.m02_storage import ManagedLocalStorage
 
@@ -31,6 +32,7 @@ app.include_router(m03_review_router)
 app.include_router(m04_classification_router)
 app.include_router(m05_ledger_router)
 app.include_router(m06_conversion_router)
+app.include_router(m09_cashflow_router)
 
 
 @app.on_event("startup")

@@ -75,6 +75,9 @@ ACCEPTED_ADDITIVE_TABLES = {
     "m06_coefficient_evidence",
     "m06_calculation_manifests",
     "m06_warning_dispositions",
+    "m09_resolved_component_inventories",
+    "m09_scenario_runs",
+    "m09_monthly_results",
 }
 
 EXCLUDED_TABLES = {

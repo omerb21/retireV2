@@ -847,6 +847,11 @@ def _manifest(
         )
     else:
         raw_kind = raw_decimal = numerator = denominator = display = None
+    authoritative_monthly_amount = (
+        display
+        if calculate and revision.mode == "balance_to_monthly_pension"
+        else None
+    )
     manifest = {
         "manifest_schema_version": "m06-manifest-v1",
         "calculation_contract_version": "pkg-011-v1",
@@ -901,6 +906,21 @@ def _manifest(
             "rounding": "ROUND_HALF_UP",
             "unit": FORMULAS[revision.mode][1],
         },
+        "authoritative_downstream_handoff": (
+            {
+                "contract_version": "m06-to-m09-monthly-amount-v1",
+                "amount": authoritative_monthly_amount,
+                "currency": "ILS",
+                "unit": "ILS/month",
+                "scale": 2,
+                "rounding_owner": "M06",
+                "formula_owner": "M06",
+                "source_formula_id": revision.formula_id,
+                "source_revision_id": revision.revision_id,
+            }
+            if authoritative_monthly_amount is not None
+            else None
+        ),
         "actor": M06_WORKFLOW_ACTOR,
         "timestamp": revision.created_at,
     }
@@ -918,6 +938,7 @@ def _manifest(
         raw_numerator=numerator,
         raw_denominator=denominator,
         display_result=display,
+        authoritative_monthly_amount=authoritative_monthly_amount,
         created_at=m06_server_timestamp(),
     )
     authorize_m06_insert(row)
@@ -1390,6 +1411,9 @@ def revision_response(db: Session, row: M06ConversionRevision) -> M06RevisionRes
                 raw_numerator=manifest.raw_numerator,
                 raw_denominator=manifest.raw_denominator,
                 display_result=manifest.display_result,
+                authoritative_monthly_amount=getattr(
+                    manifest, "authoritative_monthly_amount", None
+                ),
                 evidence=manifest.manifest,
             )
             if manifest

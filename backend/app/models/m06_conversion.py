@@ -275,6 +275,9 @@ class M06CalculationManifest(Base):
     raw_numerator: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_denominator: Mapped[str | None] = mapped_column(Text, nullable=True)
     display_result: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    authoritative_monthly_amount: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

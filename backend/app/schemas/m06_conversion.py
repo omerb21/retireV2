@@ -138,6 +138,7 @@ class M06ManifestResponse(BaseModel):
     raw_numerator: str | None
     raw_denominator: str | None
     display_result: str | None
+    authoritative_monthly_amount: str | None
     evidence: dict[str, Any]
 
 

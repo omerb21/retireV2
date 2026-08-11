@@ -22,12 +22,15 @@ from app.db.base import Base
 class Grant(Base):
     __tablename__ = "grants"
     __table_args__ = (
-        CheckConstraint("indexed_amount >= 0", name="ck_grants_indexed_amount_non_negative"),
+        CheckConstraint(
+            "indexed_amount IS NULL OR indexed_amount >= 0",
+            name="ck_grants_indexed_amount_non_negative",
+        ),
         CheckConstraint(
             "nominal_amount IS NULL OR nominal_amount >= 0",
             name="ck_grants_nominal_amount_non_negative",
         ),
-        CheckConstraint("work_end_date >= work_start_date", name="ck_grants_work_dates_order"),
+        CheckConstraint("work_end_date > work_start_date", name="ck_grants_work_dates_order"),
     )
 
     grant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -38,8 +41,11 @@ class Grant(Base):
         String(64), ForeignKey("employment_records.employment_record_id"), nullable=True
     )
     employer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    employer_withholding_file_number: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
     nominal_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
-    indexed_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    indexed_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     grant_date: Mapped[date] = mapped_column(Date, nullable=False)
     work_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     work_end_date: Mapped[date] = mapped_column(Date, nullable=False)

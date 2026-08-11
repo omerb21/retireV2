@@ -136,41 +136,53 @@ class EmploymentRecordResponse(BaseModel):
 
 
 class GrantRequest(BaseModel):
-    employment_record_id: str | None = None
-    employer_name: str | None = None
-    nominal_amount: Decimal | None = None
-    indexed_amount: Decimal
-    grant_date: date
-    work_start_date: date
-    work_end_date: date
-    notes: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("nominal_amount", "indexed_amount", mode="before")
+    employer_name: str
+    employer_withholding_file_number: str
+    employment_start_date: date
+    employment_end_date: date
+    grant_receipt_date: date
+    exempt_grant_amount: Decimal
+
+    @field_validator("exempt_grant_amount", mode="before")
     @classmethod
     def reject_blank_numeric_values(cls, value: object) -> object:
         if isinstance(value, str) and value.strip() == "":
             raise ValueError("numeric value must not be blank")
         return value
 
-    @field_validator("nominal_amount", "indexed_amount")
+    @field_validator("exempt_grant_amount")
     @classmethod
     def reject_negative_numeric_values(cls, value: Decimal | None) -> Decimal | None:
-        if value is not None and value < 0:
+        if value is None or not value.is_finite() or value < 0:
             raise ValueError("numeric value must be non-negative")
         return value
+
+    @field_validator("employer_name", "employer_withholding_file_number")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_employment_dates(self) -> "GrantRequest":
+        if self.employment_start_date >= self.employment_end_date:
+            raise ValueError("employment_start_date must be before employment_end_date")
+        return self
 
 
 class GrantResponse(BaseModel):
     grant_id: str
     client_id: int
-    employment_record_id: str | None
     employer_name: str | None
-    nominal_amount: Decimal | None
-    indexed_amount: Decimal
-    grant_date: date
-    work_start_date: date
-    work_end_date: date
-    notes: str | None
+    employer_withholding_file_number: str | None
+    employment_start_date: date
+    employment_end_date: date
+    grant_receipt_date: date
+    exempt_grant_amount: Decimal | None
 
 
 class ActualCapitalizationRequest(BaseModel):
@@ -1059,14 +1071,12 @@ def _grant_to_response(row: Grant) -> GrantResponse:
     return GrantResponse(
         grant_id=row.grant_id,
         client_id=row.client_id,
-        employment_record_id=row.employment_record_id,
         employer_name=row.employer_name,
-        nominal_amount=row.nominal_amount,
-        indexed_amount=row.indexed_amount,
-        grant_date=row.grant_date,
-        work_start_date=row.work_start_date,
-        work_end_date=row.work_end_date,
-        notes=row.notes,
+        employer_withholding_file_number=row.employer_withholding_file_number,
+        employment_start_date=row.work_start_date,
+        employment_end_date=row.work_end_date,
+        grant_receipt_date=row.grant_date,
+        exempt_grant_amount=row.nominal_amount,
     )
 
 
@@ -1363,7 +1373,7 @@ def _require_grant(db: Session, client_id: int, grant_id: str) -> Grant:
     if row is None:
         raise _source_item_not_found(
             "GRANT_NOT_FOUND",
-            f"Grant {grant_id} was not found for client {client_id}",
+            "Grant was not found for the requested client",
         )
     return row
 
@@ -2497,20 +2507,17 @@ def delete_employment_record(
 @router.post("/{client_id}/grants", response_model=GrantResponse)
 def create_grant(client_id: int, payload: GrantRequest, db: Session = Depends(get_db)) -> GrantResponse:
     _require_client(db, client_id)
-    if payload.employment_record_id is not None:
-        _require_employment_record(db, client_id, payload.employment_record_id)
-
     grant = Grant(
         grant_id=f"GR-{uuid4().hex}",
         client_id=client_id,
-        employment_record_id=payload.employment_record_id,
         employer_name=payload.employer_name,
-        nominal_amount=payload.nominal_amount,
-        indexed_amount=payload.indexed_amount,
-        grant_date=payload.grant_date,
-        work_start_date=payload.work_start_date,
-        work_end_date=payload.work_end_date,
-        notes=payload.notes,
+        employer_withholding_file_number=payload.employer_withholding_file_number,
+        nominal_amount=payload.exempt_grant_amount,
+        indexed_amount=None,
+        grant_date=payload.grant_receipt_date,
+        work_start_date=payload.employment_start_date,
+        work_end_date=payload.employment_end_date,
+        notes=None,
     )
     db.add(grant)
     db.commit()
@@ -2540,17 +2547,13 @@ def update_grant(
 ) -> GrantResponse:
     _require_client(db, client_id)
     grant = _require_grant(db, client_id, grant_id)
-    if payload.employment_record_id is not None:
-        _require_employment_record(db, client_id, payload.employment_record_id)
-
-    grant.employment_record_id = payload.employment_record_id
     grant.employer_name = payload.employer_name
-    grant.nominal_amount = payload.nominal_amount
-    grant.indexed_amount = payload.indexed_amount
-    grant.grant_date = payload.grant_date
-    grant.work_start_date = payload.work_start_date
-    grant.work_end_date = payload.work_end_date
-    grant.notes = payload.notes
+    grant.employer_withholding_file_number = payload.employer_withholding_file_number
+    grant.nominal_amount = payload.exempt_grant_amount
+    grant.indexed_amount = None
+    grant.grant_date = payload.grant_receipt_date
+    grant.work_start_date = payload.employment_start_date
+    grant.work_end_date = payload.employment_end_date
     db.commit()
     db.refresh(grant)
 

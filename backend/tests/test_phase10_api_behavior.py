@@ -504,14 +504,12 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
         grant_resp = client.post(
             f"/api/clients/{client_id}/grants",
             json={
-                "employment_record_id": employment_id,
                 "employer_name": "Employer Inc",
-                "nominal_amount": 10000.0,
-                "indexed_amount": 10000.0,
-                "grant_date": "2020-01-01",
-                "work_start_date": "2010-01-01",
-                "work_end_date": "2020-01-01",
-                "notes": "grant",
+                "employer_withholding_file_number": "WF-100",
+                "exempt_grant_amount": 10000.0,
+                "grant_receipt_date": "2020-01-01",
+                "employment_start_date": "2010-01-01",
+                "employment_end_date": "2020-01-01",
             },
         )
         assert grant_resp.status_code == 200

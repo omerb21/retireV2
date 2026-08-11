@@ -343,14 +343,12 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         create_grant_resp = client.post(
             f"/api/clients/{created_client_id}/grants",
             json={
-                "employment_record_id": employment_id,
                 "employer_name": "Employer Inc",
-                "nominal_amount": 10000.0,
-                "indexed_amount": 10000.0,
-                "grant_date": "2020-01-01",
-                "work_start_date": "2010-01-01",
-                "work_end_date": "2020-01-01",
-                "notes": "grant",
+                "employer_withholding_file_number": "WF-100",
+                "exempt_grant_amount": 10000.0,
+                "grant_receipt_date": "2020-01-01",
+                "employment_start_date": "2010-01-01",
+                "employment_end_date": "2020-01-01",
             },
         )
         assert create_grant_resp.status_code == 200
@@ -360,37 +358,37 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         update_grant_resp = client.put(
             f"/api/clients/{created_client_id}/grants/{create_grant_resp.json()['grant_id']}",
             json={
-                "employment_record_id": employment_id,
                 "employer_name": "Updated Employer Inc",
-                "nominal_amount": 11000.0,
-                "indexed_amount": 12000.0,
-                "grant_date": "2021-01-01",
-                "work_start_date": "2011-01-01",
-                "work_end_date": "2021-01-01",
-                "notes": "updated grant",
+                "employer_withholding_file_number": "WF-101",
+                "exempt_grant_amount": 11000.0,
+                "grant_receipt_date": "2021-01-01",
+                "employment_start_date": "2011-01-01",
+                "employment_end_date": "2021-01-01",
             },
         )
         assert update_grant_resp.status_code == 200
-        assert update_grant_resp.json()["indexed_amount"] == "12000.00"
+        assert update_grant_resp.json()["exempt_grant_amount"] == "11000.00"
         blank_grant_numeric_resp = client.post(
             f"/api/clients/{created_client_id}/grants",
             json={
-                "employment_record_id": employment_id,
-                "indexed_amount": "",
-                "grant_date": "2021-01-01",
-                "work_start_date": "2011-01-01",
-                "work_end_date": "2021-01-01",
+                "employer_name": "Employer",
+                "employer_withholding_file_number": "WF-102",
+                "exempt_grant_amount": "",
+                "grant_receipt_date": "2021-01-01",
+                "employment_start_date": "2011-01-01",
+                "employment_end_date": "2021-01-01",
             },
         )
         assert blank_grant_numeric_resp.status_code == 422
         negative_grant_numeric_resp = client.post(
             f"/api/clients/{created_client_id}/grants",
             json={
-                "employment_record_id": employment_id,
-                "indexed_amount": -1,
-                "grant_date": "2021-01-01",
-                "work_start_date": "2011-01-01",
-                "work_end_date": "2021-01-01",
+                "employer_name": "Employer",
+                "employer_withholding_file_number": "WF-102",
+                "exempt_grant_amount": -1,
+                "grant_receipt_date": "2021-01-01",
+                "employment_start_date": "2011-01-01",
+                "employment_end_date": "2021-01-01",
             },
         )
         assert negative_grant_numeric_resp.status_code == 422

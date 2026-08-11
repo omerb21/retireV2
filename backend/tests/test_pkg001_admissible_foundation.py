@@ -479,6 +479,8 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
             _legacy_payload(client_id=owner),
             revision_id=owner_revision,
         )
+        payload["grants_collection_state"] = "confirmed_none"
+        payload["grants"] = []
         saved = client.post(
             "/api/fixation/save",
             json={"client_id": owner, "input_data": payload},
@@ -493,7 +495,7 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
         assert owner_detail.status_code == 200
         assert other_detail.status_code == 404
         assert owner_detail.json()["input_snapshot"]["parameter_set"]["values"]["monthly_cap"] == 1000.0
-        assert owner_detail.json()["input_snapshot"]["grants"][0]["inclusion_decision"] == "include"
+        assert owner_detail.json()["input_snapshot"]["grants"] == []
 
         cross_client_calculation = client.post(
             f"/api/clients/{other}/fixation/calculate",

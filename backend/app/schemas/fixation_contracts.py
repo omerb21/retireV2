@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 import math
 from typing import Any, Literal
 
@@ -127,8 +128,8 @@ class GrantInput(BaseModel):
     client_id: int | None = None
     employer_name: str | None = None
     employer_withholding_file_number: str | None = None
-    nominal_amount: float | None = None
-    indexed_amount: float
+    nominal_amount: Decimal | None = None
+    indexed_amount: Decimal
     grant_date: date
     work_start_date: date
     work_end_date: date
@@ -150,17 +151,17 @@ class GrantInput(BaseModel):
 
     @field_validator("nominal_amount")
     @classmethod
-    def validate_nominal_amount(cls, value: float | None) -> float | None:
+    def validate_nominal_amount(cls, value: Decimal | None) -> Decimal | None:
         if value is None:
             return value
-        if not math.isfinite(value) or value < 0:
+        if not value.is_finite() or value < 0:
             raise ValueError("nominal_amount must be >= 0")
         return value
 
     @field_validator("indexed_amount")
     @classmethod
-    def validate_indexed_amount(cls, value: float) -> float:
-        if not math.isfinite(value) or value < 0:
+    def validate_indexed_amount(cls, value: Decimal) -> Decimal:
+        if not value.is_finite() or value < 0:
             raise ValueError("indexed_amount must be >= 0")
         return value
 
@@ -580,10 +581,10 @@ class GrantResult(BaseModel):
     employment_start_date: date | None = None
     employment_end_date: date | None = None
     grant_receipt_date: date | None = None
-    exempt_grant_amount: float | None = None
-    indexed_amount: float
-    limited_indexed_amount: float
-    impact_amount: float
+    exempt_grant_amount: Decimal | None = None
+    indexed_amount: Decimal
+    limited_indexed_amount: Decimal
+    impact_amount: Decimal
     exclusion_reason: str | None
     years_difference: float | None = None
     relevant: bool | None = None
@@ -592,7 +593,7 @@ class GrantResult(BaseModel):
     overlap_start: date | None = None
     overlap_end: date | None = None
     overlap_days: int | None = None
-    ratio: float | None = None
+    ratio: Decimal | None = None
     formula_contract_version: str | None = None
     parameter_set_id: str | None = None
     cbs_request_evidence: dict[str, Any] | None = None
@@ -605,7 +606,7 @@ class GrantResult(BaseModel):
 
     @field_validator("indexed_amount", "limited_indexed_amount", "impact_amount")
     @classmethod
-    def validate_grant_result_amounts(cls, value: float) -> float:
+    def validate_grant_result_amounts(cls, value: Decimal) -> Decimal:
         if value < 0:
             raise ValueError("grant result amounts must be >= 0")
         return value
@@ -772,7 +773,7 @@ class FixationResult(BaseModel):
     exemption_percentage: float | None = None
     capital_multiplier: float | None = None
     initial_exempt_capital: float | None = None
-    grant_impact_total: float | None = None
+    grant_impact_total: Decimal | None = None
     future_grant_reserved: float | None = None
     future_grant_impact: float | None = None
     actual_capitalization_impact: float | None = None

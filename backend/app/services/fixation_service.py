@@ -86,6 +86,17 @@ def _as_float(value: Decimal | None) -> float | None:
     return float(value)
 
 
+def _decimal_json(value):
+    """Preserve exact Decimal evidence in JSON payloads as canonical strings."""
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, dict):
+        return {key: _decimal_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decimal_json(item) for item in value]
+    return value
+
+
 def _safe_failed_admission_snapshot(raw_payload: dict) -> dict:
     allowed_non_m07_fields = set(FixationAdmissionRequest.model_fields) - {
         "m07_input_reference"
@@ -421,7 +432,7 @@ def run_fixation(
                         ),
                         output_amount=Decimal(str(row.output_amount)),
                         impact_amount=Decimal(str(row.impact_amount)),
-                        details_payload=row.details,
+                        details_payload=_decimal_json(row.details),
                     )
                 )
 

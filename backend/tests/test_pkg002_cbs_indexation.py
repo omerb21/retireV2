@@ -451,12 +451,12 @@ def test_asserted_and_cbs_modes_remain_distinct_without_fallback() -> None:
     grant = context.grants[0]
     assert grant.indexation_mode == "cbs_system_calculated"
     assert grant.asserted_indexed_amount == 9999.0
-    assert grant.system_calculated_amount == 1234.57
-    assert grant.selected_calculation_amount == 1234.57
+    assert grant.system_calculated_amount == Decimal("1234.57")
+    assert grant.selected_calculation_amount == Decimal("1234.57")
     assert grant.cbs_response_evidence is not None
     assert grant.cbs_response_evidence.raw_to_value == Decimal("1234.5678")
     result = calculate_fixation(engine_input)
-    assert result.grant_results[0].indexed_amount == 1234.57
+    assert result.grant_results[0].indexed_amount == Decimal("1234.57")
 
     failed = calculate_fixation_payload(
         required,
@@ -636,13 +636,17 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
             seed_eligibility_revision(session, client_id=other)
             session.commit()
 
-        def owner_payload(mode: str) -> dict:
-            return resolver_payload(
+        def owner_payload(mode: str, *, caller_grant: bool = False) -> dict:
+            payload = resolver_payload(
                 _legacy_payload(client_id=owner, mode=mode),
                 revision_id=owner_revision,
             )
+            if not caller_grant:
+                payload["grants_collection_state"] = "confirmed_none"
+                payload["grants"] = []
+            return payload
 
-        forged = owner_payload("cbs_system_calculated")
+        forged = owner_payload("cbs_system_calculated", caller_grant=True)
         forged_grant = forged["grants"][0]
         forged_grant["inclusion_decision"] = "exclude"
         forged_grant["system_calculated_amount"] = 777777.0
@@ -659,15 +663,24 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
         ).json()
         assert forged_detail["result"] is None
         assert forged_detail["audit_rows"] == []
-        persisted_forged_grant = forged_detail["input_snapshot"]["grants"][0]
-        assert persisted_forged_grant["indexation_mode"] == "cbs_system_calculation_required"
-        assert persisted_forged_grant["system_calculated_amount"] is None
-        assert persisted_forged_grant["selected_calculation_amount"] is None
-        assert persisted_forged_grant["cbs_response_evidence"] is None
+        assert forged_detail["input_snapshot"]["grants"] == []
         assert all(
             run["status"] != "success"
             for run in client.get(f"/api/clients/{owner}/fixation/history").json()
         )
+
+        created_grant = client.post(
+            f"/api/clients/{owner}/grants",
+            json={
+                "employer_name": "CBS Employer",
+                "employer_withholding_file_number": "WF-CBS",
+                "employment_start_date": "2010-01-01",
+                "employment_end_date": "2020-01-31",
+                "grant_receipt_date": "2020-02-03",
+                "exempt_grant_amount": "1000",
+            },
+        )
+        assert created_grant.status_code == 200
 
         monkeypatch.setattr(
             "app.services.fixation_admission_service.calculate_cbs_indexation",
@@ -678,18 +691,17 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
         assert saved.status_code == 200 and saved.json()["status"] == "success"
         run_id = saved.json()["run_id"]
         payload_before_mutation = copy.deepcopy(payload)
-        payload["grants"][0]["nominal_amount"] = 777777.0
-        payload["grants"][0]["indexed_amount"] = 888888.0
 
         detail = client.get(f"/api/clients/{owner}/fixation/runs/{run_id}")
         cross_client = client.get(f"/api/clients/{other}/fixation/runs/{run_id}")
         assert detail.status_code == 200
         assert cross_client.status_code == 404
         snapshot_grant = detail.json()["input_snapshot"]["grants"][0]
-        assert snapshot_grant["nominal_amount"] == payload_before_mutation["grants"][0]["nominal_amount"]
-        assert snapshot_grant["asserted_indexed_amount"] == 9999.0
-        assert snapshot_grant["system_calculated_amount"] == 1234.57
-        assert snapshot_grant["selected_calculation_amount"] == 1234.57
+        assert payload_before_mutation["grants"] == []
+        assert snapshot_grant["nominal_amount"] == "1000.00"
+        assert snapshot_grant["asserted_indexed_amount"] is None
+        assert snapshot_grant["system_calculated_amount"] == "1234.57"
+        assert snapshot_grant["selected_calculation_amount"] == "1234.57"
         assert snapshot_grant["cbs_response_evidence"]["raw_to_value"] == "1234.5678"
         assert snapshot_grant["base_date_source"] == "grant_date"
         assert snapshot_grant["cpi_code"] == "120010"

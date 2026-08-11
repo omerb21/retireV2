@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 import re
 from typing import Any
 
@@ -22,10 +23,16 @@ from app.schemas.fixation_contracts import (
 
 IDF_MONTHLY_CAP_FACTOR = 0.35
 PKG012_GRANT_FORMULA_VERSION = "pkg-012-m08d-v1"
+MONEY_QUANTUM = Decimal("0.01")
+PKG012_GRANT_MULTIPLIER = Decimal("1.35")
 
 
 def _round2(value: float) -> float:
     return round(value, 2)
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 def _shift_years(base_date: date, years: int) -> date:
@@ -163,7 +170,10 @@ def _grant_ratio_evidence(grant: GrantInput, eligibility_date: date) -> dict[str
     overlap_start = max(grant.work_start_date, window_start)
     overlap_end = min(grant.work_end_date, eligibility_date)
     overlap_days = max((overlap_end - overlap_start).days, 0)
-    ratio = min(max(overlap_days / total_employment_days, 0.0), 1.0)
+    ratio = min(
+        max(Decimal(overlap_days) / Decimal(total_employment_days), Decimal("0")),
+        Decimal("1"),
+    )
     return {
         "window_start": window_start,
         "total_employment_days": total_employment_days,
@@ -257,7 +267,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         },
     )
 
-    grant_impact_total_raw = 0.0
+    grant_impact_total_decimal = Decimal("0.00")
     grant_boundary_date = _shift_years(input_data.eligibility_date, -15)
     included_grants: list[dict[str, Any]] = []
     all_grants_15y: list[dict[str, Any]] = []
@@ -267,20 +277,20 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         ratio_evidence = _grant_ratio_evidence(grant, input_data.eligibility_date)
         is_excluded = _is_grant_excluded_15_year_rule(grant.grant_date, input_data.eligibility_date)
         if is_excluded:
-            work_years_ratio = 0.0
-            limited_indexed_amount_raw = 0.0
-            grant_impact_raw = 0.0
+            work_years_ratio = Decimal("0")
+            limited_indexed_amount_raw = Decimal("0.00")
+            grant_impact_raw = Decimal("0.00")
             exclusion_reason = "excluded_15_year_rule"
         else:
-            work_years_ratio = float(ratio_evidence["ratio"])
-            indexed_full = _round2(grant.indexed_amount)
-            limited_indexed_amount_raw = _round2(indexed_full * work_years_ratio)
-            grant_impact_raw = _round2(
-                limited_indexed_amount_raw * input_data.grant_impact_multiplier
+            work_years_ratio = ratio_evidence["ratio"]
+            indexed_full = _money(grant.indexed_amount)
+            limited_indexed_amount_raw = _money(indexed_full * work_years_ratio)
+            grant_impact_raw = _money(
+                limited_indexed_amount_raw * PKG012_GRANT_MULTIPLIER
             )
             exclusion_reason = None
 
-        grant_impact_total_raw += grant_impact_raw
+        grant_impact_total_decimal += grant_impact_raw
         grant_results.append(
             GrantResult(
                 grant_id=grant.grant_id,
@@ -291,9 +301,9 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 employment_end_date=grant.work_end_date,
                 grant_receipt_date=grant.grant_date,
                 exempt_grant_amount=grant.nominal_amount,
-                indexed_amount=_round2(grant.indexed_amount),
-                limited_indexed_amount=_round2(limited_indexed_amount_raw),
-                impact_amount=_round2(grant_impact_raw),
+                indexed_amount=_money(grant.indexed_amount),
+                limited_indexed_amount=limited_indexed_amount_raw,
+                impact_amount=grant_impact_raw,
                 exclusion_reason=exclusion_reason,
                 years_difference=years_difference,
                 relevant=not is_excluded,
@@ -346,10 +356,10 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
             stage3_details: dict[str, Any] = {
                 "component_type": "historical_grant",
                 "multiplier": input_data.grant_impact_multiplier,
-                "post_multiplier_impact": _round2(grant_impact_total_raw),
+                "post_multiplier_impact": grant_impact_total_decimal,
             }
             if only_included is not None:
-                stage3_details["pre_multiplier_amount"] = _round2(only_included["qualifying_amount"])
+                stage3_details["pre_multiplier_amount"] = only_included["qualifying_amount"]
             else:
                 stage3_details["excluded_by_15_year_rule"] = True
 
@@ -359,8 +369,8 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 source_id=only.grant_id,
                 label="grant impact",
                 input_amount=stage3_input,
-                output_amount=grant_impact_total_raw,
-                impact_amount=grant_impact_total_raw,
+                output_amount=float(grant_impact_total_decimal),
+                impact_amount=float(grant_impact_total_decimal),
                 details=stage3_details,
             )
 
@@ -369,8 +379,8 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 category="15_year_exclusion",
                 source_id=only.grant_id,
                 label="15-year exclusion",
-                input_amount=only.indexed_amount,
-                output_amount=only_included["indexed_amount"] if only_included is not None else 0.0,
+                input_amount=float(only.indexed_amount),
+                output_amount=float(only_included["indexed_amount"]) if only_included is not None else 0.0,
                 impact_amount=0.0,
                 details={
                     "grant_date": only.grant_date.isoformat(),
@@ -385,15 +395,15 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 source_id=None,
                 label="grant impact",
                 input_amount=None,
-                output_amount=grant_impact_total_raw,
-                impact_amount=grant_impact_total_raw,
+                output_amount=float(grant_impact_total_decimal),
+                impact_amount=float(grant_impact_total_decimal),
                 details={
                     "multiplier": input_data.grant_impact_multiplier,
                     "grants": [
                         {
                             "source_id": item["source_id"],
-                            "pre_multiplier_amount": _round2(item["qualifying_amount"]),
-                            "post_multiplier_impact": _round2(item["impact_amount"]),
+                            "pre_multiplier_amount": item["qualifying_amount"],
+                            "post_multiplier_impact": item["impact_amount"],
                         }
                         for item in included_grants
                     ],
@@ -406,7 +416,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                 source_id=None,
                 label="15-year exclusion",
                 input_amount=None,
-                output_amount=sum(item["indexed_amount"] for item in included_grants),
+                output_amount=float(sum((item["indexed_amount"] for item in included_grants), Decimal("0"))),
                 impact_amount=0.0,
                 details={"grants": all_grants_15y},
             )
@@ -419,14 +429,14 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                     category="32_year_ratio",
                     source_id=only_included["source_id"],
                     label="32-year ratio",
-                    input_amount=only_included["indexed_amount"],
-                    output_amount=only_included["qualifying_amount"],
+                    input_amount=float(only_included["indexed_amount"]),
+                    output_amount=float(only_included["qualifying_amount"]),
                     impact_amount=0.0,
                     details={
                         "work_start_date": only_included["work_start_date"],
                         "work_end_date": only_included["work_end_date"],
-                        "ratio_32y": _round2(only_included["ratio_32y"]),
-                        "capped": only_included["ratio_32y"] >= 1.0,
+                        "ratio_32y": only_included["ratio_32y"],
+                        "capped": only_included["ratio_32y"] >= Decimal("1"),
                     },
                 )
             else:
@@ -436,13 +446,13 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
                     source_id=None,
                     label="32-year ratio",
                     input_amount=None,
-                    output_amount=sum(item["qualifying_amount"] for item in included_grants),
+                    output_amount=float(sum((item["qualifying_amount"] for item in included_grants), Decimal("0"))),
                     impact_amount=0.0,
                     details={
                         "grants": [
                             {
                                 "source_id": item["source_id"],
-                                "ratio_32y": _round2(item["ratio_32y"]),
+                                "ratio_32y": item["ratio_32y"],
                             }
                             for item in included_grants
                         ]
@@ -535,7 +545,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         )
 
     total_impact_raw = (
-        grant_impact_total_raw
+        float(grant_impact_total_decimal)
         + future_grant_impact_raw
         + actual_capitalization_impact_raw
     )
@@ -549,7 +559,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         output_amount=total_impact_raw,
         impact_amount=total_impact_raw,
         details={
-            "grant_impact": _round2(grant_impact_total_raw),
+            "grant_impact": grant_impact_total_decimal,
             "future_reserve_impact": _round2(future_grant_impact_raw),
             "actual_capitalization_impact": _round2(actual_capitalization_impact_raw),
             "idf_excluded_as_informational": True,
@@ -604,7 +614,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         exemption_percentage=input_data.exemption_percentage,
         capital_multiplier=input_data.capital_multiplier,
         initial_exempt_capital=_round2(initial_exempt_capital_raw),
-        grant_impact_total=_round2(grant_impact_total_raw),
+        grant_impact_total=grant_impact_total_decimal,
         future_grant_reserved=input_data.future_grant_reserved,
         future_grant_impact=_round2(future_grant_impact_raw),
         actual_capitalization_impact=_round2(actual_capitalization_impact_raw),
@@ -616,7 +626,7 @@ def _calculate_formula_non_authoritative(input_data: FixationInput) -> FixationR
         pension_exemption_percentage=_round2(pension_exemption_percentage_raw),
         grant_results=grant_results,
         grant_offset_handoff={
-            "aggregate_grant_offset": _round2(grant_impact_total_raw),
+            "aggregate_grant_offset": grant_impact_total_decimal,
             "per_grant_breakdown": [item.model_dump(mode="json") for item in grant_results],
             "eligibility_date": input_data.eligibility_date.isoformat(),
             "formula_contract_version": PKG012_GRANT_FORMULA_VERSION,

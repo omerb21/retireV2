@@ -98,11 +98,6 @@ def _require_client(db: Session, client_id: int) -> None:
         raise _client_not_found(client_id)
 
 
-def _uses_pkg012_direct_grants(payload: dict[str, Any]) -> bool:
-    metadata = payload.get("metadata")
-    return isinstance(metadata, dict) and metadata.get("grant_contract") == "pkg-012-direct-v1"
-
-
 def _internal_planner_judgment_already_exists(run_id: int) -> HTTPException:
     return HTTPException(
         status_code=409,
@@ -188,7 +183,7 @@ def validate_fixation(
         payload,
         client_id=client_id,
         db_session=db,
-        use_persisted_grants=_uses_pkg012_direct_grants(payload),
+        use_persisted_grants=True,
     )
 
 
@@ -203,7 +198,7 @@ def calculate_fixation_endpoint(
         payload,
         client_id=client_id,
         db_session=db,
-        use_persisted_grants=_uses_pkg012_direct_grants(payload),
+        use_persisted_grants=True,
     )
 
 
@@ -215,7 +210,7 @@ def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -
         input_data=payload.input_data,
         db_session=db,
         planner_review_context=payload.planner_review_context,
-        use_persisted_grants=_uses_pkg012_direct_grants(payload.input_data),
+        use_persisted_grants=True,
     )
     run = db.get(FixationRun, run_id)
     if run is None:

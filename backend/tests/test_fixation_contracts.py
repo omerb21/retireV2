@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
@@ -271,7 +273,9 @@ def test_fixation_review_converter_includes_only_included_items_and_omits_review
     assert isinstance(converted, FixationInput)
     assert [grant["grant_id"] for grant in dumped["grants"]] == ["G1"]
     assert [cap["capitalization_id"] for cap in dumped["actual_capitalizations"]] == ["C1"]
-    assert dumped["grants"][0]["indexed_amount"] == payload["grants"]["items"][0]["indexed_amount"]
+    assert Decimal(dumped["grants"][0]["indexed_amount"]) == Decimal(
+        str(payload["grants"]["items"][0]["indexed_amount"])
+    )
     assert dumped["actual_capitalizations"][0]["amount"] == payload["actual_capitalizations"]["items"][0]["amount"]
     assert "source_item_id" not in dumped["grants"][0]
     assert "disposition" not in dumped["grants"][0]

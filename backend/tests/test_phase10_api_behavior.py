@@ -129,27 +129,8 @@ def _fixation_input(
             "accepted_by": "test-planner",
             "decision_timestamp": "2025-01-01T00:00:00Z",
         },
-        "grants_collection_state": "items_recorded",
-        "grants": [
-            {
-                "grant_id": "G1",
-                "client_id": client_id,
-                "item_type": "severance_grant",
-                "indexation_mode": "asserted_indexed_amount",
-                "indexed_amount": 10000.0,
-                "grant_date": "2020-01-01",
-                "work_start_date": "2010-01-01",
-                "work_end_date": "2020-01-01",
-                "source_basis": "grant fixture",
-                "status": "reviewed",
-                "accepted_for_use": True,
-                "inclusion_decision": "include",
-                "support_status": "supported",
-                "conflict_indicator": False,
-                "actor": "test-planner",
-                "decision_timestamp": "2025-01-01T00:00:00Z",
-            }
-        ],
+        "grants_collection_state": "confirmed_none",
+        "grants": [],
         "future_grant_reservation": {
             "amount": 500.0,
             "source_basis": "reserve fixture",
@@ -506,7 +487,7 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
             json={
                 "employer_name": "Employer Inc",
                 "employer_withholding_file_number": "WF-100",
-                "exempt_grant_amount": 10000.0,
+                "exempt_grant_amount": 0,
                 "grant_receipt_date": "2020-01-01",
                 "employment_start_date": "2010-01-01",
                 "employment_end_date": "2020-01-01",
@@ -691,7 +672,7 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
         expected_snapshot = resolved_snapshot.model_dump(mode="json")
         assert resolved_snapshot.eligibility_date.isoformat() == "2025-01-01"
         assert resolved_snapshot.eligibility_year == 2025
-        assert resolved_snapshot.grants[0].selected_calculation_amount == 10000.0
+        assert resolved_snapshot.grants == []
         assert resolved_snapshot.m07_resolution.outcome == "resolved"
         assert detail["planner_review_context"] == review_context
         assert detail["input_snapshot"] == expected_snapshot

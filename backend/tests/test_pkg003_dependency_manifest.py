@@ -21,6 +21,7 @@ from app.models.fixation_dependency_manifest import (
     FixationDependencyManifest as FixationDependencyManifestModel,
 )
 from app.models.fixation_run import FixationRun
+from app.models.grant import Grant
 from app.schemas.cbs_indexation import (
     CbsIndexationFailure,
     CbsIndexationFailureEvidence,
@@ -741,10 +742,13 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
 
         def api_payload(*, client_id: int = owner, mode: str = "asserted_indexed_amount") -> dict:
             revision_id = owner_revision if client_id == owner else other_revision
-            return resolver_payload(
+            payload = resolver_payload(
                 _payload(client_id=client_id, mode=mode),
                 revision_id=revision_id,
             )
+            payload["grants_collection_state"] = "confirmed_none"
+            payload["grants"] = []
+            return payload
 
         payload = api_payload()
         saved = client.post("/api/fixation/save", json={"client_id": owner, "input_data": payload})
@@ -776,14 +780,14 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         assert unchanged.json()["technical_result"] == "unchanged", unchanged.json()
 
         changed_context = copy.deepcopy(payload)
-        changed_context["grants"][0]["nominal_amount"] = 1001.0
+        changed_context["parameter_set"]["values"]["monthly_cap"] = 1001.0
         changed = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
             json=_comparison_request(changed_context),
         )
         assert changed.status_code == 200
         assert changed.json()["technical_result"] == "changed"
-        assert "grant" in changed.json()["changed_dependency_types"]
+        assert "parameter_set" in changed.json()["changed_dependency_types"]
 
         unknown = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
@@ -854,10 +858,13 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         assert historical_snapshot_as_current.status_code == 200
         assert historical_snapshot_as_current.json()["technical_result"] == "unknown"
         assert historical_snapshot_as_current.json()["reason_codes"] == [
-            "current_cbs_evidence_unavailable"
+            "current_admitted_context_unavailable"
         ]
 
-        forged_cbs_context = api_payload(mode="cbs_system_calculated")
+        forged_cbs_context = resolver_payload(
+            _payload(client_id=owner, mode="cbs_system_calculated"),
+            revision_id=owner_revision,
+        )
         forged_cbs_context["grants"][0]["system_calculated_amount"] = 777777.0
         forged_cbs_context["grants"][0]["selected_calculation_amount"] = 777777.0
         forged_cbs_context["grants"][0]["cbs_request_evidence"] = _success().request.model_dump(
@@ -877,14 +884,16 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
         cbs_required = client.post(
             f"/api/clients/{owner}/fixation/runs/{run_id}/dependency-comparison",
             json=_comparison_request(
-                api_payload(mode="cbs_system_calculation_required")
+                resolver_payload(
+                    _payload(client_id=owner, mode="cbs_system_calculation_required"),
+                    revision_id=owner_revision,
+                )
             ),
         )
         assert cbs_required.status_code == 200
         assert cbs_required.json()["technical_result"] == "unknown"
         assert cbs_required.json()["reason_codes"] == ["current_cbs_evidence_unavailable"]
 
-        payload["grants"][0]["nominal_amount"] = 999999.0
         detached_current_context = copy.deepcopy(detail_before["input_snapshot"])
         detached_current_context["parameter_set"]["values"]["monthly_cap"] = 999999.0
         manifest_after = client.get(
@@ -939,13 +948,30 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
                 session,
                 client_id=owner,
             )
+            session.add(
+                Grant(
+                    grant_id="grant-1",
+                    client_id=owner,
+                    employer_name="Employer",
+                    employer_withholding_file_number="WF-1",
+                    nominal_amount=Decimal("1000.00"),
+                    indexed_amount=None,
+                    grant_date=date(2020, 2, 3),
+                    work_start_date=date(2010, 1, 1),
+                    work_end_date=date(2020, 1, 31),
+                    notes=None,
+                )
+            )
             session.commit()
 
         def api_payload(*, mode: str = "asserted_indexed_amount") -> dict:
-            return resolver_payload(
+            payload = resolver_payload(
                 _payload(client_id=owner, mode=mode),
                 revision_id=owner_revision,
             )
+            payload["grants_collection_state"] = "confirmed_none"
+            payload["grants"] = []
+            return payload
 
         monkeypatch.setattr(
             "app.services.fixation_admission_service.calculate_cbs_indexation",
@@ -974,7 +1000,10 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
         comparison = client.post(
             f"/api/clients/{owner}/fixation/runs/{cbs_success['run_id']}/dependency-comparison",
             json=_comparison_request(
-                api_payload(mode="cbs_system_calculation_required")
+                resolver_payload(
+                    _payload(client_id=owner, mode="cbs_system_calculation_required"),
+                    revision_id=owner_revision,
+                )
             ),
         ).json()
         assert comparison["technical_result"] == "unknown"

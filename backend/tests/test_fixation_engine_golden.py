@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.engines.fixation_engine import (
     _calculate_formula_non_authoritative as calculate_fixation,
     _calculate_legacy_payload_non_authoritative as calculate_fixation_from_payload,
@@ -510,7 +512,10 @@ def test_fixation_engine_successful_golden_cases() -> None:
         assert result.status == "success", case["case_id"]
 
         for field_name, expected_value in case["expected_numeric"].items():
-            assert getattr(result, field_name) == expected_value, f"{case['case_id']}::{field_name}"
+            actual_value = getattr(result, field_name)
+            if isinstance(actual_value, Decimal):
+                expected_value = Decimal(str(expected_value))
+            assert actual_value == expected_value, f"{case['case_id']}::{field_name}"
 
         assert _audit_categories(result) == _approved_expected_categories(case["expected_audit"]), case["case_id"]
 

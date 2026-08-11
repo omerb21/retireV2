@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -50,6 +50,7 @@ CBS_SERVER_CONTROLLED_INPUT_FIELDS = (
     "cbs_response_evidence",
     "indexation_failure_evidence",
 )
+MONEY_QUANTUM = Decimal("0.01")
 
 
 def caller_supplied_cbs_system_evidence_fields(raw_item: Any) -> list[str]:
@@ -110,6 +111,10 @@ def parse_and_admit_fixation_payload(
     CalculationInputResolutionResult | None,
 ]:
     caller_evidence_paths = caller_supplied_cbs_system_evidence_paths(payload)
+    caller_grants = payload.get("grants")
+    caller_supplied_grant_envelope = bool(
+        use_persisted_grants and isinstance(caller_grants, list) and caller_grants
+    )
     effective_payload = dict(payload)
     if use_persisted_grants:
         rows = db_session.scalars(
@@ -302,6 +307,13 @@ def parse_and_admit_fixation_payload(
     )
 
     if use_persisted_grants:
+        if caller_supplied_grant_envelope:
+            errors.append(
+                _error(
+                    "grants",
+                    "caller-authored grant envelopes are not authoritative; use persisted client grants",
+                )
+            )
         for path in caller_evidence_paths:
             errors.append(
                 _error(path, "CBS indexation evidence is server-produced and cannot be supplied")
@@ -534,7 +546,9 @@ def parse_and_admit_fixation_payload(
                 )
                 continue
 
-            application_amount = round(float(outcome.response.raw_to_value), 2)
+            application_amount = outcome.response.raw_to_value.quantize(
+                MONEY_QUANTUM, rounding=ROUND_HALF_UP
+            )
             item.indexation_mode = "cbs_system_calculated"
             item.system_calculated_amount = application_amount
             item.selected_calculation_amount = application_amount

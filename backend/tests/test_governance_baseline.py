@@ -135,6 +135,25 @@ APPROVED_PKG_011_PATHS = {
     "frontend/src/pages/M06ConversionScreen.tsx",
     "frontend/src/routes/AppRoutes.tsx",
 }
+APPROVED_PKG_012_PATHS = {
+    "backend/app/api/fixation_routes.py",
+    "backend/app/engines/fixation_engine.py",
+    "backend/app/schemas/fixation_admissibility.py",
+    "backend/app/schemas/fixation_contracts.py",
+    "backend/app/services/fixation_admission_service.py",
+    "backend/app/services/fixation_service.py",
+    "backend/tests/test_fixation_contracts.py",
+    "backend/tests/test_fixation_engine_golden.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_phase10_api_behavior.py",
+    "backend/tests/test_phase9_api.py",
+    "backend/tests/test_pkg001_admissible_foundation.py",
+    "backend/tests/test_pkg002_cbs_indexation.py",
+    "backend/tests/test_pkg003_dependency_manifest.py",
+    "backend/tests/test_pkg012_grant_offset.py",
+    "frontend/src/pages/FixationInputScreen.test.tsx",
+    "frontend/src/pages/GrantsScreen.test.tsx",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -167,6 +186,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_PKG_002_PATHS,
         *APPROVED_PKG_007_PATHS,
         *APPROVED_PKG_011_PATHS,
+        *APPROVED_PKG_012_PATHS,
     }
 
 
@@ -188,6 +208,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PKG_002_PATHS,
         *APPROVED_PKG_007_PATHS,
         *APPROVED_PKG_011_PATHS,
+        *APPROVED_PKG_012_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",

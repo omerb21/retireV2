@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -153,23 +154,23 @@ class AdmissibleGrantItem(AcceptedItemEvidence):
     employer_name: str | None = None
     employer_withholding_file_number: str | None = None
     parameter_set_id: str | None = None
-    nominal_amount: float | None = None
-    indexed_amount: float | None = None
+    nominal_amount: Decimal | None = None
+    indexed_amount: Decimal | None = None
     grant_date: date
     work_start_date: date
     work_end_date: date
     inclusion_decision: Literal["include", "exclude"]
     support_status: SupportStatus
     conflict_indicator: bool
-    accepted_value: float | None = None
+    accepted_value: Decimal | None = None
     indexation_mode: Literal[
         "asserted_indexed_amount",
         "cbs_system_calculation_required",
         "cbs_system_calculated",
     ]
-    asserted_indexed_amount: float | None = None
-    system_calculated_amount: float | None = None
-    selected_calculation_amount: float | None = None
+    asserted_indexed_amount: Decimal | None = None
+    system_calculated_amount: Decimal | None = None
+    selected_calculation_amount: Decimal | None = None
     resolved_base_date: date | None = None
     base_date_source: IndexationBaseDateSource | None = None
     target_date: date | None = None
@@ -196,7 +197,7 @@ class AdmissibleGrantItem(AcceptedItemEvidence):
         "selected_calculation_amount",
     )
     @classmethod
-    def validate_amount(cls, value: float | None) -> float | None:
+    def validate_amount(cls, value: Decimal | None) -> Decimal | None:
         if value is not None and value < 0:
             raise ValueError("amount must be >= 0")
         return value

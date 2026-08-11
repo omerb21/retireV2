@@ -625,6 +625,83 @@ describe("PKG-005 fixation input workflow", () => {
     expect(screen.queryByText(/Submitting/)).not.toBeInTheDocument();
   });
 
+  it.each(["success", "structured error", "rejection"] as const)(
+    "keeps the returned A calculation pending when old A settles with %s including finally",
+    async (settlement) => {
+      const oldCalculation = deferredResponse();
+      const newCalculation = deferredResponse();
+      const success = {
+        status: "success",
+        validation_errors: [],
+        eligibility_date: "2026-01-01",
+        eligibility_year: 2026,
+        grant_impact_total: "0.00",
+        grant_results: [],
+      };
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse(revisionList()))
+        .mockResolvedValueOnce(jsonResponse(success))
+        .mockImplementationOnce(() => oldCalculation.promise)
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse(revisionList([])))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse(revisionList()))
+        .mockResolvedValueOnce(jsonResponse(success))
+        .mockImplementationOnce(() => newCalculation.promise);
+      vi.stubGlobal("fetch", fetchMock);
+      render(
+        <MemoryRouter initialEntries={[{
+          pathname: "/clients/1/fixation/input",
+          state: { clientId: 1, clientName: "Client One" },
+        }]}>
+          <Routes>
+            <Route path="/clients/:clientId/fixation/input" element={<InputTransitionHarness />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      await waitForLoaded();
+      fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-resolved" } });
+      fillValidM08Inputs();
+      fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+      expect(await screen.findByText(/Server validation passed/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+      expect(await screen.findByText("Client ID: 2")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Return to client A" }));
+      expect(await screen.findByText("Client ID: 1")).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: /m07rev-resolved/ })).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-resolved" } });
+      fillValidM08Inputs();
+      fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+      expect(await screen.findByText(/Server validation passed/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(13));
+
+      await act(async () => {
+        if (settlement === "rejection") oldCalculation.reject(new Error("stale calculation rejection"));
+        else if (settlement === "structured error") oldCalculation.resolve(jsonResponse({ detail: "stale structured error" }, 422));
+        else oldCalculation.resolve(jsonResponse(success));
+        await oldCalculation.promise.catch(() => undefined);
+      });
+
+      expect(screen.getByRole("button", { name: "Validate Inputs" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Run Calculation" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Continue to Result" })).toBeDisabled();
+      expect(screen.queryByText(/Calculation succeeded|Calculation failed|stale calculation rejection|stale structured error/)).not.toBeInTheDocument();
+
+      await act(async () => newCalculation.resolve(jsonResponse(success)));
+      expect(await screen.findByText(/Calculation succeeded/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continue to Result" })).toBeEnabled();
+    },
+  );
+
   it("presents an existing M08 blocker without weakening it", async () => {
     const blocked = {
       status: "validation_failed",

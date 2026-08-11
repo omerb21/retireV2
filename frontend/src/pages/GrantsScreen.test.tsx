@@ -16,6 +16,16 @@ function jsonResponse(body: unknown) {
   };
 }
 
+function errorResponse(body: unknown, status = 422) {
+  return {
+    ok: false,
+    status,
+    statusText: "Unprocessable Entity",
+    headers: { get: () => "application/json" },
+    json: async () => body,
+  };
+}
+
 function deferredResponse() {
   let resolve!: (value: ReturnType<typeof jsonResponse>) => void;
   let reject!: (reason: unknown) => void;
@@ -89,6 +99,112 @@ describe("GrantsScreen", () => {
     await screen.findByText("No grants found.");
     await act(async () => mutation.reject(new Error("stale A failure")));
     expect(screen.queryByText("stale A failure")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Grant" })).toBeEnabled();
+  });
+
+  it.each([
+    ["A-to-B", "structured error"],
+    ["A-to-B", "rejection"],
+    ["A-to-B-to-A", "structured error"],
+    ["A-to-B-to-A", "rejection"],
+  ] as const)("rejects stale load %s %s and finally state", async (transition, settlement) => {
+    const oldA = deferredResponse();
+    const grant = (id: string, clientId: number) => ({
+      grant_id: id, client_id: clientId, employer_name: id,
+      employer_withholding_file_number: "WF", exempt_grant_amount: 1,
+      grant_receipt_date: "2020-01-01", employment_start_date: "2010-01-01",
+      employment_end_date: "2020-01-01",
+    });
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(oldA.promise)
+      .mockResolvedValueOnce(jsonResponse([grant("Client B Grant", 8)]));
+    if (transition === "A-to-B-to-A") {
+      fetchMock.mockResolvedValueOnce(jsonResponse([grant("New A Grant", 7)]));
+    }
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MemoryRouter initialEntries={["/clients/7/grants"]}><Routes>
+      <Route path="/clients/:clientId/grants" element={<TransitionHarness />} />
+    </Routes></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    expect(await screen.findByText("Client B Grant")).toBeInTheDocument();
+    if (transition === "A-to-B-to-A") {
+      fireEvent.click(screen.getByRole("button", { name: "Return A" }));
+      expect(await screen.findByText("New A Grant")).toBeInTheDocument();
+    }
+    await act(async () => {
+      if (settlement === "rejection") oldA.reject(new Error("stale load rejection"));
+      else oldA.resolve(errorResponse({ detail: "stale structured error" }) as ReturnType<typeof jsonResponse>);
+      await oldA.promise.catch(() => undefined);
+    });
+    expect(screen.queryByText(/stale load rejection|stale structured error/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading grants...")).not.toBeInTheDocument();
+    expect(screen.getByText(transition === "A-to-B-to-A" ? "New A Grant" : "Client B Grant")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["create", "A-to-B", "success"], ["create", "A-to-B", "structured error"], ["create", "A-to-B", "rejection"],
+    ["create", "A-to-B-to-A", "success"], ["create", "A-to-B-to-A", "structured error"], ["create", "A-to-B-to-A", "rejection"],
+    ["update", "A-to-B", "success"], ["update", "A-to-B", "structured error"], ["update", "A-to-B", "rejection"],
+    ["update", "A-to-B-to-A", "success"], ["update", "A-to-B-to-A", "structured error"], ["update", "A-to-B-to-A", "rejection"],
+    ["delete", "A-to-B", "success"], ["delete", "A-to-B", "structured error"], ["delete", "A-to-B", "rejection"],
+    ["delete", "A-to-B-to-A", "success"], ["delete", "A-to-B-to-A", "structured error"], ["delete", "A-to-B-to-A", "rejection"],
+  ] as const)("guards stale %s during %s on %s", async (operation, transition, settlement) => {
+    const mutation = deferredResponse();
+    const grant = (id: string, clientId: number) => ({
+      grant_id: id, client_id: clientId, employer_name: id,
+      employer_withholding_file_number: "WF", exempt_grant_amount: 1,
+      grant_receipt_date: "2020-01-01", employment_start_date: "2010-01-01",
+      employment_end_date: "2020-01-01",
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([grant("A-old", 7)]))
+      .mockReturnValueOnce(mutation.promise)
+      .mockResolvedValueOnce(jsonResponse([grant("Client B Grant", 8)]));
+    if (transition === "A-to-B-to-A") {
+      fetchMock.mockResolvedValueOnce(jsonResponse([grant("A-new", 7)]));
+    }
+    if (settlement === "success") {
+      fetchMock.mockResolvedValueOnce(jsonResponse([grant("A-stale-refresh", 7)]));
+    }
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MemoryRouter initialEntries={["/clients/7/grants"]}><Routes>
+      <Route path="/clients/:clientId/grants" element={<TransitionHarness />} />
+    </Routes></MemoryRouter>);
+    await screen.findByText("A-old");
+
+    if (operation === "create") {
+      fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Created" } });
+      fireEvent.change(screen.getByLabelText("Employer Withholding File Number"), { target: { value: "WF" } });
+      fireEvent.change(screen.getByLabelText("Exempt Grant Amount"), { target: { value: "1" } });
+      fireEvent.change(screen.getByLabelText("Grant Receipt Date"), { target: { value: "2020-01-01" } });
+      fireEvent.change(screen.getByLabelText("Employment Start Date"), { target: { value: "2010-01-01" } });
+      fireEvent.change(screen.getByLabelText("Employment End Date"), { target: { value: "2020-01-01" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add Grant" }));
+    } else if (operation === "update") {
+      fireEvent.click(screen.getByRole("button", { name: "Edit Grant" }));
+      fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Updated" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save Grant" }));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "Delete Grant" }));
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    expect(await screen.findByText("Client B Grant")).toBeInTheDocument();
+    if (transition === "A-to-B-to-A") {
+      fireEvent.click(screen.getByRole("button", { name: "Return A" }));
+      expect(await screen.findByText("A-new")).toBeInTheDocument();
+    }
+    await act(async () => {
+      if (settlement === "rejection") mutation.reject(new Error("stale mutation rejection"));
+      else if (settlement === "structured error") mutation.resolve(errorResponse({ detail: "stale structured error" }) as ReturnType<typeof jsonResponse>);
+      else mutation.resolve(jsonResponse({ grant_id: "stale-result" }));
+      await mutation.promise.catch(() => undefined);
+    });
+    const current = transition === "A-to-B-to-A" ? "A-new" : "Client B Grant";
+    expect(screen.getByText(current)).toBeInTheDocument();
+    expect(screen.queryByText("A-stale-refresh")).not.toBeInTheDocument();
+    expect(screen.queryByText(/stale mutation rejection|stale structured error/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add Grant" })).toBeEnabled();
   });
 

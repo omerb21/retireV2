@@ -27,10 +27,12 @@ function revisionList(items = [resolvedRevision]) {
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((next) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<Response>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function ResultCapture() {
@@ -558,6 +560,69 @@ describe("PKG-005 fixation input workflow", () => {
     expect(screen.queryByRole("option", { name: /m07rev-old-a-load/ })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: /m07rev-new-a-load/ })).toBeInTheDocument();
     expect((screen.getByLabelText("Finalized B1 revision") as HTMLSelectElement).value).toBe("");
+  });
+
+  it.each([
+    ["A-to-B", "success"], ["A-to-B", "structured error"], ["A-to-B", "rejection"],
+    ["A-to-B-to-A", "success"], ["A-to-B-to-A", "structured error"], ["A-to-B-to-A", "rejection"],
+  ] as const)("guards stale calculation %s %s including finally", async (transition, settlement) => {
+    const pendingCalculation = deferredResponse();
+    const success = {
+      status: "success",
+      validation_errors: [],
+      eligibility_date: "2026-01-01",
+      eligibility_year: 2026,
+      grant_impact_total: "0.00",
+      grant_results: [],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList()))
+      .mockResolvedValueOnce(jsonResponse(success))
+      .mockImplementationOnce(() => pendingCalculation.promise)
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(revisionList([])));
+    if (transition === "A-to-B-to-A") {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse(revisionList()));
+    }
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: "/clients/1/fixation/input",
+        state: { clientId: 1, clientName: "Client One" },
+      }]}>
+        <Routes>
+          <Route path="/clients/:clientId/fixation/input" element={<InputTransitionHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitForLoaded();
+    fireEvent.change(screen.getByLabelText("Finalized B1 revision"), { target: { value: "m07rev-resolved" } });
+    fillValidM08Inputs();
+    fireEvent.click(screen.getByRole("button", { name: "Validate Inputs" }));
+    await screen.findByText(/Server validation passed/);
+    fireEvent.click(screen.getByRole("button", { name: "Run Calculation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
+    expect(await screen.findByText("Client ID: 2")).toBeInTheDocument();
+    if (transition === "A-to-B-to-A") {
+      fireEvent.click(screen.getByRole("button", { name: "Return to client A" }));
+      expect(await screen.findByText("Client ID: 1")).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: /m07rev-resolved/ })).toBeInTheDocument();
+    }
+    await act(async () => {
+      if (settlement === "rejection") pendingCalculation.reject(new Error("stale calculation rejection"));
+      else if (settlement === "structured error") pendingCalculation.resolve(jsonResponse({ detail: "stale structured error" }, 422));
+      else pendingCalculation.resolve(jsonResponse(success));
+      await pendingCalculation.promise.catch(() => undefined);
+    });
+    expect(screen.queryByText(/Calculation succeeded|Calculation failed|stale calculation rejection|stale structured error/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Server Response" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Submitting/)).not.toBeInTheDocument();
   });
 
   it("presents an existing M08 blocker without weakening it", async () => {

@@ -130,6 +130,46 @@ source identity, component contract, and month. Duplicate `component_id` within
 one run/month fails closed. Business descriptions never determine identity or
 type.
 
+### Server-Owned Resolved Component Inventory
+
+Before execution, the server resolves the complete mandatory component
+universe into one canonical immutable `resolved_component_inventory`. The
+inventory is bound to:
+
+- `client_id`;
+- `scenario_family` and `scenario_contract_version`;
+- `start_month` and `end_month`;
+- `component_domain_contract_version`;
+- server-owned `inventory_assessment_id` and `assessment_timestamp`; and
+- server-owned `inventory_fingerprint`.
+
+For every component domain, the inventory records the domain identity,
+`required` flag, every authoritative eligible candidate, mandatory source
+identities, inclusion or exclusion, typed exclusion reason, completeness,
+ambiguity or duplicate-economic-meaning outcome, currentness, and canonical
+fingerprint/digest evidence. Every mandatory eligible component resolved by the
+server is included automatically.
+
+The caller cannot author, reduce, omit, redefine, or select the required
+component universe; the component-domain list; the authoritative candidate
+subset; the omission list; completeness; `confirmed_none`; or any
+ignore/exclude/waive decision. A caller-supplied list, checkbox, free-text
+statement, or declaration of none is non-authoritative input and cannot satisfy
+completeness.
+
+An empty required domain is complete only through immutable
+`server_resolved_none` evidence containing `client_id`, exact domain,
+`scenario_family`, `scenario_contract_version`, horizon,
+`inventory_assessment_id`, system resolver actor identity,
+`assessment_timestamp`, source snapshot/digest, and `result_fingerprint`. The
+server may emit that evidence only after
+the resolver proves that no eligible current component exists for that domain.
+
+There is no partial-portfolio mode. A subset cannot succeed through warning,
+omission, ignore, waiver, `run anyway`, or planner override. A future family
+that intentionally supports partial portfolios requires a separately accepted
+family contract version and package definition.
+
 ## 9. Recurring Income and Expense Authority
 
 CRUD existence, notes, `source_status`, or `verification_state` alone never
@@ -156,12 +196,13 @@ the whole month is applicable without prorating. A boundary date inside a month
 requires an accepted upstream rule; otherwise the affected component is
 ineligible for authoritative execution.
 
-The family request must explicitly declare its required recurring component
-set or an explicit authoritative `confirmed_none` state for each required
-recurring domain. Missing mandatory recurring data is not zero. Ambiguous
-duplicate economic meaning, including possible duplication between recurring
-pension income and an M06 pension result, blocks execution until resolved by an
-accepted authority contract; M09 does not choose or deduplicate professionally.
+The server-owned component-domain contract determines which recurring domains
+are mandatory, and the resolver includes all authoritative eligible current
+records or produces qualifying `server_resolved_none` evidence. Missing
+mandatory recurring data is not zero. Ambiguous duplicate economic meaning,
+including possible duplication between recurring pension income and an M06
+pension result, blocks execution until resolved by an accepted authority
+contract; M09 does not choose or deduplicate professionally.
 
 ## 10. M05 Boundary
 
@@ -263,7 +304,8 @@ rules, projection growth, ranking, optimization, or recommendation.
 
 ## 16. Fail-Closed Completeness
 
-For every dependency or component declared mandatory:
+For every dependency or component that the server-owned family and
+component-domain contracts make mandatory:
 
 - missing is not zero;
 - blocked is not zero;
@@ -274,9 +316,10 @@ For every dependency or component declared mandatory:
 - ineligible is not accepted; and
 - an invalid fingerprint is not accepted.
 
-A missing mandatory dependency blocks authoritative success. No partial
-authoritative scenario is emitted, and no component is silently omitted to
-obtain success.
+A missing mandatory dependency or incomplete/ambiguous resolved inventory
+blocks authoritative success. No partial authoritative scenario is emitted,
+and no component is silently omitted to obtain success. Caller intent cannot
+weaken the mandatory universe or convert a blocker into a warning.
 
 ## 17. Typed Assumption Manifest
 
@@ -288,8 +331,8 @@ least:
 - `scenario_family`;
 - `client_id` and server-owned `scenario_run_id`;
 - `start_month` and `end_month`;
-- typed family-specific assumptions, limited in v1 to explicit required-domain
-  declarations and selected authoritative component identities;
+- immutable `resolved_component_inventory` identity and fingerprint resolved by
+  the server under the family/component-domain contract;
 - immutable upstream snapshot reference;
 - engine/version identities;
 - fingerprint algorithm version; and
@@ -303,8 +346,9 @@ the semantic fingerprint.
 
 ## 18. Immutable Upstream Snapshot
 
-Execution freezes applicable client identity, family/version, horizon,
-component IDs and exact values, source identities/versions, M05 evidence used
+Execution freezes applicable client identity, family/version, horizon, the
+complete resolved inventory and its fingerprint, component IDs and exact
+values, source identities/versions, M05 evidence used
 through M06, M06 result and eligibility evidence, M07 only if a future accepted
 component requires it, M08/M08F only if required, recurring authority and
 currentness, engine/contract versions, fingerprints/digests, and warning
@@ -415,21 +459,28 @@ generic "warning accepted" bypass.
 - Cross-client upstream identities are rejected before execution/persistence.
 - Direct services enforce the same ownership as routes.
 - Snapshots cannot reference another client's records.
-- Caller input cannot author trusted ownership, component amount/identity,
-  upstream eligibility/currentness, actor, timestamp, fingerprint, result,
-  run identity, or M10 eligibility.
+- Caller input cannot author trusted ownership, the required component universe,
+  candidate selection or omission, completeness, `server_resolved_none`,
+  component amount/identity, upstream eligibility/currentness, actor, timestamp,
+  fingerprint, result, run identity, or M10 eligibility.
 
 ## 27. Frontend Boundary and Async Isolation
 
 The bounded first-stage implementation is expected to include a client-scoped
-UI for explicit horizon/component selection, execution, history, result detail,
-currentness, blockers/warnings, and M10 eligibility explanation. It includes no
+UI for explicit horizon entry and display of the server-resolved inventory,
+inclusion/exclusion reasons, completeness blockers, execution, refresh,
+history, result detail, currentness, warnings, and M10 eligibility explanation.
+The UI may navigate to authoritative source workflows and trigger inventory
+refresh/reassessment, but cannot choose the authoritative subset, declare none,
+ignore a mandatory component, override completeness, or turn a blocked
+inventory into success. Any display filter or navigation selection is
+non-authoritative and cannot affect calculation completeness. It includes no
 comparison, recommendation, projection chart, or client report.
 
 All asynchronous work requires client ID plus monotonic route-context
 generation and per-request ownership. Deterministic tests cover A-to-B and
 A-to-B-to-A, stale success, structured error, rejection, stale `finally`, and a
-pending-new-owner request. Stale work cannot alter assumptions, selection,
+   pending-new-owner request. Stale work cannot alter assumptions, inventory,
 validation, loading/submission, error, result, saved-run link, history, or M10
 eligibility.
 
@@ -459,18 +510,18 @@ Stop implementation planning or implementation if any of these applies:
 - **AC-013-002:** Family is exactly `deterministic_monthly_cashflow` with server-owned supported contract version.
 - **AC-013-003:** Every material business formula has one authoritative owner and M09 contains no duplicate upstream formula.
 - **AC-013-004:** M09 owns only monthly inflow sum, outflow sum, net subtraction, and deterministic range sums.
-- **AC-013-005:** Component type/direction vocabulary is closed and rejects unknown or caller-defined values.
+- **AC-013-005:** The server resolves one immutable complete `resolved_component_inventory`, bound to client, family/version, horizon, component-domain contract version, assessment timestamp, and fingerprint; caller-defined component universes or subsets are rejected.
 - **AC-013-006:** Every component carries deterministic identity, exact Decimal amount, month, owner, source, version, and currentness/eligibility evidence.
 - **AC-013-007:** Duplicate component identity within a run/month fails closed.
 - **AC-013-008:** Eligible recurring income requires same client, monthly frequency, gross amount basis, full-month applicability, currentness, and explicit M09 eligibility.
 - **AC-013-009:** Eligible recurring expense requires same client, monthly frequency, full-month applicability, currentness, and explicit M09 eligibility.
-- **AC-013-010:** Missing required recurring-domain evidence is distinguished from authoritative `confirmed_none` and never becomes zero by omission.
+- **AC-013-010:** Every mandatory eligible component is included automatically; an empty required domain is complete only through immutable server-generated `server_resolved_none` evidence with bound assessment, source-snapshot, actor, timestamp, and fingerprint evidence, never through caller input.
 - **AC-013-011:** Explicit canonical `start_month` and `end_month` are required, ordered, inclusive, and generate full months ascending.
 - **AC-013-012:** No partial-month or non-monthly frequency conversion occurs in M09.
 - **AC-013-013:** Monetary authority is Decimal-only; every v1 component and persisted total is canonical two-decimal ILS without binary float conversion.
 - **AC-013-014:** Components are not rerounded; monthly/range totals use exact Decimal addition and subtraction.
-- **AC-013-015:** Every mandatory missing, blocked, unsupported, unresolved, stale, superseded, ineligible, or fingerprint-invalid dependency blocks complete authoritative success.
-- **AC-013-016:** No partial authoritative scenario is persisted as a successful complete result.
+- **AC-013-015:** Every mandatory missing, blocked, unsupported, unresolved, stale, superseded, ineligible, fingerprint-invalid, incomplete, or ambiguous inventory/dependency state blocks complete authoritative success.
+- **AC-013-016:** No partial-portfolio mode exists: subset selection, omission, warning, ignore, waiver, `run anyway`, or planner override cannot produce a successful complete result.
 - **AC-013-017:** M05 uses an M09-specific gate and `eligible_for_m06` is not treated as generic M09 authority.
 - **AC-013-018:** M05 balances are snapshot/dependency evidence only and never manufactured into monthly cashflow.
 - **AC-013-019:** M06 consumption requires one current eligible same-client supported leaf with complete provenance/fingerprints.
@@ -478,7 +529,7 @@ Stop implementation planning or implementation if any of these applies:
 - **AC-013-021:** M06 capital-equivalent, missing, blocked, unsupported, or ineligible output cannot become a monthly component or zero.
 - **AC-013-022:** M07 is omitted for v1 and no `m08a_fixation/v1` or generic tax manifest is inherited.
 - **AC-013-023:** M08 is omitted when not material; any future required use is explicit and requires persisted result plus exact per-use M08F eligibility.
-- **AC-013-024:** Typed assumption manifest uses `extra=forbid`, explicit calculation inputs, versions, and stable fingerprint.
+- **AC-013-024:** Typed assumption manifest uses `extra=forbid` and references the immutable server-resolved inventory identity/fingerprint rather than caller-selected component IDs or required-domain declarations.
 - **AC-013-025:** Free text, notes, title, rationale, arbitrary JSON, unknown fields, and LLM content cannot affect calculation.
 - **AC-013-026:** Immutable upstream snapshot freezes all consumed values, authority, versions, eligibility/currentness, warnings, and fingerprints.
 - **AC-013-027:** Later source changes do not mutate historical runs and can make read-time currentness false.
@@ -491,8 +542,8 @@ Stop implementation planning or implementation if any of these applies:
 - **AC-013-034:** M10 consumes persisted M09 results only and never executes/recalculates M09.
 - **AC-013-035:** Blocking, mandatory-review, and informational warnings have distinct stable semantics with no generic bypass.
 - **AC-013-036:** Routes and direct services enforce same-client ownership and foreign/missing non-leakage before persistence.
-- **AC-013-037:** Caller cannot forge ownership, component authority, actor, timestamp, fingerprint, result, currentness, or eligibility.
-- **AC-013-038:** Frontend deterministic tests prove A-to-B/A-to-B-to-A success/error/rejection/finally and pending-new-owner isolation for every included async operation.
+- **AC-013-037:** Caller cannot forge ownership, component universe/subset/omission, completeness, none evidence, component authority, actor, timestamp, fingerprint, result, currentness, or eligibility.
+- **AC-013-038:** Frontend displays and refreshes server-resolved inventory/reasons/blockers and navigates to sources without altering completeness authority, and deterministic tests prove A-to-B/A-to-B-to-A success/error/rejection/finally and pending-new-owner isolation for every included async operation.
 - **AC-013-039:** Migration is additive above `f9a1c3e5b702`, preserves existing records, has one head, and introduces no professional backfill.
 - **AC-013-040:** Focused/backend/frontend/migration tests, build, compile, deterministic replay, client isolation, formula-owner scan, and `git diff --check` supply acceptance evidence.
 
@@ -501,10 +552,10 @@ Stop implementation planning or implementation if any of these applies:
 - **NAC-013-001:** Duplicated M05, M06, M07, M08, tax, fixation, indexation, coefficient, or other upstream formula in M09.
 - **NAC-013-002:** Binary float as monetary authority or silent float-to-Decimal conversion.
 - **NAC-013-003:** Hidden/default horizon, including today, retirement date, employment end, pension start, six months, 12 months, or age 90.
-- **NAC-013-004:** Caller-defined family, alias, free-form mode, or caller-overridden family/version.
+- **NAC-013-004:** Caller-defined family/version, component universe, required-domain list, authoritative subset, selection, or omission list.
 - **NAC-013-005:** Free text, notes, rationale, title, arbitrary JSON, unknown field, or LLM output affecting calculation.
-- **NAC-013-006:** Missing, blocked, unsupported, unresolved, stale, superseded, ineligible, or corrupt authority treated as zero/current/accepted.
-- **NAC-013-007:** Silent omission producing a partial authoritative successful scenario.
+- **NAC-013-006:** Missing, blocked, unsupported, unresolved, stale, superseded, ineligible, or corrupt authority treated as zero/current/accepted, including caller-authored `confirmed_none`, checkbox, or free-text none evidence.
+- **NAC-013-007:** Partial-portfolio success through caller/UI subset selection, silent omission, warning, ignore, exclusion, waiver, `run anyway`, or planner override.
 - **NAC-013-008:** Reuse of `eligible_for_m06` as generic M09 authority.
 - **NAC-013-009:** M05 balance converted, allocated, amortized, or otherwise manufactured into monthly cashflow by M09.
 - **NAC-013-010:** M06 formula, coefficient logic, rounding, or exact-ratio conversion duplicated in M09.
@@ -514,7 +565,7 @@ Stop implementation planning or implementation if any of these applies:
 - **NAC-013-014:** `success_complete` treated as current, professionally authoritative, or automatically M10-eligible.
 - **NAC-013-015:** Update-in-place or deletion of historical run, manifest, snapshot, result, warning, or failure evidence.
 - **NAC-013-016:** Cross-client association, snapshot reference, lookup, or foreign-ID existence leakage.
-- **NAC-013-017:** Caller-forged amount, component/source identity, actor, timestamp, status, fingerprint, currentness, result, or eligibility.
+- **NAC-013-017:** Caller-forged amount, component/source identity, inventory, completeness, `server_resolved_none`, actor, timestamp, status, fingerprint, currentness, result, or eligibility.
 - **NAC-013-018:** Partial-month, annual, quarterly, daily, interpolation, inflation, return, or discounting formula in M09.
 - **NAC-013-019:** `PENSION_COEFFICIENT = 200` or any implicit coefficient/default/fallback.
 - **NAC-013-020:** `MINIMUM_PENSION = 5500` or any minimum-pension rule.
@@ -531,13 +582,22 @@ Stop implementation planning or implementation if any of these applies:
 - **NAC-013-031:** Production-readiness, professional-sufficiency, or V1/V2 parity claim.
 - **NAC-013-032:** Definition proposal treated as acceptance or implementation/migration authorization.
 
+### Definition Audit Correction Mapping
+
+- `D-013-D001` is mapped to AC-013-005, AC-013-010, AC-013-015,
+  AC-013-016, AC-013-024, AC-013-037, and AC-013-038, with negative proof in
+  NAC-013-004, NAC-013-006, NAC-013-007, and NAC-013-017.
+- `D-013-D002` is mapped to the narrow current-versus-historical consistency
+  corrections in the authoritative Business Build Plan; it changes no M09
+  architecture or implementation authorization.
+
 ## 31. Verification Matrix
 
 | Area | Required evidence |
 |---|---|
 | Authority ownership | Production/static call graph and tests prove no duplicated upstream formula |
 | Family/horizon | Schema/API tests reject aliases, unknown versions, malformed/reversed/missing months, and hidden defaults |
-| Components | Closed vocabulary, deterministic identity, duplicate rejection, recurring/M06 eligibility and ambiguity tests |
+| Components | Closed vocabulary; server-resolved complete inventory/fingerprint; all-mandatory inclusion; server-resolved-none evidence; caller-subset rejection; duplicate, recurring/M06 eligibility and ambiguity tests |
 | Arithmetic | Decimal-only tests, no float acceptance, exact monthly/range sums, canonical serialization and replay fingerprints |
 | Dependencies | M05 gate, M06 canonical handoff, M07 omission, conditional M08/M08F, and all fail-closed states |
 | Persistence | Additive migration, one Alembic head, immutable history, concurrency, rollback, and no upstream mutation |

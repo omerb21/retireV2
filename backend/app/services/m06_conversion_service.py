@@ -945,6 +945,29 @@ def _manifest(
     return row
 
 
+def _manifest_integrity_reasons(
+    leaf: M06ConversionRevision,
+    coefficient: M06CoefficientEvidence,
+    manifest: M06CalculationManifest | None,
+) -> list[str]:
+    if manifest is None:
+        return ["manifest_integrity_invalid"]
+    if (
+        manifest.fingerprint != _manifest_fingerprint(manifest.manifest)
+        or manifest.manifest.get("fingerprint") != manifest.fingerprint
+        or manifest.manifest.get("formula_id") != leaf.formula_id
+        or manifest.manifest.get("input_identity") != leaf.input_identity
+        or manifest.manifest.get("coefficient_evidence_id") != coefficient.evidence_id
+        or manifest.manifest.get("predecessors") != leaf.predecessor_snapshot
+    ):
+        return ["manifest_integrity_invalid"]
+    handoff = manifest.manifest.get("authoritative_downstream_handoff")
+    fingerprinted_amount = handoff.get("amount") if isinstance(handoff, dict) else None
+    if manifest.authoritative_monthly_amount != fingerprinted_amount:
+        return ["authoritative_downstream_handoff_integrity_invalid"]
+    return []
+
+
 def resolve_conversion(
     db: Session, client_id: int, subject_id: str, expected: str
 ) -> M06ConversionRevision:
@@ -1279,20 +1302,7 @@ def _revalidation_reasons(
             reasons.append("coefficient_evidence_replaced")
     manifest = _manifest_row(db, leaf.revision_id)
     if leaf.state in {"resolved", "warning_reviewed"}:
-        if (
-            manifest is None
-            or manifest.fingerprint != _manifest_fingerprint(manifest.manifest)
-            or manifest.manifest.get("fingerprint") != manifest.fingerprint
-        ):
-            reasons.append("manifest_integrity_invalid")
-        elif (
-            manifest.manifest.get("formula_id") != leaf.formula_id
-            or manifest.manifest.get("input_identity") != leaf.input_identity
-            or manifest.manifest.get("coefficient_evidence_id")
-            != coefficient.evidence_id
-            or manifest.manifest.get("predecessors") != leaf.predecessor_snapshot
-        ):
-            reasons.append("manifest_integrity_invalid")
+        reasons.extend(_manifest_integrity_reasons(leaf, coefficient, manifest))
     return list(dict.fromkeys(reasons)), list(
         current_eligibility.informational_warnings
     )

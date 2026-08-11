@@ -805,13 +805,16 @@ def test_read_time_revalidation_reports_each_changed_predecessor(monkeypatch) ->
         "input_identity": leaf.input_identity,
         "coefficient_evidence_id": "E",
         "predecessors": leaf.predecessor_snapshot,
+        "authoritative_downstream_handoff": {"amount": "1.00"},
     }
     manifest_payload["fingerprint"] = service._manifest_fingerprint(manifest_payload)
     monkeypatch.setattr(
         service,
         "_manifest_row",
         lambda *_: SimpleNamespace(
-            manifest=manifest_payload, fingerprint=manifest_payload["fingerprint"]
+            manifest=manifest_payload,
+            fingerprint=manifest_payload["fingerprint"],
+            authoritative_monthly_amount="1.00",
         ),
     )
     evidence.evidence_id = "E"

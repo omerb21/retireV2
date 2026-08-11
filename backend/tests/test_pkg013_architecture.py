@@ -19,9 +19,9 @@ def test_m09_business_arithmetic_is_only_addition_and_subtraction() -> None:
     prohibited = (ast.Mult, ast.Div, ast.FloorDiv, ast.Pow, ast.Mod)
     assert not [node for node in ast.walk(tree) if isinstance(node, ast.BinOp) and isinstance(node.op, prohibited)]
     source = M09_SERVICE.read_text(encoding="utf-8")
-    assert "net = inflow - outflow" in source
-    assert "range_inflow += inflow" in source
-    assert "range_outflow += outflow" in source
+    assert "net = _validate_aggregate(inflow - outflow)" in source
+    assert "range_inflow = _validate_aggregate(range_inflow + inflow)" in source
+    assert "range_outflow = _validate_aggregate(range_outflow + outflow)" in source
 
 
 def test_m09_has_no_upstream_formula_or_forbidden_scope_import() -> None:

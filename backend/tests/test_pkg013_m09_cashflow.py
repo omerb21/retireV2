@@ -21,6 +21,7 @@ from app.models.m09_cashflow import (
     M09ScenarioRun,
 )
 from app.models.retirement_facts import RecurringExpense, RecurringIncome
+from app.services import m06_conversion_service as m06_service
 from app.services import m09_cashflow_service as service
 
 
@@ -225,7 +226,9 @@ def test_duplicate_recurring_economic_meaning_blocks(api) -> None:
     assert "duplicate_economic_meaning_unresolved" in body["blocker_codes"]
 
 
-def fake_m06_subject() -> SimpleNamespace:
+def fake_m06_subject(
+    amount: str = "500.00", *, suffix: str = "1", input_identity: str = "component:pension-one"
+) -> SimpleNamespace:
     eligibility = SimpleNamespace(
         eligible_for_downstream=True,
         exclusion_reasons=[],
@@ -237,20 +240,30 @@ def fake_m06_subject() -> SimpleNamespace:
         "informational_warnings": [],
     }
     manifest = SimpleNamespace(
-        manifest_id="M06-M-1",
+        manifest_id=f"M06-M-{suffix}",
         fingerprint="a" * 64,
-        authoritative_monthly_amount="500.00",
+        authoritative_monthly_amount=amount,
+        evidence={
+            "authoritative_downstream_handoff": {
+                "contract_version": "m06-to-m09-monthly-amount-v1",
+                "amount": amount,
+                "currency": "ILS",
+                "unit": "ILS/month",
+                "formula_owner": "M06",
+                "rounding_owner": "M06",
+            }
+        },
     )
     revision = SimpleNamespace(
-        revision_id="M06-R-1",
+        revision_id=f"M06-R-{suffix}",
         state="resolved",
         mode="balance_to_monthly_pension",
-        input_identity="component:pension-one",
+        input_identity=input_identity,
         manifest=manifest,
         predecessor_snapshot={"m05_revision_id": "M05-R-1"},
     )
     return SimpleNamespace(
-        subject_id="M06-S-1", current_revision=revision, eligibility=eligibility
+        subject_id=f"M06-S-{suffix}", current_revision=revision, eligibility=eligibility
     )
 
 
@@ -280,10 +293,157 @@ def test_missing_or_invalid_m06_handoff_fails_closed(api, monkeypatch) -> None:
     client, _ = api
     subject = fake_m06_subject()
     subject.current_revision.manifest.authoritative_monthly_amount = None
+    subject.current_revision.manifest.evidence["authoritative_downstream_handoff"] = None
     monkeypatch.setattr(service, "list_m06_subjects", lambda *_: [subject])
     body = client.post("/api/clients/1/m09/runs", json=REQUEST).json()
     assert body["status"] == "dependency_failed"
     assert "m06_authoritative_monthly_handoff_missing" in body["blocker_codes"]
+
+
+def test_m06_handoff_column_and_fingerprinted_manifest_integrity_contract() -> None:
+    leaf = SimpleNamespace(
+        formula_id="m06.balance_to_monthly_pension.v1",
+        input_identity="component:pension-one",
+        predecessor_snapshot={"m05_revision_id": "M05-R-1"},
+    )
+    coefficient = SimpleNamespace(evidence_id="M06-E-1")
+    payload = {
+        "formula_id": leaf.formula_id,
+        "input_identity": leaf.input_identity,
+        "coefficient_evidence_id": coefficient.evidence_id,
+        "predecessors": leaf.predecessor_snapshot,
+        "authoritative_downstream_handoff": {"amount": "500.00"},
+    }
+    fingerprint = m06_service._manifest_fingerprint(payload)
+    payload["fingerprint"] = fingerprint
+    valid = SimpleNamespace(
+        manifest=payload,
+        fingerprint=fingerprint,
+        authoritative_monthly_amount="500.00",
+    )
+    assert m06_service._manifest_integrity_reasons(leaf, coefficient, valid) == []
+
+    tampered_column = SimpleNamespace(**vars(valid))
+    tampered_column.authoritative_monthly_amount = "501.00"
+    assert m06_service._manifest_integrity_reasons(leaf, coefficient, tampered_column) == [
+        "authoritative_downstream_handoff_integrity_invalid"
+    ]
+
+    tampered_json_payload = dict(payload)
+    tampered_json_payload["authoritative_downstream_handoff"] = {"amount": "501.00"}
+    tampered_json = SimpleNamespace(
+        manifest=tampered_json_payload,
+        fingerprint=fingerprint,
+        authoritative_monthly_amount="500.00",
+    )
+    assert m06_service._manifest_integrity_reasons(leaf, coefficient, tampered_json) == [
+        "manifest_integrity_invalid"
+    ]
+
+    mismatched_payload = dict(tampered_json_payload)
+    mismatched_fingerprint = m06_service._manifest_fingerprint(mismatched_payload)
+    mismatched_payload["fingerprint"] = mismatched_fingerprint
+    mismatch = SimpleNamespace(
+        manifest=mismatched_payload,
+        fingerprint=mismatched_fingerprint,
+        authoritative_monthly_amount="500.00",
+    )
+    assert m06_service._manifest_integrity_reasons(leaf, coefficient, mismatch) == [
+        "authoritative_downstream_handoff_integrity_invalid"
+    ]
+
+    bad_fingerprint = SimpleNamespace(
+        manifest=payload,
+        fingerprint="f" * 64,
+        authoritative_monthly_amount="500.00",
+    )
+    assert m06_service._manifest_integrity_reasons(leaf, coefficient, bad_fingerprint) == [
+        "manifest_integrity_invalid"
+    ]
+
+
+def test_m09_rejects_mismatched_m06_handoff_without_success(api, monkeypatch) -> None:
+    client, _ = api
+    subject = fake_m06_subject()
+    subject.current_revision.manifest.authoritative_monthly_amount = "501.00"
+    monkeypatch.setattr(service, "list_m06_subjects", lambda *_: [subject])
+    body = client.post("/api/clients/1/m09/runs", json=REQUEST).json()
+    assert body["status"] == "dependency_failed"
+    assert "m06_authoritative_handoff_integrity_invalid" in body["blocker_codes"]
+
+
+def test_numeric_20_2_exact_boundaries_are_explicit() -> None:
+    assert service.M09_MONEY_MAX == Decimal("999999999999999999.99")
+    assert service.M09_MONEY_MIN == Decimal("-999999999999999999.99")
+    assert service._money_text(service.M09_MONEY_MAX) == "999999999999999999.99"
+    assert service._validate_aggregate(service.M09_MONEY_MIN) == service.M09_MONEY_MIN
+    with pytest.raises(service.M09NumericDomainError):
+        service._money_text(service.M09_MONEY_MAX + Decimal("0.01"))
+    with pytest.raises(service.M09NumericDomainError):
+        service._validate_aggregate(service.M09_MONEY_MIN - Decimal("0.01"))
+
+
+def test_oversized_component_is_typed_dependency_failure(api, monkeypatch) -> None:
+    client, _ = api
+    subject = fake_m06_subject("1000000000000000000.00")
+    monkeypatch.setattr(service, "list_m06_subjects", lambda *_: [subject])
+    body = client.post("/api/clients/1/m09/runs", json=REQUEST).json()
+    assert body["status"] == "dependency_failed"
+    assert body["blocker_codes"] == ["component_amount_outside_numeric_20_2"]
+    assert body["monthly_results"] == []
+
+
+def test_exact_maximum_component_persists_for_one_month(api, monkeypatch) -> None:
+    client, _ = api
+    subject = fake_m06_subject("999999999999999999.99")
+    monkeypatch.setattr(service, "list_m06_subjects", lambda *_: [subject])
+    body = client.post(
+        "/api/clients/1/m09/runs",
+        json=REQUEST | {"end_month": "2026-01"},
+    ).json()
+    assert body["status"] == "success_complete"
+    assert body["monthly_results"][0]["gross_inflow_total"] == "999999999999999999.99"
+
+
+def test_period_net_accepts_exact_negative_boundary_and_rejects_below_it() -> None:
+    component = {
+        "component_id": "M09-C-max-expense",
+        "component_type": "recurring_expense_record",
+        "direction": "outflow",
+        "amount": "999999999999999999.99",
+        "month": "2026-01",
+        "source_identity": "recurring_expense:max",
+    }
+    rows, totals, _ = service._monthly_rows(
+        "M09-R-boundary", 1, ["2026-01"], [component]
+    )
+    assert rows[0].period_net == Decimal("-999999999999999999.99")
+    assert totals["period_net"] == "-999999999999999999.99"
+    with pytest.raises(service.M09NumericDomainError) as caught:
+        service._validate_aggregate(Decimal("-1000000000000000000.00"))
+    assert caught.value.code == "aggregate_outside_numeric_20_2"
+
+
+def test_monthly_aggregate_overflow_is_persisted_calculation_failure(api, monkeypatch) -> None:
+    client, _ = api
+    subjects = [
+        fake_m06_subject("999999999999999999.99", suffix="1", input_identity="component:one"),
+        fake_m06_subject("0.01", suffix="2", input_identity="component:two"),
+    ]
+    monkeypatch.setattr(service, "list_m06_subjects", lambda *_: subjects)
+    body = client.post("/api/clients/1/m09/runs", json=REQUEST).json()
+    assert body["status"] == "calculation_failed"
+    assert body["blocker_codes"] == ["aggregate_outside_numeric_20_2"]
+    assert body["monthly_results"] == [] and body["range_totals"] is None
+
+
+def test_range_total_overflow_is_persisted_calculation_failure(api, monkeypatch) -> None:
+    client, _ = api
+    subject = fake_m06_subject("999999999999999999.99")
+    monkeypatch.setattr(service, "list_m06_subjects", lambda *_: [subject])
+    body = client.post("/api/clients/1/m09/runs", json=REQUEST).json()
+    assert body["status"] == "calculation_failed"
+    assert body["blocker_codes"] == ["aggregate_outside_numeric_20_2"]
 
 
 def test_source_edit_preserves_history_and_invalidates_currentness(api) -> None:

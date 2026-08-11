@@ -47,6 +47,19 @@ RESULT_SCHEMA_VERSION = "m09-result-v1"
 ENGINE_VERSION = "m09-aggregation-v1"
 FINGERPRINT_VERSION = "sha256-canonical-json-v1"
 MONEY_PATTERN = re.compile(r"^(0|[1-9]\d*)\.\d{2}$")
+M09_MONEY_PRECISION = 20
+M09_MONEY_SCALE = 2
+
+
+def _numeric_limit(precision: int, scale: int) -> Decimal:
+    integer_digits = precision - scale
+    integer_part = "".join("9" for _ in range(integer_digits))
+    fractional_part = "".join("9" for _ in range(scale))
+    return Decimal(f"{integer_part}.{fractional_part}")
+
+
+M09_MONEY_MAX = _numeric_limit(M09_MONEY_PRECISION, M09_MONEY_SCALE)
+M09_MONEY_MIN = -M09_MONEY_MAX
 
 
 @dataclass(frozen=True)
@@ -54,6 +67,11 @@ class M09CashflowError(Exception):
     code: str
     message: str
     status_code: int = 409
+
+
+@dataclass(frozen=True)
+class M09NumericDomainError(Exception):
+    code: str
 
 
 def _error(code: str, message: str, status_code: int = 409) -> M09CashflowError:
@@ -90,7 +108,21 @@ def _money_text(value: Decimal) -> str:
         raise ValueError("invalid monetary source")
     if value != value.quantize(Decimal("0.01")):
         raise ValueError("source amount is not canonical two-decimal money")
+    if value > M09_MONEY_MAX:
+        raise M09NumericDomainError("component_amount_outside_numeric_20_2")
     return format(value, ".2f")
+
+
+def _validate_aggregate(value: Decimal) -> Decimal:
+    if (
+        not isinstance(value, Decimal)
+        or not value.is_finite()
+        or value < M09_MONEY_MIN
+        or value > M09_MONEY_MAX
+        or value != value.quantize(Decimal("0.01"))
+    ):
+        raise M09NumericDomainError("aggregate_outside_numeric_20_2")
+    return value
 
 
 def _month_range(start: str, end: str) -> list[str]:
@@ -230,6 +262,9 @@ def _recurring_domain(
             reasons.append("source_review_incomplete")
         try:
             amount = _money_text(row.amount)
+        except M09NumericDomainError as error:
+            amount = None
+            reasons.append(error.code)
         except (ValueError, InvalidOperation):
             amount = None
             reasons.append("amount_not_canonical_nonnegative_ils")
@@ -372,12 +407,33 @@ def _m06_domain(db: Session, client_id: int, months: list[str]) -> dict[str, Any
             reasons.append("m06_superseded")
         if relevant and not subject.eligibility.eligible_for_downstream:
             reasons.extend(subject.eligibility.exclusion_reasons or ["m06_ineligible"])
-        handoff = manifest.authoritative_monthly_amount if manifest else None
+        handoff_evidence = (
+            manifest.evidence.get("authoritative_downstream_handoff")
+            if manifest and isinstance(manifest.evidence, dict)
+            else None
+        )
+        handoff = (
+            handoff_evidence.get("amount")
+            if isinstance(handoff_evidence, dict)
+            else None
+        )
+        stored_handoff = (
+            manifest.authoritative_monthly_amount if manifest else None
+        )
         if relevant and revision.state != "superseded":
-            if manifest is None or handoff is None:
+            if manifest is not None and stored_handoff != handoff:
+                reasons.append("m06_authoritative_handoff_integrity_invalid")
+            elif manifest is None or handoff is None:
                 reasons.append("m06_authoritative_monthly_handoff_missing")
-            elif MONEY_PATTERN.fullmatch(handoff) is None:
+            elif not isinstance(handoff, str) or MONEY_PATTERN.fullmatch(handoff) is None:
                 reasons.append("m06_authoritative_monthly_handoff_invalid")
+            else:
+                try:
+                    _money_text(Decimal(handoff))
+                except M09NumericDomainError as error:
+                    reasons.append(error.code)
+                except (ValueError, InvalidOperation):
+                    reasons.append("m06_authoritative_monthly_handoff_invalid")
         source_fingerprint = _digest(
             {
                 "subject_id": subject.subject_id,
@@ -757,15 +813,15 @@ def _monthly_rows(
                 item["component_id"],
             ),
         )
-        inflow = sum(
+        inflow = _validate_aggregate(sum(
             (Decimal(item["amount"]) for item in evidence if item["direction"] == "inflow"),
             Decimal("0.00"),
-        )
-        outflow = sum(
+        ))
+        outflow = _validate_aggregate(sum(
             (Decimal(item["amount"]) for item in evidence if item["direction"] == "outflow"),
             Decimal("0.00"),
-        )
-        net = inflow - outflow
+        ))
+        net = _validate_aggregate(inflow - outflow)
         inflow_text, outflow_text, net_text = (
             format(inflow, ".2f"),
             format(outflow, ".2f"),
@@ -793,12 +849,12 @@ def _monthly_rows(
         authorize_m09_insert(row)
         rows.append(row)
         semantic_months.append(payload | {"result_fingerprint": fingerprint})
-        range_inflow += inflow
-        range_outflow += outflow
+        range_inflow = _validate_aggregate(range_inflow + inflow)
+        range_outflow = _validate_aggregate(range_outflow + outflow)
     range_totals = {
         "gross_inflow_total": format(range_inflow, ".2f"),
         "gross_outflow_total": format(range_outflow, ".2f"),
-        "period_net": format(range_inflow - range_outflow, ".2f"),
+        "period_net": format(_validate_aggregate(range_inflow - range_outflow), ".2f"),
     }
     semantic = _digest(
         {
@@ -860,21 +916,29 @@ def execute_run(
     result_integrity_fingerprint: str | None = None
     blockers = list(inventory.blocker_codes)
     if status == "success_complete":
-        rows, range_totals, semantic_fingerprint = _monthly_rows(
-            run_id,
-            client_id,
-            _month_range(request.start_month, request.end_month),
-            _included_components(inventory),
-        )
-        result_integrity_fingerprint = _digest(
-            {
-                "semantic_result_fingerprint": semantic_fingerprint,
-                "assumption_manifest_fingerprint": manifest_fingerprint,
-                "upstream_snapshot_fingerprint": snapshot_fingerprint,
-                "monthly_result_fingerprints": [row.result_fingerprint for row in rows],
-                "range_totals": range_totals,
-            }
-        )
+        try:
+            rows, range_totals, semantic_fingerprint = _monthly_rows(
+                run_id,
+                client_id,
+                _month_range(request.start_month, request.end_month),
+                _included_components(inventory),
+            )
+            result_integrity_fingerprint = _digest(
+                {
+                    "semantic_result_fingerprint": semantic_fingerprint,
+                    "assumption_manifest_fingerprint": manifest_fingerprint,
+                    "upstream_snapshot_fingerprint": snapshot_fingerprint,
+                    "monthly_result_fingerprints": [row.result_fingerprint for row in rows],
+                    "range_totals": range_totals,
+                }
+            )
+        except M09NumericDomainError as error:
+            status = "calculation_failed"
+            rows = []
+            range_totals = None
+            semantic_fingerprint = None
+            result_integrity_fingerprint = None
+            blockers.append(error.code)
     run = M09ScenarioRun(
         run_id=run_id,
         client_id=client_id,

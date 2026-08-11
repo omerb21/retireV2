@@ -20,14 +20,14 @@ This is implementation-review evidence, not an acceptance record, production-rea
 | AC-013-010 | Empty eligible domains receive server-generated none evidence bound to assessment, actor, snapshot and fingerprint. | `test_server_inventory_and_none_are_server_owned`. | PASS |
 | AC-013-011 | Required canonical ordered inclusive months are schema-validated and expanded ascending. | `test_exact_family_horizon_and_extra_fields_fail_closed`; exact aggregation month-order assertion. | PASS |
 | AC-013-012 | Non-monthly and partial-month sources block; no conversion/proration operation exists. | Parameterized ineligible test; arithmetic architecture test. | PASS |
-| AC-013-013 | Monetary columns are `Numeric(...,2)` and service accepts/persists Decimal-derived canonical strings only. | `test_component_contract_is_closed_and_has_no_float_authority`; exact aggregation test. | PASS |
+| AC-013-013 | Central `M09_MONEY_PRECISION=20`/`M09_MONEY_SCALE=2` derives exact bounds and validates every component, monthly total, net and range total before `Numeric(20,2)` persistence. | `test_numeric_20_2_exact_boundaries_are_explicit`; `test_exact_maximum_component_persists_for_one_month`; `test_period_net_accepts_exact_negative_boundary_and_rejects_below_it`; overflow API tests. | PASS |
 | AC-013-014 | Source components are not rerounded; totals use exact Decimal sums/subtraction. | Exact aggregation and zero tests; arithmetic architecture test. | PASS |
-| AC-013-015 | Typed domain blockers make inventory incomplete and persist a dependency-failed run without result rows. | Parameterized ineligible test; `test_failed_inventory_is_persisted_without_partial_rows`; M06 missing-handoff test. | PASS |
+| AC-013-015 | Typed domain blockers persist dependency failure; aggregate overflow persists `calculation_failed`; neither produces partial rows or relies on DB overflow. | `test_failed_inventory_is_persisted_without_partial_rows`; `test_oversized_component_is_typed_dependency_failure`; monthly/range overflow API tests; M06 mismatch test. | PASS |
 | AC-013-016 | Request/UI expose no subset, omit, waive, or run-anyway control. | Extra-field rejection; architecture request test; UI `offers no component omission...`. | PASS |
 | AC-013-017 | M05 `eligible_for_m06` is not an M09 input contract. | Architecture forbidden-scope test; M06 snapshot is retained only behind M06 provenance. | PASS |
 | AC-013-018 | M05 balances are never emitted as component types or converted in M09. | Closed-component vocabulary test; arithmetic/forbidden-scope architecture tests. | PASS |
-| AC-013-019 | M06 candidates require current resolved supported leaf, downstream eligibility, manifest and fingerprint. | M06 handoff success, overlap, and missing-handoff behavior tests. | PASS |
-| AC-013-020 | Minimal M06-owned `authoritative_monthly_amount` handoff supplies canonical `ILS/month`; M09 records `formula_owner=M06`. | M06 handoff behavior and architecture tests; 44-test M06 regression suite. | PASS |
+| AC-013-019 | M06 revalidation verifies manifest fingerprint, predecessor bindings and exact column/fingerprinted-handoff equality; M09 independently rejects a mismatch. | `test_m06_handoff_column_and_fingerprinted_manifest_integrity_contract`; `test_m09_rejects_mismatched_m06_handoff_without_success`; M06 regression suite. | PASS |
+| AC-013-020 | M09 reads canonical `ILS/month` from the verified fingerprinted JSON handoff, confirms equality with the indexed column, and records `formula_owner=M06`; no conversion is copied. | Valid/tampered column, tampered JSON, mismatch and bad-fingerprint cases in `test_m06_handoff_column_and_fingerprinted_manifest_integrity_contract`; M09 mismatch/API and architecture tests. | PASS |
 | AC-013-021 | Capital-equivalent mode and absent/invalid handoff never become a monthly zero/component. | `test_missing_or_invalid_m06_handoff_fails_closed`; M06 boundary service branch and structural test. | PASS |
 | AC-013-022 | M09 has no M07/fixation manifest or dependency. | Forbidden-scope architecture test and changed-file audit. | PASS |
 | AC-013-023 | M09 v1 has no M08 component/API/dependency. | Forbidden-scope architecture test and closed-component test. | PASS |
@@ -35,7 +35,7 @@ This is implementation-review evidence, not an acceptance record, production-rea
 | AC-013-025 | No request free text/arbitrary assumptions can reach execution. | Extra-field rejection and request architecture test. | PASS |
 | AC-013-026 | Run persists immutable assumption manifest and upstream snapshot with consumed component/source evidence and fingerprints. | Exact aggregation/immutable evidence and source-edit history tests. | PASS |
 | AC-013-027 | Read-time reassessment detects source changes without rewriting historical rows. | `test_source_edit_preserves_history_and_invalidates_currentness`. | PASS |
-| AC-013-028 | Three additive append-only entities, predecessor chain and server-authorized inserts preserve history. | `test_append_only_records_reject_orm_and_bulk_mutation`; replay/successor test; migration tests. | PASS |
+| AC-013-028 | ORM guards plus database triggers independently reject UPDATE/DELETE on all three evidence tables while allowing insert, read and successor insert. | `test_append_only_records_reject_orm_and_bulk_mutation`; `test_pkg013_database_triggers_block_raw_update_delete_but_allow_append`; corrective downgrade and PostgreSQL offline-DDL tests. | PASS |
 | AC-013-029 | Persisted status, derived currentness, and derived M10 eligibility are distinct fields/contracts. | Replay currentness and M10 reason-code tests. | PASS |
 | AC-013-030 | Run response exposes ordered rows, evidence, totals, manifests, fingerprints, status and derived assessments only. | Exact aggregation test; API response-model runtime coverage. | PASS |
 | AC-013-031 | Canonical JSON/deterministic ordering excludes run identity/timestamp from semantic fingerprint. | `test_replay_semantic_fingerprint_excludes_run_metadata`. | PASS |
@@ -45,9 +45,9 @@ This is implementation-review evidence, not an acceptance record, production-rea
 | AC-013-035 | Warning categories are checked by stable classification; mandatory warnings fail eligibility and informational warnings remain explanatory. | Eligibility implementation path plus schema/runtime response coverage; no generic acceptance input exists. | PASS |
 | AC-013-036 | Every inventory/run/history/currentness/eligibility lookup scopes by client and hides foreign existence. | Both client-isolation tests including direct-service enforcement. | PASS |
 | AC-013-037 | Schemas and server models own actor, IDs, timestamps, inventory, status, fingerprints, results and assessments. | Extra-field rejection, server-none test, architecture request test, API runtime suite. | PASS |
-| AC-013-038 | UI provides horizon, server inventory, blockers, execution, results, history/currentness/eligibility without selection authority; request ownership uses route generation plus channel epoch. | Five controlled-promise UI tests cover stale success/rejection/error/finally, A→B→A, old/new A, history/result and pending owner. | PASS |
-| AC-013-039 | Migration `a7c9e1f3b805` is additive above `f9a1c3e5b702`, one-head, reversible without evidence and refuses evidence loss. | Four migration tests, including SQLite/PostgreSQL offline DDL. | PASS |
-| AC-013-040 | Focused/full suites, build, compile, Alembic and diff checks are recorded in the implementation report. | Runtime commands reported at proposed implementation HEAD. | PASS |
+| AC-013-038 | UI keeps independent generation/epoch ownership for inventory, execute, history and saved-result/currentness/M10 composite loads. | Fourteen controlled-promise UI tests separately exercise A→B/A→B→A stale success, rejection, structured error, finally, pending owner, old-A/new-A and successful new owner. | PASS |
+| AC-013-039 | Original additive migration `a7c9e1f3b805` remains published; corrective trigger migration `c4e8a1f6d203` is one head above it and has deterministic downgrade. | Migration suite covers upgrade/downgrade/re-upgrade, evidence-loss refusal, raw-SQL triggers, corrective downgrade, and SQLite/PostgreSQL offline DDL. | PASS |
+| AC-013-040 | Focused, predecessor and full suites plus build, compile/import, Alembic and diff checks execute at the corrected proposed HEAD. | Exact runtime counts and command results are recorded in the correction report; focused backend and UI suites include all four defect regressions. | PASS |
 
 ## Negative acceptance criteria
 
@@ -58,7 +58,7 @@ This is implementation-review evidence, not an acceptance record, production-rea
 | NAC-013-003 | Both months are required and no date-derived/default horizon exists. | Family/horizon rejection test; architecture source scan. | PASS |
 | NAC-013-004 | Exact request schema forbids family aliases, component universe/subsets and required-domain input. | Extra-field rejection and request architecture tests. | PASS |
 | NAC-013-005 | Request has no notes/title/rationale/arbitrary JSON/LLM field. | Extra-field rejection and request architecture tests. | PASS |
-| NAC-013-006 | Ineligible/missing/invalid authority blocks or is excluded with typed evidence; none is server-generated only. | Ineligible parameterization, server-none, M06 missing-handoff tests. | PASS |
+| NAC-013-006 | Missing, oversized, fingerprint-invalid or column/manifest-mismatched M06 authority is typed and fail-closed; no conflict is treated as zero. | M06 manifest adversarial cases, M09 mismatch failure, oversized-component failure, server-none and missing-handoff tests. | PASS |
 | NAC-013-007 | No partial-success override exists in API or UI. | Failed-inventory persistence and no-omission UI tests. | PASS |
 | NAC-013-008 | M09 never consumes M05 downstream-eligibility as its authority. | Forbidden-scope architecture test. | PASS |
 | NAC-013-009 | No balance conversion/allocation/amortization exists in M09. | Arithmetic architecture and closed-component tests. | PASS |
@@ -67,7 +67,7 @@ This is implementation-review evidence, not an acceptance record, production-rea
 | NAC-013-012 | No M08 dependency is introduced. | Forbidden-scope architecture test and changed-file audit. | PASS |
 | NAC-013-013 | No M08 technical-success/latest gate exists. | Forbidden-scope architecture test. | PASS |
 | NAC-013-014 | Success, currentness and M10 eligibility are independently derived. | Source-edit and stale-success M10 tests. | PASS |
-| NAC-013-015 | ORM and bulk update/delete of M09 evidence are blocked. | Append-only mutation test; downgrade evidence-loss test. | PASS |
+| NAC-013-015 | Historical M09 evidence rejects ORM, SQLAlchemy bulk and raw-SQL UPDATE/DELETE; DB triggers provide enforcement independently of application interception. | ORM/bulk append-only test; raw connection trigger test for every table; successor-insert/read and downgrade tests. | PASS |
 | NAC-013-016 | Composite client scoping prevents cross-client association and public existence leakage. | Full client-resource and direct-service isolation tests. | PASS |
 | NAC-013-017 | Caller cannot send authoritative inventory/result/actor/status/fingerprint/currentness/eligibility fields. | Request extra-field rejection and server-ownership architecture test. | PASS |
 | NAC-013-018 | No proration/frequency conversion/interpolation/inflation/return/discount arithmetic exists. | Ineligible source tests and arithmetic architecture test. | PASS |

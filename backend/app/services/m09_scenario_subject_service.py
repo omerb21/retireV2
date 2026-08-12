@@ -252,6 +252,7 @@ def subject_eligibility(db:Session,client_id:int,subject_id:str,run_id:str)->Sub
     run=_require_run(db,client_id,subject_id,run_id); current=subject_currentness(db,client_id,subject_id,run_id); reasons=list(current.reason_codes)
     if run.status!="success_complete": reasons.append("run_not_success_complete")
     if run.blocker_codes: reasons.append("run_has_blockers")
+    if any(warning.get("classification")=="mandatory_review_warning" for warning in run.warnings): reasons.append("mandatory_review_required")
     if len(run.factual_baseline_material_fingerprint)!=64: reasons.append("factual_baseline_material_fingerprint_invalid")
     return SubjectM10EligibilityResponse(assessed_scenario_run_id=run_id,current_scenario_run_id=current.current_run_id,scenario_subject_id=subject_id,eligible_for_m10=not reasons,reason_codes=list(dict.fromkeys(reasons)),informational_warnings=[w["code"] for w in run.warnings if w.get("classification")=="informational_warning"],factual_baseline_material_fingerprint=run.factual_baseline_material_fingerprint,assessment_timestamp=m09_server_timestamp())
 

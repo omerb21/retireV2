@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/m09CashflowApi";
@@ -20,7 +20,7 @@ describe("PKG-014 scenario subjects", () => {
 
   it("shows the bounded meaning and resolves server baseline", async () => {
     mocked(api.resolveM09BaselineSubject).mockResolvedValue(subject("base")); renderPage();
-    await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Loading scenario evidenceג€¦")).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
     await screen.findByText(/Selected subject: Baseline/);
     expect(screen.getByText(/not forecasts, recommendations, professional authority, or M10 comparison/)).toBeInTheDocument();
@@ -28,7 +28,7 @@ describe("PKG-014 scenario subjects", () => {
 
   it("preserves repeated adjustment occurrences in create input", async () => {
     mocked(api.createM09AdjustedSubject).mockResolvedValue(subject("adjusted")); renderPage();
-    await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Loading scenario evidenceג€¦")).not.toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } });
     fireEvent.click(screen.getByRole("button", { name: "Add another adjustment" }));
     fireEvent.change(screen.getByLabelText("Adjustment amount 2"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 2"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 2"), { target: { value: "2026-02" } });
@@ -46,7 +46,8 @@ describe("PKG-014 scenario subjects", () => {
   });
 
   it("validates canonical amounts before create", async () => {
-    renderPage(); fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "1e2" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } });
+    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "1e2" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } });
     expect(screen.getByRole("button", { name: "Create adjusted subject" })).toBeDisabled();
   });
 });
+

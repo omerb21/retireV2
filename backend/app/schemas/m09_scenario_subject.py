@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.m09_cashflow import M09RangeTotalsResponse
 
@@ -49,7 +49,7 @@ class CreateAdjustedSubjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scenario_family: Literal["declared_retirement_cashflow_adjustments"]
     scenario_contract_version: Literal["v1"]
-    display_label: str | None = None
+    display_label: str | None = Field(default=None, max_length=160)
     adjustments: list[AdjustmentInput]
 
     @field_validator("adjustments")

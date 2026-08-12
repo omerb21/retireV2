@@ -12,7 +12,9 @@
 | Authoritative base | `f1cbddbf27d7712ce2409248240a0cb4cadebc8d` |
 | Accepted PKG-013 implementation HEAD | `50cdf8322d0a24215f5f9e1c488e5acb3736c1ea` |
 | Current Alembic head | `c4e8a1f6d203` |
-| New family | `declared_retirement_cashflow_adjustments/v1` |
+| Scenario family | `declared_retirement_cashflow_adjustments` |
+| Scenario contract version | `v1` |
+| Combined contract identifier | `declared_retirement_cashflow_adjustments/v1` |
 | M09 role | `ORCHESTRATOR_AND_AGGREGATOR_ONLY` |
 
 This document is a definition proposal for acceptance audit. It is not an
@@ -79,9 +81,14 @@ pension-conversion formula owner.
 
 ## 5. Family and Version Boundary
 
-- New family: exactly `declared_retirement_cashflow_adjustments/v1`.
-- Existing family: `deterministic_monthly_cashflow/v1`, unchanged.
-- The family and contract version are server-owned closed values.
+- `scenario_family` is exactly `declared_retirement_cashflow_adjustments`.
+- `scenario_contract_version` is exactly `v1`.
+- The combined human-readable contract identifier is exactly
+  `declared_retirement_cashflow_adjustments/v1`.
+- Existing combined contract identifier:
+  `deterministic_monthly_cashflow/v1`, unchanged.
+- The separate family and contract-version fields are server-owned closed
+  values. There is no second or ambiguous version field.
 - No alias, free-form family, caller-selected implementation version, or
   implicit fallback is permitted.
 - Unsupported families and versions fail closed.
@@ -122,6 +129,11 @@ ordered adjustment multiset containing, for every occurrence:
 - end month; and
 - multiplicity.
 
+Its canonical semantic envelope also binds the exact
+`scenario_family = declared_retirement_cashflow_adjustments` and
+`scenario_contract_version = v1`; those calculation-affecting contract tokens
+are distinct fields, not a combined value stored in `scenario_family`.
+
 Canonical ordering is lexicographic by type, canonical amount text,
 `start_month`, then `end_month`; equal tuples are retained repeatedly so their
 multiplicity remains calculation-affecting. The semantic fingerprint excludes
@@ -149,7 +161,8 @@ automatic reuse, merge, or supersession of the existing subject.
 ### 9.1 Baseline Subject
 
 Exactly one baseline subject exists per
-`client_id + family + version`. It has:
+`client_id + scenario_family + scenario_contract_version`, where the latter
+two fields have the exact values frozen in Section 5. It has:
 
 - server-generated identity;
 - the canonical empty adjustment manifest;
@@ -304,9 +317,13 @@ not applicable.
 
 ## 18. Parallel Per-Subject Currentness
 
-For `declared_retirement_cashflow_adjustments/v1`, the currentness key is:
+For combined contract identifier
+`declared_retirement_cashflow_adjustments/v1`, the currentness key is:
 
-`client_id + scenario_subject_id + family + version`
+`client_id + scenario_subject_id + scenario_family + scenario_contract_version`
+
+Here `scenario_family` is exactly `declared_retirement_cashflow_adjustments`
+and `scenario_contract_version` is exactly `v1`.
 
 The subject-aware contract version is:
 
@@ -340,14 +357,16 @@ The new family uses exactly:
 
 `m09-to-m10-eligibility-v2`
 
-It must not reinterpret `m09-to-m10-eligibility-v1`. Eligibility v2 is derived
-fail-closed evidence, never a caller-authored boolean. It preserves all
+It must not reinterpret `m09-to-m10-eligibility-v1`. Eligibility v2 is a
+**per-run** derived fail-closed evidence contract, never a caller-authored
+boolean. It preserves all
 existing integrity, dependency, currentness, warning, and successful-complete
 conditions and additionally proves:
 
 - same-client subject ownership;
 - valid subject identity;
-- supported subject family and version;
+- exact `scenario_family = declared_retirement_cashflow_adjustments` and
+  `scenario_contract_version = v1`;
 - valid assumption integrity fingerprint;
 - valid calculation-semantic fingerprint;
 - current leaf within that subject;
@@ -361,6 +380,12 @@ conditions and additionally proves:
 - result, dependency, inventory, and upstream-snapshot integrity;
 - no blockers; and
 - required mandatory-warning disposition.
+
+Every eligible run exposes and persists its canonical
+`factual_baseline_material_fingerprint`. Per-run eligibility proves the
+individual factual baseline is valid; it does not and cannot prove equality to
+an unknown future peer. Pair-level equality belongs exclusively to future M10
+admission.
 
 Eligibility means only that a separately authorized M10 may consume the
 persisted M09 subject result. It is not professional authority, ranking,
@@ -376,14 +401,34 @@ Intended first-stage future admission remains:
 
 - same client;
 - two distinct scenario subjects;
-- same family and version;
+- exact same `scenario_family`, equal to
+  `declared_retirement_cashflow_adjustments`;
+- exact same `scenario_contract_version`, equal to `v1`;
 - same exact run horizon;
 - current within each subject;
 - eligible under `m09-to-m10-eligibility-v2`;
-- valid fingerprints; and
-- semantically distinct adjustment manifests.
+- valid subject, result, inventory, dependency, and upstream fingerprints;
+- semantically distinct adjustment manifests;
+- exact same persisted `factual_baseline_material_fingerprint`;
+- exact same `component_domain_contract_version`;
+- exact same M09 engine and result-schema versions; and
+- exact same calculation-affecting factual upstream contract/engine versions
+  bound by the factual-baseline material identity.
 
-The preferred first pair is baseline subject versus one adjusted subject.
+The preferred first pair is baseline subject versus one adjusted subject, but
+only when both carry the exact same factual-baseline material fingerprint. A
+factual source change between executions makes the old pair non-comparable;
+upstream rerun or reassessment is required. M10 must not normalize, reconcile,
+or rebuild factual differences.
+
+Individual factual integrity and cross-subject factual equality are separate
+requirements. Two individually current and eligible runs with different
+factual baseline material are not comparable. `eligible_for_m10=true` or its
+equivalent per-run evidence never substitutes for pair-level equality. A
+mismatch fails closed with the stable blocking reason:
+
+`comparison_factual_baseline_material_mismatch`
+
 Future M10 remains `COMPARATOR_ONLY`: persisted side-by-side values, exact
 `A - B`, equality, and numeric greater/lower only. No percentage, ranking,
 score, recommendation, annualization, or NPV is authorized.
@@ -396,6 +441,7 @@ The following identities are distinct and independently verifiable:
 - subject evidence/integrity fingerprint;
 - adjustment manifest fingerprint;
 - factual inventory fingerprint;
+- factual baseline material fingerprint;
 - upstream snapshot fingerprint;
 - run semantic result fingerprint; and
 - result integrity fingerprint.
@@ -408,6 +454,29 @@ Repeated execution with the same subject, factual baseline, horizon, and
 supported versions must produce the same semantic result fingerprint. Run ID,
 timestamp, sequence, actor, and other evidence-only fields are excluded from
 semantic equality but may be bound by integrity fingerprints.
+
+The stable persisted field is
+`factual_baseline_material_fingerprint`. It is a deterministic canonical
+fingerprint over the calculation-affecting factual baseline material used by a
+run, excluding all scenario adjustments. Directly or through canonical
+constituent fingerprints it binds at least:
+
+- factual resolved-inventory identity and content;
+- factual component identities and exact amounts;
+- factual applicability/month evidence relevant to the run;
+- factual source identities and versions;
+- factual eligibility and currentness evidence required by contract;
+- `component_domain_contract_version`;
+- relevant calculation-affecting factual upstream contract/engine versions;
+  and
+- factual inventory fingerprint or its canonical material.
+
+It excludes scenario-subject ID, adjustment manifest, adjustment IDs,
+adjustment values, subject label, run ID, timestamp, actor when merely
+metadata, and other non-calculation display metadata. Every new-family run
+snapshot and result evidence persists this exact fingerprint. Future M10 may
+validate equality of the two persisted values but must not recompute or rebuild
+the factual baseline from raw components.
 
 ## 23. Persistence and Migration Expectations
 
@@ -434,8 +503,10 @@ Future implementation must enforce at database level, where raw-SQL bypass
 would otherwise violate evidence integrity:
 
 - client-bound subject identity;
-- one baseline per client/family/version;
-- semantic subject uniqueness per client/family/version;
+- one baseline per
+  `client_id + scenario_family + scenario_contract_version`;
+- semantic subject uniqueness per
+  `client_id + scenario_family + scenario_contract_version`;
 - immutable historical subject, adjustment, manifest, run, and result evidence;
 - append-only semantics;
 - predecessor and sequence uniqueness within each subject;
@@ -476,6 +547,11 @@ optional display label, closed adjustment values and ranges, and explicit run
 horizon. The server owns client binding, generated identities, baseline
 resolution, factual inventory, currentness, eligibility, fingerprints,
 server-owned actor/timestamp semantics, run identity, and result.
+
+API admission binds `scenario_family` to
+`declared_retirement_cashflow_adjustments` and
+`scenario_contract_version` to `v1`; the combined identifier is display and
+contract-reference terminology, not a caller-authored family value.
 
 The browser cannot create a baseline by sending an empty list and cannot
 provide an authoritative factual subset.
@@ -541,6 +617,11 @@ At minimum the future implementation blocks:
 
 No partial authoritative scenario or `run anyway` path exists.
 
+Future pair admission additionally blocks unequal persisted
+`factual_baseline_material_fingerprint` values as
+`comparison_factual_baseline_material_mismatch`. This is a blocking relational
+comparison condition, not a warning and not a per-run eligibility claim.
+
 ## 31. Stop Conditions
 
 Stop future implementation and return the named blocker if any condition is
@@ -579,15 +660,15 @@ required:
 ## 32. Acceptance Criteria
 
 - **AC-014-001:** Definition work begins from exact base `f1cbddbf27d7712ce2409248240a0cb4cadebc8d` on `pkg-014-review`, with no unrelated tracked change.
-- **AC-014-002:** Package identity, M09 module, `ORCHESTRATOR_AND_AGGREGATOR_ONLY` role, and `declared_retirement_cashflow_adjustments/v1` are exact and server-owned.
+- **AC-014-002:** Package identity and M09 `ORCHESTRATOR_AND_AGGREGATOR_ONLY` role are exact; `scenario_family == declared_retirement_cashflow_adjustments`, `scenario_contract_version == v1`, and the combined identifier is `declared_retirement_cashflow_adjustments/v1`, with no ambiguous second version field.
 - **AC-014-003:** The definition states the normative single-authority law and proves M09 owns no duplicated upstream or professional formula.
 - **AC-014-004:** `deterministic_monthly_cashflow/v1` remains byte-, history-, currentness-, eligibility-, and semantic-contract unchanged.
 - **AC-014-005:** The product is represented only as an objective planner-declared retirement cashflow sensitivity/planning alternative.
-- **AC-014-006:** An immutable client-owned scenario subject binds family, version, manifest identity, semantic fingerprint, integrity fingerprint, provenance, and creation evidence.
+- **AC-014-006:** An immutable client-owned scenario subject binds exact `scenario_family`, exact `scenario_contract_version`, manifest identity, semantic fingerprint, integrity fingerprint, provenance, and creation evidence.
 - **AC-014-007:** Calculation-semantic identity includes only calculation-affecting adjustment semantics and explicitly excludes IDs, labels, actor, timestamps, run ID, and sequence.
 - **AC-014-008:** Canonical ordering and multiplicity produce deterministic subject semantic fingerprints.
-- **AC-014-009:** Same-client/family/version semantic duplicate creation fails closed as `scenario_subject_semantically_duplicate` regardless of label or evidence-only differences.
-- **AC-014-010:** Exactly one server-owned baseline exists per client/family/version with canonical empty manifest and `server_resolved_no_scenario_adjustments` evidence.
+- **AC-014-009:** Same `client_id + scenario_family + scenario_contract_version` semantic duplicate creation fails closed as `scenario_subject_semantically_duplicate` regardless of label or evidence-only differences.
+- **AC-014-010:** Exactly one server-owned baseline exists per `client_id + scenario_family + scenario_contract_version` with canonical empty manifest and `server_resolved_no_scenario_adjustments` evidence.
 - **AC-014-011:** Caller-authored empty adjustments cannot create or forge the baseline subject.
 - **AC-014-012:** Every adjusted subject contains at least one valid positive adjustment and remains immutable.
 - **AC-014-013:** The closed vocabulary is exactly additional monthly income and additional monthly expense, with direction implied by type.
@@ -597,17 +678,17 @@ required:
 - **AC-014-017:** Months outside an adjustment range are `contractually_not_applicable`, with no missing-to-zero interpretation, proration, or extension.
 - **AC-014-018:** Adjustment semantics are `ADDITIVE_ONLY` and cannot replace, suppress, waive, or mutate factual evidence or upstream output.
 - **AC-014-019:** Equal separately declared adjustments remain separately calculation-affecting through explicit multiplicity, while duplicate identity fails closed.
-- **AC-014-020:** Factual inventory remains complete and server-owned, separate from the immutable planner-declared adjustment manifest.
-- **AC-014-021:** Execution evidence binds both factual inventory and adjustment manifest without making their authority or provenance indistinguishable.
+- **AC-014-020:** Factual inventory remains complete and server-owned, separate from the immutable planner-declared adjustment manifest, and contributes to a canonical `factual_baseline_material_fingerprint` excluding scenario adjustments.
+- **AC-014-021:** Every run snapshot/result binds factual inventory and adjustment manifest as distinct authority domains and persists/exposes the canonical `factual_baseline_material_fingerprint` without making their provenance indistinguishable.
 - **AC-014-022:** M09 arithmetic is limited to full-month alignment, admitted additions, inflow/outflow sums, period net, and deterministic range totals.
-- **AC-014-023:** Currentness key is client, subject, family, and version under `m09-subject-currentness-v1`, with one current leaf per subject.
+- **AC-014-023:** Currentness key is `client_id + scenario_subject_id + scenario_family + scenario_contract_version` under `m09-subject-currentness-v1`, with exact family/version tokens and one current leaf per subject.
 - **AC-014-024:** Multiple subject leaves may be current simultaneously; rerun A supersedes only A while factual dependency change can stale every affected subject.
 - **AC-014-025:** Legacy `m09-currentness-v1` is not reinterpreted and existing runs remain readable under their accepted contract.
-- **AC-014-026:** `m09-to-m10-eligibility-v2` is derived fail-closed evidence proving subject, manifest, factual, dependency, result, currentness, and warning integrity.
+- **AC-014-026:** `m09-to-m10-eligibility-v2` is per-run derived fail-closed evidence proving individual subject, manifest, factual, dependency, result, currentness, and warning integrity and exposing the persisted factual-baseline material fingerprint; it does not claim peer equality.
 - **AC-014-027:** Eligibility v2 does not reinterpret v1 and conveys no professional authority, recommendation, or M10 execution authorization.
-- **AC-014-028:** Future M10 admission is bounded to two distinct same-client, same-family/version, same-horizon, current, eligible, semantically distinct subjects.
-- **AC-014-029:** PKG-014 implements no M10 behavior; intended future M10 remains comparator-only and baseline-versus-one-adjusted is the preferred first pair.
-- **AC-014-030:** Distinct semantic, evidence, manifest, inventory, snapshot, result-semantic, and result-integrity fingerprints are defined with deterministic canonical ordering.
+- **AC-014-028:** Future M10 admission requires two distinct same-client subjects with exact equal `scenario_family`, `scenario_contract_version`, horizon, persisted `factual_baseline_material_fingerprint`, component-domain version, M09 engine/result-schema versions, and calculation-affecting factual upstream versions; both runs are current, individually eligible, and adjustment-semantically distinct.
+- **AC-014-029:** PKG-014 implements no M10 behavior; intended future M10 remains comparator-only and baseline-versus-one-adjusted is preferred only when exact factual-baseline material equality holds.
+- **AC-014-030:** Distinct semantic, evidence, adjustment-manifest, factual-inventory, factual-baseline-material, snapshot, result-semantic, and result-integrity fingerprints are defined with deterministic canonical ordering and exclusions.
 - **AC-014-031:** Repeated execution from identical semantic inputs produces the same semantic result fingerprint independent of run IDs and timestamps.
 - **AC-014-032:** Persistence expectations are additive, immutable, append-only, client-owned, and preserve baseline and semantic-subject uniqueness.
 - **AC-014-033:** Critical baseline, client, uniqueness, predecessor, sequence, and UPDATE/DELETE invariants are required at database level for supported databases.
@@ -616,14 +697,14 @@ required:
 - **AC-014-036:** Frontend exposes bounded subject and adjustment workflows while preserving factual/adjustment separation and no authoritative factual-selection control.
 - **AC-014-037:** Controlled-promise tests prove route/client/subject/request isolation for all seven materially independent async paths under A→B and A→B→A races.
 - **AC-014-038:** Blocking, mandatory-review, and informational warning categories remain distinct; planner-declared provenance is informational by default and creates no bypass.
-- **AC-014-039:** Every fail-closed condition and stop condition produces typed evidence without partial authoritative scenario output.
+- **AC-014-039:** Every fail-closed and stop condition produces typed evidence without partial authoritative output; future pair-level factual-baseline mismatch blocks as `comparison_factual_baseline_material_mismatch` and cannot be replaced by individual eligibility.
 - **AC-014-040:** Verification proves only the definition and necessary narrow plan alignment changed; no code, tests, migration, acceptance record, master merge, M10, or next-package work occurred.
 
 ## 33. Negative Acceptance Criteria
 
 - **NAC-014-001:** Any semantic, historical, fingerprint, currentness, eligibility, or persistence rewrite of `deterministic_monthly_cashflow/v1`.
 - **NAC-014-002:** Caller-created baseline, caller-authored `adjustments=[]` authority, or forged no-adjustment evidence.
-- **NAC-014-003:** More than one baseline for the same client/family/version.
+- **NAC-014-003:** More than one baseline for the same `client_id + scenario_family + scenario_contract_version`.
 - **NAC-014-004:** Label-, actor-, timestamp-, ID-, run-, or sequence-only distinction between semantically duplicate subjects.
 - **NAC-014-005:** Empty adjusted subject.
 - **NAC-014-006:** Arbitrary adjustment type, free-form direction, caller category, or sign-derived direction.
@@ -653,6 +734,7 @@ required:
 - **NAC-014-030:** Migration creation/execution, schema change, production code, implementation test, or acceptance record during definition drafting.
 - **NAC-014-031:** Generic warning acceptance or planner-declared provenance used to bypass blocking or mandatory-review conditions.
 - **NAC-014-032:** Authorization of PKG-014 implementation, M10 implementation, or any next package by this definition proposal.
+- **NAC-014-033:** Future M10 admission of two otherwise eligible subject runs whose persisted `factual_baseline_material_fingerprint` values differ, or M10 normalization/reconstruction used to conceal that mismatch.
 
 ## 34. Verification Matrix
 
@@ -660,11 +742,12 @@ required:
 |---|---|
 | Base and scope | Exact branch/base; docs-only diff; protected paths untouched |
 | Family isolation | Existing v1 regression and no reinterpretation; new family closed |
-| Subject semantics | Canonical semantic multiset, duplicate rejection, baseline uniqueness |
+| Subject semantics | Exact family/version tokens; canonical semantic multiset; duplicate rejection; baseline uniqueness |
 | Adjustment validation | Closed types, Decimal boundaries, canonical months, containment |
 | Factual authority | Complete server inventory; no caller subset or suppression |
 | Currentness | Independent A/B leaves; A rerun affects A only; upstream staleness propagation |
-| Eligibility v2 | Subject-aware fail-closed evidence and v1 non-reinterpretation |
+| Eligibility v2 | Per-run subject-aware fail-closed evidence, persisted factual-baseline material fingerprint, and v1 non-reinterpretation |
+| Future pair admission | Exact shared factual-baseline material and calculation-affecting version equality; mismatch blocks |
 | Determinism | Stable semantic and result fingerprints; evidence fields excluded from equality |
 | Persistence | Additive migration plan; database-enforced uniqueness and immutability |
 | Client isolation | API and direct-service foreign/nonexistent equivalence |

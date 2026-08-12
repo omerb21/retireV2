@@ -169,6 +169,17 @@ def _adjustment_components(subject: M09ScenarioSubject, adjustments: list[M09Sce
     return components
 
 
+def _semantic_component_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized=[]; occurrences: dict[tuple[str, str, str], int] = {}
+    for item in evidence:
+        if item.get("authority") == ADJUSTMENT_PROVENANCE:
+            key=(item["component_type"],item["amount"],item["source_fingerprint"]); occurrences[key]=occurrences.get(key,0)+1
+            normalized.append({"component_type":item["component_type"],"direction":item["direction"],"amount":item["amount"],"month":item["month"],"source_fingerprint":item["source_fingerprint"],"occurrence":occurrences[key],"authority":item["authority"],"applicability":item["applicability"]})
+        else:
+            normalized.append(item)
+    return sorted(normalized,key=lambda item:(str(item.get("component_type")),str(item.get("amount")),str(item.get("source_fingerprint")),int(item.get("occurrence",0)),str(item.get("component_id",""))))
+
+
 def _monthly_rows(run_id: str, subject: M09ScenarioSubject, months: list[str], components: list[dict[str, Any]]):
     by_month = {month: [] for month in months}; seen = set()
     for component in components:
@@ -180,15 +191,7 @@ def _monthly_rows(run_id: str, subject: M09ScenarioSubject, months: list[str], c
         inflow=_validate_aggregate(sum((Decimal(x["amount"]) for x in evidence if x["direction"]=="inflow"), Decimal("0.00")))
         outflow=_validate_aggregate(sum((Decimal(x["amount"]) for x in evidence if x["direction"]=="outflow"), Decimal("0.00")))
         net=_validate_aggregate(inflow-outflow); payload={"month":month,"component_evidence":evidence,"gross_inflow_total":format(inflow,".2f"),"gross_outflow_total":format(outflow,".2f"),"period_net":format(net,".2f")}; fp=_digest(payload)
-        semantic_evidence=[]
-        occurrences: dict[tuple[str, str, str], int] = {}
-        for item in evidence:
-            if item.get("authority") == ADJUSTMENT_PROVENANCE:
-                key=(item["component_type"],item["amount"],item["source_fingerprint"]); occurrences[key]=occurrences.get(key,0)+1
-                semantic_evidence.append({"component_type":item["component_type"],"direction":item["direction"],"amount":item["amount"],"month":item["month"],"source_fingerprint":item["source_fingerprint"],"occurrence":occurrences[key],"authority":item["authority"],"applicability":item["applicability"]})
-            else:
-                semantic_evidence.append(item)
-        semantic_evidence=sorted(semantic_evidence,key=lambda item:(str(item.get("component_type")),str(item.get("amount")),str(item.get("source_fingerprint")),int(item.get("occurrence",0)),str(item.get("component_id",""))))
+        semantic_evidence=_semantic_component_evidence(evidence)
         row=M09SubjectMonthlyResult(monthly_result_id="M09-SM-"+_digest({"run":run_id,"month":month})[:45],run_id=run_id,scenario_subject_id=subject.scenario_subject_id,client_id=subject.client_id,month=month,gross_inflow_total=inflow,gross_outflow_total=outflow,period_net=net,component_evidence=evidence,result_fingerprint=fp); authorize_subject_insert(row); rows.append(row); semantic.append({"month":month,"component_evidence":semantic_evidence,"gross_inflow_total":format(inflow,".2f"),"gross_outflow_total":format(outflow,".2f"),"period_net":format(net,".2f")}); range_in=_validate_aggregate(range_in+inflow); range_out=_validate_aggregate(range_out+outflow)
     totals={"gross_inflow_total":format(range_in,".2f"),"gross_outflow_total":format(range_out,".2f"),"period_net":format(_validate_aggregate(range_in-range_out),".2f")}
     semantic_fp=_digest({"result_schema_version":SUBJECT_RESULT_SCHEMA_VERSION,"scenario_family":SUBJECT_FAMILY,"scenario_contract_version":SUBJECT_VERSION,"months":semantic,"range_totals":totals})
@@ -239,6 +242,8 @@ def subject_currentness(db: Session,client_id:int,subject_id:str,run_id:str)->Su
             if _digest(payload)!=row.result_fingerprint: reasons.append("monthly_result_integrity_invalid"); break
         expected_integrity=_digest({"semantic_result_fingerprint":run.semantic_result_fingerprint,"upstream_snapshot_fingerprint":run.upstream_snapshot_fingerprint,"factual_baseline_material_fingerprint":run.factual_baseline_material_fingerprint,"monthly_result_fingerprints":[row.result_fingerprint for row in rows],"range_totals":run.range_totals})
         if expected_integrity!=run.result_integrity_fingerprint: reasons.append("result_integrity_invalid")
+        semantic=_digest({"result_schema_version":SUBJECT_RESULT_SCHEMA_VERSION,"scenario_family":run.scenario_family,"scenario_contract_version":run.scenario_contract_version,"months":[{"month":row.month,"component_evidence":_semantic_component_evidence(row.component_evidence),"gross_inflow_total":format(row.gross_inflow_total,".2f"),"gross_outflow_total":format(row.gross_outflow_total,".2f"),"period_net":format(row.period_net,".2f")} for row in rows],"range_totals":run.range_totals})
+        if semantic!=run.semantic_result_fingerprint: reasons.append("semantic_result_integrity_invalid")
     elif rows: reasons.append("failed_run_has_monthly_results")
     try:
         reassessed=_legacy_inventory(db,client_id,SubjectExecutionRequest(start_month=run.start_month,end_month=run.end_month))

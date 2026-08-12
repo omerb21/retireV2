@@ -11,6 +11,7 @@ import pytest
 PARENT = "f9a1c3e5b702"
 REVISION = "a7c9e1f3b805"
 HEAD = "c4e8a1f6d203"
+REPOSITORY_HEAD = "d5f9b2a7c406"
 TABLES = {
     "m09_resolved_component_inventories",
     "m09_scenario_runs",
@@ -42,7 +43,7 @@ def tables(path: Path) -> set[str]:
 
 
 def test_pkg013_is_single_additive_head() -> None:
-    assert run("sqlite:///:memory:", "heads").stdout.strip() == f"{HEAD} (head)"
+    assert run("sqlite:///:memory:", "heads").stdout.strip() == f"{REPOSITORY_HEAD} (head)"
 
 
 def test_pkg013_upgrade_downgrade_reupgrade_is_bounded(tmp_path: Path) -> None:

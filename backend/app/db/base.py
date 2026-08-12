@@ -29,6 +29,7 @@ def load_all_models() -> None:
     import app.models.m05_ledger  # noqa: F401
     import app.models.m06_conversion  # noqa: F401
     import app.models.m09_cashflow  # noqa: F401
+    import app.models.m09_scenario_subject  # noqa: F401
     import app.models.m07_evidence  # noqa: F401
     import app.models.official_parameter_set  # noqa: F401
     import app.models.retirement_planning_document  # noqa: F401

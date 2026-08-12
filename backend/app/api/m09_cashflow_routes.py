@@ -12,6 +12,15 @@ from app.schemas.m09_cashflow import (
     M09RunResponse,
     M09RunSummaryResponse,
 )
+from app.schemas.m09_scenario_subject import (
+    CreateAdjustedSubjectRequest,
+    ScenarioSubjectResponse,
+    SubjectCurrentnessResponse,
+    SubjectExecutionRequest,
+    SubjectM10EligibilityResponse,
+    SubjectRunResponse,
+    SubjectRunSummaryResponse,
+)
 from app.services.m01_case_service import M01CaseError
 from app.services.m09_cashflow_service import (
     M09CashflowError,
@@ -22,6 +31,17 @@ from app.services.m09_cashflow_service import (
     list_runs,
     m10_eligibility,
     run_response,
+)
+from app.services.m09_scenario_subject_service import (
+    create_adjusted_subject,
+    execute_subject_run,
+    get_subject,
+    list_subject_runs,
+    list_subjects,
+    resolve_baseline,
+    subject_currentness,
+    subject_eligibility,
+    subject_run_response,
 )
 
 
@@ -92,3 +112,48 @@ def run_m10_eligibility(
     client_id: int, run_id: str, db: Session = Depends(get_db)
 ):
     return _run(lambda: m10_eligibility(db, client_id, run_id))
+
+
+@router.post("/subjects/baseline", response_model=ScenarioSubjectResponse)
+def baseline_subject(client_id: int, db: Session = Depends(get_db)):
+    return _run(lambda: resolve_baseline(db, client_id))
+
+
+@router.post("/subjects", response_model=ScenarioSubjectResponse, status_code=201)
+def create_subject(client_id: int, payload: CreateAdjustedSubjectRequest, db: Session = Depends(get_db)):
+    return _run(lambda: create_adjusted_subject(db, client_id, payload))
+
+
+@router.get("/subjects", response_model=list[ScenarioSubjectResponse])
+def subjects(client_id: int, db: Session = Depends(get_db)):
+    return _run(lambda: list_subjects(db, client_id))
+
+
+@router.get("/subjects/{subject_id}", response_model=ScenarioSubjectResponse)
+def subject(client_id: int, subject_id: str, db: Session = Depends(get_db)):
+    return _run(lambda: get_subject(db, client_id, subject_id))
+
+
+@router.post("/subjects/{subject_id}/runs", response_model=SubjectRunResponse, status_code=201)
+def execute_subject(client_id: int, subject_id: str, payload: SubjectExecutionRequest, db: Session = Depends(get_db)):
+    return _run(lambda: execute_subject_run(db, client_id, subject_id, payload))
+
+
+@router.get("/subjects/{subject_id}/runs", response_model=list[SubjectRunSummaryResponse])
+def subject_runs(client_id: int, subject_id: str, db: Session = Depends(get_db)):
+    return _run(lambda: list_subject_runs(db, client_id, subject_id))
+
+
+@router.get("/subjects/{subject_id}/runs/{run_id}", response_model=SubjectRunResponse)
+def subject_run(client_id: int, subject_id: str, run_id: str, db: Session = Depends(get_db)):
+    return _run(lambda: subject_run_response(db, client_id, subject_id, run_id))
+
+
+@router.get("/subjects/{subject_id}/runs/{run_id}/currentness", response_model=SubjectCurrentnessResponse)
+def subject_run_currentness(client_id: int, subject_id: str, run_id: str, db: Session = Depends(get_db)):
+    return _run(lambda: subject_currentness(db, client_id, subject_id, run_id))
+
+
+@router.get("/subjects/{subject_id}/runs/{run_id}/m10-eligibility", response_model=SubjectM10EligibilityResponse)
+def subject_run_eligibility(client_id: int, subject_id: str, run_id: str, db: Session = Depends(get_db)):
+    return _run(lambda: subject_eligibility(db, client_id, subject_id, run_id))

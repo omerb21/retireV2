@@ -6,6 +6,7 @@ import {
   getM09Eligibility, getM09Run, listM09Runs, type M09ContractRequest, type M09Inventory,
   type M09Run, type M09RunSummary,
 } from "../api/m09CashflowApi";
+import { M09ScenarioSubjects } from "./M09ScenarioSubjects";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "M09 request failed";
 const codes = (values: string[]) => values.length ? values.join(", ") : "none";
@@ -84,5 +85,6 @@ export function M09CashflowScreen() {
       <details><summary>Immutable assumption and upstream evidence</summary><pre>{JSON.stringify({ assumption_manifest: run.assumption_manifest, upstream_snapshot: run.upstream_snapshot }, null, 2)}</pre></details>
     </section> : null}
     <section><h3>Saved immutable runs</h3>{history.length ? <ol>{history.map((item) => <li key={item.run_id}><button type="button" onClick={() => void loadRun(item.run_id)}>Load run {item.run_sequence}</button> — {item.status}; {item.start_month}–{item.end_month}; current {String(item.is_current)}</li>)}</ol> : <p>No saved M09 runs.</p>}</section>
+    <M09ScenarioSubjects clientId={clientId} />
   </main>;
 }

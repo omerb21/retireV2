@@ -8,7 +8,7 @@ import { ApiTransportError } from "../api/clientsApi";
 
 vi.mock("../api/m09CashflowApi", async () => {
   const actual = await vi.importActual<typeof import("../api/m09CashflowApi")>("../api/m09CashflowApi");
-  return { ...actual, assessM09Inventory: vi.fn(), executeM09Run: vi.fn(), listM09Runs: vi.fn(), getM09Run: vi.fn(), getM09Currentness: vi.fn(), getM09Eligibility: vi.fn() };
+  return { ...actual, assessM09Inventory: vi.fn(), executeM09Run: vi.fn(), listM09Runs: vi.fn(), getM09Run: vi.fn(), getM09Currentness: vi.fn(), getM09Eligibility: vi.fn(), listM09Subjects: vi.fn() };
 });
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void };
@@ -34,7 +34,7 @@ async function navigate(name: "B" | "A revisit", clientId: number) { await switc
 const structuredError = (marker: string) => new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { code: marker } } });
 
 describe("M09CashflowScreen client-generation isolation", () => {
-  beforeEach(() => { vi.clearAllMocks(); mock(api.listM09Runs).mockResolvedValue([]); });
+  beforeEach(() => { vi.clearAllMocks(); mock(api.listM09Runs).mockResolvedValue([]); mock(api.listM09Subjects).mockResolvedValue([]); });
 
   it("ignores inventory A-to-B stale success and stale finally while B remains pending", async () => {
     const oldA = deferred<M09Inventory>(); const activeB = deferred<M09Inventory>();

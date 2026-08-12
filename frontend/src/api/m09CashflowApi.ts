@@ -3,6 +3,7 @@ import { ApiTransportError } from "./clientsApi";
 
 export const M09_FAMILY = "deterministic_monthly_cashflow" as const;
 export const M09_VERSION = "v1" as const;
+export const M09_SUBJECT_FAMILY = "declared_retirement_cashflow_adjustments" as const;
 
 export interface M09ContractRequest {
   scenario_family: typeof M09_FAMILY;
@@ -51,6 +52,22 @@ export interface M09RunSummary {
   semantic_result_fingerprint: string | null; is_current: boolean; eligible_for_m10: boolean; created_at: string;
 }
 
+export interface M09AdjustmentInput { adjustment_type: "declared_additional_monthly_income" | "declared_additional_monthly_expense"; amount: string; start_month: string; end_month: string; }
+export interface M09ScenarioSubject {
+  scenario_subject_id: string; client_id: number; scenario_family: typeof M09_SUBJECT_FAMILY; scenario_contract_version: "v1";
+  combined_contract_identifier: "declared_retirement_cashflow_adjustments/v1"; subject_type: "baseline" | "adjusted";
+  display_label: string | null; adjustment_manifest: Record<string, unknown>; adjustment_manifest_fingerprint: string;
+  calculation_semantic_fingerprint: string; integrity_fingerprint: string; provenance: string; actor: string; actor_is_authentication: false;
+  created_at: string; adjustments: Array<M09AdjustmentInput & { adjustment_id: string; ordinal: number; provenance: string; semantic_fingerprint: string; actor: string; created_at: string }>;
+}
+export interface M09SubjectCurrentness extends Omit<M09Currentness, "assessment_contract_version"> { scenario_subject_id: string; assessment_contract_version: "m09-subject-currentness-v1"; }
+export interface M09SubjectEligibility extends Omit<M09Eligibility, "eligibility_contract_version"> { scenario_subject_id: string; factual_baseline_material_fingerprint: string; eligibility_contract_version: "m09-to-m10-eligibility-v2"; }
+export interface M09SubjectRun extends Omit<M09Run, "inventory" | "assumption_manifest" | "assumption_manifest_fingerprint" | "currentness" | "m10_eligibility"> {
+  scenario_subject_id: string; factual_inventory: Record<string, unknown>; factual_inventory_fingerprint: string; factual_baseline_material_fingerprint: string;
+  adjustment_manifest: Record<string, unknown>; adjustment_manifest_fingerprint: string; currentness: M09SubjectCurrentness; m10_eligibility: M09SubjectEligibility;
+}
+export interface M09SubjectRunSummary { run_id: string; scenario_subject_id: string; run_sequence: number; status: string; start_month: string; end_month: string; factual_baseline_material_fingerprint: string; is_current: boolean; eligible_for_m10: boolean; created_at: string; }
+
 async function request<T>(path: string, init: RequestInit = { method: "GET" }): Promise<T> {
   const response = await fetch(buildApiUrl(path), init);
   const body = (response.headers.get("content-type") ?? "").includes("application/json") ? await response.json() : await response.text();
@@ -66,3 +83,13 @@ export const listM09Runs = (clientId: number) => request<M09RunSummary[]>(`${roo
 export const getM09Run = (clientId: number, runId: string) => request<M09Run>(`${root(clientId)}/runs/${encodeURIComponent(runId)}`);
 export const getM09Currentness = (clientId: number, runId: string) => request<M09Currentness>(`${root(clientId)}/runs/${encodeURIComponent(runId)}/currentness`);
 export const getM09Eligibility = (clientId: number, runId: string) => request<M09Eligibility>(`${root(clientId)}/runs/${encodeURIComponent(runId)}/m10-eligibility`);
+const subjectRoot = (clientId: number) => `${root(clientId)}/subjects`;
+export const resolveM09BaselineSubject = (clientId: number) => request<M09ScenarioSubject>(`${subjectRoot(clientId)}/baseline`, json({}));
+export const createM09AdjustedSubject = (clientId: number, displayLabel: string, adjustments: M09AdjustmentInput[]) => request<M09ScenarioSubject>(subjectRoot(clientId), json({ scenario_family: M09_SUBJECT_FAMILY, scenario_contract_version: "v1", display_label: displayLabel || null, adjustments }));
+export const listM09Subjects = (clientId: number) => request<M09ScenarioSubject[]>(subjectRoot(clientId));
+export const getM09Subject = (clientId: number, subjectId: string) => request<M09ScenarioSubject>(`${subjectRoot(clientId)}/${encodeURIComponent(subjectId)}`);
+export const executeM09SubjectRun = (clientId: number, subjectId: string, startMonth: string, endMonth: string) => request<M09SubjectRun>(`${subjectRoot(clientId)}/${encodeURIComponent(subjectId)}/runs`, json({ start_month: startMonth, end_month: endMonth }));
+export const listM09SubjectRuns = (clientId: number, subjectId: string) => request<M09SubjectRunSummary[]>(`${subjectRoot(clientId)}/${encodeURIComponent(subjectId)}/runs`);
+export const getM09SubjectRun = (clientId: number, subjectId: string, runId: string) => request<M09SubjectRun>(`${subjectRoot(clientId)}/${encodeURIComponent(subjectId)}/runs/${encodeURIComponent(runId)}`);
+export const getM09SubjectCurrentness = (clientId: number, subjectId: string, runId: string) => request<M09SubjectCurrentness>(`${subjectRoot(clientId)}/${encodeURIComponent(subjectId)}/runs/${encodeURIComponent(runId)}/currentness`);
+export const getM09SubjectEligibility = (clientId: number, subjectId: string, runId: string) => request<M09SubjectEligibility>(`${subjectRoot(clientId)}/${encodeURIComponent(subjectId)}/runs/${encodeURIComponent(runId)}/m10-eligibility`);

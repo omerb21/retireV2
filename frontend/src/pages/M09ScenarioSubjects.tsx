@@ -1,55 +1,118 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { createM09AdjustedSubject, executeM09SubjectRun, getM09Subject, getM09SubjectCurrentness, getM09SubjectEligibility, getM09SubjectRun, listM09SubjectRuns, listM09Subjects, resolveM09BaselineSubject, type M09AdjustmentInput, type M09ScenarioSubject, type M09SubjectRun, type M09SubjectRunSummary } from "../api/m09CashflowApi";
+import {
+  createM09AdjustedSubject, executeM09SubjectRun, getM09Subject,
+  getM09SubjectCurrentness, getM09SubjectEligibility, getM09SubjectRun,
+  listM09SubjectRuns, listM09Subjects, resolveM09BaselineSubject,
+  type M09AdjustmentInput, type M09ScenarioSubject, type M09SubjectRun,
+  type M09SubjectRunSummary,
+} from "../api/m09CashflowApi";
 import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
 
 const blank = (): M09AdjustmentInput => ({ adjustment_type: "declared_additional_monthly_income", amount: "", start_month: "", end_month: "" });
 const message = (error: unknown) => error instanceof Error ? error.message : "Scenario subject request failed";
+type LoadingOwner = { subjectGeneration: number | null };
 
 export function M09ScenarioSubjects({ clientId }: { clientId: number }) {
   const location = useLocation();
   const { captureClientContext, isCurrentClientContext } = useClientContextGeneration(clientId, location.key);
-  const [subjects, setSubjects] = useState<M09ScenarioSubject[]>([]); const [selected, setSelected] = useState<M09ScenarioSubject | null>(null);
-  const [runs, setRuns] = useState<M09SubjectRunSummary[]>([]); const [run, setRun] = useState<M09SubjectRun | null>(null);
+  const [subjects, setSubjects] = useState<M09ScenarioSubject[]>([]);
+  const [selected, setSelected] = useState<M09ScenarioSubject | null>(null);
+  const [runs, setRuns] = useState<M09SubjectRunSummary[]>([]);
+  const [run, setRun] = useState<M09SubjectRun | null>(null);
   const [label, setLabel] = useState(""); const [adjustments, setAdjustments] = useState<M09AdjustmentInput[]>([blank()]);
-  const [start, setStart] = useState(""); const [end, setEnd] = useState(""); const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(0); const mounted = useRef(false); const epochs = useRef<Record<string, number>>({}); const seq = useRef(0); const active = useRef(new Set<number>());
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; active.current.clear(); }; }, []);
-  useEffect(() => { epochs.current = {}; active.current.clear(); setBusy(0); setSubjects([]); setSelected(null); setRuns([]); setRun(null); setError(null); }, [clientId, location.key]);
-  const begin = () => { const id = ++seq.current; active.current.add(id); setBusy(active.current.size); return id; };
-  const finish = (id: number) => { if (active.current.delete(id) && mounted.current) setBusy(active.current.size); };
-  const owner = (channel: string) => { const token = captureClientContext(); const epoch = (epochs.current[channel] ?? 0) + 1; epochs.current[channel] = epoch; return () => mounted.current && epochs.current[channel] === epoch && isCurrentClientContext(token); };
-  const guarded = async <T,>(channel: string, operation: () => Promise<T>, success: (value: T) => void) => {
-    const owns = owner(channel); const id = begin(); setError(null);
-    try { const value = await operation(); if (owns()) success(value); } catch (cause) { if (owns()) setError(message(cause)); } finally { finish(id); }
+  const [start, setStart] = useState(""); const [end, setEnd] = useState("");
+  const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(0);
+  const mounted = useRef(false); const channelEpochs = useRef<Record<string, number>>({});
+  const subjectGeneration = useRef(0); const selectedSubjectId = useRef<string | null>(null);
+  const sequence = useRef(0); const active = useRef(new Map<number, LoadingOwner>());
+
+  const refreshBusy = () => {
+    if (!mounted.current) return;
+    setBusy([...active.current.values()].filter(owner => owner.subjectGeneration === null || owner.subjectGeneration === subjectGeneration.current).length);
   };
+  const begin = (subjectBound: boolean) => {
+    const id = ++sequence.current;
+    active.current.set(id, { subjectGeneration: subjectBound ? subjectGeneration.current : null });
+    refreshBusy(); return id;
+  };
+  const finish = (id: number) => { active.current.delete(id); refreshBusy(); };
+  const invalidateSubjectContext = (nextSubjectId: string | null) => {
+    subjectGeneration.current += 1; selectedSubjectId.current = nextSubjectId;
+    setSelected(null); setRuns([]); setRun(null); setError(null); refreshBusy();
+  };
+  const owner = (channel: string, subjectId?: string) => {
+    const clientToken = captureClientContext();
+    const epoch = (channelEpochs.current[channel] ?? 0) + 1; channelEpochs.current[channel] = epoch;
+    const capturedSubjectGeneration = subjectId === undefined ? null : subjectGeneration.current;
+    return () => mounted.current
+      && channelEpochs.current[channel] === epoch
+      && isCurrentClientContext(clientToken)
+      && (subjectId === undefined || (
+        capturedSubjectGeneration === subjectGeneration.current
+        && selectedSubjectId.current === subjectId
+      ));
+  };
+  const guarded = async <T,>(channel: string, operation: () => Promise<T>, success: (value: T) => void, subjectId?: string) => {
+    const owns = owner(channel, subjectId); const loading = begin(subjectId !== undefined); setError(null);
+    try { const value = await operation(); if (owns()) success(value); }
+    catch (cause) { if (owns()) setError(message(cause)); }
+    finally { finish(loading); }
+  };
+
+  useEffect(() => { mounted.current = true; refreshBusy(); return () => { mounted.current = false; active.current.clear(); }; }, []);
+  useEffect(() => {
+    channelEpochs.current = {}; active.current.clear(); subjectGeneration.current += 1; selectedSubjectId.current = null;
+    setBusy(0); setSubjects([]); setSelected(null); setRuns([]); setRun(null); setError(null);
+  }, [clientId, location.key]);
+
   const loadSubjects = useCallback(async () => {
-    const owns = owner("candidate-load"); const id = begin();
-    try { const value = await listM09Subjects(clientId); if (owns()) setSubjects(value); } catch (cause) { if (owns()) setError(message(cause)); } finally { finish(id); }
-  // owner/begin/finish deliberately use generation refs.
+    const owns = owner("subject-list"); const loading = begin(false);
+    try { const value = await listM09Subjects(clientId); if (owns()) setSubjects(value); }
+    catch (cause) { if (owns()) setError(message(cause)); }
+    finally { finish(loading); }
+  // Ownership helpers deliberately use generation refs.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captureClientContext, clientId, isCurrentClientContext]);
   useEffect(() => { void loadSubjects(); }, [loadSubjects]);
-  const select = (subjectId: string) => void guarded("subject-detail", () => Promise.all([getM09Subject(clientId, subjectId), listM09SubjectRuns(clientId, subjectId)]), ([subject, history]) => { setSelected(subject); setRuns(history); setRun(null); });
+
+  const adoptSubject = (subject: M09ScenarioSubject, history: M09SubjectRunSummary[] = []) => {
+    invalidateSubjectContext(subject.scenario_subject_id);
+    selectedSubjectId.current = subject.scenario_subject_id; setSelected(subject); setRuns(history);
+  };
+  const selectSubject = (subjectId: string) => {
+    invalidateSubjectContext(subjectId);
+    void guarded("subject-detail", () => Promise.all([getM09Subject(clientId, subjectId), listM09SubjectRuns(clientId, subjectId)]), ([subject, history]) => {
+      setSelected(subject); setRuns(history);
+    }, subjectId);
+  };
+  const refreshRuns = (subjectId: string) => void guarded("run-history", () => listM09SubjectRuns(clientId, subjectId), setRuns, subjectId);
   const valid = adjustments.length > 0 && adjustments.every(a => /^\d+\.\d{2}$/.test(a.amount) && a.amount !== "0.00" && /^\d{4}-(0[1-9]|1[0-2])$/.test(a.start_month) && a.end_month >= a.start_month);
+
+  const factualDomains = run && Array.isArray(run.factual_inventory.domains) ? run.factual_inventory.domains as Array<Record<string, unknown>> : [];
   return <section><h3>Parallel declared-retirement scenario subjects</h3>
     <p>Planner-declared sensitivity alternatives only. They are not forecasts, recommendations, professional authority, or M10 comparison.</p>
     {error ? <p role="alert">{error}</p> : null}{busy ? <p>Loading scenario evidence…</p> : null}
-    <button type="button" disabled={busy > 0} onClick={() => void guarded("baseline-resolve", () => resolveM09BaselineSubject(clientId), value => { setSelected(value); void loadSubjects(); })}>Resolve server baseline subject</button>
-    <fieldset><legend>Create immutable adjusted subject</legend><label>Display label <input aria-label="Scenario display label" value={label} onChange={e => setLabel(e.target.value)} /></label>
-      {adjustments.map((a, index) => <div key={index}><label>Adjustment type <select aria-label={`Adjustment type ${index + 1}`} value={a.adjustment_type} onChange={e => setAdjustments(values => values.map((v, i) => i === index ? { ...v, adjustment_type: e.target.value as M09AdjustmentInput["adjustment_type"] } : v))}><option value="declared_additional_monthly_income">Additional monthly income</option><option value="declared_additional_monthly_expense">Additional monthly expense</option></select></label>
-        <label>Amount ILS <input aria-label={`Adjustment amount ${index + 1}`} value={a.amount} onChange={e => setAdjustments(values => values.map((v, i) => i === index ? { ...v, amount: e.target.value } : v))} /></label>
-        <label>Adjustment from <input aria-label={`Adjustment start month ${index + 1}`} type="month" value={a.start_month} onChange={e => setAdjustments(values => values.map((v, i) => i === index ? { ...v, start_month: e.target.value } : v))} /></label>
-        <label>Adjustment to <input aria-label={`Adjustment end month ${index + 1}`} type="month" value={a.end_month} onChange={e => setAdjustments(values => values.map((v, i) => i === index ? { ...v, end_month: e.target.value } : v))} /></label>
-        {adjustments.length > 1 ? <button type="button" onClick={() => setAdjustments(values => values.filter((_, i) => i !== index))}>Remove adjustment {index + 1}</button> : null}</div>)}
+    <button type="button" disabled={busy > 0} onClick={() => void guarded("baseline-resolution", () => resolveM09BaselineSubject(clientId), value => { adoptSubject(value); void loadSubjects(); })}>Resolve server baseline subject</button>
+    <fieldset><legend>Create immutable adjusted subject</legend><label>Display label <input aria-label="Scenario display label" value={label} onChange={event => setLabel(event.target.value)} /></label>
+      {adjustments.map((adjustment, index) => <div key={index} data-testid={`adjustment-input-${index + 1}`}><label>Adjustment type <select aria-label={`Adjustment type ${index + 1}`} value={adjustment.adjustment_type} onChange={event => setAdjustments(values => values.map((value, current) => current === index ? { ...value, adjustment_type: event.target.value as M09AdjustmentInput["adjustment_type"] } : value))}><option value="declared_additional_monthly_income">Additional monthly income</option><option value="declared_additional_monthly_expense">Additional monthly expense</option></select></label>
+        <label>Amount ILS <input aria-label={`Adjustment amount ${index + 1}`} value={adjustment.amount} onChange={event => setAdjustments(values => values.map((value, current) => current === index ? { ...value, amount: event.target.value } : value))} /></label>
+        <label>Adjustment from <input aria-label={`Adjustment start month ${index + 1}`} type="month" value={adjustment.start_month} onChange={event => setAdjustments(values => values.map((value, current) => current === index ? { ...value, start_month: event.target.value } : value))} /></label>
+        <label>Adjustment to <input aria-label={`Adjustment end month ${index + 1}`} type="month" value={adjustment.end_month} onChange={event => setAdjustments(values => values.map((value, current) => current === index ? { ...value, end_month: event.target.value } : value))} /></label>
+        {adjustments.length > 1 ? <button type="button" onClick={() => setAdjustments(values => values.filter((_, current) => current !== index))}>Remove adjustment {index + 1}</button> : null}</div>)}
       <button type="button" onClick={() => setAdjustments(values => [...values, blank()])}>Add another adjustment</button>
-      <button type="button" disabled={!valid || busy > 0} onClick={() => void guarded("subject-create", () => createM09AdjustedSubject(clientId, label, adjustments), value => { setSelected(value); setAdjustments([blank()]); setLabel(""); void loadSubjects(); })}>Create adjusted subject</button>
+      <button type="button" disabled={!valid || busy > 0} onClick={() => void guarded("subject-creation", () => createM09AdjustedSubject(clientId, label, adjustments), value => { adoptSubject(value); setAdjustments([blank()]); setLabel(""); void loadSubjects(); })}>Create adjusted subject</button>
     </fieldset>
-    <h4>Subjects</h4>{subjects.length ? <ul>{subjects.map(subject => <li key={subject.scenario_subject_id}><button type="button" onClick={() => select(subject.scenario_subject_id)}>{subject.display_label ?? "Baseline"}</button> — {subject.subject_type}; {subject.adjustments.length} adjustment occurrence(s)</li>)}</ul> : <p>No scenario subjects.</p>}
+    <h4>Subjects</h4>{subjects.length ? <ul>{subjects.map(subject => <li key={subject.scenario_subject_id}><button type="button" onClick={() => selectSubject(subject.scenario_subject_id)}>{subject.display_label ?? "Baseline"}</button> — {subject.subject_type}; {subject.adjustments.length} adjustment occurrence(s)</li>)}</ul> : <p>No scenario subjects.</p>}
     {selected ? <div><h4>Selected subject: {selected.display_label ?? "Baseline"}</h4><p>{selected.combined_contract_identifier}; immutable manifest {selected.adjustment_manifest_fingerprint}</p>
-      <label>Execution start <input aria-label="Subject execution start" type="month" value={start} onChange={e => setStart(e.target.value)} /></label><label>Execution end <input aria-label="Subject execution end" type="month" value={end} onChange={e => setEnd(e.target.value)} /></label>
-      <button type="button" disabled={!start || end < start || busy > 0} onClick={() => void guarded("subject-execute", () => executeM09SubjectRun(clientId, selected.scenario_subject_id, start, end), value => { setRun(value); void select(selected.scenario_subject_id); })}>Execute selected subject</button>
-      <h4>Subject run history</h4>{runs.length ? <ul>{runs.map(item => <li key={item.run_id}><button type="button" onClick={() => void guarded("run-load", () => Promise.all([getM09SubjectRun(clientId, selected.scenario_subject_id, item.run_id), getM09SubjectCurrentness(clientId, selected.scenario_subject_id, item.run_id), getM09SubjectEligibility(clientId, selected.scenario_subject_id, item.run_id)]), ([value, currentness, eligibility]) => setRun({ ...value, currentness, m10_eligibility: eligibility }))}>Load subject run {item.run_sequence}</button> — current {String(item.is_current)}</li>)}</ul> : <p>No runs for this subject.</p>}</div> : null}
-    {run ? <div><h4>Subject result</h4><p>Status {run.status}; independently current {String(run.currentness.is_current)}; per-run M10 technical eligibility {String(run.m10_eligibility.eligible_for_m10)}.</p><p>Factual baseline material: {run.factual_baseline_material_fingerprint}</p><table><thead><tr><th>Month</th><th>Inflows</th><th>Outflows</th><th>Net</th></tr></thead><tbody>{run.monthly_results.map(row => <tr key={row.monthly_result_id}><td>{row.month}</td><td>{row.gross_inflow_total}</td><td>{row.gross_outflow_total}</td><td>{row.period_net}</td></tr>)}</tbody></table></div> : null}
+      <section aria-label="Declared scenario adjustments"><h5>Declared scenario adjustments</h5>
+        {selected.subject_type === "baseline" ? <p>Server-owned no adjustments: server_resolved_no_scenario_adjustments.</p> : <ol>{selected.adjustments.map(adjustment => <li key={adjustment.adjustment_id}><span>{adjustment.adjustment_type}</span>: <span>{adjustment.amount} ILS</span>, <span>{adjustment.start_month}</span>–<span>{adjustment.end_month}</span></li>)}</ol>}
+      </section>
+      <label>Execution start <input aria-label="Subject execution start" type="month" value={start} onChange={event => setStart(event.target.value)} /></label><label>Execution end <input aria-label="Subject execution end" type="month" value={end} onChange={event => setEnd(event.target.value)} /></label>
+      <button type="button" disabled={!start || end < start || busy > 0} onClick={() => { const subjectId=selected.scenario_subject_id; void guarded("subject-execution", () => executeM09SubjectRun(clientId, subjectId, start, end), value => { setRun(value); refreshRuns(subjectId); }, subjectId); }}>Execute selected subject</button>
+      <h4>Subject run history</h4>{runs.length ? <ul>{runs.map(item => <li key={item.run_id}><button type="button" onClick={() => { const subjectId=selected.scenario_subject_id; void guarded("run-result", () => Promise.all([getM09SubjectRun(clientId, subjectId, item.run_id), getM09SubjectCurrentness(clientId, subjectId, item.run_id), getM09SubjectEligibility(clientId, subjectId, item.run_id)]), ([value, currentness, eligibility]) => setRun({ ...value, currentness, m10_eligibility: eligibility }), subjectId); }}>Load subject run {item.run_sequence}</button> — current {String(item.is_current)}</li>)}</ul> : <p>No runs for this subject.</p>}</div> : null}
+    {run ? <div><h4>Subject result</h4><p>Status {run.status}; independently current {String(run.currentness.is_current)}; per-run M10 technical eligibility {String(run.m10_eligibility.eligible_for_m10)}.</p><p>Factual baseline material: {run.factual_baseline_material_fingerprint}</p>
+      <section aria-label="Factual baseline"><h5>Factual baseline</h5>{factualDomains.length ? <ul>{factualDomains.map((domain, index) => <li key={`${String(domain.domain ?? "domain")}-${index}`}><strong>{String(domain.domain ?? "domain")}</strong><pre>{JSON.stringify(domain, null, 2)}</pre></li>)}</ul> : <p>No factual component rows were resolved for this run.</p>}</section>
+      <table><thead><tr><th>Month</th><th>Inflows</th><th>Outflows</th><th>Net</th></tr></thead><tbody>{run.monthly_results.map(row => <tr key={row.monthly_result_id}><td>{row.month}</td><td>{row.gross_inflow_total}</td><td>{row.gross_outflow_total}</td><td>{row.period_net}</td></tr>)}</tbody></table></div> : null}
   </section>;
 }

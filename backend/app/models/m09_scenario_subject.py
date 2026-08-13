@@ -69,6 +69,26 @@ class M09ScenarioAdjustment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class M09ScenarioSubjectSeal(Base):
+    __tablename__ = "m09_scenario_subject_seals"
+    __table_args__ = (
+        CheckConstraint("adjustment_count >= 0", name="ck_m09_subject_seal_count"),
+        CheckConstraint("length(adjustment_manifest_fingerprint) = 64", name="ck_m09_subject_seal_fingerprint"),
+        ForeignKeyConstraint(
+            ["scenario_subject_id", "client_id"],
+            ["m09_scenario_subjects.scenario_subject_id", "m09_scenario_subjects.client_id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("scenario_subject_id", "client_id", name="uq_m09_subject_seal_client"),
+    )
+    scenario_subject_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    client_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    adjustment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    adjustment_manifest_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class M09SubjectRun(Base):
     __tablename__ = "m09_subject_runs"
     __table_args__ = (
@@ -130,7 +150,7 @@ class M09SubjectMonthlyResult(Base):
     result_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
-SUBJECT_CLASSES = (M09ScenarioSubject, M09ScenarioAdjustment, M09SubjectRun, M09SubjectMonthlyResult)
+SUBJECT_CLASSES = (M09ScenarioSubject, M09ScenarioAdjustment, M09ScenarioSubjectSeal, M09SubjectRun, M09SubjectMonthlyResult)
 
 
 def authorize_subject_insert(row: object) -> None:

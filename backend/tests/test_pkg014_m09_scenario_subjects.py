@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from app.models.client import Client
 from app.models.m09_scenario_subject import M09ScenarioAdjustment, M09ScenarioSubject, M09SubjectRun
 from app.models.retirement_facts import RecurringExpense, RecurringIncome
 from app.services import m09_cashflow_service as legacy
+from app.services import m09_scenario_subject_service as service
 
 
 HORIZON = {"start_month": "2026-01", "end_month": "2026-03"}
@@ -79,6 +82,19 @@ def test_adjusted_validation_and_semantic_duplicate_rejection(api):
     assert client.post("/api/clients/1/m09/subjects", json=adjusted() | {"scenario_family": "deterministic_monthly_cashflow"}).status_code == 422
 
 
+def test_semantic_identity_is_order_independent(api):
+    client, _, _ = api
+    first = [
+        {"adjustment_type": "declared_additional_monthly_expense", "amount": "50.00", "start_month": "2026-02", "end_month": "2026-03"},
+        {"adjustment_type": "declared_additional_monthly_income", "amount": "100.00", "start_month": "2026-01", "end_month": "2026-02"},
+    ]
+    created = client.post("/api/clients/1/m09/subjects", json=adjusted(adjustments=first))
+    assert created.status_code == 201
+    reversed_request = client.post("/api/clients/1/m09/subjects", json=adjusted("Permutation", list(reversed(first))))
+    assert reversed_request.status_code == 409
+    assert reversed_request.json()["detail"]["code"] == "scenario_subject_semantically_duplicate"
+
+
 def test_additive_execution_multiplicity_and_partial_range(api):
     client, _, _ = api
     inputs = [
@@ -128,6 +144,131 @@ def test_client_isolation_hides_foreign_resources(api):
     run = client.post(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs", json=HORIZON).json()
     assert client.get(f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}").status_code == 404
     assert client.get(f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}").status_code == 404
+
+
+def test_client_isolation_matrix_matches_nonexistent_resources(api):
+    client, sessions, _ = api
+    subject = client.post("/api/clients/1/m09/subjects", json=adjusted()).json()
+    run = client.post(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs", json=HORIZON).json()
+    paths = [
+        ("get", f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}", None, f"/api/clients/2/m09/subjects/missing"),
+        ("post", f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}/runs", HORIZON, f"/api/clients/2/m09/subjects/missing/runs"),
+        ("get", f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}/runs", None, f"/api/clients/2/m09/subjects/missing/runs"),
+        ("get", f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}", None, f"/api/clients/2/m09/subjects/missing/runs/missing"),
+        ("get", f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}/currentness", None, f"/api/clients/2/m09/subjects/missing/runs/missing/currentness"),
+        ("get", f"/api/clients/2/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}/m10-eligibility", None, f"/api/clients/2/m09/subjects/missing/runs/missing/m10-eligibility"),
+    ]
+    for method, foreign, payload, missing in paths:
+        left = getattr(client, method)(foreign, json=payload) if payload else getattr(client, method)(foreign)
+        right = getattr(client, method)(missing, json=payload) if payload else getattr(client, method)(missing)
+        assert (left.status_code, left.json()) == (right.status_code, right.json())
+    with sessions() as db:
+        for target in (subject["scenario_subject_id"], "missing"):
+            with pytest.raises(service.M09CashflowError) as captured:
+                service.get_subject(db, 2, target)
+            assert (captured.value.status_code, captured.value.code) == (404, "m09_subject_resource_not_found")
+        for target in (subject["scenario_subject_id"], "missing"):
+            with pytest.raises(service.M09CashflowError) as captured:
+                service.execute_subject_run(db, 2, target, service.SubjectExecutionRequest(**HORIZON))
+            assert (captured.value.status_code, captured.value.code) == (404, "m09_subject_resource_not_found")
+    assert client.post("/api/clients/999/m09/subjects/baseline").status_code == 404
+
+
+def test_upstream_factual_change_stales_run_and_eligibility(api):
+    client, sessions, _ = api
+    subject = client.post("/api/clients/1/m09/subjects/baseline").json()
+    run = client.post(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs", json=HORIZON).json()
+    with sessions() as db:
+        income = db.scalar(select(RecurringIncome).where(RecurringIncome.client_id == 1))
+        income.amount = Decimal("1100.00")
+        db.commit()
+    current = client.get(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}/currentness").json()
+    eligibility = client.get(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}/m10-eligibility").json()
+    assert current["is_current"] is False
+    assert "factual_baseline_material_changed" in current["reason_codes"]
+    assert eligibility["eligible_for_m10"] is False
+
+
+def test_factual_material_fingerprint_binds_dimensions_and_excludes_scenario_metadata(monkeypatch):
+    inventory = SimpleNamespace(
+        component_domain_contract_version="domains-v1",
+        start_month="2026-01", end_month="2026-02",
+        inventory_payload={"material_fingerprint": "a" * 64},
+    )
+    original = service._factual_material(inventory)
+    for field, value in (("component_domain_contract_version", "domains-v2"), ("start_month", "2025-12"), ("end_month", "2026-03")):
+        changed = SimpleNamespace(**inventory.__dict__); setattr(changed, field, value)
+        assert service._factual_material(changed) != original
+    changed_material = SimpleNamespace(**inventory.__dict__); changed_material.inventory_payload = {"material_fingerprint": "b" * 64}
+    assert service._factual_material(changed_material) != original
+    monkeypatch.setattr(service, "ENGINE_VERSION", "changed-engine")
+    assert service._factual_material(inventory) != original
+    monkeypatch.setattr(service, "ENGINE_VERSION", legacy.ENGINE_VERSION)
+    monkeypatch.setattr(service, "RESULT_SCHEMA_VERSION", "changed-schema")
+    assert service._factual_material(inventory) != original
+    # Subject IDs, labels, actors, run IDs, timestamps and adjustments are not inputs.
+    assert service._factual_material(inventory) == service._factual_material(SimpleNamespace(**inventory.__dict__))
+
+
+def test_manifest_child_drift_fails_all_authoritative_paths(api):
+    client, sessions, engine = api
+    subject = client.post("/api/clients/1/m09/subjects", json=adjusted()).json()
+    run = client.post(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs", json=HORIZON).json()
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """INSERT INTO m09_scenario_adjustments
+            (adjustment_id,scenario_subject_id,client_id,ordinal,adjustment_type,amount,amount_text,start_month,end_month,provenance,semantic_fingerprint,actor,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)""",
+            ("tampered", subject["scenario_subject_id"], 1, 2, "declared_additional_monthly_income", 900, "900.00", "2026-01", "2026-02", "planner_declared_scenario_adjustment", "f" * 64, "system:m09"),
+        )
+    current_path=f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}/currentness"
+    eligibility_path=f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}/m10-eligibility"
+    current=client.get(current_path).json(); eligibility=client.get(eligibility_path).json()
+    assert current["is_current"] is False and service.MANIFEST_INTEGRITY_REASON in current["reason_codes"]
+    assert eligibility["eligible_for_m10"] is False and service.MANIFEST_INTEGRITY_REASON in eligibility["reason_codes"]
+    history=client.get(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs").json()
+    assert history[0]["status"] == "integrity_failed" and history[0]["is_current"] is False and history[0]["eligible_for_m10"] is False
+    for method, path, payload in (
+        (client.get, f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}", None),
+        (client.get, f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}", None),
+        (client.post, f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs", HORIZON),
+    ):
+        response=method(path, json=payload) if payload else method(path)
+        assert response.status_code == 409
+    with sessions() as db:
+        assert len(list(db.scalars(select(M09SubjectRun)))) == 1
+
+
+@pytest.mark.parametrize("tamper_sql", [
+    "UPDATE m09_subject_monthly_results SET gross_inflow_total = gross_inflow_total + 1 WHERE run_id = ?",
+    "UPDATE m09_subject_monthly_results SET result_fingerprint = ? WHERE run_id = ?",
+    "UPDATE m09_subject_runs SET range_totals = ? WHERE run_id = ?",
+])
+def test_result_tampering_is_non_authoritative(api, tamper_sql):
+    client, _, engine = api
+    subject = client.post("/api/clients/1/m09/subjects/baseline").json()
+    run = client.post(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs", json=HORIZON).json()
+    with engine.begin() as connection:
+        if "result_fingerprint" in tamper_sql:
+            connection.exec_driver_sql(tamper_sql, ("0" * 64, run["run_id"]))
+        elif "range_totals" in tamper_sql:
+            connection.exec_driver_sql(tamper_sql, (json.dumps({"gross_inflow_total":"1.00","gross_outflow_total":"0.00","period_net":"1.00"}), run["run_id"]))
+        else:
+            connection.exec_driver_sql(tamper_sql, (run["run_id"],))
+    root=f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}/runs/{run['run_id']}"
+    assert client.get(f"{root}/currentness").json()["is_current"] is False
+    assert client.get(f"{root}/m10-eligibility").json()["eligible_for_m10"] is False
+    detail=client.get(root)
+    assert detail.status_code == 409 and detail.json()["detail"]["code"] == "m09_subject_result_integrity_invalid"
+
+
+def test_manifest_json_tampering_is_detected(api):
+    client, _, engine = api
+    subject = client.post("/api/clients/1/m09/subjects", json=adjusted()).json()
+    with engine.begin() as connection:
+        connection.exec_driver_sql("UPDATE m09_scenario_subjects SET adjustment_manifest = ? WHERE scenario_subject_id = ?", (json.dumps({"adjustments": []}), subject["scenario_subject_id"]))
+    response=client.get(f"/api/clients/1/m09/subjects/{subject['scenario_subject_id']}")
+    assert response.status_code == 409 and response.json()["detail"]["code"] == service.MANIFEST_INTEGRITY_REASON
 
 
 def test_orm_and_database_append_only(api):

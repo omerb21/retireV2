@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.m09_cashflow import M09ResolvedComponentInventory, M09_WORKFLOW_ACTOR, authorize_m09_insert, m09_server_timestamp, new_m09_id
-from app.models.m09_scenario_subject import M09ScenarioAdjustment, M09ScenarioSubject, M09SubjectMonthlyResult, M09SubjectRun, SUBJECT_FAMILY, SUBJECT_VERSION, authorize_subject_insert
+from app.models.m09_scenario_subject import M09ScenarioAdjustment, M09ScenarioSubject, M09ScenarioSubjectSeal, M09SubjectMonthlyResult, M09SubjectRun, SUBJECT_FAMILY, SUBJECT_VERSION, authorize_subject_insert
 from app.schemas.m09_cashflow import M09ContractRequest, M09RangeTotalsResponse
 from app.schemas.m09_scenario_subject import AdjustmentResponse, CreateAdjustedSubjectRequest, ScenarioSubjectResponse, SubjectCurrentnessResponse, SubjectExecutionRequest, SubjectM10EligibilityResponse, SubjectMonthlyResultResponse, SubjectRunResponse, SubjectRunSummaryResponse
 from app.services.m01_case_service import ensure_m01_editable
@@ -65,7 +65,55 @@ def _subject_rows(db: Session, subject: M09ScenarioSubject) -> list[M09ScenarioA
     return list(db.scalars(select(M09ScenarioAdjustment).where(M09ScenarioAdjustment.client_id == subject.client_id, M09ScenarioAdjustment.scenario_subject_id == subject.scenario_subject_id).order_by(M09ScenarioAdjustment.ordinal)))
 
 
+MANIFEST_INTEGRITY_REASON = "scenario_subject_manifest_integrity_mismatch"
+
+
+def _manifest_integrity_reasons(db: Session, subject: M09ScenarioSubject) -> list[str]:
+    rows = _subject_rows(db, subject)
+    seal = db.scalar(select(M09ScenarioSubjectSeal).where(
+        M09ScenarioSubjectSeal.client_id == subject.client_id,
+        M09ScenarioSubjectSeal.scenario_subject_id == subject.scenario_subject_id,
+    ))
+    actual = []
+    try:
+        for row in rows:
+            evidence = {
+                "adjustment_type": row.adjustment_type,
+                "amount": row.amount_text,
+                "start_month": row.start_month,
+                "end_month": row.end_month,
+            }
+            if Decimal(row.amount_text) != row.amount or _digest(evidence) != row.semantic_fingerprint:
+                return [MANIFEST_INTEGRITY_REASON]
+            actual.append(evidence)
+    except (ArithmeticError, TypeError, ValueError):
+        return [MANIFEST_INTEGRITY_REASON]
+    actual = sorted(actual, key=lambda item: (item["adjustment_type"], item["amount"], item["start_month"], item["end_month"]))
+    manifest_without_fingerprint = {key: value for key, value in subject.adjustment_manifest.items() if key != "manifest_fingerprint"}
+    expected_manifest, expected_manifest_fp, expected_semantic_fp = _manifest(actual, baseline=subject.subject_type == "baseline")
+    valid = (
+        seal is not None
+        and seal.adjustment_count == len(rows)
+        and seal.adjustment_manifest_fingerprint == subject.adjustment_manifest_fingerprint
+        and [row.ordinal for row in rows] == list(range(1, len(rows) + 1))
+        and subject.adjustment_manifest.get("adjustments") == actual
+        and _digest(manifest_without_fingerprint) == subject.adjustment_manifest_fingerprint
+        and subject.adjustment_manifest.get("manifest_fingerprint") == subject.adjustment_manifest_fingerprint
+        and expected_manifest == subject.adjustment_manifest
+        and expected_manifest_fp == subject.adjustment_manifest_fingerprint
+        and expected_semantic_fp == subject.calculation_semantic_fingerprint
+        and ((subject.subject_type == "baseline" and not rows) or (subject.subject_type == "adjusted" and bool(rows)))
+    )
+    return [] if valid else [MANIFEST_INTEGRITY_REASON]
+
+
+def _assert_manifest_integrity(db: Session, subject: M09ScenarioSubject) -> None:
+    if _manifest_integrity_reasons(db, subject):
+        raise _error(MANIFEST_INTEGRITY_REASON, "scenario subject manifest does not match its sealed adjustment rows")
+
+
 def _subject_response(db: Session, row: M09ScenarioSubject) -> ScenarioSubjectResponse:
+    _assert_manifest_integrity(db, row)
     adjustments = _subject_rows(db, row)
     return ScenarioSubjectResponse(
         scenario_subject_id=row.scenario_subject_id, client_id=row.client_id, scenario_family=row.scenario_family,
@@ -95,8 +143,10 @@ def resolve_baseline(db: Session, client_id: int) -> ScenarioSubjectResponse:
     manifest, manifest_fp, semantic_fp = _manifest([], baseline=True)
     row = M09ScenarioSubject(scenario_subject_id=subject_id, client_id=client_id, scenario_family=SUBJECT_FAMILY, scenario_contract_version=SUBJECT_VERSION, subject_type="baseline", display_label="Baseline", adjustment_manifest=manifest, adjustment_manifest_fingerprint=manifest_fp, calculation_semantic_fingerprint=semantic_fp, integrity_fingerprint="0" * 64, provenance=BASELINE_MARKER, actor=M09_WORKFLOW_ACTOR, created_at=now)
     row.integrity_fingerprint = _digest(_subject_integrity_payload(row)); authorize_subject_insert(row)
+    seal = M09ScenarioSubjectSeal(scenario_subject_id=subject_id, client_id=client_id, adjustment_count=0, adjustment_manifest_fingerprint=manifest_fp, actor=M09_WORKFLOW_ACTOR, created_at=now)
+    authorize_subject_insert(seal)
     try:
-        db.add(row); db.commit(); db.refresh(row)
+        db.add(row); db.flush(); db.add(seal); db.commit(); db.refresh(row)
     except IntegrityError:
         db.rollback()
         existing = db.scalar(select(M09ScenarioSubject).where(M09ScenarioSubject.client_id == client_id, M09ScenarioSubject.calculation_semantic_fingerprint == semantic_fp))
@@ -120,8 +170,10 @@ def create_adjusted_subject(db: Session, client_id: int, request: CreateAdjusted
         evidence = {"adjustment_type": item.adjustment_type, "amount": item.amount, "start_month": item.start_month, "end_month": item.end_month}
         adjustment = M09ScenarioAdjustment(adjustment_id=adjustment_id, scenario_subject_id=subject_id, client_id=client_id, ordinal=ordinal, adjustment_type=item.adjustment_type, amount=Decimal(item.amount), amount_text=item.amount, start_month=item.start_month, end_month=item.end_month, provenance=ADJUSTMENT_PROVENANCE, semantic_fingerprint=_digest(evidence), actor=M09_WORKFLOW_ACTOR, created_at=now)
         authorize_subject_insert(adjustment); adjustment_rows.append(adjustment)
+    seal = M09ScenarioSubjectSeal(scenario_subject_id=subject_id, client_id=client_id, adjustment_count=len(adjustment_rows), adjustment_manifest_fingerprint=manifest_fp, actor=M09_WORKFLOW_ACTOR, created_at=now)
+    authorize_subject_insert(seal)
     try:
-        db.add(row); db.add_all(adjustment_rows); db.commit(); db.refresh(row)
+        db.add(row); db.add_all(adjustment_rows); db.flush(); db.add(seal); db.commit(); db.refresh(row)
     except IntegrityError as exc:
         db.rollback(); raise _error("scenario_subject_semantically_duplicate", "scenario subject semantics already exist") from exc
     return _subject_response(db, row)
@@ -149,6 +201,18 @@ def _factual_material(inventory: M09ResolvedComponentInventory) -> str:
         "factual_inventory_material_fingerprint": payload.get("material_fingerprint"),
         "start_month": inventory.start_month,
         "end_month": inventory.end_month,
+        "factual_engine_version": ENGINE_VERSION,
+        "factual_result_schema_version": RESULT_SCHEMA_VERSION,
+    })
+
+
+def _stored_factual_material(run: M09SubjectRun) -> str:
+    return _digest({
+        "factual_material_schema_version": "m09-factual-baseline-material-v1",
+        "component_domain_contract_version": run.component_domain_contract_version,
+        "factual_inventory_material_fingerprint": run.factual_inventory.get("material_fingerprint"),
+        "start_month": run.start_month,
+        "end_month": run.end_month,
         "factual_engine_version": ENGINE_VERSION,
         "factual_result_schema_version": RESULT_SCHEMA_VERSION,
     })
@@ -199,7 +263,7 @@ def _monthly_rows(run_id: str, subject: M09ScenarioSubject, months: list[str], c
 
 
 def execute_subject_run(db: Session, client_id: int, subject_id: str, request: SubjectExecutionRequest) -> SubjectRunResponse:
-    client=_require_client(db,client_id); ensure_m01_editable(client); subject=_require_subject(db,client_id,subject_id)
+    client=_require_client(db,client_id); ensure_m01_editable(client); subject=_require_subject(db,client_id,subject_id); _assert_manifest_integrity(db,subject)
     adjustments=_subject_rows(db,subject); months=_month_range(request.start_month,request.end_month); inventory=_legacy_inventory(db,client_id,request); factual_fp=_factual_material(inventory); current=_current_subject_run(db,subject); run_id=new_m09_id("M09-SR"); sequence=1 if current is None else current.run_sequence+1
     blockers=list(inventory.blocker_codes); status="success_complete" if inventory.complete else "dependency_failed"; rows=[]; totals=None; semantic_fp=None; integrity_fp=None
     snapshot={"snapshot_schema_version":"m09-subject-upstream-snapshot-v1","scenario_subject_id":subject_id,"scenario_family":SUBJECT_FAMILY,"scenario_contract_version":SUBJECT_VERSION,"start_month":request.start_month,"end_month":request.end_month,"component_domain_contract_version":DOMAIN_CONTRACT_VERSION,"factual_inventory":inventory.inventory_payload,"factual_inventory_fingerprint":inventory.inventory_fingerprint,"factual_baseline_material_fingerprint":factual_fp,"adjustment_manifest_fingerprint":subject.adjustment_manifest_fingerprint,"engine_version":SUBJECT_ENGINE_VERSION,"result_schema_version":SUBJECT_RESULT_SCHEMA_VERSION}
@@ -229,9 +293,16 @@ def _stored_months(db: Session,run:M09SubjectRun): return list(db.scalars(select
 def subject_currentness(db: Session,client_id:int,subject_id:str,run_id:str)->SubjectCurrentnessResponse:
     subject=_require_subject(db,client_id,subject_id); run=_require_run(db,client_id,subject_id,run_id); current=_current_subject_run(db,subject); reasons=[]
     if current is None or current.run_id!=run.run_id: reasons.append("run_not_current_within_subject")
+    reasons.extend(_manifest_integrity_reasons(db, subject))
     if subject.scenario_family!=SUBJECT_FAMILY or subject.scenario_contract_version!=SUBJECT_VERSION: reasons.append("scenario_contract_unsupported")
     if _digest({k:v for k,v in subject.adjustment_manifest.items() if k!="manifest_fingerprint"})!=subject.adjustment_manifest_fingerprint: reasons.append("adjustment_manifest_integrity_invalid")
     if _digest(_subject_integrity_payload(subject))!=subject.integrity_fingerprint: reasons.append("subject_integrity_invalid")
+    if _digest(run.factual_inventory)!=run.factual_inventory_fingerprint: reasons.append("factual_inventory_integrity_invalid")
+    if _stored_factual_material(run)!=run.factual_baseline_material_fingerprint: reasons.append("factual_baseline_material_integrity_invalid")
+    run_manifest_without={k:v for k,v in run.adjustment_manifest.items() if k!="manifest_fingerprint"}
+    if (_digest(run_manifest_without)!=run.adjustment_manifest_fingerprint
+        or run.adjustment_manifest.get("manifest_fingerprint")!=run.adjustment_manifest_fingerprint
+        or run.adjustment_manifest_fingerprint!=subject.adjustment_manifest_fingerprint): reasons.append("run_adjustment_manifest_integrity_invalid")
     snapshot_without={k:v for k,v in run.upstream_snapshot.items() if k!="snapshot_fingerprint"}
     if _digest(snapshot_without)!=run.upstream_snapshot_fingerprint or run.upstream_snapshot.get("snapshot_fingerprint")!=run.upstream_snapshot_fingerprint: reasons.append("upstream_snapshot_integrity_invalid")
     rows=_stored_months(db,run)
@@ -263,10 +334,15 @@ def subject_eligibility(db:Session,client_id:int,subject_id:str,run_id:str)->Sub
 
 
 def subject_run_response(db:Session,client_id:int,subject_id:str,run_id:str)->SubjectRunResponse:
-    run=_require_run(db,client_id,subject_id,run_id); rows=_stored_months(db,run)
-    return SubjectRunResponse(run_id=run.run_id,scenario_subject_id=subject_id,client_id=client_id,predecessor_run_id=run.predecessor_run_id,run_sequence=run.run_sequence,scenario_family=run.scenario_family,scenario_contract_version=run.scenario_contract_version,start_month=run.start_month,end_month=run.end_month,status=run.status,factual_inventory=run.factual_inventory,factual_inventory_fingerprint=run.factual_inventory_fingerprint,factual_baseline_material_fingerprint=run.factual_baseline_material_fingerprint,adjustment_manifest=run.adjustment_manifest,adjustment_manifest_fingerprint=run.adjustment_manifest_fingerprint,upstream_snapshot=run.upstream_snapshot,upstream_snapshot_fingerprint=run.upstream_snapshot_fingerprint,warnings=run.warnings,blocker_codes=run.blocker_codes,monthly_results=[SubjectMonthlyResultResponse(monthly_result_id=r.monthly_result_id,month=r.month,gross_inflow_total=format(r.gross_inflow_total,".2f"),gross_outflow_total=format(r.gross_outflow_total,".2f"),period_net=format(r.period_net,".2f"),component_evidence=r.component_evidence,result_fingerprint=r.result_fingerprint) for r in rows],range_totals=M09RangeTotalsResponse(**run.range_totals) if run.range_totals else None,semantic_result_fingerprint=run.semantic_result_fingerprint,result_integrity_fingerprint=run.result_integrity_fingerprint,currentness=subject_currentness(db,client_id,subject_id,run_id),m10_eligibility=subject_eligibility(db,client_id,subject_id,run_id),actor=run.actor,created_at=run.created_at)
+    subject=_require_subject(db,client_id,subject_id); _assert_manifest_integrity(db,subject); run=_require_run(db,client_id,subject_id,run_id); rows=_stored_months(db,run)
+    current=subject_currentness(db,client_id,subject_id,run_id)
+    integrity_reasons={MANIFEST_INTEGRITY_REASON,"subject_integrity_invalid","factual_inventory_integrity_invalid","factual_baseline_material_integrity_invalid","run_adjustment_manifest_integrity_invalid","upstream_snapshot_integrity_invalid","monthly_result_set_invalid","monthly_result_integrity_invalid","semantic_result_integrity_invalid","result_integrity_invalid","failed_run_has_monthly_results"}
+    if integrity_reasons.intersection(current.reason_codes):
+        raise _error("m09_subject_result_integrity_invalid", "subject result evidence failed integrity verification")
+    return SubjectRunResponse(run_id=run.run_id,scenario_subject_id=subject_id,client_id=client_id,predecessor_run_id=run.predecessor_run_id,run_sequence=run.run_sequence,scenario_family=run.scenario_family,scenario_contract_version=run.scenario_contract_version,start_month=run.start_month,end_month=run.end_month,status=run.status,factual_inventory=run.factual_inventory,factual_inventory_fingerprint=run.factual_inventory_fingerprint,factual_baseline_material_fingerprint=run.factual_baseline_material_fingerprint,adjustment_manifest=run.adjustment_manifest,adjustment_manifest_fingerprint=run.adjustment_manifest_fingerprint,upstream_snapshot=run.upstream_snapshot,upstream_snapshot_fingerprint=run.upstream_snapshot_fingerprint,warnings=run.warnings,blocker_codes=run.blocker_codes,monthly_results=[SubjectMonthlyResultResponse(monthly_result_id=r.monthly_result_id,month=r.month,gross_inflow_total=format(r.gross_inflow_total,".2f"),gross_outflow_total=format(r.gross_outflow_total,".2f"),period_net=format(r.period_net,".2f"),component_evidence=r.component_evidence,result_fingerprint=r.result_fingerprint) for r in rows],range_totals=M09RangeTotalsResponse(**run.range_totals) if run.range_totals else None,semantic_result_fingerprint=run.semantic_result_fingerprint,result_integrity_fingerprint=run.result_integrity_fingerprint,currentness=current,m10_eligibility=subject_eligibility(db,client_id,subject_id,run_id),actor=run.actor,created_at=run.created_at)
 
 
 def list_subject_runs(db:Session,client_id:int,subject_id:str)->list[SubjectRunSummaryResponse]:
     subject=_require_subject(db,client_id,subject_id); rows=list(db.scalars(select(M09SubjectRun).where(M09SubjectRun.client_id==client_id,M09SubjectRun.scenario_subject_id==subject_id).order_by(M09SubjectRun.run_sequence.desc())))
-    return [SubjectRunSummaryResponse(run_id=r.run_id,scenario_subject_id=subject_id,run_sequence=r.run_sequence,status=r.status,start_month=r.start_month,end_month=r.end_month,factual_baseline_material_fingerprint=r.factual_baseline_material_fingerprint,is_current=subject_currentness(db,client_id,subject_id,r.run_id).is_current,eligible_for_m10=subject_eligibility(db,client_id,subject_id,r.run_id).eligible_for_m10,created_at=r.created_at) for r in rows]
+    integrity_failed=bool(_manifest_integrity_reasons(db,subject))
+    return [SubjectRunSummaryResponse(run_id=r.run_id,scenario_subject_id=subject_id,run_sequence=r.run_sequence,status="integrity_failed" if integrity_failed else r.status,start_month=r.start_month,end_month=r.end_month,factual_baseline_material_fingerprint=r.factual_baseline_material_fingerprint,is_current=subject_currentness(db,client_id,subject_id,r.run_id).is_current,eligible_for_m10=subject_eligibility(db,client_id,subject_id,r.run_id).eligible_for_m10,created_at=r.created_at) for r in rows]

@@ -11,7 +11,7 @@ import pytest
 PARENT = "f9a1c3e5b702"
 REVISION = "a7c9e1f3b805"
 HEAD = "c4e8a1f6d203"
-REPOSITORY_HEAD = "d5f9b2a7c406"
+REPOSITORY_HEAD = "e6b4c8d2f507"
 TABLES = {
     "m09_resolved_component_inventories",
     "m09_scenario_runs",

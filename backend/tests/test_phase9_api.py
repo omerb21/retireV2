@@ -70,6 +70,7 @@ ACCEPTED_ADDITIVE_TABLES = {
     "m09_monthly_results",
     "m09_scenario_subjects",
     "m09_scenario_adjustments",
+    "m09_scenario_subject_seals",
     "m09_subject_runs",
     "m09_subject_monthly_results",
 }

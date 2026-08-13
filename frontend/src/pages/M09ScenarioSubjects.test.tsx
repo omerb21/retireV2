@@ -325,6 +325,91 @@ describe("PKG-014 scenario subjects", () => {
     expect(screen.queryAllByText("1111.00")).toHaveLength(0); expect(screen.getAllByText("2222.00")).toHaveLength(2);
   });
 
+  it.each([
+    ["plain rejection", () => new Error("old-list-plain")],
+    ["structured API error", () => structuredError("old-list-structured")],
+  ])("keeps A-new subject-list pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const oldA = deferred<api.M09ScenarioSubject[]>(); const newA = deferred<api.M09ScenarioSubject[]>(); let aCalls = 0;
+    mocked(api.listM09Subjects).mockImplementation(clientId => clientId === 2 ? Promise.resolve([]) : (++aCalls === 1 ? oldA.promise : newA.promise));
+    renderPage(); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
+    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
+    await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-list-/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
+    await act(async () => newA.resolve([subject("new-list", 1, "A-new list")])); expect(await screen.findByRole("button", { name: "A-new list" })).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["plain rejection", () => new Error("old-baseline-plain")],
+    ["structured API error", () => structuredError("old-baseline-structured")],
+  ])("keeps A-new baseline-resolution pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let calls = 0;
+    mocked(api.resolveM09BaselineSubject).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
+    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
+    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-baseline-/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
+    await act(async () => newA.resolve(subject("base"))); expect(await screen.findByText(/Selected subject: Baseline/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["plain rejection", () => new Error("old-create-plain")],
+    ["structured API error", () => structuredError("old-create-structured")],
+  ])("keeps A-new subject-creation pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let calls = 0;
+    mocked(api.createM09AdjustedSubject).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
+    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" }));
+    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Create adjusted subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-create-/)).not.toBeInTheDocument(); expect(screen.queryByText(/Selected subject:/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Create adjusted subject" })).toBeDisabled();
+    await act(async () => newA.resolve(subject("new-create", 1, "A-new create"))); expect(await screen.findByText(/Selected subject: A-new create/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["plain rejection", () => new Error("old-detail-plain")],
+    ["structured API error", () => structuredError("old-detail-structured")],
+  ])("keeps A-new subject-detail pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let aCalls = 0;
+    mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? Promise.resolve(b) : (++aCalls === 1 ? oldA.promise : newA.promise));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" }));
+    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-detail-/)).not.toBeInTheDocument(); expect(screen.queryByText(/Selected subject: Subject B/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
+    await act(async () => newA.resolve(subject("A", 1, "A-new detail"))); expect(await screen.findByText(/Selected subject: A-new detail/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["plain rejection", () => new Error("old-execution-plain")],
+    ["structured API error", () => structuredError("old-execution-structured")],
+  ])("keeps A-new subject-execution pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09SubjectRun>(); const newA = deferred<api.M09SubjectRun>(); let calls = 0;
+    mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.executeM09SubjectRun).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
+    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-execution-/)).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled();
+    await act(async () => newA.resolve(markedRun("A", "3333.00", "A-new-execution"))); expect(await screen.findAllByText("3333.00")).toHaveLength(2); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["plain rejection", () => new Error("old-history-plain")],
+    ["structured API error", () => structuredError("old-history-structured")],
+  ])("keeps A-new run-history pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldHistory = deferred<api.M09SubjectRunSummary[]>(); const newHistory = deferred<api.M09SubjectRunSummary[]>(); let aHistoryCalls = 0; let executionCalls = 0;
+    mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => { if (id === "B") return Promise.resolve([]); aHistoryCalls += 1; if (aHistoryCalls === 1 || aHistoryCalls === 3) return Promise.resolve([]); return aHistoryCalls === 2 ? oldHistory.promise : newHistory.promise; }); mocked(api.executeM09SubjectRun).mockImplementation(() => Promise.resolve(markedRun("A", executionCalls++ ? "4444.00" : "1111.00")));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("1111.00")).toHaveLength(2); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("4444.00")).toHaveLength(2);
+    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled(); await act(async () => oldHistory.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-history-/)).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Load subject run 1" })).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled();
+    await act(async () => newHistory.resolve([markedSummary("A", 2, "A-new-history")])); expect(await screen.findByRole("button", { name: "Load subject run 2" })).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["plain rejection", () => new Error("old-result-plain")],
+    ["structured API error", () => structuredError("old-result-structured")],
+  ])("keeps a real A-new run-result composite pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
+    const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldResult = deferred<api.M09SubjectRun>(); const newResult = deferred<api.M09SubjectRun>(); let resultCalls = 0;
+    mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => Promise.resolve(id === "A" ? [summary("A")] : [])); mocked(api.getM09SubjectRun).mockImplementation(() => ++resultCalls === 1 ? oldResult.promise : newResult.promise); mocked(api.getM09SubjectCurrentness).mockResolvedValue(currentness("A")); mocked(api.getM09SubjectEligibility).mockResolvedValue(eligibility("A"));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" }));
+    expect(resultCalls).toBe(2); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled(); await act(async () => oldResult.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-result-/)).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled();
+    await act(async () => newResult.resolve(markedRun("A", "5555.00", "A-new-result"))); expect(await screen.findAllByText("5555.00")).toHaveLength(2); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("renders factual evidence separately from each declared occurrence without edit authority", async () => {
     const a = subject("A", 1, "Subject A", [adjustment("A1"), adjustment("A2")]); mocked(api.listM09Subjects).mockResolvedValue([a]); mocked(api.getM09Subject).mockResolvedValue(a); mocked(api.executeM09SubjectRun).mockResolvedValue(run("A"));
     renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/);

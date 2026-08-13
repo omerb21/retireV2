@@ -6,7 +6,7 @@
 - Title: `M09 Declared Retirement Cashflow Adjustments and Parallel Scenario Subjects Foundation`
 - Acceptance type: `Implementation Acceptance`
 - Decision: `ACCEPT_PKG_014_IMPLEMENTATION`
-- Definition base / implementation base: `c9af24365a533e509fd327ce5056dae719b656bf`
+- Implementation base / current master: `c9af24365a533e509fd327ce5056dae719b656bf`
 - Accepted definition HEAD: `39fbc553e6bca7f10b9c1d237d3be1366be11477`
 - Definition acceptance evidence on master: `c9af24365a533e509fd327ce5056dae719b656bf`
 - Accepted implementation HEAD: `0fd7fb82c3cea99dde4be098d6cb82b08c25c76d`

@@ -19,11 +19,11 @@ This is implementation evidence only. It does not amend the accepted definition,
 | PASS | AC-014-005 | UI labels the outcome only as a planner-declared sensitivity alternative. | `M09ScenarioSubjects.test.tsx`. |
 | PASS | AC-014-006 | `m09_scenario_subjects` binds client, contract, manifests, fingerprints, provenance, actor, and timestamp. | focused API and migration tests. |
 | PASS | AC-014-007 | Semantic subject payload excludes identities, label, actor, and timestamps. | semantic duplicate test. |
-| PASS | AC-014-008 | Canonically sorted adjustment multiset retains repeated entries. | multiplicity execution test. |
+| PASS | AC-014-008 | Canonically sorted adjustment multiset retains repeated entries and is order-independent. | `test_semantic_identity_is_order_independent`; multiplicity execution test. |
 | PASS | AC-014-009 | Database uniqueness and service conflict enforce `scenario_subject_semantically_duplicate`. | duplicate rejection test. |
 | PASS | AC-014-010 | Partial unique database index plus idempotent service resolution enforce one server baseline. | baseline idempotency and migration tests. |
 | PASS | AC-014-011 | Baseline endpoint accepts no caller evidence; adjusted requests reject empty lists and extras. | validation test. |
-| PASS | AC-014-012 | Adjusted requests require at least one adjustment; all subject tables are append-only. | validation and append-only tests. |
+| PASS | AC-014-012 | Adjusted requests require at least one adjustment; subject membership is sealed atomically and all evidence tables are append-only. | validation/append-only tests; `test_pkg014_seal_rejects_raw_adjustment_injection`. |
 | PASS | AC-014-013 | Pydantic, database checks, and service direction mapping use exactly two adjustment types. | validation and migration tests. |
 | PASS | AC-014-014 | Adjustment rows bind generated identity, subject/client, canonical fields, provenance, actor, timestamp, and semantic fingerprint. | focused API test. |
 | PASS | AC-014-015 | String-only canonical Decimal validation enforces `0.01..999999999999999999.99`. | invalid amount parameter test. |
@@ -31,26 +31,26 @@ This is implementation evidence only. It does not amend the accepted definition,
 | PASS | AC-014-017 | Components exist only for months inside each adjustment range. | partial-range arithmetic test. |
 | PASS | AC-014-018 | Scenario components are added alongside untouched factual inventory. | additive arithmetic and PKG-013 regression tests. |
 | PASS | AC-014-019 | Separate equal rows remain separate occurrences; duplicate row identity and ordinal are constrained. | multiplicity test and migration constraints. |
-| PASS | AC-014-020 | Factual material fingerprint derives only from accepted factual inventory material and versions. | parallel currentness test. |
+| PASS | AC-014-020 | Factual material fingerprint binds the factual material constituent, horizon, component-domain contract, engine and result schema while excluding subject/adjustment/evidence metadata. | `test_factual_material_fingerprint_binds_dimensions_and_excludes_scenario_metadata`; parallel baseline/adjusted test; accepted PKG-013 constituent tests. |
 | PASS | AC-014-021 | Run stores factual inventory and adjustment manifest in distinct fields and snapshot domains. | run response assertions. |
 | PASS | AC-014-022 | Arithmetic is limited to monthly inflow/outflow addition, net, and range totals. | exact arithmetic test. |
 | PASS | AC-014-023 | Runs are chained and selected by client plus subject under `m09-subject-currentness-v1`. | parallel currentness test. |
-| PASS | AC-014-024 | Rerunning A stales only A; B remains current. | parallel currentness test. |
+| PASS | AC-014-024 | Rerunning A stales only A; B remains current; an upstream factual change independently stales the affected old run. | `test_parallel_currentness_and_replay_semantics`; `test_upstream_factual_change_stales_run_and_eligibility`. |
 | PASS | AC-014-025 | Legacy `m09-currentness-v1` behavior remains on legacy routes. | full PKG-013 suite. |
-| PASS | AC-014-026 | Eligibility v2 derives fail-closed from subject, snapshot, results, dependencies, and currentness and exposes factual material identity. | focused execution/currentness tests. |
+| PASS | AC-014-026 | Eligibility v2 derives fail-closed from sealed manifest parity, subject, inventory, snapshot, results, dependencies, and currentness and exposes factual material identity. | manifest-child, monthly-result, range-total, manifest-JSON and upstream-change tamper tests. |
 | PASS | AC-014-027 | Eligibility response and UI state technical scope only and preserve v1 separately. | API schema and UI text tests. |
 | PASS | AC-014-028 | Per-run evidence exposes the exact fields needed by a future separately authorized pair admission. | run response tests; no pair endpoint exists. |
 | PASS | AC-014-029 | No M10 pair selection, comparison, persistence, or route was added. | route/file diff audit. |
-| PASS | AC-014-030 | Separate subject, manifest, inventory, factual-material, snapshot, semantic-result, and integrity fingerprints persist. | focused run test. |
+| PASS | AC-014-030 | Separate subject, manifest, inventory, factual-material, snapshot, semantic-result, and integrity fingerprints persist and are read-time verified. | `test_result_tampering_is_non_authoritative`; `test_manifest_json_tampering_is_detected`; focused run tests. |
 | PASS | AC-014-031 | Semantic result evidence canonicalizes adjustment occurrences without run or adjustment IDs. | replay semantic-fingerprint test. |
-| PASS | AC-014-032 | Four additive client-owned append-only tables preserve historical evidence. | migration and ORM tests. |
+| PASS | AC-014-032 | Five additive client-owned append-only tables, including the immutable subject seal, preserve historical evidence. | correction migration upgrade/downgrade and raw-SQL trigger tests. |
 | PASS | AC-014-033 | Database constraints/triggers cover baseline, semantic uniqueness, client FKs, predecessor, sequence, and mutation. | `test_pkg014_migration.py`. |
-| PASS | AC-014-034 | Every lookup includes client and subject scope; foreign resources return the same 404 contract. | client isolation test. |
+| PASS | AC-014-034 | Every public and direct-service lookup includes client and subject scope; foreign resources are equivalent to nonexistent resources. | `test_client_isolation_matrix_matches_nonexistent_resources`. |
 | PASS | AC-014-035 | Extra fields and caller-owned identities/evidence are absent or forbidden in calculation requests. | request validation test. |
-| PASS | AC-014-036 | UI supports baseline, adjusted subjects, multiplicity, histories and technical evidence without factual selection controls. | frontend focused tests and build. |
-| PASS | AC-014-037 | Generation/epoch/loading ownership protects subject list, baseline, creation, detail/history, execution, result/currentness/eligibility; accepted legacy inventory isolation remains covered. | controlled-promise frontend suites. |
+| PASS | AC-014-036 | UI renders factual baseline read-only and separately renders every declared occurrence, including baseline no-adjustment evidence and visible multiplicity. | `renders factual evidence separately from each declared occurrence without edit authority`; baseline UI test. |
+| PASS | AC-014-037 | Client generation plus monotonic subject generation, subject identity, channel epoch and loading ownership protect list, baseline, creation, detail/history, execution and composite result/currentness/eligibility. | controlled A→B and A→B→A success/rejection/structured-error/finally tests in both PKG-014 and legacy M09 suites. |
 | PASS | AC-014-038 | Planner provenance is emitted only as informational warning; dependency blockers remain blockers. | focused response assertions and PKG-013 tests. |
-| PASS | AC-014-039 | Validation fails before persistence; dependency/calculation failures persist no partial monthly result. | focused failure tests. |
+| PASS | AC-014-039 | Validation fails before persistence; dependency/calculation failures persist no partial result; sealed-manifest and result tampering cannot be returned as authoritative success. | out-of-horizon non-persistence, manifest-drift and result-tamper tests. |
 | PASS | AC-014-040 | Scope verification covers only implementation, tests, additive migration, UI, and this evidence matrix. | final Git diff audit. |
 
 ## Negative Acceptance Criteria
@@ -74,11 +74,11 @@ This is implementation evidence only. It does not amend the accepted definition,
 | PASS | NAC-014-015 | Equal adjustment occurrences remain distinct; database identities are unique. |
 | PASS | NAC-014-016 | Separate persisted factual and adjustment envelopes. |
 | PASS | NAC-014-017 | Currentness query is subject-scoped. |
-| PASS | NAC-014-018 | ORM listeners and database triggers reject UPDATE/DELETE. |
+| PASS | NAC-014-018 | ORM listeners and database triggers reject UPDATE/DELETE, while the correction trigger rejects adjustment INSERT after subject sealing. |
 | PASS | NAC-014-019 | No backfill or retrofit of legacy runs. |
 | PASS | NAC-014-020 | Separate v1 and v2 route/response contracts. |
 | PASS | NAC-014-021 | Request schemas expose none of the server-owned evidence fields. |
-| PASS | NAC-014-022 | Composite same-client foreign keys and scoped 404 lookups. |
+| PASS | NAC-014-022 | Composite same-client foreign keys plus public-route and direct-service foreign-vs-nonexistent equivalence matrix. |
 | PASS | NAC-014-023 | No waive, partial, or run-anyway input exists. |
 | PASS | NAC-014-024 | No M10 comparison endpoint, model, service, or UI. |
 | PASS | NAC-014-025 | UI and service provide no percentage, ranking, score, recommendation, or forecast. |
@@ -86,7 +86,7 @@ This is implementation evidence only. It does not amend the accepted definition,
 | PASS | NAC-014-027 | No retirement-date, cessation, pension-start, or allocation formula. |
 | PASS | NAC-014-028 | No V1 constants or implicit horizon were introduced. |
 | PASS | NAC-014-029 | No M08E, reports, M11-M14, or production-readiness work. |
-| PASS | NAC-014-030 | Implementation migration is solely the explicitly authorized additive PKG-014 migration. |
+| PASS | NAC-014-030 | Both PKG-014 migrations are additive and linear; the correction migration adds only manifest-seal enforcement above `d5f9b2a7c406`. |
 | PASS | NAC-014-031 | Informational provenance cannot clear blockers or mandatory warnings. |
 | PASS | NAC-014-032 | No M10 or next-package authorization is claimed. |
 | PASS | NAC-014-033 | No pair admission exists; per-run eligibility cannot assert cross-run factual equality. |

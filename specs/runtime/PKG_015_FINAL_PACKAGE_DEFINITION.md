@@ -104,36 +104,67 @@ not support adjusted-versus-adjusted or arbitrary role reversal.
 
 ## 8. Pair Admission Contract
 
-A comparison succeeds only when every condition below passes atomically:
+A comparison succeeds only when every predicate in the authoritative ordered
+mapping below passes atomically. Individual per-run eligibility cannot replace
+pair-level equality checks. A failure blocks the entire comparison; there is no
+partial response.
 
-1. Both run IDs resolve inside the requested client scope.
-2. Both runs and both subjects belong to that same client.
-3. The subjects are distinct.
-4. Both runs use the exact supported scenario family/version.
-5. `reference` is the unique server-owned baseline subject with a sealed
-   canonical empty adjustment manifest and
-   `server_resolved_no_scenario_adjustments` evidence.
-6. `compared` is an adjusted subject with at least one sealed accepted declared
-   adjustment.
-7. Both horizons have identical `start_month` and `end_month`.
-8. Both runs are current under `m09-subject-currentness-v1`.
-9. Both runs are eligible under `m09-to-m10-eligibility-v2`.
-10. Subject integrity, sealed-manifest parity, factual inventory, upstream
-    snapshot, monthly result, semantic result, and result integrity checks pass.
-11. The adjustment manifests are calculation-semantically different.
-12. Persisted `factual_baseline_material_fingerprint` values are exactly equal.
-13. Persisted `component_domain_contract_version` values are exactly equal and
-    supported.
-14. Trusted factual M09 engine/result-schema versions are exactly equal and
-    supported.
-15. Trusted subject aggregation engine/result-schema versions are exactly
-    equal and supported.
-16. Relevant factual upstream source/contract versions are exactly equal.
-17. The ordered persisted month-key sequences are exact, complete, unique, and
-    equal.
+### 8.1 Authoritative Predicate-to-Public-Code Order
 
-Individual per-run eligibility cannot replace pair-level equality checks. Any
-failed condition blocks the entire comparison; there is no partial response.
+The phases and rows below are normative. For a given persisted pair, every
+compliant implementation MUST return the same first failing public code. An
+implementation MUST NOT choose another code merely because multiple predicates
+fail.
+
+| Global order | Phase and exact predicate order | Public code |
+|---:|---|---|
+| 1 | Client-scoped lookup of `reference_run_id` is unavailable | `comparison_run_unavailable` |
+| 2 | Client-scoped lookup of `compared_run_id` is unavailable | `comparison_run_unavailable` |
+| 3 | Equal persisted `scenario_subject_id` | `comparison_same_subject` |
+| 4 | Reference subject is not the unique server-owned `baseline`, or compared subject is not `adjusted` with at least one sealed accepted declared adjustment | `comparison_pair_role_invalid` |
+| 5 | Either run has unsupported or unequal persisted `scenario_family` or `scenario_contract_version` | `comparison_scenario_contract_mismatch` |
+| 6 | Persisted `start_month` or `end_month` differs | `comparison_horizon_mismatch` |
+| 7 | Reference run/result `semantic_result_fingerprint` or `result_integrity_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 8 | Reference subject `calculation_semantic_fingerprint` or `integrity_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 9 | Reference `adjustment_manifest_fingerprint` or sealed-manifest parity is invalid | `comparison_fingerprint_invalid` |
+| 10 | Reference `factual_inventory_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 11 | Reference `upstream_snapshot_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 12 | Reference persisted monthly `result_fingerprint` set/rows or persisted `range_totals` binding is invalid | `comparison_fingerprint_invalid` |
+| 13 | Compared run/result `semantic_result_fingerprint` or `result_integrity_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 14 | Compared subject `calculation_semantic_fingerprint` or `integrity_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 15 | Compared `adjustment_manifest_fingerprint` or sealed-manifest parity is invalid | `comparison_fingerprint_invalid` |
+| 16 | Compared `factual_inventory_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 17 | Compared `upstream_snapshot_fingerprint` is invalid | `comparison_fingerprint_invalid` |
+| 18 | Compared persisted monthly `result_fingerprint` set/rows or persisted `range_totals` binding is invalid | `comparison_fingerprint_invalid` |
+| 19 | Reference currentness under `m09-subject-currentness-v1` is false | `comparison_run_not_current` |
+| 20 | Compared currentness under `m09-subject-currentness-v1` is false | `comparison_run_not_current` |
+| 21 | Reference eligibility under `m09-to-m10-eligibility-v2` is false | `comparison_run_not_eligible` |
+| 22 | Compared eligibility under `m09-to-m10-eligibility-v2` is false | `comparison_run_not_eligible` |
+| 23 | Persisted `factual_baseline_material_fingerprint` values differ | `comparison_factual_baseline_material_mismatch` |
+| 24 | Persisted `component_domain_contract_version` values differ or are unsupported | `comparison_component_domain_contract_mismatch` |
+| 25 | Factual `ENGINE_VERSION` or persisted subject `upstream_snapshot.engine_version` differs or is unsupported | `comparison_engine_version_mismatch` |
+| 26 | Factual `RESULT_SCHEMA_VERSION`, persisted `upstream_snapshot.result_schema_version`, persisted `upstream_snapshot.snapshot_schema_version`, or persisted `factual_inventory.inventory_schema_version` differs or is unsupported | `comparison_result_schema_version_mismatch` |
+| 27 | The exact `factual_upstream_versions` projection in Section 9 differs, is malformed, or contains unsupported contract material | `comparison_factual_upstream_version_mismatch` |
+| 28 | Persisted adjustment manifests are calculation-semantically identical | `comparison_semantically_identical_manifest` |
+| 29 | Ordered persisted month sequences differ, omit/add a month, contain a duplicate, or differ in order | `comparison_month_alignment_mismatch` |
+| 30 | An integrity-verified persisted monetary value cannot be represented or compared in the canonical Decimal domain | `comparison_numeric_domain_invalid` |
+
+Rows 1-2 are a terminal resource-availability phase. They use client-owned
+lookup only, in reference-then-compared order. Nonexistent, foreign-client, and
+otherwise client-unreachable runs have the same public result. No global probe
+may follow.
+
+Rows 7-18 are the integrity phase. Reference is verified completely before
+compared. Rows 19-22 execute only after both sides pass integrity; therefore a
+corruption that also makes currentness false returns
+`comparison_fingerprint_invalid`, not `comparison_run_not_current`.
+
+Rows 23-27 are the shared factual/version phase. The snapshot and inventory
+identifiers are persisted contract/schema identifiers and map deterministically
+to `comparison_result_schema_version_mismatch`; this mapping does not claim
+that either is an M09 result schema. Row 28 follows all integrity and version
+checks. Month alignment follows semantic-manifest comparison. Numeric-domain
+validation is last.
 
 ## 9. Trusted Version Sources
 
@@ -149,17 +180,41 @@ in PKG-014:
 | Subject result schema | Persisted `M09SubjectRun.upstream_snapshot.result_schema_version`, expected `m09-subject-result-v1` |
 | Subject snapshot schema | Persisted `M09SubjectRun.upstream_snapshot.snapshot_schema_version`, expected `m09-subject-upstream-snapshot-v1` |
 | Factual inventory schema | Persisted `M09SubjectRun.factual_inventory.inventory_schema_version`, expected `m09-resolved-component-inventory-v1` |
-| Factual upstream versions | For every included candidate in persisted `factual_inventory.domains`, exact `domain_identity`, `candidate_identity`, `source_identity`, `source_version`, and `source_fingerprint`; for included M06 component evidence, exact `provenance.handoff_contract_version`, expected `m06-to-m09-monthly-amount-v1` |
+| Factual upstream versions | Exact projection named `factual_upstream_versions` from persisted `M09SubjectRun.factual_inventory.domains[].candidates[]` and, for M06, persisted `candidates[].components[].provenance.handoff_contract_version` |
 
-The canonical relevant-upstream-version projection includes only candidates
-whose persisted `included` value is `true`, ordered by `domain_identity`, then
-`candidate_identity`. Each projected candidate binds the exact fields named in
-the table. M06 projected component provenance additionally binds the handoff
-contract version. Missing, duplicate, malformed, unknown, or unequal version
-material fails closed. M10 must not invent `unversioned` as a fallback; it may
-compare an already persisted literal `unversioned` only when both otherwise
-eligible runs contain the exact same server-produced source material and all
-integrity and factual-baseline equality checks pass.
+The `factual_upstream_versions` value is a closed array. M10 walks persisted
+`factual_inventory.domains` in its stored array order and, within each domain,
+walks persisted `candidates` in stored array order. It emits one record for each
+candidate whose persisted `included` value is exactly `true`; it does not sort,
+deduplicate, or reconstruct candidates. Each record is exactly:
+
+```json
+{
+  "domain_identity": "<persisted string>",
+  "candidate_identity": "<persisted string>",
+  "source_identity": "<persisted string>",
+  "source_version": "<persisted string>",
+  "source_fingerprint": "<persisted lowercase sha256 hex>",
+  "handoff_contract_versions": ["<persisted contract string>"]
+}
+```
+
+For recurring-income and recurring-expense candidates,
+`handoff_contract_versions` is exactly `[]`. For an included
+`m06_monthly_pension` candidate, every persisted component must carry the same
+`provenance.handoff_contract_version`, exactly
+`m06-to-m09-monthly-amount-v1`, and the projection is the singleton array
+`["m06-to-m09-monthly-amount-v1"]`. Candidate order is already the accepted
+server-produced dependency order; M10 may only preserve it.
+
+Duplicate `(domain_identity, candidate_identity)` projection keys, a missing
+required member, a non-Boolean/missing `included`, an absent M06 handoff
+contract, unequal M06 handoff contracts across components, or malformed source
+fingerprint fails closed. No included candidates produces `[]`. M10 does not
+calculate new upstream evidence. It may compare persisted literal
+`source_version = "unversioned"` only when both runs otherwise pass integrity,
+factual-baseline equality, and exact projection equality; it must not invent
+`unversioned` as a fallback.
 
 ## 10. Currentness and Eligibility
 
@@ -297,8 +352,8 @@ The strict request body is exactly:
 
 ```json
 {
-  "reference_run_id": "string",
-  "compared_run_id": "string"
+  "reference_run_id": "<existing opaque M09 run-id string>",
+  "compared_run_id": "<existing opaque M09 run-id string>"
 }
 ```
 
@@ -322,9 +377,9 @@ validation, admission, preview, currentness, history, or selection endpoint.
   comparison fingerprint.
 
 If multiple non-leaking admission failures are present, the service evaluates
-the fixed admission order in Section 8 and returns the first applicable public
-code. Internal diagnostics may retain multiple reasons but cannot leak foreign
-resource existence.
+the exact ordered table in Section 8.1 and returns its first applicable public
+code. Internal diagnostics may retain multiple reasons but cannot change the
+public result or leak foreign resource existence.
 
 ## 19. Closed Blocking Vocabulary
 
@@ -363,72 +418,179 @@ version, currentness, eligibility, provenance, or fingerprint evidence.
 
 ## 21. Successful Response Schema
 
-A successful response exposes at minimum:
+For `m10-comparison-result-v1`, the successful public semantic object is closed
+and has exactly this shape:
 
-- `comparison_contract_version`
-- `pair_admission_contract`
-- `comparison_result_schema`
-- `comparison_fingerprint_schema`
-- `comparison_fingerprint`
-- `delta_direction`
-- `client_id`
-- `reference_run`
-- `compared_run`
-- `scenario_family`
-- `scenario_contract_version`
-- `horizon`
-- `factual_baseline_material_fingerprint`
-- `component_domain_contract_version`
-- trusted factual and subject engine/result-schema versions
-- relevant factual upstream version projection
-- `monthly_comparisons`
-- `range_total_comparisons`
+```json
+{
+  "comparison_contract_version": "m10-scenario-comparison-v1",
+  "pair_admission_contract": "m10-pair-admission-v1",
+  "comparison_result_schema": "m10-comparison-result-v1",
+  "comparison_fingerprint_schema": "m10-comparison-fingerprint-v1",
+  "comparison_fingerprint": "<lowercase sha256 hex>",
+  "delta_direction": "compared_minus_reference",
+  "client_id": 123,
+  "scenario_family": "declared_retirement_cashflow_adjustments",
+  "scenario_contract_version": "v1",
+  "horizon": {
+    "start_month": "YYYY-MM",
+    "end_month": "YYYY-MM"
+  },
+  "factual_baseline_material_fingerprint": "<persisted lowercase sha256 hex>",
+  "component_domain_contract_version": "m09-component-domains-v1",
+  "versions": {
+    "factual_engine_version": "m09-aggregation-v1",
+    "factual_result_schema_version": "m09-result-v1",
+    "subject_engine_version": "m09-subject-aggregation-v1",
+    "subject_result_schema_version": "m09-subject-result-v1",
+    "upstream_snapshot_schema_version": "m09-subject-upstream-snapshot-v1",
+    "factual_inventory_schema_version": "m09-resolved-component-inventory-v1",
+    "factual_upstream_versions": []
+  },
+  "reference_run": {
+    "run_id": "<existing opaque M09 run-id string>",
+    "scenario_subject_id": "<existing opaque M09 subject-id string>",
+    "subject_type": "baseline",
+    "calculation_semantic_fingerprint": "<persisted lowercase sha256 hex>",
+    "integrity_fingerprint": "<persisted lowercase sha256 hex>",
+    "adjustment_manifest_fingerprint": "<persisted lowercase sha256 hex>",
+    "factual_inventory_fingerprint": "<persisted lowercase sha256 hex>",
+    "upstream_snapshot_fingerprint": "<persisted lowercase sha256 hex>",
+    "semantic_result_fingerprint": "<persisted lowercase sha256 hex>",
+    "result_integrity_fingerprint": "<persisted lowercase sha256 hex>"
+  },
+  "compared_run": {
+    "run_id": "<existing opaque M09 run-id string>",
+    "scenario_subject_id": "<existing opaque M09 subject-id string>",
+    "subject_type": "adjusted",
+    "calculation_semantic_fingerprint": "<persisted lowercase sha256 hex>",
+    "integrity_fingerprint": "<persisted lowercase sha256 hex>",
+    "adjustment_manifest_fingerprint": "<persisted lowercase sha256 hex>",
+    "factual_inventory_fingerprint": "<persisted lowercase sha256 hex>",
+    "upstream_snapshot_fingerprint": "<persisted lowercase sha256 hex>",
+    "semantic_result_fingerprint": "<persisted lowercase sha256 hex>",
+    "result_integrity_fingerprint": "<persisted lowercase sha256 hex>"
+  },
+  "monthly_comparisons": [],
+  "range_totals": {
+    "gross_inflow_total": {
+      "reference_value": "0.00",
+      "compared_value": "0.00",
+      "delta": "0.00",
+      "relation": "equal"
+    },
+    "gross_outflow_total": {
+      "reference_value": "0.00",
+      "compared_value": "0.00",
+      "delta": "0.00",
+      "relation": "equal"
+    },
+    "period_net": {
+      "reference_value": "0.00",
+      "compared_value": "0.00",
+      "delta": "0.00",
+      "relation": "equal"
+    }
+  }
+}
+```
 
-Each role-bound run identity/provenance object includes `run_id`,
-`scenario_subject_id`, `subject_type`, `calculation_semantic_fingerprint`,
-`subject_integrity_fingerprint`, `adjustment_manifest_fingerprint`,
-`upstream_snapshot_fingerprint`, `semantic_result_fingerprint`, and
-`result_integrity_fingerprint`.
+The JSON integers are limited to `client_id`; accepted PKG-014 `run_id` and
+`scenario_subject_id` are existing opaque string identities and therefore stay
+JSON strings. This repository-bound type is authoritative and avoids inventing
+integer aliases for accepted M09 resources.
 
-Each monthly comparison includes `month` plus comparison objects for
-`gross_inflow_total`, `gross_outflow_total`, and `period_net`. Each range-total
-comparison includes the same three field names. Every comparison object includes
-exactly `reference_value`, `compared_value`, `delta`, and `relation`.
+The `versions` object has exactly the seven keys shown. Its
+`factual_upstream_versions` array has exactly the element shape and persisted
+ordering defined in Section 9. No additional version field is permitted.
+
+Each element of `monthly_comparisons` is exactly:
+
+```json
+{
+  "month": "YYYY-MM",
+  "gross_inflow_total": {
+    "reference_value": "0.00",
+    "compared_value": "0.00",
+    "delta": "0.00",
+    "relation": "equal"
+  },
+  "gross_outflow_total": {
+    "reference_value": "0.00",
+    "compared_value": "0.00",
+    "delta": "0.00",
+    "relation": "equal"
+  },
+  "period_net": {
+    "reference_value": "0.00",
+    "compared_value": "0.00",
+    "delta": "0.00",
+    "relation": "equal"
+  }
+}
+```
+
+Every `relation` is exactly one value from the closed vocabulary in Section 12.
+Array order equals persisted accepted month order. Comparison and fingerprinting
+must not sort it. The `range_totals` object has exactly the three comparison
+objects shown and reads the corresponding persisted M09 `range_totals` values
+directly. No response object or nested semantic object permits extra keys.
+
+Every successful semantic field is required and non-null. Missing or null
+persisted material fails closed through the first applicable Section 8.1
+blocker; semantic null placeholders and optional semantic fields are forbidden.
+
+The semantic tree permits JSON objects, arrays, strings, and integers only where
+the closed schema specifies them. Boolean values are permitted only for the
+persisted `included` predicate used to select the Section 9 projection and are
+not emitted in the successful response. JSON floating-point numbers, `null`,
+NaN, and Infinity are prohibited. All monetary Decimals are strings.
+
+Contract identifiers, hashes, enum values, `YYYY-MM` values, and Decimal strings
+are ASCII only. No free-text, display text, or user-authored label enters the
+response or its fingerprint material; Unicode normalization is therefore not a
+semantic fingerprint operation.
 
 ## 22. Deterministic Comparison Fingerprint
 
-The comparison fingerprint is the lowercase hexadecimal SHA-256 digest of the
-exact canonical comparison payload using the accepted repository
-canonicalization:
+The normative object `comparison_fingerprint_material` is exactly the successful
+Section 21 response object with its `comparison_fingerprint` key omitted. It
+contains every other success-response key and nothing else. This single rule is
+the complete `m10-comparison-fingerprint-v1` input schema.
 
-- convert supported values to JSON-compatible canonical values;
-- serialize JSON with UTF-8, `ensure_ascii = false`, lexicographically sorted
-  object keys, and compact separators `,` and `:`;
-- preserve array order;
-- preserve semantic `reference` then `compared` role order; and
-- exclude the `comparison_fingerprint` field itself from its input.
+The accepted PKG-014 `result_integrity_fingerprint` in each run object already
+binds that run's ordered monthly `result_fingerprint` values and persisted
+`range_totals`; those lower-level fingerprints are not duplicated as extra M10
+response or fingerprint-material fields.
 
-The fingerprint payload binds at minimum:
+Canonical bytes are produced exactly as follows:
 
-- all four M10 contract identifiers;
-- `delta_direction`;
-- client ID;
-- role-bound run and subject IDs;
-- supported scenario family/version;
-- horizon;
-- factual-baseline material fingerprint;
-- component-domain contract version;
-- factual and subject engine/result-schema versions;
-- relevant factual upstream version projection;
-- both run semantic and integrity fingerprints;
-- both subject semantic and integrity fingerprints;
-- both adjustment-manifest fingerprints;
-- ordered monthly result fingerprints; and
-- the exact canonical monthly and range-total comparison payload.
+1. Encode as UTF-8.
+2. Sort JSON object keys lexicographically by Unicode code point; all semantic
+   keys are ASCII, so this is deterministic ASCII lexical order.
+3. Preserve every array's contract-defined order.
+4. Emit no insignificant whitespace.
+5. Use separators exactly `,` and `:`.
+6. Apply standard JSON string escaping.
+7. Reject NaN, Infinity, floating-point monetary values, and `null`.
+8. Serialize monetary values as the canonical two-decimal strings in Section 13.
+9. Serialize `client_id` as a JSON integer and accepted opaque M09 identities as
+   JSON strings.
+10. Reject every extra object key.
 
-The role pair must never be sorted before hashing. Actor, request timestamp,
-request ID, display labels, and metadata-only fields are excluded from semantic
-identity.
+`comparison_fingerprint` is the lowercase hexadecimal SHA-256 digest of those
+canonical UTF-8 bytes. Identical semantic material produces identical bytes and
+fingerprint; changing any bound semantic field changes the fingerprint. The
+role pair and all persisted arrays must never be sorted before hashing.
+
+Actor, request timestamp, request ID, display labels, hidden diagnostics, and
+implementation-only fields are absent from both the public v1 response and
+`comparison_fingerprint_material`; they cannot affect semantic identity.
+
+For `m10-comparison-result-v1` and `m10-comparison-fingerprint-v1`, adding,
+removing, retyping, optionally populating, or implementation-specifically
+enriching any semantic field is forbidden. Any semantic schema change requires
+a separately accepted new schema/contract version.
 
 ## 23. Currentness, Staleness, and Point-in-Time Meaning
 
@@ -526,6 +688,8 @@ is required:
 13. `PKG_015_UNSUPPORTED_SCENARIO_CONTRACT_REQUIRED`
 14. `PKG_015_PREDECESSOR_SEMANTIC_REWRITE_REQUIRED`
 15. `PKG_015_M11_PLUS_AUTHORITY_REQUIRED`
+16. `PKG_015_NONDETERMINISTIC_BLOCKER_MAPPING_REQUIRED`
+17. `PKG_015_FINGERPRINT_OR_RESPONSE_SCHEMA_NOT_EXACT`
 
 Stop conditions are definition boundaries, not implementation authorization.
 
@@ -555,22 +719,30 @@ Stop conditions are definition boundaries, not implementation authorization.
 - **AC-015-022:** Relations use only `equal`, `compared_greater_than_reference`, and `compared_lower_than_reference` as numeric facts.
 - **AC-015-023:** Decimal subtraction is exact, float-free, and supports the full difference domain without `Numeric(20,2)` overflow.
 - **AC-015-024:** Reference, compared, and delta outputs use the frozen canonical two-decimal string format without scientific notation or rounding.
-- **AC-015-025:** A successful response contains the exact contract, identity, provenance, horizon, version, monthly, range, and fingerprint evidence defined here.
-- **AC-015-026:** The comparison fingerprint uses accepted canonical JSON plus SHA-256 and binds role order, version evidence, run/subject fingerprints, ordered result fingerprints, and exact comparison payload.
-- **AC-015-027:** Actor, request time, request ID, and display labels do not affect comparison semantic identity.
+- **AC-015-025:** A successful `m10-comparison-result-v1` response has exactly the closed top-level and nested semantic schema in Section 21, with no extra or optional semantic field.
+- **AC-015-026:** `comparison_fingerprint_material` is exactly the successful response with only `comparison_fingerprint` omitted, and implementation-specific enrichment is rejected.
+- **AC-015-027:** Actor, request time, request ID, display labels, hidden diagnostics, and implementation metadata are absent from the response and fingerprint input and cannot affect comparison semantic identity.
 - **AC-015-028:** PKG-015 is stateless and each request re-evaluates admission; responses are point-in-time evidence only.
 - **AC-015-029:** No comparison model, table, migration, history, currentness, lifecycle, or downstream eligibility is introduced.
 - **AC-015-030:** Exactly one endpoint exists: `POST /api/clients/{client_id}/m10/compare`.
 - **AC-015-031:** The strict request body contains only `reference_run_id` and `compared_run_id`, with `extra = forbid`.
 - **AC-015-032:** There is no separate validation/admission endpoint or split-brain validation state.
 - **AC-015-033:** Every blocker returns no partial comparison payload or comparison fingerprint.
-- **AC-015-034:** Public blocker codes, status boundaries, and deterministic admission order are closed and non-leaking.
+- **AC-015-034:** The Section 8.1 predicate table is authoritative and directly testable: every materially identical invalid pair returns the same first failing public blocker, including integrity before currentness and reference before compared.
 - **AC-015-035:** No frontend route, component, UI state, or client-side comparison is included.
 - **AC-015-036:** No recommendation, ranking, optimization, suitability, significance, materiality, forecast, or probability semantics are included.
 - **AC-015-037:** Accepted PKG-013 and PKG-014 families, currentness, eligibility, persistence, formulas, fingerprints, and history remain unchanged.
 - **AC-015-038:** M11-M14 remain unauthorized, M08E remains excluded, and `02M` remains frozen.
 - **AC-015-039:** Verification proves exactly the definition file and narrow Business Build Plan synchronization changed, with protected paths untouched.
 - **AC-015-040:** The only next gate is independent definition acceptance audit; M10 implementation and the next package remain `NOT_AUTHORIZED`.
+- **AC-015-041:** Every successful semantic field is required and non-null; missing/null persisted material fails closed without a null placeholder.
+- **AC-015-042:** All reference, compared, and delta monetary values are JSON strings in the one canonical two-decimal format, including normalization of negative zero to `0.00`.
+- **AC-015-043:** `monthly_comparisons` preserves exact persisted accepted month order, has the exact element schema, and is never sorted for comparison or fingerprinting.
+- **AC-015-044:** `versions` has exactly the seven defined keys, and `factual_upstream_versions` is the exact closed projection of accepted persisted PKG-014 dependency material in stored domain/candidate order.
+- **AC-015-045:** Canonical JSON uses exact UTF-8, key ordering, array ordering, escaping, whitespace, separator, primitive, and no-null rules and produces byte-identical material for identical semantics.
+- **AC-015-046:** The comparison fingerprint is deterministic lowercase SHA-256: identical semantic material produces the same fingerprint and a change to any bound semantic field produces a different fingerprint.
+- **AC-015-047:** No public v1 response or fingerprint-material object accepts an extra key, retyped key, alternate payload, optional semantic value, or implementation-specific field.
+- **AC-015-048:** The 16 public blockers remain closed and their exact precedence prevents alternate public-code selection when multiple predicates fail.
 
 ## 31. Negative Acceptance Criteria
 
@@ -606,6 +778,15 @@ Stop conditions are definition boundaries, not implementation authorization.
 - **NAC-015-030:** Production-readiness or V1/V2 parity claim.
 - **NAC-015-031:** Implementation code, test, migration, persistence, frontend, or acceptance record during definition drafting.
 - **NAC-015-032:** Authorization of PKG-015 implementation or any next package by this definition.
+- **NAC-015-033:** Alternate public blocker selection for the same material invalid pair or evaluation outside the Section 8.1 precedence.
+- **NAC-015-034:** Alternate or expanded fingerprint payload, optional semantic fingerprint member, or hidden implementation-defined fingerprint enrichment.
+- **NAC-015-035:** Any extra success-response field under `m10-comparison-result-v1` without a separately accepted schema version.
+- **NAC-015-036:** A null or optional semantic field in a successful response or fingerprint material.
+- **NAC-015-037:** JSON floating-point encoding of a monetary value, NaN, Infinity, or a JSON numeric Decimal.
+- **NAC-015-038:** Non-canonical Decimal text, including leading plus, unnecessary leading zero, scientific notation, excess/missing fractional digits, or negative zero.
+- **NAC-015-039:** Sorting or otherwise reordering the persisted monthly array or factual-upstream projection for comparison or fingerprinting.
+- **NAC-015-040:** Alternate canonicalization, separator, encoding, key-order, array-order, whitespace, escaping, or hash rule.
+- **NAC-015-041:** Adding, removing, retyping, or optionally populating v1 semantic material without a separately accepted new contract/schema version.
 
 ## 32. Verification Matrix
 
@@ -613,12 +794,12 @@ Stop conditions are definition boundaries, not implementation authorization.
 |---|---|
 | Base/scope | Exact branch/base; docs-only definition diff; protected paths untouched |
 | Contract/roles | Exact family/version and baseline-reference/adjusted-compared enforcement |
-| Admission | Same-client, distinct subjects, currentness v1, eligibility v2, integrity, horizon, factual and version equality |
+| Admission | Exact ordered predicate/code precedence; same-client, distinct subjects, integrity-before-currentness, eligibility v2, horizon, factual and version equality |
 | Non-leakage | Foreign and nonexistent run/service paths return equivalent public behavior |
 | Persisted values | Direct monthly/range field reads; no component/month reconstruction |
 | Alignment | Exact ordered complete month sequence; mismatch blocks |
 | Arithmetic | Decimal-only subtraction, full delta domain, canonical string output, numeric relation |
-| Fingerprint | Canonical role-bound payload and deterministic SHA-256 replay |
+| Response/fingerprint | Closed no-null/no-extra response; response-minus-fingerprint material; exact persisted upstream projection; canonical bytes and deterministic SHA-256 replay |
 | Statelessness | No model/table/migration/history/currentness/lifecycle |
 | API | One strict atomic compare endpoint and no validation route |
 | Authority audit | No recommendation, ranking, materiality, optimization, report, or M11+ semantics |

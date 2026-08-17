@@ -66,6 +66,30 @@ def api(tmp_path: Path, monkeypatch):
                     source_status="planner entered",
                     verification_state="reviewed",
                 ),
+                RecurringIncome(
+                    client_id=2,
+                    income_category="employment",
+                    description="Income",
+                    amount=Decimal("1000.00"),
+                    amount_basis="gross",
+                    frequency="monthly",
+                    continuation_status="ongoing",
+                    lifecycle_status="current",
+                    source_status="planner entered",
+                    verification_state="reviewed",
+                ),
+                RecurringExpense(
+                    client_id=2,
+                    expense_category="housing",
+                    description="Expense",
+                    amount=Decimal("300.00"),
+                    frequency="monthly",
+                    expense_type="mandatory",
+                    continuation_status="ongoing",
+                    lifecycle_status="current",
+                    source_status="planner entered",
+                    verification_state="reviewed",
+                ),
             ]
         )
         db.commit()
@@ -83,10 +107,10 @@ def api(tmp_path: Path, monkeypatch):
         engine.dispose()
 
 
-def _pair(client: TestClient, amount: str = "100.00"):
-    baseline = client.post("/api/clients/1/m09/subjects/baseline").json()
+def _pair(client: TestClient, amount: str = "100.00", client_id: int = 1):
+    baseline = client.post(f"/api/clients/{client_id}/m09/subjects/baseline").json()
     adjusted = client.post(
-        "/api/clients/1/m09/subjects",
+        f"/api/clients/{client_id}/m09/subjects",
         json={
             "scenario_family": FAMILY,
             "scenario_contract_version": "v1",
@@ -102,11 +126,11 @@ def _pair(client: TestClient, amount: str = "100.00"):
         },
     ).json()
     reference = client.post(
-        f"/api/clients/1/m09/subjects/{baseline['scenario_subject_id']}/runs",
+        f"/api/clients/{client_id}/m09/subjects/{baseline['scenario_subject_id']}/runs",
         json=HORIZON,
     ).json()
     compared = client.post(
-        f"/api/clients/1/m09/subjects/{adjusted['scenario_subject_id']}/runs",
+        f"/api/clients/{client_id}/m09/subjects/{adjusted['scenario_subject_id']}/runs",
         json=HORIZON,
     ).json()
     return baseline, adjusted, reference, compared
@@ -230,6 +254,37 @@ def test_strict_request_and_closed_resource_failure(api):
         json={"reference_run_id": "missing-a", "compared_run_id": "missing-b"},
     )
     assert (foreign.status_code, foreign.json()) == (missing.status_code, missing.json())
+
+
+def test_foreign_reference_and_foreign_compared_are_each_nonleaking(api):
+    client, _, _ = api
+    _, _, local_reference, local_compared = _pair(client)
+    _, _, foreign_reference, foreign_compared = _pair(client, client_id=2)
+    cases = (
+        {
+            "reference_run_id": foreign_reference["run_id"],
+            "compared_run_id": local_compared["run_id"],
+        },
+        {
+            "reference_run_id": local_reference["run_id"],
+            "compared_run_id": foreign_compared["run_id"],
+        },
+    )
+    for payload in cases:
+        foreign = client.post("/api/clients/1/m10/compare", json=payload)
+        missing = client.post(
+            "/api/clients/1/m10/compare",
+            json={
+                **payload,
+                (
+                    "reference_run_id"
+                    if payload["reference_run_id"] == foreign_reference["run_id"]
+                    else "compared_run_id"
+                ): "missing",
+            },
+        )
+        assert (foreign.status_code, foreign.json()) == (missing.status_code, missing.json())
+        assert foreign.json()["detail"]["code"] == "comparison_run_unavailable"
 
 
 def test_same_subject_and_role_precedence(api):
@@ -437,6 +492,91 @@ def test_factual_material_precedes_component_domain(monkeypatch, api):
     assert response.json()["detail"]["code"] == "comparison_factual_baseline_material_mismatch"
 
 
+def test_unsupported_scenario_contract_precedes_integrity(api):
+    client, _, engine = api
+    _, _, reference, compared = _pair(client)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA ignore_check_constraints=ON")
+        connection.exec_driver_sql(
+            "UPDATE m09_subject_runs SET scenario_contract_version=?, result_integrity_fingerprint=? WHERE run_id=?",
+            ("v2", "f" * 64, compared["run_id"]),
+        )
+    response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "comparison_scenario_contract_mismatch"
+
+
+def test_component_domain_version_blocker(monkeypatch, api):
+    client, _, engine = api
+    _, _, reference, compared = _pair(client)
+    _bypass_m09_authorities(monkeypatch)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE m09_subject_runs SET component_domain_contract_version=? WHERE run_id=?",
+            ("unsupported", compared["run_id"]),
+        )
+    response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
+    assert response.json()["detail"]["code"] == "comparison_component_domain_contract_mismatch"
+
+
+def test_engine_version_blocker(monkeypatch, api):
+    client, _, _ = api
+    _, _, reference, compared = _pair(client)
+    _bypass_m09_authorities(monkeypatch)
+    monkeypatch.setattr(comparison_service, "ENGINE_VERSION", "unsupported")
+    response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
+    assert response.json()["detail"]["code"] == "comparison_engine_version_mismatch"
+
+
+@pytest.mark.parametrize("dimension", ["factual_result", "snapshot_schema", "inventory_schema"])
+def test_result_and_dependency_schema_version_blockers(monkeypatch, api, dimension):
+    client, _, engine = api
+    _, _, reference, compared = _pair(client)
+    _bypass_m09_authorities(monkeypatch)
+    if dimension == "factual_result":
+        monkeypatch.setattr(comparison_service, "RESULT_SCHEMA_VERSION", "unsupported")
+    else:
+        with engine.begin() as connection:
+            column = "upstream_snapshot" if dimension == "snapshot_schema" else "factual_inventory"
+            material = json.loads(
+                connection.exec_driver_sql(
+                    f"SELECT {column} FROM m09_subject_runs WHERE run_id=?", (compared["run_id"],)
+                ).scalar_one()
+            )
+            key = "snapshot_schema_version" if dimension == "snapshot_schema" else "inventory_schema_version"
+            material[key] = "unsupported"
+            connection.exec_driver_sql(
+                f"UPDATE m09_subject_runs SET {column}=? WHERE run_id=?",
+                (json.dumps(material), compared["run_id"]),
+            )
+    response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
+    assert response.json()["detail"]["code"] == "comparison_result_schema_version_mismatch"
+
+
+def test_upstream_projection_pair_mismatch_blocker(monkeypatch, api):
+    client, _, _ = api
+    _, _, reference, compared = _pair(client)
+    _bypass_m09_authorities(monkeypatch)
+    original = comparison_service._upstream_versions
+
+    def mismatched_projection(run):
+        projection = original(run)
+        return projection if run.run_id == reference["run_id"] else [
+            {
+                "domain_identity": "recurring_income",
+                "candidate_identity": "different",
+                "source_identity": "different",
+                "source_version": "unversioned",
+                "source_fingerprint": "a" * 64,
+                "handoff_contract_versions": [],
+            }
+        ]
+
+    monkeypatch.setattr(comparison_service, "_upstream_versions", mismatched_projection)
+    response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
+    assert response.json()["detail"]["code"] == "comparison_factual_upstream_version_mismatch"
+
+
 def test_manifest_identity_precedes_month_alignment(monkeypatch, api):
     client, _, engine = api
     _, _, reference, compared = _pair(client)
@@ -479,6 +619,36 @@ def test_month_alignment_precedes_numeric_domain(monkeypatch, api):
             "UPDATE m09_subject_runs SET range_totals=? WHERE run_id=?",
             ('{"gross_inflow_total":"1e2","gross_outflow_total":"0.00","period_net":"0.00"}', compared["run_id"]),
         )
+    response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "comparison_month_alignment_mismatch"
+
+
+@pytest.mark.parametrize("shape", ["missing", "extra", "duplicate", "reordered"])
+def test_each_month_alignment_shape_fails_closed(monkeypatch, api, shape):
+    client, sessions, _ = api
+    _, _, reference, compared = _pair(client)
+    _bypass_m09_authorities(monkeypatch)
+    with sessions() as db:
+        reference_run = db.scalar(select(M09SubjectRun).where(M09SubjectRun.run_id == reference["run_id"]))
+        compared_run = db.scalar(select(M09SubjectRun).where(M09SubjectRun.run_id == compared["run_id"]))
+        reference_rows = comparison_service._rows(db, reference_run)
+        compared_rows = comparison_service._rows(db, compared_run)
+    altered = list(compared_rows)
+    if shape == "missing":
+        altered = altered[:-1]
+    elif shape == "extra":
+        altered = altered + [SimpleNamespace(**{**altered[-1].__dict__, "month": "2026-04"})]
+    elif shape == "duplicate":
+        altered = altered + [altered[-1]]
+    else:
+        altered = list(reversed(altered))
+    original_rows = comparison_service._rows
+    monkeypatch.setattr(
+        comparison_service,
+        "_rows",
+        lambda db, run: altered if run.run_id == compared["run_id"] else original_rows(db, run),
+    )
     response = client.post("/api/clients/1/m10/compare", json=_request(reference, compared))
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "comparison_month_alignment_mismatch"

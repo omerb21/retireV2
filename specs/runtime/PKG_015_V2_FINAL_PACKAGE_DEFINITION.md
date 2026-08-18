@@ -185,7 +185,7 @@ fail.
 | 26 | Factual `RESULT_SCHEMA_VERSION`, persisted `upstream_snapshot.result_schema_version`, persisted `upstream_snapshot.snapshot_schema_version`, or persisted `factual_inventory.inventory_schema_version` differs or is unsupported | `comparison_result_schema_version_mismatch` |
 | 27 | The exact `factual_upstream_versions` projection in Section 9 differs, is malformed, or contains unsupported contract material | `comparison_factual_upstream_version_mismatch` |
 | 28 | Persisted adjustment manifests are calculation-semantically identical | `comparison_semantically_identical_manifest` |
-| 29 | The two already-current authoritative canonical monthly sequences are unequal, or either canonical sequence differs from the accepted inclusive horizon representation despite having passed predecessor currentness | `comparison_month_alignment_mismatch` |
+| 29 | Pair-level canonical month-sequence invariant guard: the two already-current authoritative canonical monthly sequences are unequal, or either canonical sequence differs from the accepted inclusive horizon representation despite having passed predecessor currentness | `comparison_month_alignment_mismatch` |
 | 30 | An integrity-verified persisted monetary value cannot be represented or compared in the canonical Decimal domain | `comparison_numeric_domain_invalid` |
 
 Rows 1-2 are a terminal resource-availability phase. They use client-owned
@@ -214,7 +214,19 @@ extra, duplicate, or incomplete authoritative row set returns
 `comparison_run_not_current`, reference before compared. Predicate 29 neither
 duplicates nor overrides that result. It compares only the canonical
 chronological sequences exposed by accepted PKG-014 after both runs have passed
-currentness and eligibility. M10 must not inspect or infer physical row order.
+currentness and eligibility. It is a defensive invariant guard, executed after
+predicate 28 and before predicate 30. Under accepted predecessor semantics it is
+not normally reachable through a valid persisted pair: predicate 6 requires
+equal `start_month` and `end_month`; reference currentness requires the reference
+canonical months to equal the inclusive authoritative
+`_month_range(start_month, end_month)`; and compared currentness requires the
+compared canonical months to equal that same range. Both canonical sequences
+therefore are equal before predicate 29 is reached. A predicate 29 failure
+indicates an internal invariant breach or unexpected representational
+inconsistency, not an ordinary accepted business-state outcome. M10 must not
+inspect physical database order or insertion order, create an alternate raw-read
+path, override predecessor currentness, or remap per-run membership defects into
+predicate 29.
 
 The externally observable v2 examples are therefore:
 
@@ -222,10 +234,15 @@ The externally observable v2 examples are therefore:
   `comparison_run_not_current`;
 - compared missing/extra/duplicate/incomplete membership: predicate 20,
   `comparison_run_not_current`;
-- unequal authoritative canonical pair sequences after predicates 1-28 pass:
-  predicate 29, `comparison_month_alignment_mismatch`;
-- semantic-manifest identity: predicate 28; and
-- numeric-domain failure: predicate 30.
+- actual present-row value or fingerprint corruption:
+  `comparison_fingerprint_invalid`;
+- semantic-manifest identity: predicate 28,
+  `comparison_semantically_identical_manifest`;
+- predicate 29 retains `comparison_month_alignment_mismatch` as a defensive
+  invariant blocker, not as an outcome expected from a valid accepted
+  predecessor state; and
+- numeric-domain failure after valid admission: predicate 30,
+  `comparison_numeric_domain_invalid`.
 
 ## 9. Trusted Version Sources
 
@@ -366,6 +383,13 @@ Predicate 29 requires:
 - identical authoritative canonical `monthly_results[].month` sequences; and
 - equality of each canonical sequence to the accepted inclusive horizon
   representation after predecessor currentness has passed.
+
+This is a defensive pair-level invariant guard. Under the accepted predecessor
+contract, predicate 6 establishes an equal horizon and each successful
+currentness decision establishes equality to the same inclusive authoritative
+range, so a valid persisted pair necessarily passes predicate 29. Its failure
+branch is retained to fail closed on an internal invariant breach or unexpected
+representational inconsistency and is not an ordinary accepted business state.
 
 Missing, extra, duplicate, or incomplete membership is a predecessor-currentness
 failure and is not remapped to predicate 29. M10 must not inspect physical row
@@ -746,14 +770,20 @@ runtime evidence must prove without bypassing accepted predecessor authorities:
 - predecessor-detected invalid membership is not remapped to
   `comparison_fingerprint_invalid`;
 - predecessor currentness and eligibility remain authoritative;
-- equal authoritative canonical pair sequences pass predicate 29;
-- if unequal canonical sequences can be represented through accepted
-  authoritative interfaces after currentness, predicate 29 returns
-  `comparison_month_alignment_mismatch`;
+- a valid reference and valid compared current pair passes predicate 29 through
+  integration evidence;
+- actual present-row integrity corruption returns
+  `comparison_fingerprint_invalid` through integration evidence;
+- manifest semantic identity remains predicate 28 and precedes predicate 29;
+- numeric-domain validation remains predicate 30 and follows predicate 29;
+- the predicate 29 unequal-array branch is tested only by a pure helper test or
+  isolated structural guard test that supplies canonical month arrays directly
+  and returns `comparison_month_alignment_mismatch`;
+- that isolated failure test does not represent a valid persisted PKG-014 pair
+  and must not monkeypatch predecessor currentness or eligibility to manufacture
+  a purportedly valid persisted mismatch;
 - no raw database-order, reinsertion-order, or impossible persisted-order test
   is required;
-- predicate 28 semantic identity precedes predicate 29, which precedes predicate
-  30 numeric-domain validation;
 - D-015-I002 rejects Decimal authority requiring rounding, implicit
   quantization, invalid scale, exponent representation, non-finite values,
   floats, and out-of-domain values before formatting, while preserving both
@@ -822,7 +852,7 @@ No implementation correction is authorized by these states.
 - **AC-015-014:** Exact factual and subject engine/result-schema sources and expected values are defined without fallback.
 - **AC-015-015:** Relevant included factual upstream source versions/fingerprints and M06 handoff contract versions are canonically projected and exactly equal.
 - **AC-015-016:** PKG-014 currentness remains authoritative: missing, extra, duplicate, or incomplete per-run canonical month membership returns `comparison_run_not_current`, reference before compared.
-- **AC-015-017:** Predicate 29 compares only two already-current canonical chronological sequences for exact pair equality and accepted inclusive-horizon equality; no ordinal, physical-order inspection, zero-fill, sorting, or reindexing path exists.
+- **AC-015-017:** Predicate 29 is a defensive pair-level canonical month-sequence invariant guard under accepted predecessor semantics: it compares only two already-current canonical chronological sequences for exact pair equality and accepted inclusive-horizon equality, and no ordinal, physical-order inspection, zero-fill, sorting, or reindexing path exists.
 - **AC-015-018:** Only persisted monthly `gross_inflow_total`, `gross_outflow_total`, and `period_net` are compared directly.
 - **AC-015-019:** Only persisted `range_totals` fields with those exact three names are compared directly.
 - **AC-015-020:** No monthly, range, component, or net value is reconstructed or normalized.
@@ -839,7 +869,7 @@ No implementation correction is authorized by these states.
 - **AC-015-031:** The strict request body contains only `reference_run_id` and `compared_run_id`, with `extra = forbid`.
 - **AC-015-032:** There is no separate validation/admission endpoint or split-brain validation state.
 - **AC-015-033:** Every blocker returns no partial comparison payload or comparison fingerprint.
-- **AC-015-034:** The Section 8.1 v2 predicate table is authoritative and directly testable: integrity precedes currentness, reference precedes compared, predecessor month-set failures remain predicates 19/20, semantic identity remains 28, canonical pair mismatch remains 29, and numeric domain remains 30.
+- **AC-015-034:** The Section 8.1 v2 predicate table is authoritative: predicates representing valid predecessor states require integration evidence; predicate 29 requires integration proof that valid current pairs pass plus isolated structural/helper guard evidence for its unequal-array failure branch; integrity precedes currentness, reference precedes compared, predecessor month-set failures remain predicates 19/20, semantic identity remains 28, and numeric domain remains 30.
 - **AC-015-035:** No frontend route, component, UI state, or client-side comparison is included.
 - **AC-015-036:** No recommendation, ranking, optimization, suitability, significance, materiality, forecast, or probability semantics are included.
 - **AC-015-037:** Accepted PKG-013 and PKG-014 families, chronological read authority, currentness, eligibility, persistence, formulas, fingerprints, and history remain unchanged; no predecessor schema or semantic rewrite is required.
@@ -853,7 +883,7 @@ No implementation correction is authorized by these states.
 - **AC-015-045:** Canonical JSON uses exact UTF-8, key ordering, array ordering, escaping, whitespace, separator, primitive, and no-null rules and produces byte-identical material for identical semantics.
 - **AC-015-046:** The comparison fingerprint is deterministic lowercase SHA-256: identical semantic material produces the same fingerprint and a change to any bound semantic field produces a different fingerprint.
 - **AC-015-047:** No public v2 response or fingerprint-material object accepts an extra key, retyped key, alternate payload, optional semantic value, or implementation-specific field; v1 is not silently reinterpreted.
-- **AC-015-048:** The 16 public blockers remain closed and their exact precedence prevents alternate public-code selection when multiple predicates fail.
+- **AC-015-048:** The 16 public blockers remain closed: every reachable accepted state has deterministic exact public mapping, defensive predicate 29 has deterministic structural guard mapping to `comparison_month_alignment_mismatch`, and exact precedence prevents alternate public-code selection.
 
 ## 31. Negative Acceptance Criteria
 
@@ -889,7 +919,7 @@ No implementation correction is authorized by these states.
 - **NAC-015-030:** Production-readiness or V1/V2 parity claim.
 - **NAC-015-031:** Implementation code, test, migration, persistence, frontend, v1-history rewrite, or acceptance record during v2 definition drafting.
 - **NAC-015-032:** Acceptance of the frozen v1 implementation, authorization of v2 implementation correction, or authorization of any next package by this definition.
-- **NAC-015-033:** Alternate public blocker selection for the same material invalid pair or evaluation outside the Section 8.1 precedence.
+- **NAC-015-033:** Selecting an alternate public code when predicate 29 is invoked, treating its defensive status as permission to omit or remap the guard, or manufacturing a predecessor-invalid state and presenting it as valid persisted integration evidence.
 - **NAC-015-034:** Alternate or expanded fingerprint payload, optional semantic fingerprint member, or hidden implementation-defined fingerprint enrichment.
 - **NAC-015-035:** Any extra success-response field under `m10-comparison-result-v2` without a separately accepted schema version.
 - **NAC-015-036:** A null or optional semantic field in a successful response or fingerprint material.
@@ -908,7 +938,7 @@ No implementation correction is authorized by these states.
 | Admission | Exact ordered predicate/code precedence; same-client, distinct subjects, integrity-before-currentness, predecessor-authoritative predicates 19/20, eligibility v2, horizon, factual and version equality |
 | Non-leakage | Foreign and nonexistent run/service paths return equivalent public behavior |
 | Persisted values | Direct monthly/range field reads; no component/month reconstruction |
-| Alignment | Reference missing month maps through predicate 19; compared missing month through predicate 20; invalid predecessor month set is not remapped to fingerprint failure; canonical pair equality passes; representable canonical pair mismatch maps to predicate 29; no raw-row-order test |
+| Alignment | Integration: reference invalid membership maps through predicate 19, compared invalid membership through predicate 20, and a valid current pair passes predicate 29. Structural/helper: directly supplied unequal canonical arrays map exactly to `comparison_month_alignment_mismatch`, without claiming a valid persisted predecessor pair. No raw-row-order, reinsertion-order, or predecessor-monkeypatch test |
 | Arithmetic | Decimal-only subtraction, full delta domain, canonical string output, numeric relation |
 | Response/fingerprint | Closed no-null/no-extra response; response-minus-fingerprint material; exact persisted upstream projection; canonical bytes and deterministic SHA-256 replay |
 | Statelessness | No model/table/migration/history/currentness/lifecycle |

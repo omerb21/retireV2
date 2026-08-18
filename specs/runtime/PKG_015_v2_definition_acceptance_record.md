@@ -95,9 +95,20 @@ Historical v1 identifiers are not active v2 identifiers.
 
 - Status: `OPEN`
 - `BLOCKED_BY_ACCEPTED_V1_CONTRACT_INCOMPATIBILITY`
-- `RESOLUTION_REQUIRES_ACCEPTED_V2_CONTRACT_AND_IMPLEMENTATION_CORRECTION`
+- `RESOLUTION_REQUIRES_ACCEPTED_V2_CONTRACT_IMPLEMENTATION_CORRECTION_AND_INDEPENDENT_WORK_IMPLEMENTATION_REAUDIT`
 
-Acceptance of the v2 definition does not close D-015-I001.
+D-015-I001 remains `OPEN` and may be closed only after all of the following are
+true:
+
+1. The accepted PKG-015 v2 definition is closed on master.
+2. The implementation is corrected against that accepted v2 contract.
+3. The corrected implementation passes an independent WORK implementation
+   re-audit.
+
+No subset of these conditions closes D-015-I001. Acceptance of the v2
+definition alone, implementation correction alone, or implementation tests
+alone do not close it. Only independent acceptance after correction may close
+the defect.
 
 ### D-015-I002
 

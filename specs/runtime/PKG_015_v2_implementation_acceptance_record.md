@@ -41,9 +41,7 @@ implementation and test paths:
 - `backend/app/services/m10_comparison_service.py`
 - `backend/tests/test_pkg015_m10_comparison.py`
 
-No documentation other than this acceptance record, models, migration,
-persistence, frontend, or unrelated backend path was part of the accepted
-implementation candidate.
+No documentation, model, migration, persistence, frontend, or unrelated backend path was part of the accepted implementation candidate. This acceptance record is a later documentation-evidence commit outside the accepted implementation boundary.
 
 ## WORK Implementation Acceptance Evidence
 

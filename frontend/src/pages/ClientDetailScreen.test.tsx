@@ -191,6 +191,10 @@ describe("ClientDetailScreen", () => {
       "href",
       "/clients/7/employment-history"
     );
+    expect(screen.getByRole("link", { name: "M10 Scenario Comparison" })).toHaveAttribute(
+      "href",
+      "/clients/7/scenario-comparison"
+    );
     expect(screen.getByRole("link", { name: "Back to client list" })).toHaveAttribute("href", "/clients");
   });
 

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api/clientsApi";
 import * as m09 from "../api/m09CashflowApi";
 import * as m10 from "../api/m10ComparisonApi";
+import { AppRoutes } from "../routes/AppRoutes";
 import { M10ComparisonScreen } from "./M10ComparisonScreen";
 
 vi.mock("../api/m09CashflowApi", async () => {
@@ -199,6 +200,13 @@ afterEach(() => {
 });
 
 describe("M10ComparisonScreen", () => {
+  it("is wired into the client-scoped application route", async () => {
+    readyDiscovery();
+    render(<MemoryRouter initialEntries={["/clients/1/scenario-comparison"]}><AppRoutes /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "M10 Scenario comparison" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: /Adjusted adjusted/ })).toBeInTheDocument();
+  });
+
   it("rejects an invalid route client without issuing discovery", () => {
     renderScreen("/clients/0/scenario-comparison");
     expect(screen.getByRole("alert")).toHaveTextContent("Invalid client ID.");

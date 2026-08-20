@@ -16,6 +16,7 @@ import { M04ClassificationScreen } from "../pages/M04ClassificationScreen";
 import { M05LedgerScreen } from "../pages/M05LedgerScreen";
 import { M06ConversionScreen } from "../pages/M06ConversionScreen";
 import { M09CashflowScreen } from "../pages/M09CashflowScreen";
+import { M10ComparisonScreen } from "../pages/M10ComparisonScreen";
 
 export function AppRoutes() {
   return (
@@ -31,6 +32,7 @@ export function AppRoutes() {
       <Route path="/clients/:clientId/pension-ledger" element={<M05LedgerScreen />} />
       <Route path="/clients/:clientId/pension-conversion" element={<M06ConversionScreen />} />
       <Route path="/clients/:clientId/monthly-cashflow" element={<M09CashflowScreen />} />
+      <Route path="/clients/:clientId/scenario-comparison" element={<M10ComparisonScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
       <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
       <Route path="/clients/:clientId/fixation/workspace" element={<FixationWorkspaceScreen />} />

@@ -1443,6 +1443,13 @@ export function ClientDetailScreen() {
         >
           M09 Deterministic Monthly Cashflow
         </Link>
+        <Link
+          className="button-link"
+          to={`/clients/${validRouteClientId}/scenario-comparison`}
+          state={{ clientName: client.full_name }}
+        >
+          M10 Scenario Comparison
+        </Link>
       </p>
       <p>
         <Link

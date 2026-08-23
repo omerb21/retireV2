@@ -169,6 +169,26 @@ For Q-015 and Q-016, M08A, M08B, M08C, M08D, M08F, and M08 overall remain `READY
 
 The final M09-M14 blocker statement above is retained as `HISTORICAL / SUPERSEDED` provenance for the pre-PKG-013 checkpoint. The current controlling position is: PKG-013 is `CLOSED_ON_MASTER` with `deterministic_monthly_cashflow/v1` and role `ORCHESTRATOR_AND_AGGREGATOR_ONLY` unchanged; PKG-014 is `CLOSED_ON_MASTER` with accepted `declared_retirement_cashflow_adjustments/v1`; and its narrow accepted baseline/adjusted outputs resolve the prior parallel-output prerequisite for that family only. The PKG-015 v1 definition remains historically `ACCEPTED_ON_MASTER` at immutable HEAD `fcadcaf33cc877014ea84dc13eb9d83205ae9b4e`, with acceptance evidence `1c302e0d760ab7e66c94c6c1695fc71cda6b4e7d`. The predecessor-compatible PKG-015 v2 definition is `CLOSED_ON_MASTER` at immutable definition HEAD `73d2ce72c39d90c64457b9bf49d32176483fcc4e`, with definition acceptance-record evidence HEAD `715379d6157a3bd29c0cd74e66337421e378f252`. PKG-015 v2 is `CLOSED_ON_MASTER`, with immutable accepted implementation HEAD `4cb10f2bc36c041a7681b60edfbcba712037f0c6`, implementation acceptance-record evidence HEAD `fd63b38abb9d51bffa71eb494ec62e6f1d728d9a`, and final governance convergence/master closure HEAD `91e0d3f01c4c01c1e5d81f06bc678dfa9f79635d`. Historical v1 implementation candidate `aca250f50409e569b30552ec312818ce50dcfc74` is `HISTORICAL_V1_IMPLEMENTATION_CANDIDATE`, `NOT_AUTHORITATIVE_FOR_V2`, and `SUPERSEDED_FOR_CURRENT_PKG_015_V2_IMPLEMENTATION_STATE`. All PKG-015 closure defects are `CLOSED`. PKG-016 is `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE` for bounded frontend presentation and invocation over the accepted PKG-015 comparator, with `NO_NEW_M10_BUSINESS_AUTHORITY`; its implementation is `NOT_AUTHORIZED`. All other deferred M09 families remain unresolved future scope. Broad M10 remains `BLOCKED_FOR_LOGIC_DETAIL`; Q-019/Q-020 remain partly unresolved for broader M10 but do not block this bounded definition; M11-M14 remain `NOT_AUTHORIZED`; M08E remains excluded; `02M` remains frozen; and the next package after PKG-016 is `NOT_AUTHORIZED`.
 
+### PKG-017 Controlling Proposal-Stage Update
+
+This narrow update supersedes the earlier PKG-016 proposal-stage wording in the
+active planning checkpoint without rewriting its historical evidence. PKG-015
+and PKG-016 are `CLOSED_ON_MASTER`. PKG-016 retains immutable accepted
+implementation HEAD `cc8fe1c169747e7da96e4f05ed78b996865018a1` and
+implementation acceptance-record evidence HEAD
+`16a404f4263771a2ec47d59c930f10cb4d85ad60`.
+
+PKG-017 is `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE` for frontend-only
+presentation of exact persisted adjustment occurrences belonging to the
+currently selected eligible adjusted scenario. Its classification is
+`FRONTEND_PRESENTATION_ONLY`, its business authority is
+`NO_NEW_M10_BUSINESS_AUTHORITY`, and its implementation is `NOT_AUTHORIZED`.
+It authorizes no second subject fetch, backend/API expansion, total, impact,
+manifest diff, causal attribution, persistence, or selection authority. Broad
+M10 remains `BLOCKED_FOR_LOGIC_DETAIL`; M11-M14 remain `NOT_AUTHORIZED`; M08E
+remains `EXCLUDED`; `02M` remains `FROZEN`; the next package beyond PKG-017 is
+`NOT_AUTHORIZED`; and production readiness is `NOT_CLAIMED`.
+
 ## 7. Explicit Non-Goals
 
 - This is not a full V1 parity proof.
@@ -241,6 +261,8 @@ The final M09-M14 blocker statement above is retained as `HISTORICAL / SUPERSEDE
 | PKG-016 definition status | `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE`; package: `PKG-016 — M10 Stateless Comparator Frontend Presentation and Invocation Foundation`; classification: `FRONTEND_PRESENTATION_AND_INVOCATION_ONLY`; business authority: `NO_NEW_M10_BUSINESS_AUTHORITY`; purpose: bounded client-scoped frontend presentation and exact invocation of the accepted PKG-015 comparator; definition: `specs/runtime/PKG_016_FINAL_PACKAGE_DEFINITION.md`; Q-019/Q-020 remain partly unresolved for broader M10 but do not block this frozen bounded subset |
 | PKG-016 implementation status | `NOT_AUTHORIZED`; no frontend code, backend code, test, migration, persistence, API-semantic change, production-readiness work, or next package after PKG-016 is authorized; M11-M14 remain `NOT_AUTHORIZED`; M08E remains `EXCLUDED`; `02M` remains `FROZEN` |
 | Next package authorization | `NOT_AUTHORIZED` |
+| PKG-017 controlling definition-stage status | `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE`; package: `PKG-017 — M10 Selected Scenario Adjustment Evidence Presentation Foundation`; definition: `specs/runtime/PKG_017_FINAL_PACKAGE_DEFINITION.md`; classification: `FRONTEND_PRESENTATION_ONLY`; business authority: `NO_NEW_M10_BUSINESS_AUTHORITY`; PKG-015 and PKG-016 `CLOSED_ON_MASTER`; PKG-017 implementation `NOT_AUTHORIZED`; broad M10 `BLOCKED_FOR_LOGIC_DETAIL`; M11-M14 `NOT_AUTHORIZED`; M08E `EXCLUDED`; `02M` `FROZEN`; next package beyond PKG-017 `NOT_AUTHORIZED`; production readiness `NOT_CLAIMED` |
+| PKG-017 immediate next workstream | Independent acceptance audit of the PKG-017 definition draft only; this row supersedes the earlier PKG-016 proposal-stage immediate-next-workstream wording without erasing its historical checkpoint |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.
 

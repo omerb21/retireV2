@@ -338,6 +338,10 @@ describe("M10ComparisonScreen", () => {
   });
 
   it.each([
+    ["absent detail", new ApiTransportError({ status: 409, statusText: "Conflict", body: {} })],
+    ["non-object detail", new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: "bad" } })],
+    ["missing blocker code", new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { message: "missing code" } } })],
+    ["missing blocker message", new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { code: "comparison_run_not_current" } } })],
     ["unknown structured code", structuredError("comparison_unknown")],
     ["wrong status for accepted code", structuredError("comparison_run_not_current", 404)],
     ["ordinary transport failure", new Error("network unavailable")],
@@ -409,6 +413,46 @@ describe("M10ComparisonScreen", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("makes A-old discovery success a complete no-op during A-new discovery after A-to-B-to-A", async () => {
+    const oldA = deferred<m09.M09ScenarioSubject[]>();
+    const newA = deferred<m09.M09ScenarioSubject[]>();
+    let aCalls = 0;
+    vi.mocked(m09.listM09Subjects).mockImplementation(clientId => {
+      if (clientId === 2) return Promise.resolve([subject("B-baseline", "baseline")]);
+      aCalls += 1;
+      return aCalls === 1 ? oldA.promise : newA.promise;
+    });
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    await screen.findByText(/No eligible current adjusted run/);
+    fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
+    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+
+    await act(async () => oldA.resolve([
+      subject("A-old-baseline", "baseline"),
+      subject("A-old-adjusted", "adjusted", undefined, "A old adjusted"),
+    ]));
+
+    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.queryByText(/A old adjusted/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Comparator success evidence" })).not.toBeInTheDocument();
+
+    await act(async () => newA.resolve([
+      subject("A-new-baseline", "baseline"),
+      subject("A-new-adjusted", "adjusted", undefined, "A new adjusted"),
+    ]));
+    expect(await screen.findByRole("radio", { name: /A new adjusted/ })).not.toBeChecked();
+    expect(screen.queryByText(/A old adjusted/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading eligible M09 runs…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("discards compare A-old success after switching to B", async () => {
     const oldCompare = deferred<m10.M10ComparisonResponse>();
     vi.mocked(m09.listM09Subjects).mockImplementation(clientId => Promise.resolve([
@@ -448,6 +492,68 @@ describe("M10ComparisonScreen", () => {
     await act(async () => newCompare.resolve(comparisonResult("A-new")));
     expect(await screen.findByText("A-new-fingerprint")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("makes A-old compare success a complete no-op during A-new compare after A-to-B-to-A", async () => {
+    const oldCompare = deferred<m10.M10ComparisonResponse>();
+    const newCompare = deferred<m10.M10ComparisonResponse>();
+    let aDiscoveryCalls = 0;
+    vi.mocked(m09.listM09Subjects).mockImplementation(clientId => {
+      if (clientId === 2) return Promise.resolve([
+        subject("B-baseline", "baseline"),
+        subject("B-adjusted", "adjusted", undefined, "B adjusted"),
+      ]);
+      aDiscoveryCalls += 1;
+      const marker = aDiscoveryCalls === 1 ? "old" : "new";
+      return Promise.resolve([
+        subject(`A-${marker}-baseline`, "baseline"),
+        subject(`A-${marker}-adjusted`, "adjusted", undefined, `A ${marker} adjusted`),
+      ]);
+    });
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    vi.mocked(m10.compareM10Runs).mockImplementationOnce(() => oldCompare.promise).mockImplementationOnce(() => newCompare.promise);
+    renderScreen();
+    await selectFirstCandidateAndCompare();
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    await screen.findByRole("radio", { name: /B adjusted/ });
+    fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
+    const newCandidate = await screen.findByRole("radio", { name: /A new adjusted/ });
+    fireEvent.click(newCandidate);
+    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    expect(newCandidate).toBeChecked();
+    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+
+    await act(async () => oldCompare.resolve(comparisonResult(
+      "A-old",
+      1,
+      "A-old-baseline-run",
+      "A-old-adjusted-run",
+    )));
+
+    expect(newCandidate).toBeChecked();
+    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.queryByText("A-old-fingerprint")).not.toBeInTheDocument();
+    expect(screen.queryByText("A-old-baseline-run")).not.toBeInTheDocument();
+    expect(screen.queryByText("A-old-adjusted-run")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Comparator success evidence" })).not.toBeInTheDocument();
+
+    await act(async () => newCompare.resolve(comparisonResult(
+      "A-new",
+      1,
+      "A-new-baseline-run",
+      "A-new-adjusted-run",
+    )));
+    const evidence = await screen.findByRole("region", { name: "Comparator success evidence" });
+    expect(evidence).toHaveTextContent("A-new-fingerprint");
+    expect(evidence).toHaveTextContent("A-new-baseline-run");
+    expect(evidence).toHaveTextContent("A-new-adjusted-run");
+    expect(newCandidate).toBeChecked();
+    expect(screen.queryByText("Loading comparator evidence…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
   });
 
   it("uses compare request ownership to prevent R1 from overwriting R2 in the same client generation", async () => {

@@ -523,12 +523,9 @@ describe("M10ComparisonScreen", () => {
     expect(newCandidate).toBeChecked();
     expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
 
-    await act(async () => oldCompare.resolve(comparisonResult(
-      "A-old",
-      1,
-      "A-old-baseline-run",
-      "A-old-adjusted-run",
-    )));
+    const oldResult = comparisonResult("A-old", 1, "A-old-baseline-run", "A-old-adjusted-run");
+    oldResult.monthly_comparisons[0].gross_inflow_total.reference_value = "111.11";
+    await act(async () => oldCompare.resolve(oldResult));
 
     expect(newCandidate).toBeChecked();
     expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
@@ -536,20 +533,19 @@ describe("M10ComparisonScreen", () => {
     expect(screen.queryByText("A-old-fingerprint")).not.toBeInTheDocument();
     expect(screen.queryByText("A-old-baseline-run")).not.toBeInTheDocument();
     expect(screen.queryByText("A-old-adjusted-run")).not.toBeInTheDocument();
+    expect(screen.queryByText("111.11")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Comparator success evidence" })).not.toBeInTheDocument();
 
-    await act(async () => newCompare.resolve(comparisonResult(
-      "A-new",
-      1,
-      "A-new-baseline-run",
-      "A-new-adjusted-run",
-    )));
+    const newResult = comparisonResult("A-new", 1, "A-new-baseline-run", "A-new-adjusted-run");
+    newResult.monthly_comparisons[0].gross_inflow_total.reference_value = "222.22";
+    await act(async () => newCompare.resolve(newResult));
     const evidence = await screen.findByRole("region", { name: "Comparator success evidence" });
     expect(evidence).toHaveTextContent("A-new-fingerprint");
     expect(evidence).toHaveTextContent("A-new-baseline-run");
     expect(evidence).toHaveTextContent("A-new-adjusted-run");
+    expect(evidence).toHaveTextContent("222.22");
     expect(newCandidate).toBeChecked();
     expect(screen.queryByText("Loading comparator evidence…")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

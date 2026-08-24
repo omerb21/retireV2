@@ -38,6 +38,101 @@ type ComparatorBlocker = {
   message: string;
 };
 
+type AdjustmentEvidence = M09ScenarioSubject["adjustments"][number];
+
+const ADJUSTMENT_AMOUNT = /^(?:0\.(?:0[1-9]|[1-9]\d)|[1-9]\d{0,17}\.\d{2})$/;
+const ADJUSTMENT_MONTH = /^\d{4}-(?:0[1-9]|1[0-2])$/;
+const ADJUSTMENT_PROVENANCE = "planner_declared_scenario_adjustment";
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function selectedAdjustmentEvidence(candidate: Candidate | null, clientId: number): AdjustmentEvidence[] | null {
+  if (candidate === null) return null;
+  const { run, subject } = candidate;
+  if (!isNonEmptyString(subject.scenario_subject_id)
+    || subject.scenario_subject_id !== run.scenario_subject_id
+    || subject.client_id !== clientId
+    || subject.scenario_family !== M09_SUBJECT_FAMILY
+    || subject.scenario_contract_version !== "v1"
+    || subject.combined_contract_identifier !== "declared_retirement_cashflow_adjustments/v1"
+    || subject.subject_type !== "adjusted"
+    || subject.provenance !== ADJUSTMENT_PROVENANCE
+    || typeof subject.adjustment_manifest !== "object"
+    || subject.adjustment_manifest === null
+    || Array.isArray(subject.adjustment_manifest)
+    || !isNonEmptyString(subject.adjustment_manifest_fingerprint)
+    || !isNonEmptyString(subject.calculation_semantic_fingerprint)
+    || !isNonEmptyString(subject.integrity_fingerprint)
+    || !isNonEmptyString(subject.actor)
+    || subject.actor_is_authentication !== false
+    || !isNonEmptyString(subject.created_at)
+    || !Array.isArray(subject.adjustments)
+    || subject.adjustments.length === 0
+    || run.is_current !== true
+    || run.eligible_for_m10 !== true) return null;
+
+  const adjustmentIds = new Set<string>();
+  for (let index = 0; index < subject.adjustments.length; index += 1) {
+    const adjustment = subject.adjustments[index] as unknown as Record<string, unknown>;
+    if (typeof adjustment !== "object" || adjustment === null
+      || !isNonEmptyString(adjustment.adjustment_id)
+      || adjustmentIds.has(adjustment.adjustment_id)
+      || typeof adjustment.ordinal !== "number"
+      || !Number.isInteger(adjustment.ordinal)
+      || adjustment.ordinal !== index + 1
+      || (adjustment.adjustment_type !== "declared_additional_monthly_income"
+        && adjustment.adjustment_type !== "declared_additional_monthly_expense")
+      || typeof adjustment.amount !== "string"
+      || !ADJUSTMENT_AMOUNT.test(adjustment.amount)
+      || typeof adjustment.start_month !== "string"
+      || !ADJUSTMENT_MONTH.test(adjustment.start_month)
+      || typeof adjustment.end_month !== "string"
+      || !ADJUSTMENT_MONTH.test(adjustment.end_month)
+      || adjustment.end_month < adjustment.start_month
+      || adjustment.provenance !== ADJUSTMENT_PROVENANCE
+      || !isNonEmptyString(adjustment.semantic_fingerprint)
+      || !isNonEmptyString(adjustment.actor)
+      || !isNonEmptyString(adjustment.created_at)) return null;
+    adjustmentIds.add(adjustment.adjustment_id);
+  }
+  return subject.adjustments;
+}
+
+function adjustmentTypeLabel(type: AdjustmentEvidence["adjustment_type"]): string {
+  return type === "declared_additional_monthly_income"
+    ? "Declared additional monthly income"
+    : "Declared additional monthly expense";
+}
+
+function SelectedAdjustmentEvidence({ candidate, clientId, onClear }: {
+  candidate: Candidate;
+  clientId: number;
+  onClear: () => void;
+}) {
+  const adjustments = selectedAdjustmentEvidence(candidate, clientId);
+  return <section aria-label="Selected scenario adjustment evidence">
+    <h3>Selected scenario adjustment evidence</h3>
+    <p>Scenario subject ID: {candidate.subject.scenario_subject_id}</p>
+    <button type="button" onClick={onClear}>Clear selected scenario</button>
+    {adjustments === null ? <p>Selected scenario adjustment evidence unavailable.</p> : <ol>
+      {adjustments.map(adjustment => <li key={adjustment.adjustment_id}>
+        <h4>{adjustmentTypeLabel(adjustment.adjustment_type)}</h4>
+        <dl>
+          <dt>Occurrence ID</dt><dd>{adjustment.adjustment_id}</dd>
+          <dt>Ordinal</dt><dd>{adjustment.ordinal}</dd>
+          <dt>Adjustment type</dt><dd><code>{adjustment.adjustment_type}</code></dd>
+          <dt>Amount</dt><dd>{adjustment.amount}</dd>
+          <dt>Start month</dt><dd>{adjustment.start_month}</dd>
+          <dt>End month</dt><dd>{adjustment.end_month}</dd>
+          <dt>Provenance</dt><dd><code>{adjustment.provenance}</code></dd>
+        </dl>
+      </li>)}
+    </ol>}
+  </section>;
+}
+
 const BLOCKER_TEXT: Record<M10ComparatorBlockerCode, string> = {
   comparison_run_unavailable: "A requested comparison run is unavailable.",
   comparison_same_subject: "The two runs belong to the same scenario subject.",
@@ -306,6 +401,15 @@ export function M10ComparisonScreen() {
     setCompareError(null);
   };
 
+  const clearSelected = () => {
+    compareEpoch.current += 1;
+    setSelectedAdjustedRunId(null);
+    setCompareLoading(false);
+    setResult(null);
+    setBlocker(null);
+    setCompareError(null);
+  };
+
   const compare = async () => {
     if (clientId === null || baseline === null || selectedAdjustedRunId === null) return;
     const selected = adjustedCandidates.find(candidate => candidate.run.run_id === selectedAdjustedRunId);
@@ -338,6 +442,9 @@ export function M10ComparisonScreen() {
   const visibleBaseline = stateBelongsToCurrentContext ? baseline : null;
   const visibleCandidates = stateBelongsToCurrentContext ? adjustedCandidates : [];
   const visibleSelectedRunId = stateBelongsToCurrentContext ? selectedAdjustedRunId : null;
+  const visibleSelectedCandidate = visibleSelectedRunId === null
+    ? null
+    : visibleCandidates.find(candidate => candidate.run.run_id === visibleSelectedRunId) ?? null;
 
   return <main>
     <h2>M10 Scenario comparison</h2>
@@ -373,6 +480,12 @@ export function M10ComparisonScreen() {
         <p>Candidate order is technical and neutral; it does not express preference or ranking.</p>
       </fieldset> : null}
     </section>
+
+    {visibleSelectedCandidate ? <SelectedAdjustmentEvidence
+      candidate={visibleSelectedCandidate}
+      clientId={clientId}
+      onClear={clearSelected}
+    /> : null}
 
     <section aria-label="Comparator invocation">
       <h3>Comparator invocation</h3>

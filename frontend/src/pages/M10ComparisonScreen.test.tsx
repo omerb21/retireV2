@@ -34,12 +34,35 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+function adjustment(
+  id: string,
+  ordinal = 1,
+  type: m09.M09ScenarioSubject["adjustments"][number]["adjustment_type"] = "declared_additional_monthly_income",
+  amount = "100.00",
+  startMonth = "2026-01",
+  endMonth = "2026-02",
+): m09.M09ScenarioSubject["adjustments"][number] {
+  return {
+    adjustment_id: id,
+    ordinal,
+    adjustment_type: type,
+    amount,
+    start_month: startMonth,
+    end_month: endMonth,
+    provenance: "planner_declared_scenario_adjustment",
+    semantic_fingerprint: "d".repeat(64),
+    actor: "system:m09",
+    created_at: "2026-01-01T00:00:00.000000",
+  };
+}
+
 function subject(
   id: string,
   type: "baseline" | "adjusted",
   createdAt = "2026-01-01T00:00:00.000000",
   label: string | null = type === "baseline" ? null : `Adjusted ${id}`,
 ): m09.M09ScenarioSubject {
+  const adjusted = type === "adjusted";
   return {
     scenario_subject_id: id,
     client_id: 1,
@@ -49,15 +72,23 @@ function subject(
     subject_type: type,
     display_label: label,
     adjustment_manifest: {},
-    adjustment_manifest_fingerprint: `manifest-${id}`,
-    calculation_semantic_fingerprint: `semantic-${id}`,
-    integrity_fingerprint: `integrity-${id}`,
-    provenance: "server",
-    actor: "system",
+    adjustment_manifest_fingerprint: "a".repeat(64),
+    calculation_semantic_fingerprint: "b".repeat(64),
+    integrity_fingerprint: "c".repeat(64),
+    provenance: adjusted ? "planner_declared_scenario_adjustment" : "server_resolved_no_scenario_adjustments",
+    actor: "system:m09",
     actor_is_authentication: false,
     created_at: createdAt,
-    adjustments: [],
+    adjustments: adjusted ? [adjustment(`${id}-adjustment`)] : [],
   };
+}
+
+function withAdjustments(
+  value: m09.M09ScenarioSubject,
+  adjustments: m09.M09ScenarioSubject["adjustments"],
+  clientId = value.client_id,
+): m09.M09ScenarioSubject {
+  return { ...value, client_id: clientId, adjustments };
 }
 
 function run(
@@ -293,6 +324,173 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     expect(await screen.findByText(/unexpected scenario-subject contract evidence/)).toBeInTheDocument();
     expect(m09.listM09SubjectRuns).not.toHaveBeenCalled();
+  });
+
+  it("renders both accepted adjustment types with exact literal identity, order, amounts, months, and provenance", async () => {
+    const selected = withAdjustments(subject("literal", "adjusted"), [
+      adjustment("occurrence-income", 1, "declared_additional_monthly_income", "9007199254740993.00", "2026-01", "2026-03"),
+      adjustment("occurrence-expense", 2, "declared_additional_monthly_expense", "999999999999999999.99", "2027-10", "2027-12"),
+    ]);
+    readyDiscovery([selected]);
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+
+    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
+    expect(evidence).toHaveTextContent("Scenario subject ID: literal");
+    expect(evidence).toHaveTextContent("Declared additional monthly income");
+    expect(evidence).toHaveTextContent("Declared additional monthly expense");
+    expect(evidence).toHaveTextContent("9007199254740993.00");
+    expect(evidence).toHaveTextContent("999999999999999999.99");
+    expect(evidence).toHaveTextContent("2026-01");
+    expect(evidence).toHaveTextContent("2026-03");
+    expect(evidence).toHaveTextContent("2027-10");
+    expect(evidence).toHaveTextContent("2027-12");
+    expect(evidence).toHaveTextContent("planner_declared_scenario_adjustment");
+    const rows = within(evidence).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("occurrence-income");
+    expect(rows[0]).toHaveTextContent("Ordinal1");
+    expect(rows[1]).toHaveTextContent("occurrence-expense");
+    expect(rows[1]).toHaveTextContent("Ordinal2");
+  });
+
+  it("preserves duplicate-looking occurrences and authoritative server array order without sorting", async () => {
+    const selected = withAdjustments(subject("duplicates", "adjusted"), [
+      adjustment("server-first", 1, "declared_additional_monthly_expense", "500.00", "2028-06", "2028-06"),
+      adjustment("server-second", 2, "declared_additional_monthly_expense", "500.00", "2028-06", "2028-06"),
+      adjustment("server-third", 3, "declared_additional_monthly_income", "0.01", "2025-01", "2025-01"),
+    ]);
+    readyDiscovery([selected]);
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+
+    const rows = within(screen.getByRole("region", { name: "Selected scenario adjustment evidence" })).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining("server-first"),
+      expect.stringContaining("server-second"),
+      expect.stringContaining("server-third"),
+    ]);
+    expect(rows[0]).toHaveTextContent("500.00");
+    expect(rows[1]).toHaveTextContent("500.00");
+  });
+
+  it.each([
+    ["missing adjustment_id", (row: Record<string, unknown>) => { delete row.adjustment_id; }],
+    ["invalid ordinal", (row: Record<string, unknown>) => { row.ordinal = 1.5; }],
+    ["unsupported adjustment type", (row: Record<string, unknown>) => { row.adjustment_type = "monthly_income"; }],
+    ["invalid amount format", (row: Record<string, unknown>) => { row.amount = "1.0"; }],
+    ["amount below minimum", (row: Record<string, unknown>) => { row.amount = "0.00"; }],
+    ["amount above maximum", (row: Record<string, unknown>) => { row.amount = "1000000000000000000.00"; }],
+    ["invalid start month", (row: Record<string, unknown>) => { row.start_month = "2026-1"; }],
+    ["invalid end month", (row: Record<string, unknown>) => { row.end_month = "2026-13"; }],
+    ["end before start", (row: Record<string, unknown>) => { row.start_month = "2026-03"; row.end_month = "2026-02"; }],
+    ["wrong provenance", (row: Record<string, unknown>) => { row.provenance = "server"; }],
+    ["missing required occurrence field", (row: Record<string, unknown>) => { delete row.actor; }],
+    ["duplicate occurrence identity", (row: Record<string, unknown>) => { row.adjustment_id = "valid-first"; }],
+    ["conflicting array order and ordinal", (row: Record<string, unknown>) => { row.ordinal = 3; }],
+  ])("withholds the complete adjustment list for %s without creating a comparator blocker", async (_label, mutate) => {
+    const rows = [adjustment("valid-first"), adjustment("malformed-second", 2)];
+    mutate(rows[1] as unknown as Record<string, unknown>);
+    readyDiscovery([withAdjustments(subject("malformed", "adjusted"), rows)]);
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+
+    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
+    expect(evidence).toHaveTextContent("Selected scenario adjustment evidence unavailable.");
+    expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
+    expect(evidence).not.toHaveTextContent("valid-first");
+    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("withholds an empty adjusted occurrence set as malformed evidence", async () => {
+    readyDiscovery([withAdjustments(subject("empty", "adjusted"), [])]);
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
+    expect(evidence).toHaveTextContent("Selected scenario adjustment evidence unavailable.");
+    expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["foreign client identity", (value: Record<string, unknown>) => { value.client_id = 2; }],
+    ["wrong adjusted-subject provenance", (value: Record<string, unknown>) => { value.provenance = "server"; }],
+    ["missing manifest fingerprint", (value: Record<string, unknown>) => { value.adjustment_manifest_fingerprint = ""; }],
+    ["missing calculation fingerprint", (value: Record<string, unknown>) => { value.calculation_semantic_fingerprint = null; }],
+    ["malformed manifest evidence", (value: Record<string, unknown>) => { value.adjustment_manifest = []; }],
+  ])("withholds selected adjustment rows for %s", async (_label, mutate) => {
+    const selected = subject("invalid-subject", "adjusted") as unknown as Record<string, unknown>;
+    mutate(selected);
+    readyDiscovery([selected as unknown as m09.M09ScenarioSubject]);
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
+    expect(evidence).toHaveTextContent("Selected scenario adjustment evidence unavailable.");
+    expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("replaces S1 evidence immediately with only S2 evidence and clears it without fallback", async () => {
+    const s1 = withAdjustments(subject("S1", "adjusted", "2026-01-02T00:00:00.000000"), [adjustment("S1-occurrence", 1, "declared_additional_monthly_income", "111.11")]);
+    const s2 = withAdjustments(subject("S2", "adjusted", "2026-01-03T00:00:00.000000"), [adjustment("S2-occurrence", 1, "declared_additional_monthly_expense", "222.22")]);
+    readyDiscovery([s1, s2]);
+    renderScreen();
+    const radios = await screen.findAllByRole("radio");
+    fireEvent.click(radios[0]);
+    expect(screen.getByText("S1-occurrence")).toBeInTheDocument();
+    fireEvent.click(radios[1]);
+    expect(screen.queryByText("S1-occurrence")).not.toBeInTheDocument();
+    expect(screen.getByText("S2-occurrence")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear selected scenario" }));
+    expect(screen.queryByRole("region", { name: "Selected scenario adjustment evidence" })).not.toBeInTheDocument();
+    expect(radios[1]).not.toBeChecked();
+  });
+
+  it("removes selected A evidence immediately when the current candidate is invalidated by A-to-B navigation", async () => {
+    vi.mocked(m09.listM09Subjects).mockImplementation(clientId => Promise.resolve([
+      { ...subject(`${clientId}-baseline`, "baseline"), client_id: clientId },
+      withAdjustments(subject(`${clientId}-adjusted`, "adjusted"), [adjustment(`${clientId}-occurrence`, 1, "declared_additional_monthly_income", clientId === 1 ? "111.11" : "222.22")], clientId),
+    ]));
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+    expect(screen.getByText("1-occurrence")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    expect(screen.queryByText("1-occurrence")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("radio"));
+    expect(screen.getByText("2-occurrence")).toBeInTheDocument();
+    expect(screen.queryByText("111.11")).not.toBeInTheDocument();
+  });
+
+  it("does not repopulate A-old evidence in a new A generation after A-to-B-to-A", async () => {
+    const newA = deferred<m09.M09ScenarioSubject[]>();
+    let aCalls = 0;
+    vi.mocked(m09.listM09Subjects).mockImplementation(clientId => {
+      if (clientId === 2) return Promise.resolve([{ ...subject("B-baseline", "baseline"), client_id: 2 }]);
+      aCalls += 1;
+      if (aCalls === 2) return newA.promise;
+      return Promise.resolve([
+        subject("A-old-baseline", "baseline"),
+        withAdjustments(subject("A-old-adjusted", "adjusted"), [adjustment("A-old-occurrence", 1, "declared_additional_monthly_income", "9007199254740993.00", "2026-01", "2026-02")]),
+      ]);
+    });
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    renderScreen();
+    fireEvent.click(await screen.findByRole("radio"));
+    expect(screen.getByText("A-old-occurrence")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    await screen.findByText(/No eligible current adjusted run/);
+    fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
+    expect(screen.queryByText("A-old-occurrence")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    await act(async () => newA.resolve([
+      subject("A-new-baseline", "baseline"),
+      withAdjustments(subject("A-new-adjusted", "adjusted"), [adjustment("A-new-occurrence", 1, "declared_additional_monthly_expense", "999999999999999999.99", "2028-11", "2028-12")]),
+    ]));
+    fireEvent.click(await screen.findByRole("radio"));
+    expect(screen.getByText("A-new-occurrence")).toBeInTheDocument();
+    expect(screen.queryByText("A-old-occurrence")).not.toBeInTheDocument();
+    expect(screen.queryByText("9007199254740993.00")).not.toBeInTheDocument();
   });
 
   it("invokes the exact role-bound request and renders exact server strings, relations, versions, and evidence", async () => {

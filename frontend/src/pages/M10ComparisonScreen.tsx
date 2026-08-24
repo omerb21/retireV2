@@ -106,16 +106,14 @@ function adjustmentTypeLabel(type: AdjustmentEvidence["adjustment_type"]): strin
     : "Declared additional monthly expense";
 }
 
-function SelectedAdjustmentEvidence({ candidate, clientId, onClear }: {
+function SelectedAdjustmentEvidence({ candidate, clientId }: {
   candidate: Candidate;
   clientId: number;
-  onClear: () => void;
 }) {
   const adjustments = selectedAdjustmentEvidence(candidate, clientId);
   return <section aria-label="Selected scenario adjustment evidence">
     <h3>Selected scenario adjustment evidence</h3>
     <p>Scenario subject ID: {candidate.subject.scenario_subject_id}</p>
-    <button type="button" onClick={onClear}>Clear selected scenario</button>
     {adjustments === null ? <p>Selected scenario adjustment evidence unavailable.</p> : <ol>
       {adjustments.map(adjustment => <li key={adjustment.adjustment_id}>
         <h4>{adjustmentTypeLabel(adjustment.adjustment_type)}</h4>
@@ -401,15 +399,6 @@ export function M10ComparisonScreen() {
     setCompareError(null);
   };
 
-  const clearSelected = () => {
-    compareEpoch.current += 1;
-    setSelectedAdjustedRunId(null);
-    setCompareLoading(false);
-    setResult(null);
-    setBlocker(null);
-    setCompareError(null);
-  };
-
   const compare = async () => {
     if (clientId === null || baseline === null || selectedAdjustedRunId === null) return;
     const selected = adjustedCandidates.find(candidate => candidate.run.run_id === selectedAdjustedRunId);
@@ -484,7 +473,6 @@ export function M10ComparisonScreen() {
     {visibleSelectedCandidate ? <SelectedAdjustmentEvidence
       candidate={visibleSelectedCandidate}
       clientId={clientId}
-      onClear={clearSelected}
     /> : null}
 
     <section aria-label="Comparator invocation">

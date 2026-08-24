@@ -430,20 +430,21 @@ describe("M10ComparisonScreen", () => {
     expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
   });
 
-  it("replaces S1 evidence immediately with only S2 evidence and clears it without fallback", async () => {
+  it("replaces S1 evidence immediately with only S2 evidence without adding a clear-selection action", async () => {
     const s1 = withAdjustments(subject("S1", "adjusted", "2026-01-02T00:00:00.000000"), [adjustment("S1-occurrence", 1, "declared_additional_monthly_income", "111.11")]);
     const s2 = withAdjustments(subject("S2", "adjusted", "2026-01-03T00:00:00.000000"), [adjustment("S2-occurrence", 1, "declared_additional_monthly_expense", "222.22")]);
     readyDiscovery([s1, s2]);
     renderScreen();
     const radios = await screen.findAllByRole("radio");
+    expect(screen.queryByRole("region", { name: "Selected scenario adjustment evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear selected scenario" })).not.toBeInTheDocument();
     fireEvent.click(radios[0]);
     expect(screen.getByText("S1-occurrence")).toBeInTheDocument();
     fireEvent.click(radios[1]);
     expect(screen.queryByText("S1-occurrence")).not.toBeInTheDocument();
     expect(screen.getByText("S2-occurrence")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear selected scenario" }));
-    expect(screen.queryByRole("region", { name: "Selected scenario adjustment evidence" })).not.toBeInTheDocument();
-    expect(radios[1]).not.toBeChecked();
+    expect(radios[1]).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Clear selected scenario" })).not.toBeInTheDocument();
   });
 
   it("removes selected A evidence immediately when the current candidate is invalidated by A-to-B navigation", async () => {

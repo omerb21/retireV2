@@ -8,6 +8,8 @@ import * as m10 from "../api/m10ComparisonApi";
 import { AppRoutes } from "../routes/AppRoutes";
 import { M10ComparisonScreen } from "./M10ComparisonScreen";
 
+const BASELINE_PROVENANCE = "server_resolved_no_scenario_adjustments";
+
 vi.mock("../api/m09CashflowApi", async () => {
   const actual = await vi.importActual<typeof import("../api/m09CashflowApi")>("../api/m09CashflowApi");
   return { ...actual, listM09Subjects: vi.fn(), listM09SubjectRuns: vi.fn() };
@@ -71,7 +73,7 @@ function subject(
     combined_contract_identifier: "declared_retirement_cashflow_adjustments/v1",
     subject_type: type,
     display_label: label,
-    adjustment_manifest: {},
+    adjustment_manifest: adjusted ? {} : { baseline_evidence: BASELINE_PROVENANCE },
     adjustment_manifest_fingerprint: "a".repeat(64),
     calculation_semantic_fingerprint: "b".repeat(64),
     integrity_fingerprint: "c".repeat(64),
@@ -275,6 +277,7 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     expect(await screen.findByText(/no eligible current baseline run/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
   });
 
   it("fails closed when two apparent baseline subjects are returned", async () => {
@@ -324,6 +327,135 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     expect(await screen.findByText(/unexpected scenario-subject contract evidence/)).toBeInTheDocument();
     expect(m09.listM09SubjectRuns).not.toHaveBeenCalled();
+  });
+
+  it("renders exact corroborated server-owned baseline evidence from the retained candidate without a new request", async () => {
+    readyDiscovery();
+    renderScreen();
+
+    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
+    expect(screen.getByText("Subject ID: baseline")).toBeInTheDocument();
+    expect(evidence).toHaveTextContent("No planner-declared scenario adjustments.");
+    expect(evidence).toHaveTextContent(BASELINE_PROVENANCE);
+    expect(evidence).not.toHaveTextContent("evidence unavailable");
+    expect(m09.listM09Subjects).toHaveBeenCalledTimes(1);
+    expect(m09.listM09SubjectRuns).toHaveBeenCalledTimes(2);
+    expect(m10.compareM10Runs).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing subject provenance", (value: Record<string, unknown>) => { delete value.provenance; }],
+    ["null subject provenance", (value: Record<string, unknown>) => { value.provenance = null; }],
+    ["non-string subject provenance", (value: Record<string, unknown>) => { value.provenance = 7; }],
+    ["wrong subject provenance", (value: Record<string, unknown>) => { value.provenance = "server_owned"; }],
+    ["normalized subject provenance", (value: Record<string, unknown>) => { value.provenance = ` ${BASELINE_PROVENANCE} `; }],
+    ["missing manifest marker", (value: Record<string, unknown>) => { value.adjustment_manifest = {}; }],
+    ["null manifest marker", (value: Record<string, unknown>) => { value.adjustment_manifest = { baseline_evidence: null }; }],
+    ["non-string manifest marker", (value: Record<string, unknown>) => { value.adjustment_manifest = { baseline_evidence: 7 }; }],
+    ["wrong manifest marker", (value: Record<string, unknown>) => { value.adjustment_manifest = { baseline_evidence: "server_owned" }; }],
+    ["case-changed manifest marker", (value: Record<string, unknown>) => { value.adjustment_manifest = { baseline_evidence: BASELINE_PROVENANCE.toUpperCase() }; }],
+    ["null manifest", (value: Record<string, unknown>) => { value.adjustment_manifest = null; }],
+    ["array manifest", (value: Record<string, unknown>) => { value.adjustment_manifest = []; }],
+    ["primitive manifest", (value: Record<string, unknown>) => { value.adjustment_manifest = BASELINE_PROVENANCE; }],
+  ])("fails the optional baseline presentation closed for %s", async (_label, mutate) => {
+    const baseline = subject("baseline", "baseline") as unknown as Record<string, unknown>;
+    mutate(baseline);
+    vi.mocked(m09.listM09Subjects).mockResolvedValue([
+      baseline as unknown as m09.M09ScenarioSubject,
+      subject("adjusted", "adjusted"),
+    ]);
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    renderScreen();
+
+    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
+    expect(within(evidence).getByText("Server-owned baseline reference evidence unavailable.")).toBeInTheDocument();
+    expect(evidence).not.toHaveTextContent("No planner-declared scenario adjustments.");
+    expect(evidence.querySelector("code")).toBeNull();
+  });
+
+  it("never infers baseline meaning from an empty adjustment array", async () => {
+    const baseline = subject("empty-only", "baseline") as unknown as Record<string, unknown>;
+    delete baseline.provenance;
+    baseline.adjustment_manifest = {};
+    baseline.adjustments = [];
+    vi.mocked(m09.listM09Subjects).mockResolvedValue([
+      baseline as unknown as m09.M09ScenarioSubject,
+      subject("adjusted", "adjusted"),
+    ]);
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    renderScreen();
+
+    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
+    expect(evidence).toHaveTextContent("Server-owned baseline reference evidence unavailable.");
+    expect(evidence).not.toHaveTextContent("No planner-declared scenario adjustments.");
+  });
+
+  it.each([
+    ["wrong client", (value: m09.M09ScenarioSubject) => ({ ...value, client_id: 2 }), run("baseline")],
+    ["empty identifier", (value: m09.M09ScenarioSubject) => ({ ...value, scenario_subject_id: "" }), run("")],
+    ["subject/run mismatch", (value: m09.M09ScenarioSubject) => value, run("other-subject", "baseline-run")],
+  ])("fails the optional baseline presentation closed for reachable %s binding", async (_label, change, baselineRun) => {
+    const baseline = change(subject("baseline", "baseline"));
+    vi.mocked(m09.listM09Subjects).mockResolvedValue([baseline, subject("adjusted", "adjusted")]);
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([
+      subjectId === baseline.scenario_subject_id ? baselineRun : run(subjectId),
+    ]));
+    renderScreen();
+
+    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
+    expect(evidence).toHaveTextContent("Server-owned baseline reference evidence unavailable.");
+  });
+
+  it.each([
+    ["wrong role", { subject_type: "adjusted" }],
+    ["wrong family", { scenario_family: "other_family" }],
+    ["wrong version", { scenario_contract_version: "v2" }],
+    ["wrong combined identifier", { combined_contract_identifier: "declared_retirement_cashflow_adjustments/v2" }],
+  ])("does not create a baseline-reference panel when discovery rejects %s", async (_label, override) => {
+    const invalid = { ...subject("baseline", "baseline"), ...override } as unknown as m09.M09ScenarioSubject;
+    vi.mocked(m09.listM09Subjects).mockResolvedValue([invalid, subject("adjusted", "adjusted")]);
+    vi.mocked(m09.listM09SubjectRuns).mockResolvedValue([run("baseline")]);
+    renderScreen();
+
+    await screen.findByText(/Comparison unavailable:/);
+    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["non-current run", run("baseline", "baseline-run", true, false)],
+    ["non-eligible run", run("baseline", "baseline-run", false, true)],
+  ])("does not create a baseline-reference panel for %s under existing discovery", async (_label, baselineRun) => {
+    vi.mocked(m09.listM09Subjects).mockResolvedValue([subject("baseline", "baseline"), subject("adjusted", "adjusted")]);
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([
+      subjectId === "baseline" ? baselineRun : run(subjectId),
+    ]));
+    renderScreen();
+
+    await screen.findByText(/no eligible current baseline run/);
+    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
+  });
+
+  it("keeps malformed optional baseline evidence separate from PKG-017 and comparator success", async () => {
+    const baseline = subject("baseline", "baseline") as unknown as Record<string, unknown>;
+    baseline.adjustment_manifest = {};
+    vi.mocked(m09.listM09Subjects).mockResolvedValue([
+      baseline as unknown as m09.M09ScenarioSubject,
+      withAdjustments(subject("adjusted", "adjusted"), [adjustment("preserved-occurrence")]),
+    ]);
+    vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
+    vi.mocked(m10.compareM10Runs).mockResolvedValue(comparisonResult());
+    renderScreen();
+
+    await selectFirstCandidateAndCompare();
+    expect(screen.getByRole("region", { name: "Server-owned baseline reference" }))
+      .toHaveTextContent("Server-owned baseline reference evidence unavailable.");
+    expect(screen.getByRole("region", { name: "Selected scenario adjustment evidence" }))
+      .toHaveTextContent("preserved-occurrence");
+    expect(await screen.findByRole("region", { name: "Comparator success evidence" })).toBeInTheDocument();
+    expect(m10.compareM10Runs).toHaveBeenCalledWith(1, {
+      reference_run_id: "baseline-run",
+      compared_run_id: "adjusted-run",
+    });
   });
 
   it("renders both accepted adjustment types with exact literal identity, order, amounts, months, and provenance", async () => {
@@ -456,10 +588,15 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("1-occurrence")).toBeInTheDocument();
+    expect(screen.getByText("Subject ID: 1-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     expect(screen.queryByText("1-occurrence")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("2-occurrence")).toBeInTheDocument();
+    expect(screen.getByText("Subject ID: 2-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
     expect(screen.queryByText("111.11")).not.toBeInTheDocument();
   });
 
@@ -479,10 +616,15 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("A-old-occurrence")).toBeInTheDocument();
+    expect(screen.getByText("Subject ID: A-old-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     await screen.findByText(/No eligible current adjusted run/);
+    expect(screen.getByText("Subject ID: B-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
     expect(screen.queryByText("A-old-occurrence")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
     expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
     await act(async () => newA.resolve([
       subject("A-new-baseline", "baseline"),
@@ -490,6 +632,9 @@ describe("M10ComparisonScreen", () => {
     ]));
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("A-new-occurrence")).toBeInTheDocument();
+    expect(screen.getByText("Subject ID: A-new-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
+    expect(screen.queryByText("Subject ID: A-old-baseline")).not.toBeInTheDocument();
     expect(screen.queryByText("A-old-occurrence")).not.toBeInTheDocument();
     expect(screen.queryByText("9007199254740993.00")).not.toBeInTheDocument();
   });

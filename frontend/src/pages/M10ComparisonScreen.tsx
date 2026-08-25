@@ -43,9 +43,42 @@ type AdjustmentEvidence = M09ScenarioSubject["adjustments"][number];
 const ADJUSTMENT_AMOUNT = /^(?:0\.(?:0[1-9]|[1-9]\d)|[1-9]\d{0,17}\.\d{2})$/;
 const ADJUSTMENT_MONTH = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const ADJUSTMENT_PROVENANCE = "planner_declared_scenario_adjustment";
+const BASELINE_PROVENANCE = "server_resolved_no_scenario_adjustments";
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function hasServerOwnedBaselineEvidence(candidate: Candidate, clientId: number): boolean {
+  const { run, subject } = candidate;
+  return isNonEmptyString(subject.scenario_subject_id)
+    && subject.scenario_subject_id === run.scenario_subject_id
+    && subject.client_id === clientId
+    && subject.scenario_family === M09_SUBJECT_FAMILY
+    && subject.scenario_contract_version === "v1"
+    && subject.combined_contract_identifier === "declared_retirement_cashflow_adjustments/v1"
+    && subject.subject_type === "baseline"
+    && run.is_current === true
+    && run.eligible_for_m10 === true
+    && subject.provenance === BASELINE_PROVENANCE
+    && typeof subject.adjustment_manifest === "object"
+    && subject.adjustment_manifest !== null
+    && !Array.isArray(subject.adjustment_manifest)
+    && subject.adjustment_manifest.baseline_evidence === BASELINE_PROVENANCE;
+}
+
+function ServerOwnedBaselineReference({ candidate, clientId }: {
+  candidate: Candidate;
+  clientId: number;
+}) {
+  const valid = hasServerOwnedBaselineEvidence(candidate, clientId);
+  return <section aria-label="Server-owned baseline reference">
+    <h3>Server-owned baseline reference</h3>
+    {valid ? <>
+      <p>No planner-declared scenario adjustments.</p>
+      <p>Provenance: <code>{BASELINE_PROVENANCE}</code></p>
+    </> : <p>Server-owned baseline reference evidence unavailable.</p>}
+  </section>;
 }
 
 function selectedAdjustmentEvidence(candidate: Candidate | null, clientId: number): AdjustmentEvidence[] | null {
@@ -469,6 +502,11 @@ export function M10ComparisonScreen() {
         <p>Candidate order is technical and neutral; it does not express preference or ranking.</p>
       </fieldset> : null}
     </section>
+
+    {visibleBaseline ? <ServerOwnedBaselineReference
+      candidate={visibleBaseline}
+      clientId={clientId}
+    /> : null}
 
     {visibleSelectedCandidate ? <SelectedAdjustmentEvidence
       candidate={visibleSelectedCandidate}

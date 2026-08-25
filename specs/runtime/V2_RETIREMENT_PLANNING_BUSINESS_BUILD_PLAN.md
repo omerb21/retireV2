@@ -189,6 +189,23 @@ M10 remains `BLOCKED_FOR_LOGIC_DETAIL`; M11-M14 remain `NOT_AUTHORIZED`; M08E
 remains `EXCLUDED`; `02M` remains `FROZEN`; the next package beyond PKG-017 is
 `NOT_AUTHORIZED`; and production readiness is `NOT_CLAIMED`.
 
+### PKG-018 Controlling Proposal-Stage Update
+
+This narrow checkpoint supersedes the PKG-017 proposal-stage wording only for
+the active next-work item and preserves its historical evidence. PKG-015,
+PKG-016, and PKG-017 are `CLOSED_ON_MASTER`.
+
+PKG-018 is `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE` for frontend-only
+presentation of exact server-owned baseline reference evidence already retained
+by existing M10 discovery. Its classification is `FRONTEND_PRESENTATION_ONLY`,
+its business authority is `NO_NEW_M10_BUSINESS_AUTHORITY`, and implementation is
+`NOT_AUTHORIZED`. It authorizes no empty-array inference, second fetch,
+backend/API expansion, manifest comparison, calculation, causal attribution,
+selection/reset authority, persistence, or diagnostics product. Broad M10
+remains `BLOCKED_FOR_LOGIC_DETAIL`; M11-M14 remain `NOT_AUTHORIZED`; M08E
+remains `EXCLUDED`; `02M` remains `FROZEN`; the next package beyond PKG-018 is
+`NOT_AUTHORIZED`; and production readiness is `NOT_CLAIMED`.
+
 ## 7. Explicit Non-Goals
 
 - This is not a full V1 parity proof.
@@ -263,6 +280,8 @@ remains `EXCLUDED`; `02M` remains `FROZEN`; the next package beyond PKG-017 is
 | Next package authorization | `NOT_AUTHORIZED` |
 | PKG-017 controlling definition-stage status | `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE`; package: `PKG-017 — M10 Selected Scenario Adjustment Evidence Presentation Foundation`; definition: `specs/runtime/PKG_017_FINAL_PACKAGE_DEFINITION.md`; classification: `FRONTEND_PRESENTATION_ONLY`; business authority: `NO_NEW_M10_BUSINESS_AUTHORITY`; PKG-015 and PKG-016 `CLOSED_ON_MASTER`; PKG-017 implementation `NOT_AUTHORIZED`; broad M10 `BLOCKED_FOR_LOGIC_DETAIL`; M11-M14 `NOT_AUTHORIZED`; M08E `EXCLUDED`; `02M` `FROZEN`; next package beyond PKG-017 `NOT_AUTHORIZED`; production readiness `NOT_CLAIMED` |
 | PKG-017 immediate next workstream | Independent acceptance audit of the PKG-017 definition draft only; this row supersedes the earlier PKG-016 proposal-stage immediate-next-workstream wording without erasing its historical checkpoint |
+| PKG-018 controlling definition-stage status | `DEFINITION_DRAFTED` / `PROPOSED_FOR_ACCEPTANCE`; package: `PKG-018 — M10 Server-Owned Baseline Reference Evidence Presentation Foundation`; definition: `specs/runtime/PKG_018_FINAL_PACKAGE_DEFINITION.md`; classification: `FRONTEND_PRESENTATION_ONLY`; business authority: `NO_NEW_M10_BUSINESS_AUTHORITY`; PKG-015, PKG-016, and PKG-017 `CLOSED_ON_MASTER`; PKG-018 implementation `NOT_AUTHORIZED`; broad M10 `BLOCKED_FOR_LOGIC_DETAIL`; M11-M14 `NOT_AUTHORIZED`; M08E `EXCLUDED`; `02M` `FROZEN`; next package beyond PKG-018 `NOT_AUTHORIZED`; production readiness `NOT_CLAIMED` |
+| PKG-018 immediate next workstream | Independent acceptance audit of the PKG-018 definition draft only; this row supersedes earlier proposal-stage immediate-next-workstream wording without erasing historical checkpoints |
 
 Any implementation package still requires separate scope and authorization before code changes. A future working architecture may incorporate GPT Work or equivalent orchestration, but this checkpoint is tool-independent and does not depend on that choice.
 

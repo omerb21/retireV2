@@ -34,6 +34,14 @@ The accepted definition is self-contained for independent implementation
 authorization review. This record authorizes no implementation, master merge,
 or next package.
 
+## Correction Defect Closure
+
+- `D-018-DAR001`: `CLOSED` — exact field-level baseline binding recorded.
+- `D-018-DAR002`: `CLOSED` — no-visible-baseline and outcome classes recorded.
+- `D-018-DAR003`: `CLOSED` — implementation/API envelope recorded exactly.
+- `D-018-DAR004`: `CLOSED` — deterministic future test obligations recorded.
+- `D-018-DAR005`: `CLOSED` — Q-019/Q-020 exclusions restored exactly.
+
 ## Accepted Definition and Build Plan Integrity
 
 | Accepted artifact | Blob SHA |
@@ -110,12 +118,39 @@ This optional evidence failure:
 
 No partial marker claim, default, or inferred meaning is accepted.
 
+If no current visible baseline exists, PKG-018 renders no panel or context. It
+does not synthesize unavailable evidence for a baseline that does not exist.
+
+The accepted outcome classes remain exactly distinct:
+
+1. comparator business blocker;
+2. optional PKG-018 baseline evidence unavailable or malformed;
+3. transport/API discovery failure; and
+4. stale discarded context.
+
+There is no conversion between classes. Optional evidence failure is not a
+comparator blocker, transport failure, stale discard, or eligibility failure.
+
 ## Binding and Client-Generation Authority
 
-Accepted presentation binds to the exact current route client, retained
-baseline `Candidate.subject`, authoritative subject/run identity, baseline role,
-exact family/version and combined identifier, current run, M10 eligibility,
-current visible discovery generation, and existing unique-baseline rules.
+Accepted presentation binds to the exact current visible baseline and requires
+all of these literal field-level constraints:
+
+```text
+subject.client_id == current route client
+subject.subject_type == "baseline"
+subject.scenario_family == "declared_retirement_cashflow_adjustments"
+subject.scenario_contract_version == "v1"
+subject.combined_contract_identifier ==
+"declared_retirement_cashflow_adjustments/v1"
+run.scenario_subject_id == subject.scenario_subject_id
+run.is_current == true
+run.eligible_for_m10 == true
+```
+
+The subject/run must belong to the current visible baseline and current
+discovery generation. Identity must not be reconstructed from list order,
+labels, amounts, empty arrays, dates, or fingerprint fragments.
 
 `useClientContextGeneration` and existing discovery ownership remain
 authoritative. A -> B and A -> B -> A must prevent old-client or old-generation
@@ -135,6 +170,33 @@ The accepted definition reuses only existing M09 subject discovery:
 There is no second fetch, subject-detail request, endpoint, response expansion,
 API-client semantic expansion, async effect, request-owner channel, or duplicate
 discovery.
+
+## Exact Future Implementation and API Envelope
+
+The accepted future implementation surfaces are exactly:
+
+- `frontend/src/pages/M10ComparisonScreen.tsx`
+- `frontend/src/pages/M10ComparisonScreen.test.tsx`
+
+An optional tiny presentational helper and focused test are permitted only when
+narrowly justified by the accepted definition. No other implementation surface
+is accepted.
+
+The exact preserved comparator endpoint is:
+
+`POST /api/clients/{client_id}/m10/compare`
+
+Its existing request and response contract remains unchanged. The immutable
+expected diff boundaries are:
+
+- `BACKEND_DIFF = NONE`
+- `API_CLIENT_DIFF = NONE`
+- `API_EXPANSION = NONE`
+- `MIGRATION_DIFF = NONE`
+- `PERSISTENCE_DIFF = NONE`
+
+There is no second subject fetch, subject-detail request, new async effect, new
+request owner, or API-client semantic expansion.
 
 ## Comparator and Predecessor Preservation
 
@@ -189,6 +251,83 @@ The accepted definition creates no:
 - factual component or field-level source disclosure; or
 - currentness/eligibility diagnostics product or reason-code taxonomy.
 
+## Q-019 and Q-020 Exclusions
+
+Q-019 explicitly excludes metrics, percentages, materiality/significance,
+semantic assumption differences, causal attribution, broader scenario-family
+support, factual component disclosure, and missing or partial value
+substitution.
+
+Q-020 explicitly excludes multi-scenario comparison,
+adjusted-versus-adjusted comparison, review, preference, persisted selection,
+comparison persistence/history, supersession, archive, and M11/M12 handoff.
+These are authority boundaries, not optional wording.
+
+## Deterministic Future Implementation Test Obligations
+
+These are accepted future implementation obligations. This definition
+acceptance record does not claim that they have already run.
+
+### Valid evidence
+
+- exact valid dual markers; and
+- exact accepted presentation wording.
+
+### Marker corruption
+
+- missing, wrong, null, or wrong-primitive subject provenance;
+- missing, wrong, null, or wrong-primitive manifest marker;
+- provenance/manifest mismatch; and
+- null, array, or non-object manifest.
+
+### Empty-array rule
+
+- `adjustments.length === 0` without valid dual markers does not create
+  baseline meaning.
+
+### Binding failures
+
+- wrong client;
+- wrong subject role;
+- wrong family, version, or combined identifier;
+- subject/run mismatch; and
+- non-current or non-M10-eligible run when that malformed runtime case is
+  reachable.
+
+### Baseline availability and isolation
+
+- no visible baseline renders no PKG-018 context;
+- same-context replacement/removal is tested only if reachable through
+  existing discovery;
+- A -> B; and
+- A -> B -> A.
+
+### Optional outcome separation
+
+- malformed optional evidence does not block an otherwise valid comparator
+  pair;
+- transport failure remains distinct; and
+- stale discard remains distinct.
+
+### Predecessor preservation
+
+- PKG-017 selected adjustment evidence remains unchanged; and
+- comparator request, result, and blocker behavior remain unchanged.
+
+### No-new-request proof
+
+- no second subject fetch;
+- no new API-client call; and
+- no new async owner.
+
+### Scope proof
+
+- `BACKEND_DIFF = NONE`
+- `API_CLIENT_DIFF = NONE`
+- `API_EXPANSION = NONE`
+- `MIGRATION_DIFF = NONE`
+- `PERSISTENCE_DIFF = NONE`
+
 ## Acceptance-Criteria Evidence
 
 - Range: `AC-018-001` through `AC-018-042`
@@ -230,6 +369,19 @@ All 19 accepted stop conditions are `NOT_FIRED`:
 
 Result: `19 NOT_FIRED`
 
+## Historical Incomplete Record Candidate
+
+Commit `1eca1b5da3027879dabbbe6d14f37c19757cccef` remains unchanged in linear
+history with status:
+
+`HISTORICAL_INCOMPLETE_DEFINITION_ACCEPTANCE_RECORD_CANDIDATE`
+
+It is evidence of the failed record audit and is not the final accepted record
+evidence. The append-only correction commit containing this revised record is
+the current definition acceptance-record candidate pending WORK re-audit. The
+immutable accepted definition boundary remains
+`12e121c8e5f5c51dae0490e2d338b463d140d1bc`.
+
 ## Governance After Definition Acceptance Record
 
 - PKG-015: `CLOSED_ON_MASTER`
@@ -238,6 +390,9 @@ Result: `19 NOT_FIRED`
 - PKG-018 definition: `ACCEPTED`
 - Immutable accepted definition HEAD:
   `12e121c8e5f5c51dae0490e2d338b463d140d1bc`
+- Historical incomplete acceptance-record candidate:
+  `1eca1b5da3027879dabbbe6d14f37c19757cccef`
+- Record status: `CORRECTED_CANDIDATE_PENDING_WORK_REAUDIT`
 - PKG-018 implementation: `NOT_AUTHORIZED`
 - Master merge: `NOT_AUTHORIZED`
 - Broad M10: `BLOCKED_FOR_LOGIC_DETAIL`

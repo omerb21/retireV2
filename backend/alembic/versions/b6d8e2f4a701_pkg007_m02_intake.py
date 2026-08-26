@@ -66,14 +66,14 @@ def upgrade() -> None:
             "duplicate_candidate",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("0"),
+            server_default=sa.false(),
         ),
         sa.Column("duplicate_of_intake_id", sa.String(64), nullable=True),
         sa.Column(
             "superseding_candidate",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("0"),
+            server_default=sa.false(),
         ),
         sa.Column("superseding_intake_id", sa.String(64), nullable=True),
         sa.Column("created_by_actor", sa.String(128), nullable=False),
@@ -118,14 +118,14 @@ def upgrade() -> None:
             name="ck_m02_intake_records_creation_path",
         ),
         sa.CheckConstraint(
-            "(duplicate_candidate = 0 AND duplicate_of_intake_id IS NULL) OR "
-            "(duplicate_candidate = 1 AND duplicate_of_intake_id IS NOT NULL "
+            "(duplicate_candidate = FALSE AND duplicate_of_intake_id IS NULL) OR "
+            "(duplicate_candidate = TRUE AND duplicate_of_intake_id IS NOT NULL "
             "AND duplicate_of_intake_id != intake_id)",
             name="ck_m02_intake_records_duplicate_consistency",
         ),
         sa.CheckConstraint(
-            "(superseding_candidate = 0 AND superseding_intake_id IS NULL) OR "
-            "(superseding_candidate = 1 AND superseding_intake_id IS NOT NULL "
+            "(superseding_candidate = FALSE AND superseding_intake_id IS NULL) OR "
+            "(superseding_candidate = TRUE AND superseding_intake_id IS NOT NULL "
             "AND superseding_intake_id != intake_id)",
             name="ck_m02_intake_records_superseding_consistency",
         ),

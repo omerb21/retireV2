@@ -1101,10 +1101,44 @@ def test_pkg007_migration_is_additive_and_downgrades(tmp_path: Path) -> None:
         "m02_preserved_sources",
         "m02_preserved_blobs",
     }.issubset(inspector.get_table_names())
-    with upgraded.connect() as connection:
+    with upgraded.begin() as connection:
         assert connection.scalar(
             text("SELECT display_name FROM clients WHERE client_id = 77")
         ) == "Existing"
+        connection.execute(
+            text(
+                "INSERT INTO m02_intake_records "
+                "(intake_id, client_id, record_kind, manual_technical_reference, "
+                "source_type, lifecycle_status, preservation_status, "
+                "created_by_actor, updated_by_actor, lifecycle_decided_by_actor) "
+                "VALUES ('base', 77, 'manual', 'M02-MANUAL-BASE', 'manual', "
+                "'metadata_review', 'not_applicable', 'test', 'test', 'test')"
+            )
+        )
+        assert connection.execute(
+            text(
+                "SELECT duplicate_candidate, superseding_candidate "
+                "FROM m02_intake_records WHERE intake_id = 'base'"
+            )
+        ).one() == (0, 0)
+        connection.execute(
+            text(
+                "INSERT INTO m02_intake_records "
+                "(intake_id, client_id, record_kind, manual_technical_reference, "
+                "source_type, lifecycle_status, preservation_status, "
+                "duplicate_candidate, duplicate_of_intake_id, created_by_actor, "
+                "updated_by_actor, lifecycle_decided_by_actor) "
+                "VALUES ('duplicate', 77, 'manual', 'M02-MANUAL-DUPLICATE', "
+                "'manual', 'metadata_review', 'not_applicable', TRUE, 'base', "
+                "'test', 'test', 'test')"
+            )
+        )
+        assert connection.scalar(
+            text(
+                "SELECT duplicate_candidate FROM m02_intake_records "
+                "WHERE intake_id = 'duplicate'"
+            )
+        ) == 1
     upgraded.dispose()
 
     _run_alembic(db_path, "downgrade", PARENT_REVISION)
@@ -1154,11 +1188,24 @@ def test_pkg007_migration_compiles_portable_postgresql_ddl() -> None:
     module.op = Operations(context)
     module.upgrade()
     sql = output.getvalue()
+    normalized_sql = " ".join(sql.lower().split())
     assert "GLOB" not in sql
     assert "instr(" not in sql
     assert "char(92)" not in sql
     assert "sha256_checksum ~ '^[0-9a-f]{64}$'" in sql
     assert "storage_key NOT LIKE" in sql
+    assert "duplicate_candidate boolean default false not null" in normalized_sql
+    assert "superseding_candidate boolean default false not null" in normalized_sql
+    assert "duplicate_candidate = false" in normalized_sql
+    assert "duplicate_candidate = true" in normalized_sql
+    assert "superseding_candidate = false" in normalized_sql
+    assert "superseding_candidate = true" in normalized_sql
+    assert "duplicate_candidate boolean default 0" not in normalized_sql
+    assert "superseding_candidate boolean default 0" not in normalized_sql
+    assert "duplicate_candidate = 0" not in normalized_sql
+    assert "duplicate_candidate = 1" not in normalized_sql
+    assert "superseding_candidate = 0" not in normalized_sql
+    assert "superseding_candidate = 1" not in normalized_sql
 
 
 def test_pkg007_model_compiles_portable_postgresql_ddl() -> None:

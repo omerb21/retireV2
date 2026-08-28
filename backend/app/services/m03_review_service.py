@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+import hashlib
+import json
 import re
 
 from sqlalchemy import select
@@ -17,6 +20,7 @@ from app.services.m01_case_service import effective_lifecycle_status
 ACTOR = M03_WORKFLOW_ACTOR
 REVISION_ID_PATTERN = re.compile(r"^M03-R-[0-9a-f]{32}$")
 MAX_SERVER_CLOCK_SKEW = timedelta(minutes=5)
+DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class M03ReviewError(Exception):
@@ -93,6 +97,93 @@ def _target_for_response(
         return "source_evidence_review", source, "uploaded_provenance_inconsistent"
 
 
+def _canonical_value(value):
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _m02_evidence_payload(
+    intake: M02IntakeRecord,
+    kind: str,
+    source: M02PreservedSource | None,
+) -> dict:
+    blob = source.blob if source is not None else None
+    return _canonical_value(
+        {
+            "schema_version": "m03-m02-evidence-v1",
+            "client_id": intake.client_id,
+            "intake_id": intake.intake_id,
+            "target_kind": kind,
+            "record_kind": intake.record_kind,
+            "declared_provider_name": intake.declared_provider_name,
+            "product_name": intake.product_name,
+            "product_identifier": intake.product_identifier,
+            "declared_account_reference": intake.declared_account_reference,
+            "declared_total_balance_amount": intake.declared_total_balance_amount,
+            "declared_monthly_pension_amount": intake.declared_monthly_pension_amount,
+            "declared_component_values": intake.declared_component_values,
+            "declared_statement_date": intake.declared_statement_date,
+            "declared_start_date": intake.declared_start_date,
+            "declared_product_type": intake.declared_product_type,
+            "source_type": intake.source_type,
+            "declared_basis": intake.declared_basis,
+            "notes": intake.notes,
+            "preservation_status": intake.preservation_status,
+            "preservation_failure_code": intake.preservation_failure_code,
+            "source": (
+                {
+                    "source_id": source.source_id,
+                    "blob_id": source.blob_id,
+                    "original_filename": source.original_filename,
+                    "sanitized_download_filename": source.sanitized_download_filename,
+                    "normalized_extension": source.normalized_extension,
+                    "declared_mime_type": source.declared_mime_type,
+                    "validated_media_type": source.validated_media_type,
+                    "detected_text_encoding": source.detected_text_encoding,
+                    "source_type": source.source_type,
+                    "declared_statement_date": source.declared_statement_date,
+                    "byte_size": source.byte_size,
+                    "preservation_status": source.preservation_status,
+                    "validation_diagnostics": source.validation_diagnostics,
+                    "blob_sha256_checksum": blob.sha256_checksum if blob else None,
+                    "blob_byte_size": blob.byte_size if blob else None,
+                    "blob_validated_media_type": (
+                        blob.validated_media_type if blob else None
+                    ),
+                }
+                if source is not None
+                else None
+            ),
+        }
+    )
+
+
+def m02_evidence_digest(
+    intake: M02IntakeRecord,
+    kind: str,
+    source: M02PreservedSource | None,
+) -> str:
+    canonical = json.dumps(
+        _m02_evidence_payload(intake, kind, source),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _history(db: Session, intake_id: str) -> list[M03ReviewRevision]:
     return list(db.scalars(select(M03ReviewRevision).where(
         M03ReviewRevision.intake_id == intake_id,
@@ -130,6 +221,10 @@ def _leaf(
             or row.target_kind != kind
             or row.source_id != expected_source_id
             or row.actor != ACTOR
+            or (
+                row.m02_evidence_digest is not None
+                and DIGEST_PATTERN.fullmatch(row.m02_evidence_digest) is None
+            )
             or row.revision_sequence != index
             or row.predecessor_revision_id != expected_parent
             or row.state not in expected_state
@@ -173,6 +268,10 @@ def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetRes
             exclusion = "review_not_started"
         elif leaf.state != "accepted":
             exclusion = f"review_{leaf.state}"
+        elif leaf.m02_evidence_digest != m02_evidence_digest(
+            intake, kind, source
+        ):
+            exclusion = "upstream_m02_evidence_changed"
     eligible = exclusion is None
     blob = (
         source.blob
@@ -238,6 +337,7 @@ def _append(
         revision_sequence=len(rows) + 1,
         state=state,
         reason=reason,
+        m02_evidence_digest=m02_evidence_digest(intake, kind, source),
         actor=ACTOR,
     )
     db.add(row)
@@ -267,6 +367,14 @@ def decide_review(db: Session, client_id: int, intake_id: str, action: str, reas
     leaf = _leaf(_history(db, intake_id), intake, kind, source)
     if leaf is None:
         raise M03ReviewError(409, "M03_REVIEW_NOT_STARTED", "Review has not started")
+    if action in {"accepted", "rejected"} and (
+        leaf.m02_evidence_digest != m02_evidence_digest(intake, kind, source)
+    ):
+        raise M03ReviewError(
+            409,
+            "M03_UPSTREAM_EVIDENCE_CHANGED",
+            "M02 evidence changed; reopen and review the current evidence",
+        )
     allowed = leaf.state == "under_review" if action in {"accepted", "rejected"} else leaf.state in {"accepted", "rejected"}
     if not allowed:
         raise M03ReviewError(409, "M03_WRONG_CURRENT_STATE", "The action is not allowed from the current state")

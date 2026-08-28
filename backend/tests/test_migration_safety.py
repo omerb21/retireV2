@@ -119,6 +119,43 @@ def test_clean_db_downgrade_upgrade_path_works(tmp_path: Path) -> None:
     assert result.returncode == 0
 
 
+def test_m03_m02_authority_digest_migration_is_narrow_and_reversible(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "m03_authority_digest.db"
+    _run_alembic(db_path, "upgrade", "e6b4c8d2f507")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    assert "m02_evidence_digest" not in {
+        column["name"]
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    engine.dispose()
+
+    _run_alembic(db_path, "upgrade", "a1c7e4d9f208")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    columns = {
+        column["name"]: column
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    assert columns["m02_evidence_digest"]["nullable"] is True
+    assert columns["m02_evidence_digest"]["type"].length == 64
+    engine.dispose()
+
+    _run_alembic(db_path, "downgrade", "e6b4c8d2f507")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    assert "m02_evidence_digest" not in {
+        column["name"]
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    engine.dispose()
+
+
 def test_pkg002_status_migration_preserves_existing_runs_and_supports_new_statuses(
     tmp_path: Path,
 ) -> None:

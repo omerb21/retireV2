@@ -56,6 +56,9 @@ class M03ReviewRevision(Base):
     revision_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    m02_evidence_digest: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     actor: Mapped[str] = mapped_column(String(128), nullable=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

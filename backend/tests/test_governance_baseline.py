@@ -154,6 +154,23 @@ APPROVED_PKG_012_PATHS = {
     "frontend/src/pages/FixationInputScreen.test.tsx",
     "frontend/src/pages/GrantsScreen.test.tsx",
 }
+APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS = {
+    "backend/alembic/versions/a1c7e4d9f208_m03_m02_authority_digest.py",
+    "backend/app/models/m03_review.py",
+    "backend/app/services/m03_review_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_migration_safety.py",
+    "backend/tests/test_pkg008_m03_review.py",
+    "backend/tests/test_pkg009_m04_classification.py",
+    "backend/tests/test_pkg010_m05_ledger.py",
+    "backend/tests/test_pkg011_migration.py",
+    "backend/tests/test_pkg013_migration.py",
+    "backend/tests/test_pkg014_migration.py",
+    "frontend/src/pages/M04ClassificationScreen.test.tsx",
+    "frontend/src/pages/M04ClassificationScreen.tsx",
+    "frontend/src/pages/M05LedgerScreen.test.tsx",
+    "frontend/src/pages/M05LedgerScreen.tsx",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -187,6 +204,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_PKG_007_PATHS,
         *APPROVED_PKG_011_PATHS,
         *APPROVED_PKG_012_PATHS,
+        *APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS,
     }
 
 
@@ -209,6 +227,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PKG_007_PATHS,
         *APPROVED_PKG_011_PATHS,
         *APPROVED_PKG_012_PATHS,
+        *APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",

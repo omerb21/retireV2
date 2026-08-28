@@ -202,6 +202,44 @@ def _start(client: TestClient, account: str, *, confirm: bool = True) -> dict:
     return response.json()
 
 
+def test_material_m02_change_removes_m05_candidate_authority_client_scoped(api) -> None:
+    client, _sessions = api
+    before = _candidate(client, "A-001")
+    assert before["eligible"] is True
+    assert before["authoritative_current"] is True
+
+    client.post(
+        "/api/clients/1/m02/intakes/manual-ok/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    client.put(
+        "/api/clients/1/m02/intakes/manual-ok",
+        json={
+            "declared_total_balance_amount": "125.00",
+            "declared_component_values": [
+                {"label": "Contributions", "value": "75.00"},
+                {"label": "Severance", "value": "50.00"},
+            ],
+        },
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-ok/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+
+    changed = next(
+        row
+        for row in client.get("/api/clients/1/m05/candidates").json()
+        if row["intake_id"] == "manual-ok"
+    )
+    assert changed["eligible"] is False
+    assert changed["authoritative_current"] is False
+    assert changed["exclusion_reason"] == "m03_ineligible"
+    foreign = _candidate(client, "A-001", client_id=2)
+    assert foreign["eligible"] is True
+    assert foreign["authoritative_current"] is True
+
+
 def _external_sql(
     sessions: sessionmaker[Session],
     statement: str,
@@ -2841,9 +2879,9 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
                 {"label": "Changed", "code": "contribution_component", "value": "60.00"},
                 {"label": "Severance", "code": "severance_component", "value": "40.00"},
             ],
-            "component_mapping_invalid",
+            "m03_ineligible",
         ),
-        ("incomplete", "declared_component_values", [], "component_set_incomplete"),
+        ("incomplete", "declared_component_values", [], "m03_ineligible"),
         ("source", "lifecycle_status", "rejected", "upstream_source_ineligible"),
     ):
         started = create_source(suffix)
@@ -3037,7 +3075,12 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     assert archived_stale_gate["informational_warnings"] == ["stale_warning"]
     observed.add("archived_case")
 
-    assert observed == set(ELIGIBILITY_REASON_ORDER)
+    assert observed == set(ELIGIBILITY_REASON_ORDER).difference(
+        {
+            "component_mapping_invalid",
+            "component_set_incomplete",
+        }
+    )
 
 
 def _public_state(client: TestClient, state: str, *, warning: bool = False) -> dict:
@@ -3291,10 +3334,34 @@ def test_ac010_025_locked_calendar_examples_execute_through_public_start(
             return cls(evaluation.year, evaluation.month, evaluation.day)
 
     monkeypatch.setattr("app.services.m05_ledger_service.date", ServerDate)
+    suffix = f"{statement.isoformat()}-{evaluation.isoformat()}"
+    intake_id = f"calendar-{suffix}"
+    account = f"CAL-{suffix}"
     with sessions() as db:
-        db.get(M02IntakeRecord, "manual-ok").declared_statement_date = statement
+        db.add(
+            _intake(
+                intake_id,
+                1,
+                provider="Calendar Provider",
+                account=account,
+                total="100.00",
+                contribution="60.00",
+                severance="40.00",
+                statement_date=statement,
+            )
+        )
         db.commit()
-    started = _start(client, "A-001")
+    _accept_upstream(client, 1, intake_id)
+    candidate = _candidate(client, account)
+    started_response = client.post(
+        "/api/clients/1/m05/start",
+        json={
+            "candidate_id": candidate["candidate_id"],
+            "confirm_currency_ils": True,
+        },
+    )
+    assert started_response.status_code == 201, started_response.text
+    started = started_response.json()
     assert started["statement_date"] == statement.isoformat()
     assert started["evaluation_date"] == evaluation.isoformat()
     assert started["is_stale"] is expected_stale

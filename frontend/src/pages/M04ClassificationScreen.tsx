@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { getClient, type ClientDetailItem } from "../api/clientsApi";
+import {
+  ApiTransportError, getClient, type ClientDetailItem,
+} from "../api/clientsApi";
 import {
   actOnM04, createM04Proposal, getM04Eligibility, getM04History,
   getM04MatchedRules, getM04Target, listM04Targets, overrideM04,
@@ -27,8 +29,28 @@ type ComponentDraft = {
   componentKind: M04ComponentKind; interpretation: M04ComponentInterpretation;
   currentEmployerRelated: "yes" | "no" | "unknown"; explanation: string;
 };
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "M04 request failed";
+const apiDetail = (error: unknown) => {
+  if (!(error instanceof ApiTransportError) ||
+    typeof error.body !== "object" || error.body === null) return null;
+  const detail = (error.body as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null || Array.isArray(detail)) return null;
+  const code = (detail as { code?: unknown }).code;
+  const detailMessage = (detail as { message?: unknown }).message;
+  return {
+    code: typeof code === "string" ? code : null,
+    message: typeof detailMessage === "string" ? detailMessage : null,
+  };
+};
+const message = (error: unknown, refreshed = false) => {
+  const detail = apiDetail(error);
+  if (detail?.code === "M04_STALE_CURRENT_REVISION") {
+    return `The proposal changed before this action. ${refreshed ? "Current classification state was reloaded. " : ""}Technical code: ${detail.code}`;
+  }
+  if (detail?.message || detail?.code) {
+    return `${detail.message ?? "M04 request failed"}${detail.code ? ` (Technical code: ${detail.code})` : ""}${refreshed ? " Current classification state was reloaded." : ""}`;
+  }
+  return error instanceof Error ? error.message : "M04 request failed";
+};
 const draftsFrom = (rows: M04Component[]): ComponentDraft[] => rows.map((row) => ({
   evidenceIdentity: row.evidence_identity,
   originalLabel: row.original_label,
@@ -72,12 +94,16 @@ function ComponentEvidenceView({ component }: { component: M04Component }) {
   </li>;
 }
 
-function RevisionEvidenceView({ revision, current }:
-  { revision: M04Revision; current: boolean }) {
+function RevisionEvidenceView({ revision, current, boundToCurrentEvidence }:
+  { revision: M04Revision; current: boolean; boundToCurrentEvidence: boolean }) {
   const unresolved = revision.action_evidence.unresolved_reasons;
   const conflicts = revision.action_evidence.conflicts;
   return <li>
-    <h5>Revision #{revision.revision_sequence} — {current ? "current" : "historical"}</h5>
+    <h5>Revision #{revision.revision_sequence} — {current
+      ? boundToCurrentEvidence
+        ? "current chain revision — bound to present upstream evidence"
+        : "current chain revision — not authoritative for present upstream evidence"
+      : "historical"}</h5>
     <p>State: {revision.state}; action: {revision.action_type}; actor: {revision.actor}; timestamp: {revision.created_at}.</p>
     <p>Predecessor: {revision.predecessor_revision_id ?? "root"}; catalogue: {revision.catalogue_version}; match basis: {revision.match_basis}.</p>
     <p>Reason code: {revision.reason_code ?? "none"}; reason: {revision.reason ?? "none"}; explanation: {revision.explanation ?? "none"}.</p>
@@ -224,19 +250,23 @@ export function M04ClassificationScreen() {
     }
   };
 
-  const mutate = async (operation: () => Promise<unknown>) => {
+  const mutate = async (
+    operation: (expectedRevisionId: string | null) => Promise<unknown>,
+  ) => {
     if (clientId === null || !target) return;
     const token = captureClientContext(); const intakeId = target.intake_id;
     const currentRevisionId = target.current_revision?.revision_id ?? null;
     const request = ++mutationEpoch.current;
     previewEpoch.current += 1; setPreview(null); setLoading(false);
-    const owned = () => mounted.current && request === mutationEpoch.current &&
+    const contextOwned = () => mounted.current && request === mutationEpoch.current &&
+      selectedTarget.current === intakeId && isCurrentClientContext(token);
+    const owned = () => contextOwned() &&
       selectedTarget.current === intakeId &&
       selectedRevision.current === currentRevisionId &&
       isCurrentClientContext(token);
     setSubmitting(true); setError(null);
     try {
-      await operation();
+      await operation(currentRevisionId);
       if (!owned()) return; // stale mutation launches zero refreshes
       const refreshToken = captureClientContext();
       const detailRequest = ++detailEpoch.current;
@@ -249,12 +279,33 @@ export function M04ClassificationScreen() {
       if (!owned() || !isCurrentClientContext(refreshToken) ||
         detailRequest !== detailEpoch.current || listRequest !== listEpoch.current) return;
       const combined = { ...next, eligibility };
+      selectedRevision.current = combined.current_revision?.revision_id ?? null;
       setTarget(combined); setHistory(revisions); setRules(matched); setTargets(rows);
       setPreview(null); setExplanation(""); bindRevision(combined.current_revision);
     } catch (cause) {
-      if (owned()) setError(message(cause));
+      if (!owned()) return;
+      let refreshed = false;
+      if (cause instanceof ApiTransportError && cause.status === 409) {
+        try {
+          const [next, revisions, eligibility, matched, rows] = await Promise.all([
+            getM04Target(clientId, intakeId), getM04History(clientId, intakeId),
+            getM04Eligibility(clientId, intakeId), getM04MatchedRules(clientId, intakeId),
+            listM04Targets(clientId),
+          ]);
+          if (contextOwned()) {
+            const combined = { ...next, eligibility };
+            selectedRevision.current = combined.current_revision?.revision_id ?? null;
+            setTarget(combined); setHistory(revisions); setRules(matched); setTargets(rows);
+            bindRevision(combined.current_revision);
+            refreshed = true;
+          }
+        } catch {
+          // Preserve the original structured conflict if a safe refresh is unavailable.
+        }
+      }
+      if (contextOwned()) setError(message(cause, refreshed));
     } finally {
-      if (owned()) setSubmitting(false);
+      if (contextOwned()) setSubmitting(false);
     }
   };
 
@@ -272,6 +323,11 @@ export function M04ClassificationScreen() {
     expected_current_revision_id: current.revision_id,
     reason_code: reasonCode, explanation,
   } : null;
+  const currentBoundToEvidence = Boolean(
+    current && target?.m03_eligible &&
+    current.input_snapshot.accepted_m03_revision_id ===
+      target.m03_accepted_revision_id,
+  );
   const overrideReady = reasonReady && family !== "unknown_or_unresolved" &&
     components.length > 0 && components.every((row) =>
       row.componentKind !== "unknown_component" &&
@@ -337,13 +393,19 @@ export function M04ClassificationScreen() {
         </button> : null}
         {current?.state === "proposed" ? <>
           <button type="button" disabled={!reasonReady}
-            onClick={() => reasonPayload && void mutate(() =>
-              actOnM04(clientId, target.intake_id, "accept", reasonPayload))}>
+            onClick={() => reasonPayload && void mutate((expectedRevisionId) =>
+              actOnM04(clientId, target.intake_id, "accept", {
+                ...reasonPayload,
+                expected_current_revision_id: expectedRevisionId ?? "",
+              }))}>
             Accept proposal
           </button>
           <button type="button" disabled={!reasonReady}
-            onClick={() => reasonPayload && void mutate(() =>
-              actOnM04(clientId, target.intake_id, "reject", reasonPayload))}>
+            onClick={() => reasonPayload && void mutate((expectedRevisionId) =>
+              actOnM04(clientId, target.intake_id, "reject", {
+                ...reasonPayload,
+                expected_current_revision_id: expectedRevisionId ?? "",
+              }))}>
             Reject proposal
           </button>
         </> : null}
@@ -437,7 +499,8 @@ export function M04ClassificationScreen() {
       <h4>Immutable classification history</h4>
       <p>This is technical provenance only; it is not professional, tax, legal, liquidity, withdrawal, or M05 authority.</p>
       <ol>{history.map((row) => <RevisionEvidenceView key={row.revision_id}
-        revision={row} current={row.revision_id === current?.revision_id} />)}</ol>
+        revision={row} current={row.revision_id === current?.revision_id}
+        boundToCurrentEvidence={row.revision_id === current?.revision_id && currentBoundToEvidence} />)}</ol>
     </section> : null}
     <p><Link to={`/clients/${clientId}`}>Back to M01 client case</Link></p>
   </section>;

@@ -241,6 +241,59 @@ describe("M04ClassificationScreen", () => {
     expect(screen.getByText(/State: accepted; action: accept/)).toBeInTheDocument();
   });
 
+  it("binds proposal decisions to the displayed revision and reloads structured conflicts", async () => {
+    const displayed = {
+      ...revision("proposed", 2, "proposal"),
+      input_snapshot: { accepted_m03_revision_id: "m03-1" },
+    };
+    const refreshed = {
+      ...revision("proposed", 3, "proposal"),
+      input_snapshot: { accepted_m03_revision_id: "m03-1" },
+    };
+    let conflictReturned = false;
+    let posted: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const current = conflictReturned ? refreshed : displayed;
+      if (url.endsWith("/api/clients/1")) return json(client());
+      if (url.endsWith("/m04/targets") && (init?.method ?? "GET") === "GET") {
+        return json([target(1, current)]);
+      }
+      if (url.endsWith("/history")) return json([current]);
+      if (url.endsWith("/matched-rules")) return json([]);
+      if (url.endsWith("/eligibility")) return json(target(1, current).eligibility);
+      if (url.endsWith("/manual-1") && (init?.method ?? "GET") === "GET") {
+        return json(target(1, current));
+      }
+      if (url.endsWith("/accept") && init?.method === "POST") {
+        posted = JSON.parse(String(init.body));
+        conflictReturned = true;
+        return json({
+          detail: {
+            code: "M04_STALE_CURRENT_REVISION",
+            message: "Classification changed before this action",
+          },
+        }, 409);
+      }
+      throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
+    fireEvent.change(await screen.findByLabelText("Explanation"), {
+      target: { value: "accept displayed proposal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Accept proposal" }));
+    await waitFor(() => expect(posted).toMatchObject({
+      expected_current_revision_id: displayed.revision_id,
+    }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /proposal changed.*reloaded.*M04_STALE_CURRENT_REVISION/i,
+    );
+    expect(screen.getByRole("heading", {
+      name: /Revision #3 — current chain revision — bound to present upstream evidence/,
+    })).toBeInTheDocument();
+  });
+
   it("renders complete persisted rule, component, revision, conflict, and authority evidence", async () => {
     const assetRule = fullRule();
     const componentRule = fullRule({

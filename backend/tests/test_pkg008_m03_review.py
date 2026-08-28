@@ -38,6 +38,8 @@ def api(tmp_path: Path) -> Generator[tuple[TestClient, sessionmaker[Session]], N
             M02IntakeRecord(
                 intake_id="manual-1", client_id=1, record_kind="manual",
                 manual_technical_reference="M02-MANUAL-1", source_type="manual",
+                declared_provider_name="Provider One", product_name="Product One",
+                declared_account_reference="Account One",
                 lifecycle_status="accepted_for_review", preservation_status="not_applicable",
                 diagnostics=[], created_by_actor="m02", updated_by_actor="m02",
                 lifecycle_decided_by_actor="m02",
@@ -45,6 +47,8 @@ def api(tmp_path: Path) -> Generator[tuple[TestClient, sessionmaker[Session]], N
             M02IntakeRecord(
                 intake_id="manual-2", client_id=2, record_kind="manual",
                 manual_technical_reference="M02-MANUAL-2", source_type="manual",
+                declared_provider_name="Provider Two", product_name="Product Two",
+                declared_account_reference="Account Two",
                 lifecycle_status="accepted_for_review", preservation_status="not_applicable",
                 diagnostics=[], created_by_actor="m02", updated_by_actor="m02",
                 lifecycle_decided_by_actor="m02",
@@ -143,6 +147,117 @@ def test_append_only_accept_reopen_and_eligibility(api) -> None:
         terminal_row = db.get(M03ReviewRevision, terminal["revision_id"])
         assert root_row.state == "under_review"
         assert terminal_row.state == "accepted"
+
+
+def test_material_m02_change_invalidates_authority_until_explicit_rereview(api) -> None:
+    client, sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    accepted_a = client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "accepted version A",
+            "expected_current_revision_id": root["revision_id"],
+        },
+    ).json()
+    other_root = client.post("/api/clients/2/m03/targets/manual-2/start").json()
+    client.post(
+        "/api/clients/2/m03/targets/manual-2/accept",
+        json={
+            "reason": "other client accepted",
+            "expected_current_revision_id": other_root["revision_id"],
+        },
+    ).raise_for_status()
+    history_a = client.get(
+        "/api/clients/1/m03/targets/manual-1/history"
+    ).json()
+
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    client.put(
+        "/api/clients/1/m02/intakes/manual-1",
+        json={
+            "declared_statement_date": "2026-07-01",
+            "declared_total_balance_amount": "1000.00",
+            "declared_component_values": [
+                {"label": "Contributions", "value": "1000.00"}
+            ],
+        },
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+
+    stale = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert stale["eligible"] is False
+    assert stale["exclusion_reason"] == "upstream_m02_evidence_changed"
+    assert stale["accepted_revision_id"] is None
+    assert client.get(
+        "/api/clients/1/m03/targets/manual-1/history"
+    ).json() == history_a
+    assert client.get(
+        "/api/clients/2/m03/targets/manual-2/eligibility"
+    ).json()["eligible"] is True
+
+    reopened = client.post(
+        "/api/clients/1/m03/targets/manual-1/reopen",
+        json={
+            "reason": "review version B",
+            "expected_current_revision_id": accepted_a["revision_id"],
+        },
+    ).json()
+    accepted_b_response = client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "accepted version B",
+            "expected_current_revision_id": reopened["revision_id"],
+        },
+    )
+    assert accepted_b_response.status_code == 201
+    accepted_b = accepted_b_response.json()
+    restored = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert restored["eligible"] is True
+    assert restored["accepted_revision_id"] == accepted_b["revision_id"]
+    with sessions() as db:
+        old = db.get(M03ReviewRevision, accepted_a["revision_id"])
+        new = db.get(M03ReviewRevision, accepted_b["revision_id"])
+        assert old.state == "accepted"
+        assert old.reason == "accepted version A"
+        assert old.m02_evidence_digest != new.m02_evidence_digest
+
+
+def test_lifecycle_only_round_trip_does_not_change_m02_evidence_authority(api) -> None:
+    client, _sessions = api
+    root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "accepted evidence",
+            "expected_current_revision_id": root["revision_id"],
+        },
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    assert client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()["exclusion_reason"] == "m02_metadata_review"
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+    eligibility = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert eligibility["eligible"] is True
+    assert eligibility["exclusion_reason"] is None
 
 
 def test_rejection_m02_exclusion_annotations_and_archived_mutations(api) -> None:

@@ -216,6 +216,60 @@ describe("M05LedgerScreen", () => {
     expect(screen.queryByText(/unknown product|assumed product/i)).not.toBeInTheDocument();
   });
 
+  it("explains candidate exclusion in plain language with a secondary technical code", async () => {
+    const excluded = {
+      ...candidate(1),
+      provider_name: null,
+      statement_date: null,
+      eligible: false,
+      authoritative_current: false,
+      exclusion_reason: "required_value_missing",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = path(input);
+      if (url.endsWith("/m05/candidates")) return json([excluded]);
+      return defaultResponse(url);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", {
+      name: /Provider unavailable.*Statement date unavailable/,
+    }));
+    const explanation = screen.getByLabelText("Selected candidate explanation");
+    expect(explanation).toHaveTextContent(
+      "A required provider, account, statement date, balance, or component value is missing.",
+    );
+    expect(explanation).toHaveTextContent(
+      "Technical exclusion code: required_value_missing",
+    );
+    expect(explanation).toHaveTextContent("Provider: not supplied");
+    expect(explanation).toHaveTextContent("statement date: not supplied");
+  });
+
+  it("shows structured API conflict detail instead of a raw HTTP status", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = path(input);
+      if (url.endsWith("/m05/start")) {
+        return json({
+          detail: {
+            code: "required_value_missing",
+            message: "Statement date is required",
+          },
+        }, 409, "Conflict");
+      }
+      return defaultResponse(url);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", {
+      name: /Provider 1 \/ Account 1 \/ 2026/,
+    }));
+    fireEvent.click(screen.getByLabelText(/Confirm currency ILS/));
+    fireEvent.click(screen.getByRole("button", { name: "Start ledger" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Statement date is required");
+    expect(alert).toHaveTextContent("Technical code: required_value_missing");
+    expect(alert).not.toHaveTextContent("HTTP 409 Conflict");
+  });
+
   it("disables lifecycle-invalid actions for a superseded revision", async () => {
     const terminalRevision = revision(1, "superseded");
     const terminalSubject = { ...subject(1), current_revision: terminalRevision };

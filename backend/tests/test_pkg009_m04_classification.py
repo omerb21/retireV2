@@ -433,6 +433,143 @@ def test_m03_invalidation_is_read_time_and_does_not_mutate_m04(api) -> None:
     ).json() == history_before
 
 
+def test_material_m02_change_preserves_history_and_requires_m03_m04_rereview(api) -> None:
+    client, sessions = api
+    _, _, _, accepted_a = _accepted_classification(client)
+    history_a = client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json()
+    m03_a = client.get(
+        "/api/clients/1/m03/targets/manual-1"
+    ).json()["current_revision"]
+
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    client.put(
+        "/api/clients/1/m02/intakes/manual-1",
+        json={
+            "declared_statement_date": "2026-07-01",
+            "declared_total_balance_amount": "1000.00",
+            "declared_component_values": [
+                {"label": "Updated contributions", "value": "1000.00"}
+            ],
+        },
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+
+    m03_stale = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert m03_stale["eligible"] is False
+    assert m03_stale["exclusion_reason"] == "upstream_m02_evidence_changed"
+    m04_stale = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()
+    assert m04_stale["eligible_for_m05"] is False
+    assert m04_stale["exclusion_reason"] == "m03_ineligible"
+    retained = client.get(
+        "/api/clients/1/m04/targets/manual-1"
+    ).json()
+    assert retained["current_revision"]["revision_id"] == accepted_a["revision_id"]
+    assert client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json() == history_a
+    blocked = client.post(
+        "/api/clients/1/m04/targets/manual-1/reopen",
+        json=_reason(accepted_a["revision_id"], "cannot reuse old authority"),
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "M04_M03_INELIGIBLE"
+
+    reopened_m03 = client.post(
+        "/api/clients/1/m03/targets/manual-1/reopen",
+        json={
+            "reason": "review updated M02 evidence",
+            "expected_current_revision_id": m03_a["revision_id"],
+        },
+    ).json()
+    accepted_m03_b = client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "accept updated M02 evidence",
+            "expected_current_revision_id": reopened_m03["revision_id"],
+        },
+    ).json()
+    still_stale = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()
+    assert still_stale["eligible_for_m05"] is False
+    assert still_stale["exclusion_reason"] == "m03_ineligible"
+    assert still_stale["m03_revision_id"] == accepted_m03_b["revision_id"]
+
+    reopened_m04 = client.post(
+        "/api/clients/1/m04/targets/manual-1/reopen",
+        json=_reason(accepted_a["revision_id"], "classify version B"),
+    ).json()
+    proposal_b = client.post(
+        "/api/clients/1/m04/targets/manual-1/proposal",
+        json={"expected_current_revision_id": reopened_m04["revision_id"]},
+    ).json()
+    override_b = client.post(
+        "/api/clients/1/m04/targets/manual-1/override",
+        json=_override_payload(proposal_b),
+    ).json()
+    accepted_b = client.post(
+        "/api/clients/1/m04/targets/manual-1/accept",
+        json=_reason(override_b["revision_id"], "accept version B"),
+    )
+    assert accepted_b.status_code == 201
+    assert client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()["eligible_for_m05"] is True
+    history_b = client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json()
+    assert history_b[: len(history_a)] == history_a
+    with sessions() as db:
+        historical = db.get(M04ClassificationRevision, accepted_a["revision_id"])
+        assert historical.state == "accepted"
+        assert historical.input_snapshot == history_a[-1]["input_snapshot"]
+
+
+def test_old_m04_proposal_cannot_be_accepted_after_material_m02_change(api) -> None:
+    client, _sessions = api
+    started = client.post("/api/clients/1/m04/targets/manual-1/start").json()
+    proposal = client.post(
+        "/api/clients/1/m04/targets/manual-1/proposal",
+        json={"expected_current_revision_id": started["revision_id"]},
+    ).json()
+    history_before = client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    client.put(
+        "/api/clients/1/m02/intakes/manual-1",
+        json={"declared_statement_date": "2026-07-01"},
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+    response = client.post(
+        "/api/clients/1/m04/targets/manual-1/accept",
+        json=_reason(proposal["revision_id"], "stale acceptance"),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "M04_M03_INELIGIBLE"
+    assert client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json() == history_before
+
+
 def test_foreign_ids_and_caller_forgery_are_rejected(api) -> None:
     client, _ = api
     foreign = client.get("/api/clients/2/m04/targets/manual-1")

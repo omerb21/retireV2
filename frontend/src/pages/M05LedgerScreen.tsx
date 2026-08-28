@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { getClient, type ClientDetailItem } from "../api/clientsApi";
+import {
+  ApiTransportError, getClient, type ClientDetailItem,
+} from "../api/clientsApi";
 import {
   adjustM05, getM05Eligibility, getM05History, getM05Provenance,
   getM05Subject, getM05Warnings, listM05Candidates, listM05Subjects,
@@ -9,7 +11,41 @@ import {
 } from "../api/m05LedgerApi";
 import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
 
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : "M05 request failed";
+const errorMessage = (error: unknown) => {
+  if (error instanceof ApiTransportError &&
+    typeof error.body === "object" && error.body !== null) {
+    const detail = (error.body as { detail?: unknown }).detail;
+    if (typeof detail === "object" && detail !== null && !Array.isArray(detail)) {
+      const code = (detail as { code?: unknown }).code;
+      const detailMessage = (detail as { message?: unknown }).message;
+      if (typeof detailMessage === "string" || typeof code === "string") {
+        return `${typeof detailMessage === "string" ? detailMessage : "M05 request failed"}${typeof code === "string" ? ` (Technical code: ${code})` : ""}`;
+      }
+    }
+  }
+  return error instanceof Error ? error.message : "M05 request failed";
+};
+const CANDIDATE_EXPLANATIONS: Record<string, string> = {
+  archived_case: "The client case is archived and read-only.",
+  ledger_chain_inconsistent: "The retained ledger history failed its integrity checks.",
+  no_authoritative_candidate: "Another current record is authoritative for this provider and account.",
+  authoritative_candidate_tie: "More than one record has the same authority rank; selection is blocked.",
+  upstream_source_ineligible: "The M02 record is not a current eligible manual source.",
+  m03_ineligible: "The source review is missing, stale, or not currently accepted.",
+  m04_ineligible: "The classification is missing, stale, unresolved, or not currently accepted.",
+  upstream_revalidation_required: "Upstream evidence changed and requires explicit revalidation.",
+  required_value_missing: "A required provider, account, statement date, balance, or component value is missing.",
+  currency_or_unit_invalid: "The required ILS currency confirmation is missing or invalid.",
+  component_mapping_invalid: "The M02 component evidence does not match the accepted classification mapping.",
+  component_set_incomplete: "A complete non-empty set of reconcilable components is required.",
+  statement_date_invalid: "The statement date is missing, invalid, or in the future.",
+};
+const candidateExplanation = (candidate: M05Candidate) => candidate.exclusion_reason
+  ? CANDIDATE_EXPLANATIONS[candidate.exclusion_reason] ??
+    "This candidate is excluded by a technical eligibility gate."
+  : candidate.authoritative_current
+    ? "This is the current technically authoritative candidate."
+    : "This candidate is not the current authoritative record.";
 const text = (value: unknown) => value === null || value === undefined || value === ""
   ? "not present" : typeof value === "string" ? value : JSON.stringify(value);
 
@@ -196,11 +232,23 @@ export function M05LedgerScreen() {
     <section><h3>Manual candidates</h3>
       {candidates.length ? <ul>{candidates.map((candidate) => <li key={candidate.candidate_id}>
         <button type="button" onClick={() => chooseCandidate(candidate.candidate_id)}>
-          {candidate.provider_name ?? "missing provider"} / {candidate.account_reference ?? "missing account"} / {candidate.statement_date ?? "missing date"}
+          {candidate.provider_name ?? "Provider unavailable"} / {candidate.account_reference ?? "Account unavailable"} / {candidate.statement_date ?? "Statement date unavailable"}
         </button>
-        <span> — eligible: {String(candidate.eligible)}; authoritative: {String(candidate.authoritative_current)}; exclusion: {candidate.exclusion_reason ?? "none"}; warnings: {candidate.informational_warnings.join(", ") || "none"}</span>
+        <span> — {candidateExplanation(candidate)}</span>
         <ProductContextView context={candidate.product_context} label={`Candidate ${candidate.candidate_id} product context`} />
       </li>)}</ul> : <p>No manual M05 candidates.</p>}
+      {selectedCandidateRow ? <section aria-label="Selected candidate explanation">
+        <h4>Why this candidate is or is not usable</h4>
+        <p>{candidateExplanation(selectedCandidateRow)}</p>
+        <p>Provider: {selectedCandidateRow.provider_name ?? "not supplied"}; account: {selectedCandidateRow.account_reference ?? "not supplied"}; statement date: {selectedCandidateRow.statement_date ?? "not supplied"}.</p>
+        <p>Technical eligibility: {String(selectedCandidateRow.eligible)}; current authority: {String(selectedCandidateRow.authoritative_current)}.</p>
+        {selectedCandidateRow.exclusion_reason
+          ? <p><small>Technical exclusion code: {selectedCandidateRow.exclusion_reason}</small></p>
+          : null}
+        {selectedCandidateRow.informational_warnings.length
+          ? <p>Technical informational warnings: {selectedCandidateRow.informational_warnings.join(", ")}</p>
+          : null}
+      </section> : null}
       <label><input type="checkbox" checked={confirmCurrency} onChange={(event) => setConfirmCurrency(event.target.checked)} /> Confirm currency ILS for this current candidate</label>
       <button type="button" disabled={!selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current || submitting} onClick={() => void mutate(() => startM05(clientId, selectedCandidateId, confirmCurrency))}>Start ledger</button>
     </section>

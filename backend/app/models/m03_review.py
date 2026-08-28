@@ -155,6 +155,7 @@ def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> N
             M03ReviewRevision.target_kind,
             M03ReviewRevision.revision_sequence,
             M03ReviewRevision.state,
+            M03ReviewRevision.m02_evidence_digest,
         ).where(M03ReviewRevision.revision_id == target.predecessor_revision_id)
     ).one_or_none()
     if predecessor is None:
@@ -173,6 +174,11 @@ def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> N
     ) or (
         predecessor.state in {"accepted", "rejected"}
         and target.state == "under_review"
+    ) or (
+        predecessor.state == "under_review"
+        and target.state == "under_review"
+        and target.m02_evidence_digest is not None
+        and predecessor.m02_evidence_digest != target.m02_evidence_digest
     )
     if not allowed:
         raise ValueError("M03 review lifecycle transition is invalid")

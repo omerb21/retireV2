@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,14 @@ from app.main import app
 from app.models.client import Client
 from app.models.m02_intake import M02IntakeRecord, M02PreservedBlob, M02PreservedSource
 from app.models.m03_review import M03Annotation, M03ReviewRevision
-from app.services.m03_review_service import ACTOR
+from app.services.m03_review_service import ACTOR, m02_evidence_digest
+
+
+def _revision_snapshot(row: M03ReviewRevision) -> dict[str, object]:
+    return {
+        column.name: getattr(row, column.name)
+        for column in M03ReviewRevision.__table__.columns
+    }
 
 
 @pytest.fixture
@@ -230,6 +238,284 @@ def test_material_m02_change_invalidates_authority_until_explicit_rereview(api) 
         assert old.state == "accepted"
         assert old.reason == "accepted version A"
         assert old.m02_evidence_digest != new.m02_evidence_digest
+
+
+def test_stale_under_review_recovers_append_only_before_explicit_decision(api) -> None:
+    client, sessions = api
+    started = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    with sessions() as db:
+        original = db.get(M03ReviewRevision, started["revision_id"])
+        original_snapshot = _revision_snapshot(original)
+
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    client.put(
+        "/api/clients/1/m02/intakes/manual-1",
+        json={
+            "declared_statement_date": "2026-07-01",
+            "declared_total_balance_amount": "1000.00",
+            "declared_component_values": [
+                {"label": "Contributions", "value": "1000.00"}
+            ],
+        },
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+
+    stale = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert stale["eligible"] is False
+    assert stale["exclusion_reason"] == "upstream_m02_evidence_changed"
+    for action in ("accept", "reject"):
+        blocked = client.post(
+            f"/api/clients/1/m03/targets/manual-1/{action}",
+            json={
+                "reason": f"must not {action} stale evidence",
+                "expected_current_revision_id": started["revision_id"],
+            },
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "M03_UPSTREAM_EVIDENCE_CHANGED"
+
+    recovered_response = client.post(
+        "/api/clients/1/m03/targets/manual-1/reopen",
+        json={
+            "reason": "review current version B evidence",
+            "expected_current_revision_id": started["revision_id"],
+        },
+    )
+    assert recovered_response.status_code == 201
+    recovered = recovered_response.json()
+    assert recovered["state"] == "under_review"
+    assert recovered["revision_sequence"] == 2
+    assert recovered["predecessor_revision_id"] == started["revision_id"]
+    active = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert active["eligible"] is False
+    assert active["exclusion_reason"] == "review_under_review"
+
+    accepted = client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "explicitly accepted version B",
+            "expected_current_revision_id": recovered["revision_id"],
+        },
+    )
+    assert accepted.status_code == 201
+    restored = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert restored["eligible"] is True
+    assert restored["accepted_revision_id"] == accepted.json()["revision_id"]
+    with sessions() as db:
+        original = db.get(M03ReviewRevision, started["revision_id"])
+        recovered_row = db.get(M03ReviewRevision, recovered["revision_id"])
+        assert _revision_snapshot(original) == original_snapshot
+        assert recovered_row.m02_evidence_digest is not None
+        assert recovered_row.m02_evidence_digest != original.m02_evidence_digest
+
+
+def test_legacy_null_digest_under_review_recovers_without_backfill(api) -> None:
+    client, sessions = api
+    with sessions() as db:
+        legacy = M03ReviewRevision(
+            revision_id="server-replaces-this-id",
+            client_id=1,
+            target_kind="manual_record_review",
+            intake_id="manual-1",
+            source_id=None,
+            predecessor_revision_id=None,
+            revision_sequence=1,
+            state="under_review",
+            reason=None,
+            m02_evidence_digest=None,
+            actor=ACTOR,
+            decided_at=datetime.now(timezone.utc),
+        )
+        db.add(legacy)
+        db.commit()
+        db.refresh(legacy)
+        legacy_id = legacy.revision_id
+        legacy_snapshot = _revision_snapshot(legacy)
+
+    history = client.get("/api/clients/1/m03/targets/manual-1/history")
+    assert history.status_code == 200
+    assert [row["revision_id"] for row in history.json()] == [legacy_id]
+    stale = client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()
+    assert stale["eligible"] is False
+    assert stale["exclusion_reason"] == "upstream_m02_evidence_changed"
+    for action in ("accept", "reject"):
+        blocked = client.post(
+            f"/api/clients/1/m03/targets/manual-1/{action}",
+            json={
+                "reason": "legacy evidence requires current review",
+                "expected_current_revision_id": legacy_id,
+            },
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "M03_UPSTREAM_EVIDENCE_CHANGED"
+
+    recovered_response = client.post(
+        "/api/clients/1/m03/targets/manual-1/reopen",
+        json={
+            "reason": "bind a fresh review to current evidence",
+            "expected_current_revision_id": legacy_id,
+        },
+    )
+    assert recovered_response.status_code == 201
+    recovered = recovered_response.json()
+    assert recovered["state"] == "under_review"
+    assert recovered["revision_sequence"] == 2
+    assert recovered["predecessor_revision_id"] == legacy_id
+    accepted = client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "explicit current-evidence acceptance",
+            "expected_current_revision_id": recovered["revision_id"],
+        },
+    )
+    assert accepted.status_code == 201
+    assert client.get(
+        "/api/clients/1/m03/targets/manual-1/eligibility"
+    ).json()["eligible"] is True
+    with sessions() as db:
+        legacy = db.get(M03ReviewRevision, legacy_id)
+        recovered_row = db.get(M03ReviewRevision, recovered["revision_id"])
+        accepted_row = db.get(M03ReviewRevision, accepted.json()["revision_id"])
+        assert _revision_snapshot(legacy) == legacy_snapshot
+        assert legacy.m02_evidence_digest is None
+        assert recovered_row.m02_evidence_digest is not None
+        assert recovered_row.predecessor_revision_id == legacy_id
+        assert accepted_row.predecessor_revision_id == recovered_row.revision_id
+        assert [legacy.revision_sequence, recovered_row.revision_sequence,
+                accepted_row.revision_sequence] == [1, 2, 3]
+
+
+def test_current_evidence_under_review_cannot_reopen_into_generic_loop(api) -> None:
+    client, sessions = api
+    started = client.post("/api/clients/1/m03/targets/manual-1/start").json()
+    blocked = client.post(
+        "/api/clients/1/m03/targets/manual-1/reopen",
+        json={
+            "reason": "must not create an ordinary under-review loop",
+            "expected_current_revision_id": started["revision_id"],
+        },
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "M03_WRONG_CURRENT_STATE"
+    with sessions() as db:
+        root = db.get(M03ReviewRevision, started["revision_id"])
+        db.add(M03ReviewRevision(
+            revision_id="server-replaces-this-id",
+            client_id=root.client_id,
+            target_kind=root.target_kind,
+            intake_id=root.intake_id,
+            source_id=root.source_id,
+            predecessor_revision_id=root.revision_id,
+            revision_sequence=2,
+            state="under_review",
+            reason="attempt generic loop",
+            m02_evidence_digest=root.m02_evidence_digest,
+            actor=ACTOR,
+            decided_at=datetime.now(timezone.utc),
+        ))
+        with pytest.raises(ValueError, match="lifecycle transition is invalid"):
+            db.commit()
+        db.rollback()
+        rows = list(db.scalars(select(M03ReviewRevision)).all())
+        assert len(rows) == 1
+        assert rows[0].revision_id == started["revision_id"]
+
+
+def test_m02_evidence_digest_canonicalization_and_material_inputs(api) -> None:
+    _client, sessions = api
+    with sessions() as db:
+        manual = db.get(M02IntakeRecord, "manual-1")
+        manual.notes = "קצבה – café"
+        manual.declared_total_balance_amount = Decimal("1000.0")
+        manual.declared_component_values = [
+            {"label": "Alpha", "value": "600.00"},
+            {"label": "Beta", "value": "400.00"},
+        ]
+        db.commit()
+        db.expire_all()
+        manual = db.get(M02IntakeRecord, "manual-1")
+        persisted = m02_evidence_digest(manual, "manual_record_review", None)
+        assert persisted == m02_evidence_digest(
+            manual, "manual_record_review", None
+        )
+
+        manual.declared_component_values = [
+            {"value": "600.00", "label": "Alpha"},
+            {"value": "400.00", "label": "Beta"},
+        ]
+        key_reordered = m02_evidence_digest(
+            manual, "manual_record_review", None
+        )
+        assert key_reordered == persisted
+
+        manual.declared_total_balance_amount = Decimal("1000.00")
+        db.commit()
+        db.expire_all()
+        manual = db.get(M02IntakeRecord, "manual-1")
+        assert m02_evidence_digest(
+            manual, "manual_record_review", None
+        ) == persisted
+
+        manual.declared_statement_date = date(2026, 7, 1)
+        assert m02_evidence_digest(
+            manual, "manual_record_review", None
+        ) != persisted
+        manual.declared_statement_date = None
+        manual.declared_component_values = [
+            {"label": "Beta", "value": "400.00"},
+            {"label": "Alpha", "value": "600.00"},
+        ]
+        assert m02_evidence_digest(
+            manual, "manual_record_review", None
+        ) != persisted
+
+        uploaded = db.get(M02IntakeRecord, "upload-1")
+        source = db.get(M02PreservedSource, "source-1")
+        source_digest = m02_evidence_digest(
+            uploaded, "source_evidence_review", source
+        )
+        source.original_filename = "מקור.pdf"
+        db.commit()
+        db.expire_all()
+        uploaded = db.get(M02IntakeRecord, "upload-1")
+        source = db.get(M02PreservedSource, "source-1")
+        renamed_digest = m02_evidence_digest(
+            uploaded, "source_evidence_review", source
+        )
+        assert renamed_digest != source_digest
+
+        replacement_blob = M02PreservedBlob(
+            blob_id="blob-2",
+            client_id=1,
+            storage_key="objects/bb/file",
+            sha256_checksum="b" * 64,
+            byte_size=11,
+            validated_media_type="application/pdf",
+        )
+        db.add(replacement_blob)
+        source.blob = replacement_blob
+        source.blob_id = replacement_blob.blob_id
+        db.commit()
+        db.expire_all()
+        uploaded = db.get(M02IntakeRecord, "upload-1")
+        source = db.get(M02PreservedSource, "source-1")
+        assert m02_evidence_digest(
+            uploaded, "source_evidence_review", source
+        ) != renamed_digest
 
 
 def test_lifecycle_only_round_trip_does_not_change_m02_evidence_authority(api) -> None:

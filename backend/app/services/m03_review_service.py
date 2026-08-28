@@ -211,7 +211,15 @@ def _leaf(
     now_limit = datetime.now(timezone.utc) + MAX_SERVER_CLOCK_SKEW
     for index, row in enumerate(rows, 1):
         expected_parent = None if index == 1 else rows[index - 2].revision_id
-        expected_state = {"accepted", "rejected"} if index > 1 and rows[index - 2].state == "under_review" else {"under_review"}
+        predecessor = rows[index - 2] if index > 1 else None
+        expected_state = {"under_review"}
+        if predecessor is not None and predecessor.state == "under_review":
+            expected_state = {"accepted", "rejected"}
+            if (
+                row.m02_evidence_digest is not None
+                and predecessor.m02_evidence_digest != row.m02_evidence_digest
+            ):
+                expected_state.add("under_review")
         decided_at = _utc(row.decided_at)
         predecessor_decided_at = _utc(rows[index - 2].decided_at) if index > 1 else intake_created_at
         if (
@@ -266,12 +274,12 @@ def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetRes
             exclusion = f"m02_{intake.lifecycle_status}"
         elif leaf is None:
             exclusion = "review_not_started"
-        elif leaf.state != "accepted":
-            exclusion = f"review_{leaf.state}"
         elif leaf.m02_evidence_digest != m02_evidence_digest(
             intake, kind, source
         ):
             exclusion = "upstream_m02_evidence_changed"
+        elif leaf.state != "accepted":
+            exclusion = f"review_{leaf.state}"
     eligible = exclusion is None
     blob = (
         source.blob
@@ -367,15 +375,23 @@ def decide_review(db: Session, client_id: int, intake_id: str, action: str, reas
     leaf = _leaf(_history(db, intake_id), intake, kind, source)
     if leaf is None:
         raise M03ReviewError(409, "M03_REVIEW_NOT_STARTED", "Review has not started")
-    if action in {"accepted", "rejected"} and (
-        leaf.m02_evidence_digest != m02_evidence_digest(intake, kind, source)
-    ):
+    evidence_changed = leaf.m02_evidence_digest != m02_evidence_digest(
+        intake, kind, source
+    )
+    if action in {"accepted", "rejected"} and evidence_changed:
         raise M03ReviewError(
             409,
             "M03_UPSTREAM_EVIDENCE_CHANGED",
             "M02 evidence changed; reopen and review the current evidence",
         )
-    allowed = leaf.state == "under_review" if action in {"accepted", "rejected"} else leaf.state in {"accepted", "rejected"}
+    if action in {"accepted", "rejected"}:
+        allowed = leaf.state == "under_review"
+    elif action == "reopen":
+        allowed = leaf.state in {"accepted", "rejected"} or (
+            leaf.state == "under_review" and evidence_changed
+        )
+    else:
+        allowed = False
     if not allowed:
         raise M03ReviewError(409, "M03_WRONG_CURRENT_STATE", "The action is not allowed from the current state")
     return _append(db, intake, "under_review" if action == "reopen" else action, reason, expected)

@@ -156,7 +156,9 @@ APPROVED_PKG_012_PATHS = {
 }
 APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS = {
     "backend/alembic/versions/a1c7e4d9f208_m03_m02_authority_digest.py",
+    "backend/alembic/versions/c2d8f5a1b309_m03_m02_evidence_snapshot.py",
     "backend/app/models/m03_review.py",
+    "backend/app/services/m02_evidence_digest.py",
     "backend/app/services/m03_review_service.py",
     "backend/tests/test_governance_baseline.py",
     "backend/tests/test_migration_safety.py",

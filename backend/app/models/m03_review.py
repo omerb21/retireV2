@@ -7,6 +7,10 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, St
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.services.m02_evidence_digest import (
+    load_authoritative_m02_evidence,
+    validate_stored_m02_evidence,
+)
 
 
 M03_TARGET_KINDS = ("source_evidence_review", "manual_record_review")
@@ -59,6 +63,9 @@ class M03ReviewRevision(Base):
     m02_evidence_digest: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )
+    m02_evidence_snapshot_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
     actor: Mapped[str] = mapped_column(String(128), nullable=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -97,39 +104,22 @@ def _prevent_delete(_mapper, _connection, _target) -> None:
 
 
 def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> None:
-    from app.models.m02_intake import M02IntakeRecord, M02PreservedSource
-
     target.revision_id = new_m03_revision_id()
     target.decided_at = m03_server_timestamp()
-
-    intake = connection.execute(
-        select(
-            M02IntakeRecord.client_id,
-            M02IntakeRecord.record_kind,
-        ).where(M02IntakeRecord.intake_id == target.intake_id)
-    ).one_or_none()
-    if intake is None or intake.client_id != target.client_id:
-        raise ValueError("M03 review target must belong to the same client")
-
-    if intake.record_kind == "manual":
-        if target.target_kind != "manual_record_review" or target.source_id is not None:
-            raise ValueError("M03 manual review provenance is inconsistent")
-    elif intake.record_kind == "uploaded_source":
-        source = connection.execute(
-            select(
-                M02PreservedSource.client_id,
-                M02PreservedSource.intake_id,
-            ).where(M02PreservedSource.source_id == target.source_id)
-        ).one_or_none()
-        if (
-            target.target_kind != "source_evidence_review"
-            or source is None
-            or source.client_id != target.client_id
-            or source.intake_id != target.intake_id
-        ):
-            raise ValueError("M03 uploaded review provenance is inconsistent")
-    else:
-        raise ValueError("M03 review target kind is unsupported")
+    current_evidence = load_authoritative_m02_evidence(
+        connection,
+        client_id=target.client_id,
+        intake_id=target.intake_id,
+        target_kind=target.target_kind,
+        source_id=target.source_id,
+    )
+    if (
+        target.m02_evidence_snapshot_json != current_evidence.snapshot_json
+        or target.m02_evidence_digest != current_evidence.digest
+    ):
+        raise ValueError(
+            "M03 review evidence must equal authoritative current M02 evidence"
+        )
 
     if target.actor != M03_WORKFLOW_ACTOR:
         raise ValueError("M03 review actor must be server-controlled")
@@ -156,6 +146,7 @@ def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> N
             M03ReviewRevision.revision_sequence,
             M03ReviewRevision.state,
             M03ReviewRevision.m02_evidence_digest,
+            M03ReviewRevision.m02_evidence_snapshot_json,
         ).where(M03ReviewRevision.revision_id == target.predecessor_revision_id)
     ).one_or_none()
     if predecessor is None:
@@ -168,18 +159,35 @@ def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> N
         or predecessor.revision_sequence + 1 != target.revision_sequence
     ):
         raise ValueError("M03 predecessor must belong to the same target chain")
-    allowed = (
-        predecessor.state == "under_review"
-        and target.state in {"accepted", "rejected"}
-    ) or (
+    predecessor_evidence = validate_stored_m02_evidence(
+        predecessor.m02_evidence_snapshot_json,
+        predecessor.m02_evidence_digest,
+        client_id=predecessor.client_id,
+        intake_id=predecessor.intake_id,
+        target_kind=predecessor.target_kind,
+        source_id=predecessor.source_id,
+    )
+    if predecessor.state == "under_review" and target.state in {
+        "accepted",
+        "rejected",
+    }:
+        allowed = (
+            predecessor_evidence is not None
+            and predecessor_evidence.snapshot_json == current_evidence.snapshot_json
+            and predecessor_evidence.digest == current_evidence.digest
+        )
+    elif (
         predecessor.state in {"accepted", "rejected"}
         and target.state == "under_review"
-    ) or (
-        predecessor.state == "under_review"
-        and target.state == "under_review"
-        and target.m02_evidence_digest is not None
-        and predecessor.m02_evidence_digest != target.m02_evidence_digest
-    )
+    ):
+        allowed = True
+    elif predecessor.state == "under_review" and target.state == "under_review":
+        allowed = (
+            predecessor_evidence is None
+            or predecessor_evidence.digest != current_evidence.digest
+        )
+    else:
+        allowed = False
     if not allowed:
         raise ValueError("M03 review lifecycle transition is invalid")
 

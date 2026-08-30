@@ -9,7 +9,7 @@ import pytest
 
 PARENT = "c4e8a1f6d203"
 FOUNDATION = "d5f9b2a7c406"
-HEAD = "a1c7e4d9f208"
+HEAD = "c2d8f5a1b309"
 TABLES = {"m09_scenario_subjects", "m09_scenario_adjustments", "m09_scenario_subject_seals", "m09_subject_runs", "m09_subject_monthly_results"}
 
 

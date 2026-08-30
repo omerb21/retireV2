@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-import hashlib
-import json
+from datetime import datetime, timedelta, timezone
 import re
 
 from sqlalchemy import select
@@ -15,12 +12,15 @@ from app.models.m02_intake import M02IntakeRecord, M02PreservedSource
 from app.models.m03_review import M03Annotation, M03ReviewRevision, M03_WORKFLOW_ACTOR
 from app.schemas.m03_review import M03AnnotationRequest, M03AnnotationResponse, M03RevisionResponse, M03TargetResponse
 from app.services.m01_case_service import effective_lifecycle_status
+from app.services.m02_evidence_digest import (
+    build_m02_evidence,
+    validate_stored_m02_evidence,
+)
 
 
 ACTOR = M03_WORKFLOW_ACTOR
 REVISION_ID_PATTERN = re.compile(r"^M03-R-[0-9a-f]{32}$")
 MAX_SERVER_CLOCK_SKEW = timedelta(minutes=5)
-DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class M03ReviewError(Exception):
@@ -97,93 +97,6 @@ def _target_for_response(
         return "source_evidence_review", source, "uploaded_provenance_inconsistent"
 
 
-def _canonical_value(value):
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return format(value, "f")
-    if isinstance(value, dict):
-        return {
-            str(key): _canonical_value(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
-    if isinstance(value, (list, tuple)):
-        return [_canonical_value(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
-
-
-def _m02_evidence_payload(
-    intake: M02IntakeRecord,
-    kind: str,
-    source: M02PreservedSource | None,
-) -> dict:
-    blob = source.blob if source is not None else None
-    return _canonical_value(
-        {
-            "schema_version": "m03-m02-evidence-v1",
-            "client_id": intake.client_id,
-            "intake_id": intake.intake_id,
-            "target_kind": kind,
-            "record_kind": intake.record_kind,
-            "declared_provider_name": intake.declared_provider_name,
-            "product_name": intake.product_name,
-            "product_identifier": intake.product_identifier,
-            "declared_account_reference": intake.declared_account_reference,
-            "declared_total_balance_amount": intake.declared_total_balance_amount,
-            "declared_monthly_pension_amount": intake.declared_monthly_pension_amount,
-            "declared_component_values": intake.declared_component_values,
-            "declared_statement_date": intake.declared_statement_date,
-            "declared_start_date": intake.declared_start_date,
-            "declared_product_type": intake.declared_product_type,
-            "source_type": intake.source_type,
-            "declared_basis": intake.declared_basis,
-            "notes": intake.notes,
-            "preservation_status": intake.preservation_status,
-            "preservation_failure_code": intake.preservation_failure_code,
-            "source": (
-                {
-                    "source_id": source.source_id,
-                    "blob_id": source.blob_id,
-                    "original_filename": source.original_filename,
-                    "sanitized_download_filename": source.sanitized_download_filename,
-                    "normalized_extension": source.normalized_extension,
-                    "declared_mime_type": source.declared_mime_type,
-                    "validated_media_type": source.validated_media_type,
-                    "detected_text_encoding": source.detected_text_encoding,
-                    "source_type": source.source_type,
-                    "declared_statement_date": source.declared_statement_date,
-                    "byte_size": source.byte_size,
-                    "preservation_status": source.preservation_status,
-                    "validation_diagnostics": source.validation_diagnostics,
-                    "blob_sha256_checksum": blob.sha256_checksum if blob else None,
-                    "blob_byte_size": blob.byte_size if blob else None,
-                    "blob_validated_media_type": (
-                        blob.validated_media_type if blob else None
-                    ),
-                }
-                if source is not None
-                else None
-            ),
-        }
-    )
-
-
-def m02_evidence_digest(
-    intake: M02IntakeRecord,
-    kind: str,
-    source: M02PreservedSource | None,
-) -> str:
-    canonical = json.dumps(
-        _m02_evidence_payload(intake, kind, source),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 def _history(db: Session, intake_id: str) -> list[M03ReviewRevision]:
     return list(db.scalars(select(M03ReviewRevision).where(
         M03ReviewRevision.intake_id == intake_id,
@@ -209,17 +122,53 @@ def _leaf(
     expected_source_id = source.source_id if source else None
     intake_created_at = _utc(intake.created_at)
     now_limit = datetime.now(timezone.utc) + MAX_SERVER_CLOCK_SKEW
+    stored_evidence = []
     for index, row in enumerate(rows, 1):
         expected_parent = None if index == 1 else rows[index - 2].revision_id
         predecessor = rows[index - 2] if index > 1 else None
-        expected_state = {"under_review"}
-        if predecessor is not None and predecessor.state == "under_review":
-            expected_state = {"accepted", "rejected"}
-            if (
-                row.m02_evidence_digest is not None
-                and predecessor.m02_evidence_digest != row.m02_evidence_digest
-            ):
-                expected_state.add("under_review")
+        try:
+            row_evidence = validate_stored_m02_evidence(
+                row.m02_evidence_snapshot_json,
+                row.m02_evidence_digest,
+                client_id=row.client_id,
+                intake_id=row.intake_id,
+                target_kind=row.target_kind,
+                source_id=row.source_id,
+            )
+        except ValueError as error:
+            raise M03ReviewError(
+                409,
+                "M03_REVIEW_CHAIN_INCONSISTENT",
+                "Review chain is inconsistent",
+            ) from error
+        predecessor_evidence = stored_evidence[-1] if stored_evidence else None
+        if predecessor is None:
+            transition_valid = row.state == "under_review"
+        elif predecessor.state == "under_review" and row.state in {
+            "accepted",
+            "rejected",
+        }:
+            transition_valid = (
+                predecessor_evidence is None and row_evidence is None
+            ) or (
+                predecessor_evidence is not None
+                and row_evidence is not None
+                and predecessor_evidence.digest == row_evidence.digest
+                and predecessor_evidence.snapshot_json
+                == row_evidence.snapshot_json
+            )
+        elif predecessor.state == "under_review" and row.state == "under_review":
+            transition_valid = row_evidence is not None and (
+                predecessor_evidence is None
+                or predecessor_evidence.digest != row_evidence.digest
+            )
+        elif (
+            predecessor.state in {"accepted", "rejected"}
+            and row.state == "under_review"
+        ):
+            transition_valid = True
+        else:
+            transition_valid = False
         decided_at = _utc(row.decided_at)
         predecessor_decided_at = _utc(rows[index - 2].decided_at) if index > 1 else intake_created_at
         if (
@@ -229,13 +178,9 @@ def _leaf(
             or row.target_kind != kind
             or row.source_id != expected_source_id
             or row.actor != ACTOR
-            or (
-                row.m02_evidence_digest is not None
-                and DIGEST_PATTERN.fullmatch(row.m02_evidence_digest) is None
-            )
             or row.revision_sequence != index
             or row.predecessor_revision_id != expected_parent
-            or row.state not in expected_state
+            or not transition_valid
             or (index == 1 and row.reason is not None)
             or (index > 1 and (row.reason is None or not row.reason.strip()))
             or decided_at is None
@@ -244,6 +189,7 @@ def _leaf(
             or decided_at > now_limit
         ):
             raise M03ReviewError(409, "M03_REVIEW_CHAIN_INCONSISTENT", "Review chain is inconsistent")
+        stored_evidence.append(row_evidence)
     return rows[-1]
 
 
@@ -270,12 +216,27 @@ def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetRes
         leaf = None
         exclusion = "review_chain_inconsistent"
     if exclusion is None:
+        current_evidence = build_m02_evidence(intake, kind, source)
+        leaf_evidence = (
+            validate_stored_m02_evidence(
+                leaf.m02_evidence_snapshot_json,
+                leaf.m02_evidence_digest,
+                client_id=leaf.client_id,
+                intake_id=leaf.intake_id,
+                target_kind=leaf.target_kind,
+                source_id=leaf.source_id,
+            )
+            if leaf is not None
+            else None
+        )
         if intake.lifecycle_status != "accepted_for_review":
             exclusion = f"m02_{intake.lifecycle_status}"
         elif leaf is None:
             exclusion = "review_not_started"
-        elif leaf.m02_evidence_digest != m02_evidence_digest(
-            intake, kind, source
+        elif (
+            leaf_evidence is None
+            or leaf_evidence.digest != current_evidence.digest
+            or leaf_evidence.snapshot_json != current_evidence.snapshot_json
         ):
             exclusion = "upstream_m02_evidence_changed"
         elif leaf.state != "accepted":
@@ -336,6 +297,7 @@ def _append(
         raise M03ReviewError(409, "M03_REVIEW_ALREADY_STARTED", "Review already exists")
     if expected is not None and (leaf is None or leaf.revision_id != expected):
         raise M03ReviewError(409, "M03_STALE_CURRENT_REVISION", "The review changed before this action")
+    evidence = build_m02_evidence(intake, kind, source)
     row = M03ReviewRevision(
         client_id=intake.client_id,
         target_kind=kind,
@@ -345,7 +307,8 @@ def _append(
         revision_sequence=len(rows) + 1,
         state=state,
         reason=reason,
-        m02_evidence_digest=m02_evidence_digest(intake, kind, source),
+        m02_evidence_digest=evidence.digest,
+        m02_evidence_snapshot_json=evidence.snapshot_json,
         actor=ACTOR,
     )
     db.add(row)
@@ -375,8 +338,19 @@ def decide_review(db: Session, client_id: int, intake_id: str, action: str, reas
     leaf = _leaf(_history(db, intake_id), intake, kind, source)
     if leaf is None:
         raise M03ReviewError(409, "M03_REVIEW_NOT_STARTED", "Review has not started")
-    evidence_changed = leaf.m02_evidence_digest != m02_evidence_digest(
-        intake, kind, source
+    current_evidence = build_m02_evidence(intake, kind, source)
+    leaf_evidence = validate_stored_m02_evidence(
+        leaf.m02_evidence_snapshot_json,
+        leaf.m02_evidence_digest,
+        client_id=leaf.client_id,
+        intake_id=leaf.intake_id,
+        target_kind=leaf.target_kind,
+        source_id=leaf.source_id,
+    )
+    evidence_changed = (
+        leaf_evidence is None
+        or leaf_evidence.digest != current_evidence.digest
+        or leaf_evidence.snapshot_json != current_evidence.snapshot_json
     )
     if action in {"accepted", "rejected"} and evidence_changed:
         raise M03ReviewError(

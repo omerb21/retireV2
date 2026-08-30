@@ -156,6 +156,88 @@ def test_m03_m02_authority_digest_migration_is_narrow_and_reversible(
     engine.dispose()
 
 
+def test_m03_m02_evidence_snapshot_migration_is_narrow_and_reversible(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "m03_evidence_snapshot.db"
+    _run_alembic(db_path, "upgrade", "a1c7e4d9f208")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    columns = {
+        column["name"]: column
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    assert "m02_evidence_snapshot_json" not in columns
+    assert columns["m02_evidence_digest"]["nullable"] is True
+    assert columns["m02_evidence_digest"]["type"].length == 64
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO clients (client_id,display_name,id_number) "
+            "VALUES (901,'Snapshot Legacy','snapshot-legacy')"
+        ))
+        connection.execute(text(
+            "INSERT INTO m02_intake_records "
+            "(intake_id,client_id,record_kind,manual_technical_reference,"
+            "source_type,lifecycle_status,preservation_status,created_by_actor,"
+            "updated_by_actor,lifecycle_decided_by_actor) VALUES "
+            "('snapshot-legacy',901,'manual','M02-SNAPSHOT-LEGACY','manual',"
+            "'accepted_for_review','not_applicable','test','test','test')"
+        ))
+        connection.execute(text(
+            "INSERT INTO m03_review_revisions "
+            "(revision_id,client_id,target_kind,intake_id,source_id,"
+            "predecessor_revision_id,revision_sequence,state,reason,"
+            "m02_evidence_digest,actor,decided_at) VALUES "
+            "('M03-R-00000000000000000000000000000901',901,"
+            "'manual_record_review','snapshot-legacy',NULL,NULL,1,"
+            "'under_review',NULL,NULL,'test','2026-01-01 00:00:00')"
+        ))
+    engine.dispose()
+
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    columns = {
+        column["name"]: column
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    assert columns["m02_evidence_snapshot_json"]["nullable"] is True
+    assert columns["m02_evidence_snapshot_json"]["type"].__class__.__name__ == "TEXT"
+    assert columns["m02_evidence_digest"]["nullable"] is True
+    assert columns["m02_evidence_digest"]["type"].length == 64
+    with engine.connect() as connection:
+        legacy = connection.execute(text(
+            "SELECT m02_evidence_digest,m02_evidence_snapshot_json "
+            "FROM m03_review_revisions WHERE intake_id='snapshot-legacy'"
+        )).one()
+        assert legacy == (None, None)
+    engine.dispose()
+
+    _run_alembic(db_path, "downgrade", "a1c7e4d9f208")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    columns = {
+        column["name"]
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    assert "m02_evidence_snapshot_json" not in columns
+    assert "m02_evidence_digest" in columns
+    engine.dispose()
+
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    assert "m02_evidence_snapshot_json" in {
+        column["name"]
+        for column in sqlalchemy_inspect(engine).get_columns(
+            "m03_review_revisions"
+        )
+    }
+    engine.dispose()
+
+
 def test_pkg002_status_migration_preserves_existing_runs_and_supports_new_statuses(
     tmp_path: Path,
 ) -> None:

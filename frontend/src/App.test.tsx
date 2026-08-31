@@ -43,8 +43,9 @@ describe("App", () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText("Retirement Planning V2 - Frontend Shell")).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Client List" })).toBeInTheDocument();
+    expect(screen.getByText("מערכת תכנון פרישה")).toBeInTheDocument();
+    expect(screen.getByText("מערכת תכנון פרישה").closest("div")).toHaveAttribute("dir", "rtl");
+    expect(await screen.findByRole("heading", { name: "רשימת לקוחות" })).toBeInTheDocument();
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
   });
 });

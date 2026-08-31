@@ -18,6 +18,7 @@ import {
   type M10RunEvidence,
 } from "../api/m10ComparisonApi";
 import { useClientContextGeneration, type ClientContextToken } from "../hooks/useClientContextGeneration";
+import { heLabel } from "../i18n/he";
 
 type DiscoveryStatus =
   | "initial"
@@ -72,12 +73,12 @@ function ServerOwnedBaselineReference({ candidate, clientId }: {
   clientId: number;
 }) {
   const valid = hasServerOwnedBaselineEvidence(candidate, clientId);
-  return <section aria-label="Server-owned baseline reference">
-    <h3>Server-owned baseline reference</h3>
+  return <section aria-label="תרחיש בסיס שנקבע בשרת">
+    <h3>תרחיש בסיס שנקבע בשרת</h3>
     {valid ? <>
-      <p>No planner-declared scenario adjustments.</p>
-      <p>Provenance: <code>{BASELINE_PROVENANCE}</code></p>
-    </> : <p>Server-owned baseline reference evidence unavailable.</p>}
+      <p>אין התאמות תרחיש שהוגדרו על ידי המתכנן.</p>
+      <p>מקור: <code>{BASELINE_PROVENANCE}</code></p>
+    </> : <p>אסמכתת תרחיש הבסיס אינה זמינה.</p>}
   </section>;
 }
 
@@ -135,8 +136,8 @@ function selectedAdjustmentEvidence(candidate: Candidate | null, clientId: numbe
 
 function adjustmentTypeLabel(type: AdjustmentEvidence["adjustment_type"]): string {
   return type === "declared_additional_monthly_income"
-    ? "Declared additional monthly income"
-    : "Declared additional monthly expense";
+    ? "הכנסה חודשית נוספת מוצהרת"
+    : "הוצאה חודשית נוספת מוצהרת";
 }
 
 function SelectedAdjustmentEvidence({ candidate, clientId }: {
@@ -144,20 +145,20 @@ function SelectedAdjustmentEvidence({ candidate, clientId }: {
   clientId: number;
 }) {
   const adjustments = selectedAdjustmentEvidence(candidate, clientId);
-  return <section aria-label="Selected scenario adjustment evidence">
-    <h3>Selected scenario adjustment evidence</h3>
-    <p>Scenario subject ID: {candidate.subject.scenario_subject_id}</p>
-    {adjustments === null ? <p>Selected scenario adjustment evidence unavailable.</p> : <ol>
+  return <section aria-label="ראיות ההתאמה של התרחיש שנבחר">
+    <h3>ראיות ההתאמה של התרחיש שנבחר</h3>
+    <p>מזהה תרחיש: {candidate.subject.scenario_subject_id}</p>
+    {adjustments === null ? <p>ראיות התאמת התרחיש אינן זמינות.</p> : <ol>
       {adjustments.map(adjustment => <li key={adjustment.adjustment_id}>
         <h4>{adjustmentTypeLabel(adjustment.adjustment_type)}</h4>
         <dl>
-          <dt>Occurrence ID</dt><dd>{adjustment.adjustment_id}</dd>
-          <dt>Ordinal</dt><dd>{adjustment.ordinal}</dd>
-          <dt>Adjustment type</dt><dd><code>{adjustment.adjustment_type}</code></dd>
-          <dt>Amount</dt><dd>{adjustment.amount}</dd>
-          <dt>Start month</dt><dd>{adjustment.start_month}</dd>
-          <dt>End month</dt><dd>{adjustment.end_month}</dd>
-          <dt>Provenance</dt><dd><code>{adjustment.provenance}</code></dd>
+          <dt>מזהה מופע</dt><dd>{adjustment.adjustment_id}</dd>
+          <dt>סדר</dt><dd>{adjustment.ordinal}</dd>
+          <dt>סוג התאמה</dt><dd><code>{adjustment.adjustment_type}</code></dd>
+          <dt>סכום</dt><dd>{adjustment.amount}</dd>
+          <dt>חודש התחלה</dt><dd>{adjustment.start_month}</dd>
+          <dt>חודש סיום</dt><dd>{adjustment.end_month}</dd>
+          <dt>מקור</dt><dd><code>{adjustment.provenance}</code></dd>
         </dl>
       </li>)}
     </ol>}
@@ -165,28 +166,28 @@ function SelectedAdjustmentEvidence({ candidate, clientId }: {
 }
 
 const BLOCKER_TEXT: Record<M10ComparatorBlockerCode, string> = {
-  comparison_run_unavailable: "A requested comparison run is unavailable.",
-  comparison_same_subject: "The two runs belong to the same scenario subject.",
-  comparison_pair_role_invalid: "The submitted runs do not have the required baseline and adjusted roles.",
-  comparison_scenario_contract_mismatch: "The scenario contract evidence does not match.",
-  comparison_horizon_mismatch: "The comparison horizons do not match.",
-  comparison_factual_baseline_material_mismatch: "The factual baseline material does not match.",
-  comparison_component_domain_contract_mismatch: "The component-domain contract evidence does not match.",
-  comparison_engine_version_mismatch: "The engine-version evidence does not match.",
-  comparison_result_schema_version_mismatch: "The result-schema evidence does not match.",
-  comparison_factual_upstream_version_mismatch: "The factual upstream-version evidence does not match.",
-  comparison_run_not_current: "A submitted run is not current.",
-  comparison_run_not_eligible: "A submitted run is not eligible for M10 comparison.",
-  comparison_fingerprint_invalid: "Comparison fingerprint evidence is invalid.",
-  comparison_semantically_identical_manifest: "The adjustment manifests are semantically identical.",
-  comparison_month_alignment_mismatch: "The persisted monthly evidence is not aligned.",
-  comparison_numeric_domain_invalid: "Persisted numeric evidence is outside the accepted domain.",
+  comparison_run_unavailable: "הרצת ההשוואה המבוקשת אינה זמינה.",
+  comparison_same_subject: "שתי ההרצות שייכות לאותו נושא תרחיש.",
+  comparison_pair_role_invalid: "להרצות שנשלחו אין את תפקידי הבסיס והתרחיש המותאם הנדרשים.",
+  comparison_scenario_contract_mismatch: "ראיות חוזה התרחיש אינן תואמות.",
+  comparison_horizon_mismatch: "טווחי ההשוואה אינם תואמים.",
+  comparison_factual_baseline_material_mismatch: "נתוני הבסיס העובדתיים אינם תואמים.",
+  comparison_component_domain_contract_mismatch: "ראיות חוזה תחום הרכיבים אינן תואמות.",
+  comparison_engine_version_mismatch: "ראיות גרסת מנוע החישוב אינן תואמות.",
+  comparison_result_schema_version_mismatch: "ראיות סכמת התוצאה אינן תואמות.",
+  comparison_factual_upstream_version_mismatch: "ראיות גרסת נתוני המקור העובדתיים אינן תואמות.",
+  comparison_run_not_current: "אחת ההרצות שנשלחו אינה ההרצה הנוכחית.",
+  comparison_run_not_eligible: "אחת ההרצות שנשלחו אינה כשירה להשוואת M10.",
+  comparison_fingerprint_invalid: "ראיות טביעת האצבע של ההשוואה אינן תקינות.",
+  comparison_semantically_identical_manifest: "מניפסטי ההתאמה זהים מבחינה סמנטית.",
+  comparison_month_alignment_mismatch: "הראיות החודשיות שנשמרו אינן מיושרות.",
+  comparison_numeric_domain_invalid: "הראיות המספריות שנשמרו חורגות מהתחום המאושר.",
 };
 
 const METRICS = [
-  ["gross_inflow_total", "Gross inflow total"],
-  ["gross_outflow_total", "Gross outflow total"],
-  ["period_net", "Period net"],
+  ["gross_inflow_total", "סך תקבולים ברוטו"],
+  ["gross_outflow_total", "סך תשלומים ברוטו"],
+  ["period_net", "נטו לתקופה"],
 ] as const;
 
 function transportMessage(error: unknown, context: string): string {
@@ -231,16 +232,16 @@ function RunEvidence({ title, evidence }: { title: string; evidence: M10RunEvide
   return <section aria-label={title}>
     <h4>{title}</h4>
     <dl>
-      <dt>Run ID</dt><dd>{evidence.run_id}</dd>
-      <dt>Scenario subject ID</dt><dd>{evidence.scenario_subject_id}</dd>
-      <dt>Subject type</dt><dd>{evidence.subject_type}</dd>
-      <dt>Calculation semantic fingerprint</dt><dd>{evidence.calculation_semantic_fingerprint}</dd>
-      <dt>Integrity fingerprint</dt><dd>{evidence.integrity_fingerprint}</dd>
-      <dt>Adjustment manifest fingerprint</dt><dd>{evidence.adjustment_manifest_fingerprint}</dd>
-      <dt>Factual inventory fingerprint</dt><dd>{evidence.factual_inventory_fingerprint}</dd>
-      <dt>Upstream snapshot fingerprint</dt><dd>{evidence.upstream_snapshot_fingerprint}</dd>
-      <dt>Semantic result fingerprint</dt><dd>{evidence.semantic_result_fingerprint}</dd>
-      <dt>Result integrity fingerprint</dt><dd>{evidence.result_integrity_fingerprint}</dd>
+      <dt>מזהה הרצה</dt><dd>{evidence.run_id}</dd>
+      <dt>מזהה נושא תרחיש</dt><dd>{evidence.scenario_subject_id}</dd>
+      <dt>סוג נושא</dt><dd>{heLabel(evidence.subject_type)}</dd>
+      <dt>טביעת אצבע סמנטית של החישוב</dt><dd>{evidence.calculation_semantic_fingerprint}</dd>
+      <dt>טביעת אצבע לשלמות</dt><dd>{evidence.integrity_fingerprint}</dd>
+      <dt>טביעת אצבע של מניפסט ההתאמות</dt><dd>{evidence.adjustment_manifest_fingerprint}</dd>
+      <dt>טביעת אצבע של המלאי העובדתי</dt><dd>{evidence.factual_inventory_fingerprint}</dd>
+      <dt>טביעת אצבע של תמונת מצב המקור</dt><dd>{evidence.upstream_snapshot_fingerprint}</dd>
+      <dt>טביעת אצבע סמנטית של התוצאה</dt><dd>{evidence.semantic_result_fingerprint}</dd>
+      <dt>טביעת אצבע לשלמות התוצאה</dt><dd>{evidence.result_integrity_fingerprint}</dd>
     </dl>
   </section>;
 }
@@ -255,52 +256,52 @@ function MetricCells({ metric }: { metric: M10MetricComparison }) {
 }
 
 function ComparisonResult({ result }: { result: M10ComparisonResponse }) {
-  return <section aria-label="Comparator success evidence">
-    <h3>Comparator success evidence</h3>
+  return <section aria-label="ראיות לתוצאת ההשוואה">
+    <h3>תוצאת השוואה</h3>
     <dl>
-      <dt>Comparison contract</dt><dd>{result.comparison_contract_version}</dd>
-      <dt>Pair admission contract</dt><dd>{result.pair_admission_contract}</dd>
-      <dt>Result schema</dt><dd>{result.comparison_result_schema}</dd>
-      <dt>Fingerprint schema</dt><dd>{result.comparison_fingerprint_schema}</dd>
-      <dt>Comparison fingerprint</dt><dd>{result.comparison_fingerprint}</dd>
-      <dt>Delta direction</dt><dd>{result.delta_direction}</dd>
-      <dt>Client ID</dt><dd>{result.client_id}</dd>
-      <dt>Scenario contract</dt><dd>{result.scenario_family}/{result.scenario_contract_version}</dd>
-      <dt>Horizon</dt><dd>{result.horizon.start_month}–{result.horizon.end_month}</dd>
-      <dt>Factual baseline material fingerprint</dt><dd>{result.factual_baseline_material_fingerprint}</dd>
-      <dt>Component-domain contract</dt><dd>{result.component_domain_contract_version}</dd>
-      <dt>Factual engine version</dt><dd>{result.versions.factual_engine_version}</dd>
-      <dt>Factual result schema</dt><dd>{result.versions.factual_result_schema_version}</dd>
-      <dt>Subject engine version</dt><dd>{result.versions.subject_engine_version}</dd>
-      <dt>Subject result schema</dt><dd>{result.versions.subject_result_schema_version}</dd>
-      <dt>Upstream snapshot schema</dt><dd>{result.versions.upstream_snapshot_schema_version}</dd>
-      <dt>Factual inventory schema</dt><dd>{result.versions.factual_inventory_schema_version}</dd>
+      <dt>חוזה ההשוואה</dt><dd>{result.comparison_contract_version}</dd>
+      <dt>חוזה קבלת הזוג</dt><dd>{result.pair_admission_contract}</dd>
+      <dt>סכמת תוצאה</dt><dd>{result.comparison_result_schema}</dd>
+      <dt>סכמת טביעת אצבע</dt><dd>{result.comparison_fingerprint_schema}</dd>
+      <dt>טביעת אצבע של ההשוואה</dt><dd>{result.comparison_fingerprint}</dd>
+      <dt>כיוון ההפרש</dt><dd>{result.delta_direction}</dd>
+      <dt>מזהה לקוח</dt><dd>{result.client_id}</dd>
+      <dt>חוזה תרחיש</dt><dd>{result.scenario_family}/{result.scenario_contract_version}</dd>
+      <dt>טווח</dt><dd>{result.horizon.start_month}–{result.horizon.end_month}</dd>
+      <dt>טביעת אצבע של נתוני הבסיס העובדתיים</dt><dd>{result.factual_baseline_material_fingerprint}</dd>
+      <dt>חוזה תחום הרכיבים</dt><dd>{result.component_domain_contract_version}</dd>
+      <dt>גרסת מנוע עובדתי</dt><dd>{result.versions.factual_engine_version}</dd>
+      <dt>סכמת תוצאה עובדתית</dt><dd>{result.versions.factual_result_schema_version}</dd>
+      <dt>גרסת מנוע נושא</dt><dd>{result.versions.subject_engine_version}</dd>
+      <dt>סכמת תוצאת נושא</dt><dd>{result.versions.subject_result_schema_version}</dd>
+      <dt>סכמת תמונת מצב מקור</dt><dd>{result.versions.upstream_snapshot_schema_version}</dd>
+      <dt>סכמת מלאי עובדתי</dt><dd>{result.versions.factual_inventory_schema_version}</dd>
     </dl>
-    <section aria-label="Factual upstream versions">
-      <h4>Factual upstream versions</h4>
+    <section aria-label="גרסאות נתוני המקור העובדתיים">
+      <h4>גרסאות נתוני המקור</h4>
       {result.versions.factual_upstream_versions.length ? <ol>{result.versions.factual_upstream_versions.map((version, index) => <li key={`${version.domain_identity}-${version.candidate_identity}-${index}`}>
         <dl>
-          <dt>Domain identity</dt><dd>{version.domain_identity}</dd>
-          <dt>Candidate identity</dt><dd>{version.candidate_identity}</dd>
-          <dt>Source identity</dt><dd>{version.source_identity}</dd>
-          <dt>Source version</dt><dd>{version.source_version}</dd>
-          <dt>Source fingerprint</dt><dd>{version.source_fingerprint}</dd>
-          <dt>Handoff contracts</dt><dd>{version.handoff_contract_versions.join(", ")}</dd>
+          <dt>זהות תחום</dt><dd>{version.domain_identity}</dd>
+          <dt>זהות רשומה</dt><dd>{version.candidate_identity}</dd>
+          <dt>זהות מקור</dt><dd>{version.source_identity}</dd>
+          <dt>גרסת מקור</dt><dd>{version.source_version}</dd>
+          <dt>טביעת אצבע של המקור</dt><dd>{version.source_fingerprint}</dd>
+          <dt>חוזי מסירה</dt><dd>{version.handoff_contract_versions.join(", ")}</dd>
         </dl>
-      </li>)}</ol> : <p>No factual upstream version rows were returned.</p>}
+      </li>)}</ol> : <p>לא הוחזרו שורות גרסה של נתוני מקור עובדתיים.</p>}
     </section>
-    <RunEvidence title="Reference run evidence" evidence={result.reference_run} />
-    <RunEvidence title="Compared run evidence" evidence={result.compared_run} />
-    <h4>Monthly comparisons</h4>
+    <RunEvidence title="ראיות הרצת הייחוס" evidence={result.reference_run} />
+    <RunEvidence title="ראיות ההרצה המושווית" evidence={result.compared_run} />
+    <h4>השוואה חודשית</h4>
     <table>
-      <thead><tr><th>Month</th><th>Metric</th><th>Reference</th><th>Compared</th><th>Compared minus reference</th><th>Relation</th></tr></thead>
+      <thead><tr><th>חודש</th><th>מדד</th><th>ייחוס</th><th>מושווה</th><th>מושווה פחות ייחוס</th><th>יחס</th></tr></thead>
       <tbody>{result.monthly_comparisons.flatMap(row => METRICS.map(([field, label]) => <tr key={`${row.month}-${field}`}>
         <td>{row.month}</td><th scope="row">{label}</th><MetricCells metric={row[field]} />
       </tr>))}</tbody>
     </table>
-    <h4>Range totals</h4>
+    <h4>סיכום לכל התקופה</h4>
     <table>
-      <thead><tr><th>Metric</th><th>Reference</th><th>Compared</th><th>Compared minus reference</th><th>Relation</th></tr></thead>
+      <thead><tr><th>מדד</th><th>ייחוס</th><th>מושווה</th><th>מושווה פחות ייחוס</th><th>יחס</th></tr></thead>
       <tbody>{METRICS.map(([field, label]) => <tr key={field}><th scope="row">{label}</th><MetricCells metric={result.range_totals[field]} /></tr>)}</tbody>
     </table>
   </section>;
@@ -350,7 +351,7 @@ export function M10ComparisonScreen() {
       if (!owns(token, epoch, "discovery")) return;
       if (!subjects.every(hasAcceptedSubjectContract)) {
         setDiscoveryStatus("unavailable");
-        setDiscoveryUnavailableReason("Comparison unavailable: unexpected scenario-subject contract evidence.");
+        setDiscoveryUnavailableReason("ההשוואה אינה זמינה: ראיות חוזה התרחיש אינן תקינות.");
         return;
       }
       const histories = await Promise.all(subjects.map(async subject => ({
@@ -383,7 +384,7 @@ export function M10ComparisonScreen() {
         const runs = eligibleRuns(item.runs);
         if (runs.length > 1) {
           setDiscoveryStatus("unavailable");
-          setDiscoveryUnavailableReason("Comparison unavailable: an adjusted subject has ambiguous eligible run evidence.");
+          setDiscoveryUnavailableReason("ההשוואה אינה זמינה: ראיות ההרצה הכשירה של תרחיש מותאם אינן חד־משמעיות.");
           return;
         }
         if (runs.length === 1) nextCandidates.push({ subject: item.subject, run: runs[0] });
@@ -398,7 +399,7 @@ export function M10ComparisonScreen() {
     } catch (error) {
       if (owns(token, epoch, "discovery")) {
         setDiscoveryStatus("transport_error");
-        setDiscoveryError(transportMessage(error, "Eligible-run discovery failed"));
+        setDiscoveryError(transportMessage(error, "איתור ההרצות הכשירות נכשל"));
       }
     } finally {
       if (owns(token, epoch, "discovery")) setDiscoveryLoading(false);
@@ -452,13 +453,13 @@ export function M10ComparisonScreen() {
       if (!owns(token, epoch, "compare")) return;
       const acceptedBlocker = comparatorBlocker(error);
       if (acceptedBlocker) setBlocker(acceptedBlocker);
-      else setCompareError(transportMessage(error, "Comparator request failed"));
+      else setCompareError(transportMessage(error, "בקשת ההשוואה נכשלה"));
     } finally {
       if (owns(token, epoch, "compare")) setCompareLoading(false);
     }
   };
 
-  if (clientId === null) return <main><h2>M10 Scenario comparison</h2><p role="alert">Invalid client ID.</p><p><Link to="/clients">Back to clients</Link></p></main>;
+  if (clientId === null) return <main><h2>M10 — השוואת תרחישים</h2><p role="alert">מזהה הלקוח אינו תקין.</p><p><Link to="/clients">חזרה ללקוחות</Link></p></main>;
 
   const stateBelongsToCurrentContext = visibleContext !== null && isCurrentClientContext(visibleContext);
   const visibleBaseline = stateBelongsToCurrentContext ? baseline : null;
@@ -469,26 +470,26 @@ export function M10ComparisonScreen() {
     : visibleCandidates.find(candidate => candidate.run.run_id === visibleSelectedRunId) ?? null;
 
   return <main>
-    <h2>M10 Scenario comparison</h2>
-    <p>Read-only presentation of server comparison evidence. Pair choice constructs one request only and is not a preference, approval, review, recommendation, or saved selection.</p>
-    <p><Link to={`/clients/${clientId}`}>Back to client</Link></p>
+    <h2>M10 — השוואת תרחישים</h2>
+    <p>תצוגה לקריאה בלבד של השוואה שנוצרה בשרת. בחירת זוג תרחישים אינה המלצה, אישור או בחירה מקצועית שמורה.</p>
+    <p><Link to={`/clients/${clientId}`}>חזרה ללקוח</Link></p>
 
-    <section aria-label="Eligible run discovery">
-      <h3>Eligible run discovery</h3>
-      {!stateBelongsToCurrentContext || discoveryLoading ? <p role="status">Loading eligible M09 runs…</p> : null}
-      {stateBelongsToCurrentContext && discoveryStatus === "no_baseline" ? <p>Comparison unavailable: no eligible current baseline run was provided by the server.</p> : null}
-      {stateBelongsToCurrentContext && discoveryStatus === "ambiguous_baseline" ? <p>Comparison unavailable: baseline evidence is ambiguous.</p> : null}
+    <section aria-label="איתור הרצות כשירות">
+      <h3>איתור הרצות כשירות</h3>
+      {!stateBelongsToCurrentContext || discoveryLoading ? <p role="status">טוען הרצות M09 כשירות…</p> : null}
+      {stateBelongsToCurrentContext && discoveryStatus === "no_baseline" ? <p>ההשוואה אינה זמינה: השרת לא סיפק הרצת בסיס עדכנית וכשירה.</p> : null}
+      {stateBelongsToCurrentContext && discoveryStatus === "ambiguous_baseline" ? <p>ההשוואה אינה זמינה: תרחיש הבסיס אינו חד־משמעי.</p> : null}
       {stateBelongsToCurrentContext && discoveryStatus === "unavailable" ? <p>{discoveryUnavailableReason}</p> : null}
       {stateBelongsToCurrentContext && discoveryStatus === "transport_error" && discoveryError ? <p role="alert">{discoveryError}</p> : null}
       {visibleBaseline ? <div>
-        <h4>Baseline reference</h4>
-        <p>Subject ID: {visibleBaseline.subject.scenario_subject_id}</p>
-        <p>Run ID: {visibleBaseline.run.run_id}</p>
-        <p>Horizon: {visibleBaseline.run.start_month}–{visibleBaseline.run.end_month}</p>
+        <h4>תרחיש בסיס</h4>
+        <p>מזהה תרחיש: {visibleBaseline.subject.scenario_subject_id}</p>
+        <p>מזהה הרצה: {visibleBaseline.run.run_id}</p>
+        <p>טווח: {visibleBaseline.run.start_month}–{visibleBaseline.run.end_month}</p>
       </div> : null}
-      {stateBelongsToCurrentContext && discoveryStatus === "no_adjusted" ? <p>No eligible current adjusted run was provided by the server.</p> : null}
+      {stateBelongsToCurrentContext && discoveryStatus === "no_adjusted" ? <p>השרת לא סיפק הרצה מותאמת עדכנית וכשירה.</p> : null}
       {visibleCandidates.length ? <fieldset>
-        <legend>Eligible adjusted candidates</legend>
+        <legend>תרחישים מותאמים כשירים</legend>
         {visibleCandidates.map(candidate => <label key={candidate.subject.scenario_subject_id}>
           <input
             type="radio"
@@ -497,9 +498,9 @@ export function M10ComparisonScreen() {
             checked={visibleSelectedRunId === candidate.run.run_id}
             onChange={() => selectAdjusted(candidate.run.run_id)}
           />
-          {candidate.subject.display_label ?? "Adjusted scenario"} — subject {candidate.subject.scenario_subject_id}; run {candidate.run.run_id}; {candidate.run.start_month}–{candidate.run.end_month}
+          {candidate.subject.display_label ?? "תרחיש מותאם"} — נושא {candidate.subject.scenario_subject_id}; הרצה {candidate.run.run_id}; {candidate.run.start_month}–{candidate.run.end_month}
         </label>)}
-        <p>Candidate order is technical and neutral; it does not express preference or ranking.</p>
+        <p>סדר התרחישים טכני וניטרלי ואינו מבטא העדפה או דירוג.</p>
       </fieldset> : null}
     </section>
 
@@ -513,15 +514,15 @@ export function M10ComparisonScreen() {
       clientId={clientId}
     /> : null}
 
-    <section aria-label="Comparator invocation">
-      <h3>Comparator invocation</h3>
-      <button type="button" disabled={!visibleBaseline || !visibleSelectedRunId || compareLoading} onClick={() => void compare()}>Compare selected pair</button>
-      {stateBelongsToCurrentContext && compareLoading ? <p role="status">Loading comparator evidence…</p> : null}
-      {stateBelongsToCurrentContext && blocker ? <section aria-label="Accepted comparator blocker">
-        <h4>Comparison blocked</h4>
-        <p>Code: <code>{blocker.code}</code></p>
+    <section aria-label="ביצוע השוואה">
+      <h3>ביצוע השוואה</h3>
+      <button type="button" aria-label="השוואת הזוג שנבחר" disabled={!visibleBaseline || !visibleSelectedRunId || compareLoading} onClick={() => void compare()}>השוואת הזוג שנבחר</button>
+      {stateBelongsToCurrentContext && compareLoading ? <p role="status">טוען את נתוני ההשוואה…</p> : null}
+      {stateBelongsToCurrentContext && blocker ? <section aria-label="חסם השוואה מוכר">
+        <h4>לא ניתן לבצע את ההשוואה</h4>
+        <p>קוד טכני: <code>{blocker.code}</code></p>
         <p>{BLOCKER_TEXT[blocker.code]}</p>
-        <p>Server message: {blocker.message}</p>
+        <p>הודעת שרת: {blocker.message}</p>
       </section> : null}
       {stateBelongsToCurrentContext && compareError ? <p role="alert">{compareError}</p> : null}
     </section>

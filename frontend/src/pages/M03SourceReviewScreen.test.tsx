@@ -105,12 +105,12 @@ describe("M03SourceReviewScreen", () => {
       throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
-    expect(await screen.findByText(/no external source, blob, or checksum evidence/i)).toBeInTheDocument();
-    expect(screen.getByText(/not eligible — review_not_started/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
-    expect(await screen.findByText(/#1 under_review/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Accept review" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+    expect(await screen.findByText(/אין קובץ מקור חיצוני או checksum/i)).toBeInTheDocument();
+    expect(screen.getByText(/הבדיקה טרם התחילה/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "התחלת בדיקה" }));
+    expect(await screen.findByText(/#1 בבדיקה/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "אישור הבדיקה" })).toBeInTheDocument();
   });
 
   it("disables every mutation in an archived case while retaining history", async () => {
@@ -126,11 +126,11 @@ describe("M03SourceReviewScreen", () => {
       throw new Error(`unexpected ${url}`);
     }));
     renderPage();
-    expect(await screen.findByText(/Archived case/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Manual record/ }));
-    await screen.findByText(/#2 accepted/);
-    expect(screen.getByRole("button", { name: "Reopen review" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save annotation" })).toBeDisabled();
+    expect(await screen.findByText(/התיק בארכיון/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /רשומה ידנית/ }));
+    await screen.findByText(/#2 אושר/);
+    expect(screen.getByRole("button", { name: "פתיחת הבדיקה מחדש" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "שמירת הערה" })).toBeDisabled();
   });
 
   it("creates annotation supersession without replacing the retained annotation", async () => {
@@ -163,16 +163,16 @@ describe("M03SourceReviewScreen", () => {
       throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
     await screen.findByText(/Retained note/);
-    fireEvent.change(screen.getByLabelText("Topic"), { target: { value: "Updated" } });
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "New note" } });
-    fireEvent.change(screen.getAllByLabelText("Reason")[0] ?? screen.getByLabelText("Reason"), { target: { value: "Correction context" } });
-    fireEvent.change(screen.getByLabelText(/Supersede existing annotation/), { target: { value: "a-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save annotation" }));
-    expect(await screen.findByText(/New note.*supersedes a-1/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("נושא"), { target: { value: "Updated" } });
+    fireEvent.change(screen.getByLabelText("הערה"), { target: { value: "New note" } });
+    fireEvent.change(screen.getAllByLabelText("נימוק")[0] ?? screen.getByLabelText("נימוק"), { target: { value: "Correction context" } });
+    fireEvent.change(screen.getByLabelText(/החלפת הערה קיימת/), { target: { value: "a-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת הערה" }));
+    expect(await screen.findByText(/New note.*מחליפה את a-1/)).toBeInTheDocument();
     expect(screen.getByText(/Retained note/)).toBeInTheDocument();
-    expect(screen.getByText(/eligible for a separately authorized/)).toBeInTheDocument();
+    expect(screen.getByText(/הבדיקה אושרה והיא עדכנית/)).toBeInTheDocument();
   });
 
   it("opens retained review history after a target leaves the candidate list", async () => {
@@ -193,13 +193,13 @@ describe("M03SourceReviewScreen", () => {
       throw new Error(`unexpected ${url}`);
     }));
     renderPage();
-    expect(await screen.findByText(/No M02 records currently accepted/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Open retained review by M02 intake ID/), {
+    expect(await screen.findByText(/אין כרגע רשומות M02 שהתקבלו לבדיקה/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/פתיחת בדיקה שמורה לפי מזהה קליטת M02/), {
       target: { value: "manual-1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Open retained review" }));
-    expect(await screen.findByText(/#2 accepted/)).toBeInTheDocument();
-    expect(screen.getByText(/not eligible.*m02_superseded/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "פתיחת בדיקה שמורה" }));
+    expect(await screen.findByText(/#2 אושר/)).toBeInTheDocument();
+    expect(screen.getByText(/רשומת M02 הוחלפה ואינה עדכנית/)).toBeInTheDocument();
   });
 
   it.each(
@@ -290,7 +290,7 @@ describe("M03SourceReviewScreen", () => {
       if (readPath !== "candidates") {
         fireEvent.click(await screen.findByRole("button", { name: new RegExp(currentIntakeId) }));
       }
-      expect(await screen.findByText(/Loading M03 review/)).toBeInTheDocument();
+      expect(await screen.findByText(/טוען את בדיקת M03/)).toBeInTheDocument();
 
       await act(async () => {
         if (outcome === "success") {
@@ -307,7 +307,7 @@ describe("M03SourceReviewScreen", () => {
         await Promise.resolve();
       });
 
-      expect(screen.getByText(/Loading M03 review/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען את בדיקת M03/)).toBeInTheDocument();
       expect(screen.queryByText(/A-old|A_OLD_API_ERROR|rejected promise/)).not.toBeInTheDocument();
 
       await act(async () => {
@@ -324,12 +324,12 @@ describe("M03SourceReviewScreen", () => {
       } else {
         expect(await screen.findByText(new RegExp(`${currentLabel}-history`))).toBeInTheDocument();
         expect(screen.getByText(new RegExp(`${currentLabel}-annotation-note`))).toBeInTheDocument();
-        expect(screen.getByText(/eligible for a separately authorized downstream transformation/)).toBeInTheDocument();
-        expect(screen.getByLabelText(/Decision\/reopen reason/)).toBeEnabled();
-        expect(screen.getByLabelText(/Supersede existing annotation/)).toBeEnabled();
+        expect(screen.getByText(/הבדיקה אושרה והיא עדכנית/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/נימוק להחלטה או לפתיחה מחדש/)).toBeEnabled();
+        expect(screen.getByLabelText(/החלפת הערה קיימת/)).toBeEnabled();
       }
       expect(screen.queryByText(/A-old|A_OLD_API_ERROR|rejected promise/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את בדיקת M03/)).not.toBeInTheDocument();
       expect(screen.queryByRole("pre")).not.toBeInTheDocument();
     },
   );
@@ -358,7 +358,7 @@ describe("M03SourceReviewScreen", () => {
     firstCandidates.reject(new Error("stale candidate failure"));
     await waitFor(() => {
       expect(screen.queryByText(/stale candidate failure/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את בדיקת M03/)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /manual-1/ })).toBeInTheDocument();
     });
   });
@@ -388,7 +388,7 @@ describe("M03SourceReviewScreen", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: /stale-candidate/ })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /manual-1/ })).toBeEnabled();
-      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את בדיקת M03/)).not.toBeInTheDocument();
     });
   });
 
@@ -431,7 +431,7 @@ describe("M03SourceReviewScreen", () => {
     await screen.findByRole("button", { name: /manual-2/ });
     fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
     fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-    expect(await screen.findByText(/#2 accepted/)).toBeInTheDocument();
+    expect(await screen.findByText(/#2 אושר/)).toBeInTheDocument();
     if (outcome === "success") {
       const response = readPath === "history" || readPath === "annotations"
         ? json([])
@@ -441,10 +441,10 @@ describe("M03SourceReviewScreen", () => {
       staleRead.resolve(json({ detail: "stale read error" }, 500));
     }
     await waitFor(() => {
-      expect(screen.getByText(/#2 accepted/)).toBeInTheDocument();
-      expect(screen.getByText(/eligible for a separately authorized/)).toBeInTheDocument();
+      expect(screen.getByText(/#2 אושר/)).toBeInTheDocument();
+      expect(screen.getByText(/הבדיקה אושרה והיא עדכנית/)).toBeInTheDocument();
       expect(screen.queryByText(/stale read error/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את בדיקת M03/)).not.toBeInTheDocument();
     });
   });
 
@@ -483,7 +483,7 @@ describe("M03SourceReviewScreen", () => {
     await screen.findByRole("button", { name: /manual-2/ });
     fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
     fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-    expect(await screen.findByText(/#2 accepted/)).toBeInTheDocument();
+    expect(await screen.findByText(/#2 אושר/)).toBeInTheDocument();
     oldDetail.resolve(json(target()));
     oldHistory.resolve(json([]));
     oldAnnotations.resolve(json([{
@@ -493,9 +493,9 @@ describe("M03SourceReviewScreen", () => {
     }]));
     oldEligibility.resolve(json(target()));
     await waitFor(() => {
-      expect(screen.getByText(/#2 accepted/)).toBeInTheDocument();
+      expect(screen.getByText(/#2 אושר/)).toBeInTheDocument();
       expect(screen.queryByText(/^stale: stale/)).not.toBeInTheDocument();
-      expect(screen.getByText(/eligible for a separately authorized/)).toBeInTheDocument();
+      expect(screen.getByText(/הבדיקה אושרה והיא עדכנית/)).toBeInTheDocument();
     });
   });
 
@@ -539,21 +539,21 @@ describe("M03SourceReviewScreen", () => {
       }));
       renderNavigablePage();
       fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-      await screen.findByText(/Review target/);
+      await screen.findByText(/פרטי הרשומה הנבדקת/);
       if (action === "start") {
-        fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+        fireEvent.click(screen.getByRole("button", { name: "התחלת בדיקה" }));
       } else if (action === "accept" || action === "reject" || action === "reopen") {
-        fireEvent.change(screen.getByLabelText(/Decision\/reopen reason/), { target: { value: "reason" } });
-        const label = action === "accept" ? "Accept review" : action === "reject" ? "Reject review" : "Reopen review";
+        fireEvent.change(screen.getByLabelText(/נימוק להחלטה או לפתיחה מחדש/), { target: { value: "reason" } });
+        const label = action === "accept" ? "אישור הבדיקה" : action === "reject" ? "דחיית הבדיקה" : "פתיחת הבדיקה מחדש";
         fireEvent.click(screen.getByRole("button", { name: label }));
       } else {
-        fireEvent.change(screen.getByLabelText("Topic"), { target: { value: "Topic" } });
-        fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Note" } });
-        fireEvent.change(screen.getAllByLabelText("Reason")[0] ?? screen.getByLabelText("Reason"), { target: { value: "Reason" } });
+        fireEvent.change(screen.getByLabelText("נושא"), { target: { value: "Topic" } });
+        fireEvent.change(screen.getByLabelText("הערה"), { target: { value: "Note" } });
+        fireEvent.change(screen.getAllByLabelText("נימוק")[0] ?? screen.getByLabelText("נימוק"), { target: { value: "Reason" } });
         if (action === "supersession") {
-          fireEvent.change(screen.getByLabelText(/Supersede existing annotation/), { target: { value: "a-1" } });
+          fireEvent.change(screen.getByLabelText(/החלפת הערה קיימת/), { target: { value: "a-1" } });
         }
-        fireEvent.click(screen.getByRole("button", { name: "Save annotation" }));
+        fireEvent.click(screen.getByRole("button", { name: "שמירת הערה" }));
       }
       fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
       await screen.findByRole("button", { name: /manual-2/ });
@@ -570,8 +570,8 @@ describe("M03SourceReviewScreen", () => {
       }
       await waitFor(() => {
         expect(targetReadCalls).toBe(4);
-        expect(screen.queryByText(/Review target/)).not.toBeInTheDocument();
-        expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/פרטי הרשומה הנבדקת/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/טוען את בדיקת M03/)).not.toBeInTheDocument();
         expect(screen.queryByText(/M03 request failed/)).not.toBeInTheDocument();
         expect(screen.queryByText(/stale mutation/)).not.toBeInTheDocument();
         const expectedCandidate = transition === "A-B-A" ? /manual-1/ : /manual-2/;
@@ -608,29 +608,29 @@ describe("M03SourceReviewScreen", () => {
     }));
     renderNavigablePage();
     fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-    await screen.findByText(/Review target/);
-    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await screen.findByText(/פרטי הרשומה הנבדקת/);
+    fireEvent.click(screen.getByRole("button", { name: "התחלת בדיקה" }));
     fireEvent.click(screen.getByRole("button", { name: "Navigate B" }));
     await screen.findByRole("button", { name: /manual-2/ });
     fireEvent.click(screen.getByRole("button", { name: "Navigate A" }));
     fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-    await screen.findByText(/Review target/);
-    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await screen.findByText(/פרטי הרשומה הנבדקת/);
+    fireEvent.click(screen.getByRole("button", { name: "התחלת בדיקה" }));
 
     oldMutation.resolve(json(revision("under_review", 1), 201));
     await waitFor(() => {
       expect(targetReadCalls).toBe(8);
-      expect(screen.getByRole("button", { name: "Start review" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "התחלת בדיקה" })).toBeDisabled();
     });
 
     current = revision("under_review", 1);
     newMutation.resolve(json(current, 201));
     await waitFor(() => {
       expect(targetReadCalls).toBe(12);
-      expect(screen.getByText(/#1 under_review/)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Decision\/reopen reason/)).toBeEnabled();
-      expect(screen.getByRole("button", { name: "Accept review" })).toBeDisabled();
-      expect(screen.queryByText(/Loading M03 review/)).not.toBeInTheDocument();
+      expect(screen.getByText(/#1 בבדיקה/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/נימוק להחלטה או לפתיחה מחדש/)).toBeEnabled();
+      expect(screen.getByRole("button", { name: "אישור הבדיקה" })).toBeDisabled();
+      expect(screen.queryByText(/טוען את בדיקת M03/)).not.toBeInTheDocument();
     });
   });
 });

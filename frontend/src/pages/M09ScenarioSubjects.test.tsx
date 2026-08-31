@@ -1,4 +1,4 @@
-﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/m09CashflowApi";
@@ -21,13 +21,13 @@ const deferred = <T,>(): Deferred<T> => { let resolve!: (v: T) => void; let reje
 function Harness() { const navigate = useNavigate(); const { id } = useParams(); return <><button onClick={() => navigate("/clients/1/monthly-cashflow")}>Switch A</button><button onClick={() => navigate("/clients/2/monthly-cashflow")}>Switch B</button><M09ScenarioSubjects clientId={Number(id)} /></>; }
 const renderPage = () => render(<MemoryRouter initialEntries={["/clients/1/monthly-cashflow"]}><Routes><Route path="/clients/:id/monthly-cashflow" element={<Harness />} /></Routes></MemoryRouter>);
 const fillValidAdjustment = () => {
-  fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "100.00" } });
-  fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } });
-  fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } });
+  fireEvent.change(screen.getByLabelText("סכום התאמה 1"), { target: { value: "100.00" } });
+  fireEvent.change(screen.getByLabelText("חודש התחלת התאמה 1"), { target: { value: "2026-01" } });
+  fireEvent.change(screen.getByLabelText("חודש סיום התאמה 1"), { target: { value: "2026-02" } });
 };
 const fillExecutionRange = () => {
-  fireEvent.change(screen.getByLabelText("Subject execution start"), { target: { value: "2026-01" } });
-  fireEvent.change(screen.getByLabelText("Subject execution end"), { target: { value: "2026-02" } });
+  fireEvent.change(screen.getByLabelText("חודש התחלת הרצת החלופה"), { target: { value: "2026-01" } });
+  fireEvent.change(screen.getByLabelText("חודש סיום הרצת החלופה"), { target: { value: "2026-02" } });
 };
 const structuredError = (code: string) => new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { code } } });
 const markedRun = (subjectId: string, amount: string, runId = "run-1"): api.M09SubjectRun => {
@@ -41,19 +41,19 @@ describe("PKG-014 scenario subjects", () => {
 
   it("shows the bounded meaning and resolves server baseline", async () => {
     mocked(api.resolveM09BaselineSubject).mockResolvedValue(subject("base")); renderPage();
-    await waitFor(() => expect(screen.queryByText("Loading scenario evidenceג€¦")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
-    await screen.findByText(/Selected subject: Baseline/);
-    expect(screen.getByText(/not forecasts, recommendations, professional authority, or M10 comparison/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" }));
+    await screen.findByText(/חלופה נבחרת: בסיס/);
+    expect(screen.getByText(/אינן תחזית, המלצה, סמכות מקצועית או השוואת M10/)).toBeInTheDocument();
   });
 
   it("preserves repeated adjustment occurrences in create input", async () => {
     mocked(api.createM09AdjustedSubject).mockResolvedValue(subject("adjusted")); renderPage();
-    await waitFor(() => expect(screen.queryByText("Loading scenario evidenceג€¦")).not.toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add another adjustment" }));
-    fireEvent.change(screen.getByLabelText("Adjustment amount 2"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 2"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 2"), { target: { value: "2026-02" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" }));
+    await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("סכום התאמה 1"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("חודש התחלת התאמה 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום התאמה 1"), { target: { value: "2026-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוספת התאמה נוספת" }));
+    fireEvent.change(screen.getByLabelText("סכום התאמה 2"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("חודש התחלת התאמה 2"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום התאמה 2"), { target: { value: "2026-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" }));
     await waitFor(() => expect(api.createM09AdjustedSubject).toHaveBeenCalled());
     expect(mocked(api.createM09AdjustedSubject).mock.calls[0][2]).toHaveLength(2);
   });
@@ -67,8 +67,8 @@ describe("PKG-014 scenario subjects", () => {
   });
 
   it("validates canonical amounts before create", async () => {
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "1e2" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } });
-    expect(screen.getByRole("button", { name: "Create adjusted subject" })).toBeDisabled();
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.change(screen.getByLabelText("סכום התאמה 1"), { target: { value: "1e2" } }); fireEvent.change(screen.getByLabelText("חודש התחלת התאמה 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום התאמה 1"), { target: { value: "2026-02" } });
+    expect(screen.getByRole("button", { name: "יצירת חלופה מותאמת" })).toBeDisabled();
   });
 
   it("invalidates subject A detail success and finally immediately on A-to-B", async () => {
@@ -79,10 +79,10 @@ describe("PKG-014 scenario subjects", () => {
     renderPage(); await screen.findByRole("button", { name: "Subject A" });
     fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
     await act(async () => aDetail.resolve(a));
-    expect(screen.queryByText(/Selected subject: Subject A/)).not.toBeInTheDocument();
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת: Subject A/)).not.toBeInTheDocument();
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
     await act(async () => bDetail.resolve(b));
-    expect(await screen.findByText(/Selected subject: Subject B/)).toBeInTheDocument();
+    expect(await screen.findByText(/חלופה נבחרת: Subject B/)).toBeInTheDocument();
   });
 
   it("distinguishes old A rejection from new A after A-to-B-to-A", async () => {
@@ -95,37 +95,37 @@ describe("PKG-014 scenario subjects", () => {
     await act(async () => oldA.reject(new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { code: "old-a" } } })));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await act(async () => newA.resolve(a));
-    expect(await screen.findByText(/Selected subject: Subject A/)).toBeInTheDocument();
+    expect(await screen.findByText(/חלופה נבחרת: Subject A/)).toBeInTheDocument();
     await act(async () => oldB.resolve(b));
-    expect(screen.queryByText(/Selected subject: Subject B/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת: Subject B/)).not.toBeInTheDocument();
   });
 
   it("does not let stale subject execution write result or clear new-subject loading", async () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const execution = deferred<api.M09SubjectRun>(); const bDetail = deferred<api.M09ScenarioSubject>();
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? bDetail.promise : Promise.resolve(a));
     mocked(api.executeM09SubjectRun).mockReturnValue(execution.promise);
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/);
-    fireEvent.change(screen.getByLabelText("Subject execution start"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Subject execution end"), { target: { value: "2026-02" } }); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/);
+    fireEvent.change(screen.getByLabelText("חודש התחלת הרצת החלופה"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום הרצת החלופה"), { target: { value: "2026-02" } }); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" }));
     fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await act(async () => execution.resolve(run("A")));
-    expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
-    await act(async () => bDetail.resolve(b)); expect(await screen.findByText(/Selected subject: Subject B/)).toBeInTheDocument();
+    expect(screen.queryByText("תוצאת החלופה")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
+    await act(async () => bDetail.resolve(b)); expect(await screen.findByText(/חלופה נבחרת: Subject B/)).toBeInTheDocument();
   });
 
   it("guards stale run composite rejection across subject A-to-B-to-A", async () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldRun = deferred<api.M09SubjectRun>();
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => Promise.resolve(id === "A" ? [summary("A")] : []));
     mocked(api.getM09SubjectRun).mockReturnValue(oldRun.promise); mocked(api.getM09SubjectCurrentness).mockResolvedValue(currentness("A")); mocked(api.getM09SubjectEligibility).mockResolvedValue(eligibility("A"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByRole("button", { name: "Load subject run 1" }); fireEvent.click(screen.getByRole("button", { name: "Load subject run 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/);
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" }); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצת חלופה 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/);
     await act(async () => oldRun.reject(new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { code: "old-run" } } })));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText("תוצאת החלופה")).not.toBeInTheDocument();
   });
 
   it("keeps stale create response from selecting a subject after client change", async () => {
-    const creation = deferred<api.M09ScenarioSubject>(); mocked(api.createM09AdjustedSubject).mockReturnValue(creation.promise); renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Adjustment amount 1"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("Adjustment start month 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Adjustment end month 1"), { target: { value: "2026-02" } }); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" }));
+    const creation = deferred<api.M09ScenarioSubject>(); mocked(api.createM09AdjustedSubject).mockReturnValue(creation.promise); renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("סכום התאמה 1"), { target: { value: "100.00" } }); fireEvent.change(screen.getByLabelText("חודש התחלת התאמה 1"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום התאמה 1"), { target: { value: "2026-02" } }); fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await act(async () => creation.resolve(subject("A", 1, "Old A")));
-    expect(screen.queryByText(/Selected subject: Old A/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת: Old A/)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -137,7 +137,7 @@ describe("PKG-014 scenario subjects", () => {
     renderPage(); fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     await act(async () => oldA.reject(makeError()));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
     await act(async () => currentB.resolve([subject("B", 2, "Current B")]));
     expect(await screen.findByRole("button", { name: "Current B" })).toBeInTheDocument();
   });
@@ -161,35 +161,35 @@ describe("PKG-014 scenario subjects", () => {
     const baseline = deferred<api.M09ScenarioSubject>(); const bList = deferred<api.M09ScenarioSubject[]>();
     mocked(api.listM09Subjects).mockImplementation(clientId => clientId === 2 ? bList.promise : Promise.resolve([]));
     mocked(api.resolveM09BaselineSubject).mockReturnValue(baseline.promise);
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     await act(async () => baseline.reject(makeError()));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
     await act(async () => bList.resolve([]));
   });
 
   it("suppresses stale baseline success after A-to-B and preserves the newer client loading owner", async () => {
     const baseline = deferred<api.M09ScenarioSubject>(); const bList = deferred<api.M09ScenarioSubject[]>();
     mocked(api.listM09Subjects).mockImplementation(clientId => clientId === 2 ? bList.promise : Promise.resolve([])); mocked(api.resolveM09BaselineSubject).mockReturnValue(baseline.promise);
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     await act(async () => baseline.resolve(subject("old-baseline", 1, "Old baseline")));
-    expect(screen.queryByText(/Selected subject: Old baseline/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); await act(async () => bList.resolve([]));
+    expect(screen.queryByText(/חלופה נבחרת: Old baseline/)).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); await act(async () => bList.resolve([]));
   });
 
   it("keeps an old baseline success out of a new A client generation", async () => {
     const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let calls = 0;
     mocked(api.resolveM09BaselineSubject).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
-    fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
-    await act(async () => newA.resolve(subject("base"))); expect(await screen.findByText(/Selected subject: Baseline/)).toBeInTheDocument();
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" }));
+    await act(async () => newA.resolve(subject("base"))); expect(await screen.findByText(/חלופה נבחרת: בסיס/)).toBeInTheDocument();
     await act(async () => oldA.resolve(subject("old-baseline", 1, "Old baseline")));
-    expect(screen.queryByText(/Selected subject: Old baseline/)).not.toBeInTheDocument();
-    expect(screen.getByText(/Selected subject: Baseline/)).toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת: Old baseline/)).not.toBeInTheDocument();
+    expect(screen.getByText(/חלופה נבחרת: בסיס/)).toBeInTheDocument();
   });
 
   it.each([
@@ -199,22 +199,22 @@ describe("PKG-014 scenario subjects", () => {
     const creation = deferred<api.M09ScenarioSubject>(); const bList = deferred<api.M09ScenarioSubject[]>();
     mocked(api.createM09AdjustedSubject).mockReturnValue(creation.promise);
     mocked(api.listM09Subjects).mockImplementation(clientId => clientId === 2 ? bList.promise : Promise.resolve([]));
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment();
-    fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fillValidAdjustment();
+    fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     await act(async () => creation.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
-    expect(screen.queryByText(/Selected subject:/)).not.toBeInTheDocument(); await act(async () => bList.resolve([]));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת:/)).not.toBeInTheDocument(); await act(async () => bList.resolve([]));
   });
 
   it("keeps an old create success from appending or selecting into a new A client generation", async () => {
     const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let calls = 0;
     mocked(api.createM09AdjustedSubject).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" }));
-    fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" }));
-    await act(async () => newA.resolve(subject("new-create", 1, "New create"))); expect(await screen.findByText(/Selected subject: New create/)).toBeInTheDocument();
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" }));
+    await act(async () => newA.resolve(subject("new-create", 1, "New create"))); expect(await screen.findByText(/חלופה נבחרת: New create/)).toBeInTheDocument();
     await act(async () => oldA.resolve(subject("old-create", 1, "Old create")));
-    expect(screen.queryByText(/Selected subject: Old create/)).not.toBeInTheDocument(); expect(screen.getByText(/Selected subject: New create/)).toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת: Old create/)).not.toBeInTheDocument(); expect(screen.getByText(/חלופה נבחרת: New create/)).toBeInTheDocument();
   });
 
   it.each([
@@ -224,17 +224,17 @@ describe("PKG-014 scenario subjects", () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09ScenarioSubject>(); const currentB = deferred<api.M09ScenarioSubject>();
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "A" ? oldA.promise : currentB.promise);
     renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
-    await act(async () => oldA.reject(makeError())); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
-    await act(async () => currentB.resolve(b)); expect(await screen.findByText(/Selected subject: Subject B/)).toBeInTheDocument();
+    await act(async () => oldA.reject(makeError())); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
+    await act(async () => currentB.resolve(b)); expect(await screen.findByText(/חלופה נבחרת: Subject B/)).toBeInTheDocument();
   });
 
   it("keeps an old subject-detail success out of a new A subject generation", async () => {
     const listedA = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let aCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([listedA, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? Promise.resolve(b) : (++aCalls === 1 ? oldA.promise : newA.promise));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" }));
-    await act(async () => newA.resolve(subject("A", 1, "New A detail"))); expect(await screen.findByText(/Selected subject: New A detail/)).toBeInTheDocument();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" }));
+    await act(async () => newA.resolve(subject("A", 1, "New A detail"))); expect(await screen.findByText(/חלופה נבחרת: New A detail/)).toBeInTheDocument();
     await act(async () => oldA.resolve(subject("A", 1, "Old A detail")));
-    expect(screen.queryByText(/Selected subject: Old A detail/)).not.toBeInTheDocument(); expect(screen.getByText(/Selected subject: New A detail/)).toBeInTheDocument();
+    expect(screen.queryByText(/חלופה נבחרת: Old A detail/)).not.toBeInTheDocument(); expect(screen.getByText(/חלופה נבחרת: New A detail/)).toBeInTheDocument();
   });
 
   it.each([
@@ -243,17 +243,17 @@ describe("PKG-014 scenario subjects", () => {
   ])("suppresses stale subject-execution %s and preserves the newer subject loading owner", async (_kind, makeError) => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const execution = deferred<api.M09SubjectRun>(); const bDetail = deferred<api.M09ScenarioSubject>();
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? bDetail.promise : Promise.resolve(a)); mocked(api.executeM09SubjectRun).mockReturnValue(execution.promise);
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" }));
     fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await act(async () => execution.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
-    await act(async () => bDetail.resolve(b)); expect(await screen.findByText(/Selected subject: Subject B/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText("תוצאת החלופה")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
+    await act(async () => bDetail.resolve(b)); expect(await screen.findByText(/חלופה נבחרת: Subject B/)).toBeInTheDocument();
   });
 
   it("keeps an old execution success from overwriting a new A result after A-to-B-to-A", async () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09SubjectRun>(); const newA = deferred<api.M09SubjectRun>(); let calls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.executeM09SubjectRun).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
-    fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" }));
+    fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" }));
     await act(async () => newA.resolve(markedRun("A", "2222.00", "new-run"))); expect(await screen.findAllByText("2222.00")).toHaveLength(2);
     await act(async () => oldA.resolve(markedRun("A", "1111.00", "old-run")));
     expect(screen.queryAllByText("1111.00")).toHaveLength(0); expect(screen.getAllByText("2222.00")).toHaveLength(2);
@@ -263,10 +263,10 @@ describe("PKG-014 scenario subjects", () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const staleHistory = deferred<api.M09SubjectRunSummary[]>(); const bDetail = deferred<api.M09ScenarioSubject>(); const bHistory = deferred<api.M09SubjectRunSummary[]>(); let aHistoryCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? bDetail.promise : Promise.resolve(a));
     mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => id === "B" ? bHistory.promise : (++aHistoryCalls === 1 ? Promise.resolve([]) : staleHistory.promise)); mocked(api.executeM09SubjectRun).mockResolvedValue(markedRun("A", "1234.00"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("1234.00")).toHaveLength(2);
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })); expect(await screen.findAllByText("1234.00")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await act(async () => staleHistory.resolve([markedSummary("A", 1, "stale-history")]));
-    expect(screen.queryByRole("button", { name: "Load subject run 1" })).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
-    await act(async () => { bDetail.resolve(b); bHistory.resolve([]); }); expect(await screen.findByText(/Selected subject: Subject B/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "טעינת הרצת חלופה 1" })).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
+    await act(async () => { bDetail.resolve(b); bHistory.resolve([]); }); expect(await screen.findByText(/חלופה נבחרת: Subject B/)).toBeInTheDocument();
   });
 
   it.each([
@@ -275,8 +275,8 @@ describe("PKG-014 scenario subjects", () => {
   ])("suppresses independently refreshed stale run-history %s and preserves newer loading", async (_kind, makeError) => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const staleHistory = deferred<api.M09SubjectRunSummary[]>(); const bDetail = deferred<api.M09ScenarioSubject>(); const bHistory = deferred<api.M09SubjectRunSummary[]>(); let aHistoryCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? bDetail.promise : Promise.resolve(a)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => id === "B" ? bHistory.promise : (++aHistoryCalls === 1 ? Promise.resolve([]) : staleHistory.promise)); mocked(api.executeM09SubjectRun).mockResolvedValue(markedRun("A", "1234.00"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("1234.00")).toHaveLength(2); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
-    await act(async () => staleHistory.reject(makeError())); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); await act(async () => { bDetail.resolve(b); bHistory.resolve([]); });
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })); expect(await screen.findAllByText("1234.00")).toHaveLength(2); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
+    await act(async () => staleHistory.reject(makeError())); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); await act(async () => { bDetail.resolve(b); bHistory.resolve([]); });
   });
 
   it("keeps independently refreshed old A history out of a new A subject generation", async () => {
@@ -288,10 +288,10 @@ describe("PKG-014 scenario subjects", () => {
       return Promise.resolve([markedSummary("A", 2, "new-history")]);
     });
     mocked(api.executeM09SubjectRun).mockResolvedValue(markedRun("A", "1234.00"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("1234.00")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); expect(await screen.findByRole("button", { name: "Load subject run 2" })).toBeInTheDocument();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })); expect(await screen.findAllByText("1234.00")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); expect(await screen.findByRole("button", { name: "טעינת הרצת חלופה 2" })).toBeInTheDocument();
     await act(async () => staleHistory.resolve([markedSummary("A", 1, "old-history")]));
-    expect(screen.queryByRole("button", { name: "Load subject run 1" })).not.toBeInTheDocument(); expect(screen.getByRole("button", { name: "Load subject run 2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "טעינת הרצת חלופה 1" })).not.toBeInTheDocument(); expect(screen.getByRole("button", { name: "טעינת הרצת חלופה 2" })).toBeInTheDocument();
   });
 
   it.each([
@@ -301,17 +301,17 @@ describe("PKG-014 scenario subjects", () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const staleResult = deferred<api.M09SubjectRun>(); const bDetail = deferred<api.M09ScenarioSubject>();
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? bDetail.promise : Promise.resolve(a)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => Promise.resolve(id === "A" ? [summary("A")] : []));
     mocked(api.getM09SubjectRun).mockReturnValue(staleResult.promise); mocked(api.getM09SubjectCurrentness).mockResolvedValue(currentness("A")); mocked(api.getM09SubjectEligibility).mockResolvedValue(eligibility("A"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
-    await act(async () => staleResult.reject(makeError())); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
-    await act(async () => bDetail.resolve(b)); expect(await screen.findByText(/Selected subject: Subject B/)).toBeInTheDocument();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
+    await act(async () => staleResult.reject(makeError())); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText("תוצאת החלופה")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
+    await act(async () => bDetail.resolve(b)); expect(await screen.findByText(/חלופה נבחרת: Subject B/)).toBeInTheDocument();
   });
 
   it("keeps a stale run-result success out of the next subject and preserves its loading", async () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const staleResult = deferred<api.M09SubjectRun>(); const bDetail = deferred<api.M09ScenarioSubject>();
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? bDetail.promise : Promise.resolve(a)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => Promise.resolve(id === "A" ? [summary("A")] : []));
     mocked(api.getM09SubjectRun).mockReturnValue(staleResult.promise); mocked(api.getM09SubjectCurrentness).mockResolvedValue(currentness("A")); mocked(api.getM09SubjectEligibility).mockResolvedValue(eligibility("A"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
-    await act(async () => staleResult.resolve(markedRun("A", "1111.00", "old-result"))); expect(screen.queryByText("1111.00")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" }));
+    await act(async () => staleResult.resolve(markedRun("A", "1111.00", "old-result"))); expect(screen.queryByText("1111.00")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument();
     await act(async () => bDetail.resolve(b));
   });
 
@@ -319,7 +319,7 @@ describe("PKG-014 scenario subjects", () => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldResult = deferred<api.M09SubjectRun>(); const newResult = deferred<api.M09SubjectRun>(); let runCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => Promise.resolve(id === "A" ? [summary("A")] : []));
     mocked(api.getM09SubjectRun).mockImplementation(() => ++runCalls === 1 ? oldResult.promise : newResult.promise); mocked(api.getM09SubjectCurrentness).mockResolvedValue(currentness("A")); mocked(api.getM09SubjectEligibility).mockResolvedValue(eligibility("A"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" }));
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" }));
     await act(async () => newResult.resolve(markedRun("A", "2222.00", "new-result"))); expect(await screen.findAllByText("2222.00")).toHaveLength(2);
     await act(async () => oldResult.resolve(markedRun("A", "1111.00", "old-result")));
     expect(screen.queryAllByText("1111.00")).toHaveLength(0); expect(screen.getAllByText("2222.00")).toHaveLength(2);
@@ -331,10 +331,10 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps A-new subject-list pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const oldA = deferred<api.M09ScenarioSubject[]>(); const newA = deferred<api.M09ScenarioSubject[]>(); let aCalls = 0;
     mocked(api.listM09Subjects).mockImplementation(clientId => clientId === 2 ? Promise.resolve([]) : (++aCalls === 1 ? oldA.promise : newA.promise));
-    renderPage(); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
+    renderPage(); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })).toBeDisabled();
     await act(async () => oldA.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-list-/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-list-/)).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })).toBeDisabled();
     await act(async () => newA.resolve([subject("new-list", 1, "A-new list")])); expect(await screen.findByRole("button", { name: "A-new list" })).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -344,10 +344,10 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps A-new baseline-resolution pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let calls = 0;
     mocked(api.resolveM09BaselineSubject).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Resolve server baseline subject" }));
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-baseline-/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
-    await act(async () => newA.resolve(subject("base"))); expect(await screen.findByText(/Selected subject: Baseline/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" }));
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-baseline-/)).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })).toBeDisabled();
+    await act(async () => newA.resolve(subject("base"))); expect(await screen.findByText(/חלופה נבחרת: בסיס/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -356,10 +356,10 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps A-new subject-creation pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let calls = 0;
     mocked(api.createM09AdjustedSubject).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
-    renderPage(); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("Loading scenario evidence…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "Create adjusted subject" }));
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Create adjusted subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-create-/)).not.toBeInTheDocument(); expect(screen.queryByText(/Selected subject:/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Create adjusted subject" })).toBeDisabled();
-    await act(async () => newA.resolve(subject("new-create", 1, "A-new create"))); expect(await screen.findByText(/Selected subject: A-new create/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    renderPage(); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" })); fireEvent.click(screen.getByRole("button", { name: "Switch B" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fireEvent.click(screen.getByRole("button", { name: "Switch A" })); await waitFor(() => expect(screen.queryByText("טעינת ראיות התרחיש…")).not.toBeInTheDocument()); fillValidAdjustment(); fireEvent.click(screen.getByRole("button", { name: "יצירת חלופה מותאמת" }));
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "יצירת חלופה מותאמת" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-create-/)).not.toBeInTheDocument(); expect(screen.queryByText(/חלופה נבחרת:/)).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "יצירת חלופה מותאמת" })).toBeDisabled();
+    await act(async () => newA.resolve(subject("new-create", 1, "A-new create"))); expect(await screen.findByText(/חלופה נבחרת: A-new create/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -368,10 +368,10 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps A-new subject-detail pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09ScenarioSubject>(); const newA = deferred<api.M09ScenarioSubject>(); let aCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => id === "B" ? Promise.resolve(b) : (++aCalls === 1 ? oldA.promise : newA.promise));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" }));
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-detail-/)).not.toBeInTheDocument(); expect(screen.queryByText(/Selected subject: Subject B/)).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Resolve server baseline subject" })).toBeDisabled();
-    await act(async () => newA.resolve(subject("A", 1, "A-new detail"))); expect(await screen.findByText(/Selected subject: A-new detail/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" }));
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-detail-/)).not.toBeInTheDocument(); expect(screen.queryByText(/חלופה נבחרת: Subject B/)).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "איתור תרחיש הבסיס בשרת" })).toBeDisabled();
+    await act(async () => newA.resolve(subject("A", 1, "A-new detail"))); expect(await screen.findByText(/חלופה נבחרת: A-new detail/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -380,9 +380,9 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps A-new subject-execution pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldA = deferred<api.M09SubjectRun>(); const newA = deferred<api.M09SubjectRun>(); let calls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.executeM09SubjectRun).mockImplementation(() => ++calls === 1 ? oldA.promise : newA.promise);
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-execution-/)).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" }));
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })).toBeDisabled(); await act(async () => oldA.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-execution-/)).not.toBeInTheDocument(); expect(screen.queryByText("תוצאת החלופה")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })).toBeDisabled();
     await act(async () => newA.resolve(markedRun("A", "3333.00", "A-new-execution"))); expect(await screen.findAllByText("3333.00")).toHaveLength(2); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -392,10 +392,10 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps A-new run-history pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldHistory = deferred<api.M09SubjectRunSummary[]>(); const newHistory = deferred<api.M09SubjectRunSummary[]>(); let aHistoryCalls = 0; let executionCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => { if (id === "B") return Promise.resolve([]); aHistoryCalls += 1; if (aHistoryCalls === 1 || aHistoryCalls === 3) return Promise.resolve([]); return aHistoryCalls === 2 ? oldHistory.promise : newHistory.promise; }); mocked(api.executeM09SubjectRun).mockImplementation(() => Promise.resolve(markedRun("A", executionCalls++ ? "4444.00" : "1111.00")));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("1111.00")).toHaveLength(2); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" })); expect(await screen.findAllByText("4444.00")).toHaveLength(2);
-    expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled(); await act(async () => oldHistory.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-history-/)).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Load subject run 1" })).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled();
-    await act(async () => newHistory.resolve([markedSummary("A", 2, "A-new-history")])); expect(await screen.findByRole("button", { name: "Load subject run 2" })).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })); expect(await screen.findAllByText("1111.00")).toHaveLength(2); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/); fillExecutionRange(); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })); expect(await screen.findAllByText("4444.00")).toHaveLength(2);
+    expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })).toBeDisabled(); await act(async () => oldHistory.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-history-/)).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "טעינת הרצת חלופה 1" })).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })).toBeDisabled();
+    await act(async () => newHistory.resolve([markedSummary("A", 2, "A-new-history")])); expect(await screen.findByRole("button", { name: "טעינת הרצת חלופה 2" })).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -404,21 +404,20 @@ describe("PKG-014 scenario subjects", () => {
   ])("keeps a real A-new run-result composite pending through A-old %s after A-to-B-to-A", async (_kind, makeError) => {
     const a = subject("A", 1, "Subject A"); const b = subject("B", 1, "Subject B"); const oldResult = deferred<api.M09SubjectRun>(); const newResult = deferred<api.M09SubjectRun>(); let resultCalls = 0;
     mocked(api.listM09Subjects).mockResolvedValue([a, b]); mocked(api.getM09Subject).mockImplementation((_client, id) => Promise.resolve(id === "A" ? a : b)); mocked(api.listM09SubjectRuns).mockImplementation((_client, id) => Promise.resolve(id === "A" ? [summary("A")] : [])); mocked(api.getM09SubjectRun).mockImplementation(() => ++resultCalls === 1 ? oldResult.promise : newResult.promise); mocked(api.getM09SubjectCurrentness).mockResolvedValue(currentness("A")); mocked(api.getM09SubjectEligibility).mockResolvedValue(eligibility("A"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/Selected subject: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "Load subject run 1" }));
-    expect(resultCalls).toBe(2); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled(); await act(async () => oldResult.reject(makeError()));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-result-/)).not.toBeInTheDocument(); expect(screen.queryByText("Subject result")).not.toBeInTheDocument(); expect(screen.getByText("Loading scenario evidence…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Execute selected subject" })).toBeDisabled();
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" })); fireEvent.click(screen.getByRole("button", { name: "Subject B" })); await screen.findByText(/חלופה נבחרת: Subject B/); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); fireEvent.click(await screen.findByRole("button", { name: "טעינת הרצת חלופה 1" }));
+    expect(resultCalls).toBe(2); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })).toBeDisabled(); await act(async () => oldResult.reject(makeError()));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.queryByText(/old-result-/)).not.toBeInTheDocument(); expect(screen.queryByText("תוצאת החלופה")).not.toBeInTheDocument(); expect(screen.getByText("טעינת ראיות התרחיש…")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" })).toBeDisabled();
     await act(async () => newResult.resolve(markedRun("A", "5555.00", "A-new-result"))); expect(await screen.findAllByText("5555.00")).toHaveLength(2); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("renders factual evidence separately from each declared occurrence without edit authority", async () => {
     const a = subject("A", 1, "Subject A", [adjustment("A1"), adjustment("A2")]); mocked(api.listM09Subjects).mockResolvedValue([a]); mocked(api.getM09Subject).mockResolvedValue(a); mocked(api.executeM09SubjectRun).mockResolvedValue(run("A"));
-    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/Selected subject: Subject A/);
-    expect(screen.getByRole("region", { name: "Declared scenario adjustments" }).querySelectorAll("li")).toHaveLength(2);
-    expect(screen.getAllByText("100.00 ILS")).toHaveLength(2);
-    fireEvent.change(screen.getByLabelText("Subject execution start"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("Subject execution end"), { target: { value: "2026-02" } }); fireEvent.click(screen.getByRole("button", { name: "Execute selected subject" }));
-    const factual = await screen.findByRole("region", { name: "Factual baseline" }); expect(factual).toHaveTextContent("recurring_income"); expect(factual).toHaveTextContent("income-1");
+    renderPage(); await screen.findByRole("button", { name: "Subject A" }); fireEvent.click(screen.getByRole("button", { name: "Subject A" })); await screen.findByText(/חלופה נבחרת: Subject A/);
+    expect(screen.getByRole("region", { name: "התאמות תרחיש מוצהרות" }).querySelectorAll("li")).toHaveLength(2);
+    expect(screen.getAllByText("100.00 ש״ח")).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("חודש התחלת הרצת החלופה"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום הרצת החלופה"), { target: { value: "2026-02" } }); fireEvent.click(screen.getByRole("button", { name: "הרצת החלופה הנבחרת" }));
+    const factual = await screen.findByRole("region", { name: "בסיס עובדתי" }); expect(factual).toHaveTextContent("recurring_income"); expect(factual).toHaveTextContent("income-1");
     expect(factual.querySelectorAll('input, button, select')).toHaveLength(0);
     expect(screen.queryByText(/suppress/i)).not.toBeInTheDocument();
   });
 });
-

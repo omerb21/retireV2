@@ -58,14 +58,14 @@ describe("CreateClientScreen", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText("Client Name"), { target: { value: "Dana Levi" } });
-    fireEvent.change(screen.getByLabelText("ID Number"), { target: { value: "001234567" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Client" }));
+    fireEvent.change(screen.getByLabelText("שם הלקוח"), { target: { value: "Dana Levi" } });
+    fireEvent.change(screen.getByLabelText("מספר זהות"), { target: { value: "001234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת לקוח" }));
 
-    expect(await screen.findByRole("heading", { name: "Client Detail" })).toBeInTheDocument();
-    expect(await screen.findByText("Full Name: Dana Levi")).toBeInTheDocument();
-    expect(await screen.findByText("ID Number: 001234567")).toBeInTheDocument();
-    expect(await screen.findByText("Professional Identification: identification_incomplete")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "פרטי לקוח — M01" })).toBeInTheDocument();
+    expect(await screen.findByText("שם מלא: Dana Levi")).toBeInTheDocument();
+    expect(await screen.findByText("מספר זהות: 001234567")).toBeInTheDocument();
+    expect(await screen.findByText("זיהוי מקצועי: זיהוי לא הושלם")).toBeInTheDocument();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/clients",
       expect.objectContaining({
@@ -91,9 +91,9 @@ describe("CreateClientScreen", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Save Client" }));
+    fireEvent.click(screen.getByRole("button", { name: "שמירת לקוח" }));
 
-    expect(await screen.findByText("Client name is required.")).toBeInTheDocument();
+    expect(await screen.findByText("יש להזין שם לקוח.")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -109,10 +109,10 @@ describe("CreateClientScreen", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText("Client Name"), { target: { value: "Dana Levi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Client" }));
+    fireEvent.change(screen.getByLabelText("שם הלקוח"), { target: { value: "Dana Levi" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת לקוח" }));
 
-    expect(await screen.findByText("ID number is required.")).toBeInTheDocument();
+    expect(await screen.findByText("יש להזין מספר זהות.")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -144,12 +144,12 @@ describe("CreateClientScreen", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText("Client Name"), { target: { value: "Dana Levi" } });
-    fireEvent.change(screen.getByLabelText("ID Number"), { target: { value: "001234567" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Client" }));
+    fireEvent.change(screen.getByLabelText("שם הלקוח"), { target: { value: "Dana Levi" } });
+    fireEvent.change(screen.getByLabelText("מספר זהות"), { target: { value: "001234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת לקוח" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Unable to create client.")).toBeInTheDocument();
+      expect(screen.getByText("לא ניתן ליצור את הלקוח.")).toBeInTheDocument();
     });
     expect(screen.getByText(/Field required/)).toBeInTheDocument();
   });
@@ -164,6 +164,6 @@ describe("CreateClientScreen", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: "Cancel" })).toHaveAttribute("href", "/clients");
+    expect(screen.getByRole("link", { name: "ביטול וחזרה לרשימה" })).toHaveAttribute("href", "/clients");
   });
 });

@@ -27,9 +27,9 @@ function summary(clientId: number, marker: string): M09RunSummary { const value 
 
 function Navigation() { const navigate = useNavigate(); const location = useLocation(); return <><button onClick={() => navigate("/clients/2/monthly-cashflow")}>B</button><button onClick={() => navigate("/clients/1/monthly-cashflow", { state: { revisit: Math.random() } })}>A revisit</button><output aria-label="route generation">{location.key}</output></>; }
 function renderScreen() { return render(<MemoryRouter initialEntries={["/clients/1/monthly-cashflow"]}><Navigation /><Routes><Route path="/clients/:clientId/monthly-cashflow" element={<M09CashflowScreen />} /></Routes></MemoryRouter>); }
-function horizon() { fireEvent.change(screen.getByLabelText("Start month"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("End month"), { target: { value: "2026-02" } }); }
-async function settled() { await waitFor(() => expect(screen.queryByText("Loading M09 evidence…")).not.toBeInTheDocument()); }
-async function switchClient(name: "B" | "A revisit", clientId: number) { const previous = screen.getByLabelText("route generation").textContent; fireEvent.click(screen.getByRole("button", { name })); await waitFor(() => expect(screen.getByLabelText("route generation").textContent).not.toBe(previous)); await waitFor(() => expect(screen.getByRole("link", { name: "Back to client" })).toHaveAttribute("href", `/clients/${clientId}`)); }
+function horizon() { fireEvent.change(screen.getByLabelText("חודש התחלה"), { target: { value: "2026-01" } }); fireEvent.change(screen.getByLabelText("חודש סיום"), { target: { value: "2026-02" } }); }
+async function settled() { await waitFor(() => expect(screen.queryByText("טוען נתוני M09…")).not.toBeInTheDocument()); }
+async function switchClient(name: "B" | "A revisit", clientId: number) { const previous = screen.getByLabelText("route generation").textContent; fireEvent.click(screen.getByRole("button", { name })); await waitFor(() => expect(screen.getByLabelText("route generation").textContent).not.toBe(previous)); await waitFor(() => expect(screen.getByRole("link", { name: "חזרה ללקוח" })).toHaveAttribute("href", `/clients/${clientId}`)); }
 async function navigate(name: "B" | "A revisit", clientId: number) { await switchClient(name, clientId); await settled(); }
 const structuredError = (marker: string) => new ApiTransportError({ status: 409, statusText: "Conflict", body: { detail: { code: marker } } });
 
@@ -39,23 +39,23 @@ describe("M09CashflowScreen client-generation isolation", () => {
   it("ignores inventory A-to-B stale success and stale finally while B remains pending", async () => {
     const oldA = deferred<M09Inventory>(); const activeB = deferred<M09Inventory>();
     mock(api.assessM09Inventory).mockImplementation((clientId) => clientId === 1 ? oldA.promise : activeB.promise);
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Assess server inventory" }));
-    await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "Assess server inventory" }));
-    await act(async () => oldA.resolve(inventory(1, "old-a"))); expect(screen.queryByText(/fingerprint-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "בדיקת מלאי נתונים בשרת" }));
+    await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "בדיקת מלאי נתונים בשרת" }));
+    await act(async () => oldA.resolve(inventory(1, "old-a"))); expect(screen.queryByText(/fingerprint-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
     await act(async () => activeB.resolve(inventory(2, "active-b"))); expect(await screen.findByText(/fingerprint-active-b/)).toBeInTheDocument(); await settled();
   });
 
   it("ignores stale execution rejection/structured error and accepts the new owner result", async () => {
     const oldA = deferred<M09Run>(); const activeB = deferred<M09Run>(); mock(api.executeM09Run).mockImplementation((clientId) => clientId === 1 ? oldA.promise : activeB.promise);
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" })); await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" }));
-    await act(async () => oldA.reject(new Error("structured stale A error"))); expect(screen.queryByText(/structured stale A error/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
-    await act(async () => activeB.resolve(run(2, "active-b"))); expect(await screen.findByText(/Range totals: inflows 100.00/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" })); await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" }));
+    await act(async () => oldA.reject(new Error("structured stale A error"))); expect(screen.queryByText(/structured stale A error/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
+    await act(async () => activeB.resolve(run(2, "active-b"))); expect(await screen.findByText(/סיכום הטווח: תקבולים 100.00/)).toBeInTheDocument(); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps old-A work stale after A-to-B-to-A and lets the new-A request succeed", async () => {
     const oldA = deferred<M09Inventory>(); const newA = deferred<M09Inventory>(); let aCalls = 0;
     mock(api.assessM09Inventory).mockImplementation((clientId) => clientId === 1 ? (++aCalls === 1 ? oldA.promise : newA.promise) : Promise.resolve(inventory(2, "b")));
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Assess server inventory" })); await navigate("B", 2); await navigate("A revisit", 1); horizon(); fireEvent.click(screen.getByRole("button", { name: "Assess server inventory" }));
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "בדיקת מלאי נתונים בשרת" })); await navigate("B", 2); await navigate("A revisit", 1); horizon(); fireEvent.click(screen.getByRole("button", { name: "בדיקת מלאי נתונים בשרת" }));
     await act(async () => oldA.resolve(inventory(1, "old-a"))); expect(screen.queryByText(/fingerprint-old-a/)).not.toBeInTheDocument(); await act(async () => newA.resolve(inventory(1, "new-a"))); expect(await screen.findByText(/fingerprint-new-a/)).toBeInTheDocument();
   });
 
@@ -64,56 +64,56 @@ describe("M09CashflowScreen client-generation isolation", () => {
     mock(api.listM09Runs).mockImplementation((clientId) => clientId === 1 ? oldHistory.promise : Promise.resolve([summary(2, "b")]));
     mock(api.getM09Run).mockImplementation((clientId) => clientId === 1 ? oldResult.promise : Promise.resolve(run(2, "b")));
     mock(api.getM09Currentness).mockResolvedValue(currentness("run-b")); mock(api.getM09Eligibility).mockResolvedValue(eligibility("run-b"));
-    renderScreen(); await navigate("B", 2); expect(await screen.findByRole("button", { name: "Load run 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Load run 1" }));
-    await act(async () => { oldHistory.resolve([summary(1, "old-a")]); oldResult.resolve(run(1, "old-a")); }); expect(screen.queryByText(/old-a/)).not.toBeInTheDocument(); expect(await screen.findByText(/Range totals: inflows 100.00/)).toBeInTheDocument();
+    renderScreen(); await navigate("B", 2); expect(await screen.findByRole("button", { name: "טעינת הרצה 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" }));
+    await act(async () => { oldHistory.resolve([summary(1, "old-a")]); oldResult.resolve(run(1, "old-a")); }); expect(screen.queryByText(/old-a/)).not.toBeInTheDocument(); expect(await screen.findByText(/סיכום הטווח: תקבולים 100.00/)).toBeInTheDocument();
   });
 
   it("ignores inventory stale structured rejection without clearing B loading", async () => {
     const oldA = deferred<M09Inventory>(); const activeB = deferred<M09Inventory>();
     mock(api.assessM09Inventory).mockImplementation((clientId) => clientId === 1 ? oldA.promise : activeB.promise);
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Assess server inventory" }));
-    await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "Assess server inventory" }));
-    await act(async () => oldA.reject(structuredError("stale_inventory"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "בדיקת מלאי נתונים בשרת" }));
+    await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "בדיקת מלאי נתונים בשרת" }));
+    await act(async () => oldA.reject(structuredError("stale_inventory"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
     await act(async () => activeB.resolve(inventory(2, "inventory-b"))); expect(await screen.findByText(/fingerprint-inventory-b/)).toBeInTheDocument();
   });
 
   it("ignores execute A-to-B stale success and stale finally while B is pending", async () => {
     const oldA = deferred<M09Run>(); const activeB = deferred<M09Run>();
     mock(api.executeM09Run).mockImplementation((clientId) => clientId === 1 ? oldA.promise : activeB.promise);
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" }));
-    await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" }));
-    await act(async () => oldA.resolve(run(1, "execute-old-a"))); expect(screen.queryByText(/execute-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
-    await act(async () => activeB.resolve(run(2, "execute-b"))); expect(await screen.findByText(/Range totals: inflows 100.00/)).toBeInTheDocument();
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" }));
+    await navigate("B", 2); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" }));
+    await act(async () => oldA.resolve(run(1, "execute-old-a"))); expect(screen.queryByText(/execute-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
+    await act(async () => activeB.resolve(run(2, "execute-b"))); expect(await screen.findByText(/סיכום הטווח: תקבולים 100.00/)).toBeInTheDocument();
   });
 
   it("distinguishes execute old-A from new-A after A-to-B-to-A", async () => {
     const oldA = deferred<M09Run>(); const newA = deferred<M09Run>(); let calls = 0;
     mock(api.executeM09Run).mockImplementation((clientId) => clientId === 1 ? (++calls === 1 ? oldA.promise : newA.promise) : Promise.resolve(run(2, "execute-b")));
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" })); await navigate("B", 2); await navigate("A revisit", 1); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" }));
-    await act(async () => oldA.reject(new Error("stale execute rejection"))); expect(screen.queryByText(/stale execute rejection/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" })); await navigate("B", 2); await navigate("A revisit", 1); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" }));
+    await act(async () => oldA.reject(new Error("stale execute rejection"))); expect(screen.queryByText(/stale execute rejection/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
     await act(async () => newA.resolve(run(1, "execute-new-a"))); expect((await screen.findAllByText(/execute-new-a/)).length).toBeGreaterThan(0);
   });
 
   it("ignores a separately structured stale execute API error", async () => {
     const oldA = deferred<M09Run>(); mock(api.executeM09Run).mockImplementation((clientId) => clientId === 1 ? oldA.promise : Promise.resolve(run(2, "b")));
-    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "Execute complete inventory" })); await navigate("B", 2);
+    renderScreen(); await settled(); horizon(); fireEvent.click(screen.getByRole("button", { name: "הרצת המלאי המלא" })); await navigate("B", 2);
     await act(async () => oldA.reject(structuredError("stale_execute_structured"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("protects history from stale rejection/error/finally while new owner is pending", async () => {
     const oldA = deferred<M09RunSummary[]>(); const activeB = deferred<M09RunSummary[]>();
     mock(api.listM09Runs).mockImplementation((clientId) => clientId === 1 ? oldA.promise : activeB.promise);
-    renderScreen(); await switchClient("B", 2); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
-    await act(async () => oldA.reject(structuredError("stale_history"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
-    await act(async () => activeB.resolve([summary(2, "history-b")])); expect(await screen.findByRole("button", { name: "Load run 1" })).toBeInTheDocument(); await settled();
+    renderScreen(); await switchClient("B", 2); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
+    await act(async () => oldA.reject(structuredError("stale_history"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
+    await act(async () => activeB.resolve([summary(2, "history-b")])); expect(await screen.findByRole("button", { name: "טעינת הרצה 1" })).toBeInTheDocument(); await settled();
   });
 
   it("distinguishes history old-A from pending new-A after A-to-B-to-A", async () => {
     const oldA = deferred<M09RunSummary[]>(); const newA = deferred<M09RunSummary[]>(); let calls = 0;
     mock(api.listM09Runs).mockImplementation((clientId) => clientId === 1 ? (++calls === 1 ? oldA.promise : newA.promise) : Promise.resolve([]));
     renderScreen(); await navigate("B", 2); await switchClient("A revisit", 1);
-    await act(async () => oldA.resolve([summary(1, "history-old-a")])); expect(screen.queryByText(/history-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
-    await act(async () => newA.resolve([summary(1, "history-new-a")])); expect(await screen.findByRole("button", { name: "Load run 1" })).toBeInTheDocument(); await settled();
+    await act(async () => oldA.resolve([summary(1, "history-old-a")])); expect(screen.queryByText(/history-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
+    await act(async () => newA.resolve([summary(1, "history-new-a")])); expect(await screen.findByRole("button", { name: "טעינת הרצה 1" })).toBeInTheDocument(); await settled();
   });
 
   it("starts old-A composite load before navigation and rejects its success/finally", async () => {
@@ -123,12 +123,12 @@ describe("M09CashflowScreen client-generation isolation", () => {
     mock(api.getM09Run).mockImplementation((clientId) => clientId === 1 ? oldRun.promise : bRun.promise);
     mock(api.getM09Currentness).mockImplementation((clientId) => clientId === 1 ? oldCurrent.promise : bCurrent.promise);
     mock(api.getM09Eligibility).mockImplementation((clientId) => clientId === 1 ? oldEligibility.promise : bEligibility.promise);
-    renderScreen(); expect(await screen.findByRole("button", { name: "Load run 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Load run 1" }));
-    await navigate("B", 2); fireEvent.click(screen.getByRole("button", { name: "Load run 1" }));
+    renderScreen(); expect(await screen.findByRole("button", { name: "טעינת הרצה 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" }));
+    await navigate("B", 2); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" }));
     await act(async () => { oldRun.resolve(run(1, "composite-old-a")); oldCurrent.resolve(currentness("run-a")); oldEligibility.resolve(eligibility("run-a")); });
-    expect(screen.queryByText(/composite-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
+    expect(screen.queryByText(/composite-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
     await act(async () => { bRun.resolve(run(2, "composite-b")); bCurrent.resolve(currentness("run-b")); bEligibility.resolve(eligibility("run-b")); });
-    expect(await screen.findByText(/Range totals: inflows 100.00/)).toBeInTheDocument();
+    expect(await screen.findByText(/סיכום הטווח: תקבולים 100.00/)).toBeInTheDocument();
   });
 
   it("ignores old-A composite structured rejection while B remains owned", async () => {
@@ -137,9 +137,9 @@ describe("M09CashflowScreen client-generation isolation", () => {
     mock(api.getM09Run).mockImplementation((clientId) => clientId === 1 ? oldRun.promise : activeB.promise);
     mock(api.getM09Currentness).mockImplementation((_clientId, id) => Promise.resolve(currentness(id)));
     mock(api.getM09Eligibility).mockImplementation((_clientId, id) => Promise.resolve(eligibility(id)));
-    renderScreen(); expect(await screen.findByRole("button", { name: "Load run 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Load run 1" })); await navigate("B", 2); fireEvent.click(screen.getByRole("button", { name: "Load run 1" }));
-    await act(async () => oldRun.reject(structuredError("stale_composite"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
-    await act(async () => activeB.resolve(run(2, "composite-active-b"))); expect(await screen.findByText(/Range totals: inflows 100.00/)).toBeInTheDocument();
+    renderScreen(); expect(await screen.findByRole("button", { name: "טעינת הרצה 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" })); await navigate("B", 2); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" }));
+    await act(async () => oldRun.reject(structuredError("stale_composite"))); expect(screen.queryByRole("alert")).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
+    await act(async () => activeB.resolve(run(2, "composite-active-b"))); expect(await screen.findByText(/סיכום הטווח: תקבולים 100.00/)).toBeInTheDocument();
   });
 
   it("distinguishes composite old-A from new-A after A-to-B-to-A", async () => {
@@ -148,8 +148,8 @@ describe("M09CashflowScreen client-generation isolation", () => {
     mock(api.getM09Run).mockImplementation((clientId) => clientId === 1 ? (++aCalls === 1 ? oldA.promise : newA.promise) : Promise.resolve(run(2, "b")));
     mock(api.getM09Currentness).mockImplementation((_clientId, id) => Promise.resolve(currentness(id)));
     mock(api.getM09Eligibility).mockImplementation((_clientId, id) => Promise.resolve(eligibility(id)));
-    renderScreen(); expect(await screen.findByRole("button", { name: "Load run 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Load run 1" })); await navigate("B", 2); await navigate("A revisit", 1); fireEvent.click(screen.getByRole("button", { name: "Load run 1" }));
-    await act(async () => oldA.resolve(run(1, "composite-old-a"))); expect(screen.queryByText(/composite-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("Loading M09 evidence…")).toBeInTheDocument();
+    renderScreen(); expect(await screen.findByRole("button", { name: "טעינת הרצה 1" })).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" })); await navigate("B", 2); await navigate("A revisit", 1); fireEvent.click(screen.getByRole("button", { name: "טעינת הרצה 1" }));
+    await act(async () => oldA.resolve(run(1, "composite-old-a"))); expect(screen.queryByText(/composite-old-a/)).not.toBeInTheDocument(); expect(screen.getByText("טוען נתוני M09…")).toBeInTheDocument();
     await act(async () => newA.resolve(run(1, "composite-new-a"))); expect((await screen.findAllByText(/composite-new-a/)).length).toBeGreaterThan(0);
   });
 

@@ -14,12 +14,10 @@ vi.mock("../api/m09CashflowApi", async () => {
   const actual = await vi.importActual<typeof import("../api/m09CashflowApi")>("../api/m09CashflowApi");
   return { ...actual, listM09Subjects: vi.fn(), listM09SubjectRuns: vi.fn() };
 });
-
 vi.mock("../api/m10ComparisonApi", async () => {
   const actual = await vi.importActual<typeof import("../api/m10ComparisonApi")>("../api/m10ComparisonApi");
   return { ...actual, compareM10Runs: vi.fn() };
 });
-
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -214,7 +212,7 @@ async function selectFirstCandidateAndCompare() {
   const candidate = await screen.findByRole("radio");
   await act(async () => {
     fireEvent.click(candidate);
-    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    fireEvent.click(screen.getByRole("button", { name: "השוואת הזוג שנבחר" }));
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -231,18 +229,17 @@ function structuredError(code: string, status?: number): ApiTransportError {
 afterEach(() => {
   vi.resetAllMocks();
 });
-
 describe("M10ComparisonScreen", () => {
   it("is wired into the client-scoped application route", async () => {
     readyDiscovery();
     render(<MemoryRouter initialEntries={["/clients/1/scenario-comparison"]}><AppRoutes /></MemoryRouter>);
-    expect(await screen.findByRole("heading", { name: "M10 Scenario comparison" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "M10 — השוואת תרחישים" })).toBeInTheDocument();
     expect(await screen.findByRole("radio", { name: /Adjusted adjusted/ })).toBeInTheDocument();
   });
 
   it("rejects an invalid route client without issuing discovery", () => {
     renderScreen("/clients/0/scenario-comparison");
-    expect(screen.getByRole("alert")).toHaveTextContent("Invalid client ID.");
+    expect(screen.getByRole("alert")).toHaveTextContent("מזהה הלקוח אינו תקין.");
     expect(m09.listM09Subjects).not.toHaveBeenCalled();
   });
 
@@ -259,7 +256,7 @@ describe("M10ComparisonScreen", () => {
 
     renderScreen();
 
-    expect(await screen.findByText("Run ID: baseline-run")).toBeInTheDocument();
+    expect(await screen.findByText("מזהה הרצה: baseline-run")).toBeInTheDocument();
     const labels = screen.getAllByRole("radio").map(input => input.parentElement?.textContent);
     expect(labels).toEqual([
       expect.stringContaining("Tie A"),
@@ -267,17 +264,17 @@ describe("M10ComparisonScreen", () => {
       expect.stringContaining("Later adjusted"),
     ]);
     expect(screen.queryByText(/Ineligible adjusted/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
-    expect(screen.getByText(/technical and neutral/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "השוואת הזוג שנבחר" })).toBeDisabled();
+    expect(screen.getByText(/טכני וניטרלי/)).toBeInTheDocument();
   });
 
   it("fails closed when no baseline subject is present", async () => {
     vi.mocked(m09.listM09Subjects).mockResolvedValue([subject("adjusted", "adjusted")]);
     vi.mocked(m09.listM09SubjectRuns).mockResolvedValue([run("adjusted")]);
     renderScreen();
-    expect(await screen.findByText(/no eligible current baseline run/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
-    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/לא סיפק הרצת בסיס עדכנית וכשירה/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "השוואת הזוג שנבחר" })).toBeDisabled();
+    expect(screen.queryByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).not.toBeInTheDocument();
   });
 
   it("fails closed when two apparent baseline subjects are returned", async () => {
@@ -288,7 +285,7 @@ describe("M10ComparisonScreen", () => {
     ]);
     vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
     renderScreen();
-    expect(await screen.findByText(/baseline evidence is ambiguous/)).toBeInTheDocument();
+    expect(await screen.findByText(/תרחיש הבסיס אינו חד־משמעי/)).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
@@ -298,7 +295,7 @@ describe("M10ComparisonScreen", () => {
       subjectId === "baseline" ? [run(subjectId, "baseline-1"), run(subjectId, "baseline-2")] : [run(subjectId)],
     ));
     renderScreen();
-    expect(await screen.findByText(/baseline evidence is ambiguous/)).toBeInTheDocument();
+    expect(await screen.findByText(/תרחיש הבסיס אינו חד־משמעי/)).toBeInTheDocument();
   });
 
   it("shows the no-adjusted state when adjusted subjects have no eligible current run", async () => {
@@ -307,7 +304,7 @@ describe("M10ComparisonScreen", () => {
       [run(subjectId, `${subjectId}-run`, subjectId === "baseline")],
     ));
     renderScreen();
-    expect(await screen.findByText(/No eligible current adjusted run/)).toBeInTheDocument();
+    expect(await screen.findByText(/לא סיפק הרצה מותאמת עדכנית וכשירה/)).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
@@ -317,7 +314,7 @@ describe("M10ComparisonScreen", () => {
       subjectId === "adjusted" ? [run(subjectId, "adjusted-1"), run(subjectId, "adjusted-2")] : [run(subjectId)],
     ));
     renderScreen();
-    expect(await screen.findByText(/adjusted subject has ambiguous eligible run evidence/)).toBeInTheDocument();
+    expect(await screen.findByText(/תרחיש מותאם אינן חד־משמעיות/)).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
@@ -325,7 +322,7 @@ describe("M10ComparisonScreen", () => {
     const invalid = { ...subject("unexpected", "adjusted"), scenario_contract_version: "v2" } as unknown as m09.M09ScenarioSubject;
     vi.mocked(m09.listM09Subjects).mockResolvedValue([subject("baseline", "baseline"), invalid]);
     renderScreen();
-    expect(await screen.findByText(/unexpected scenario-subject contract evidence/)).toBeInTheDocument();
+    expect(await screen.findByText(/ראיות חוזה התרחיש אינן תקינות/)).toBeInTheDocument();
     expect(m09.listM09SubjectRuns).not.toHaveBeenCalled();
   });
 
@@ -333,9 +330,9 @@ describe("M10ComparisonScreen", () => {
     readyDiscovery();
     renderScreen();
 
-    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
-    expect(screen.getByText("Subject ID: baseline")).toBeInTheDocument();
-    expect(evidence).toHaveTextContent("No planner-declared scenario adjustments.");
+    const evidence = await screen.findByRole("region", { name: "תרחיש בסיס שנקבע בשרת" });
+    expect(screen.getByText("מזהה תרחיש: baseline")).toBeInTheDocument();
+    expect(evidence).toHaveTextContent("אין התאמות תרחיש שהוגדרו על ידי המתכנן.");
     expect(evidence).toHaveTextContent(BASELINE_PROVENANCE);
     expect(evidence).not.toHaveTextContent("evidence unavailable");
     expect(m09.listM09Subjects).toHaveBeenCalledTimes(1);
@@ -367,8 +364,8 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
     renderScreen();
 
-    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
-    expect(within(evidence).getByText("Server-owned baseline reference evidence unavailable.")).toBeInTheDocument();
+    const evidence = await screen.findByRole("region", { name: "תרחיש בסיס שנקבע בשרת" });
+    expect(within(evidence).getByText("אסמכתת תרחיש הבסיס אינה זמינה.")).toBeInTheDocument();
     expect(evidence).not.toHaveTextContent("No planner-declared scenario adjustments.");
     expect(evidence.querySelector("code")).toBeNull();
   });
@@ -385,8 +382,8 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
     renderScreen();
 
-    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
-    expect(evidence).toHaveTextContent("Server-owned baseline reference evidence unavailable.");
+    const evidence = await screen.findByRole("region", { name: "תרחיש בסיס שנקבע בשרת" });
+    expect(evidence).toHaveTextContent("אסמכתת תרחיש הבסיס אינה זמינה.");
     expect(evidence).not.toHaveTextContent("No planner-declared scenario adjustments.");
   });
 
@@ -402,8 +399,8 @@ describe("M10ComparisonScreen", () => {
     ]));
     renderScreen();
 
-    const evidence = await screen.findByRole("region", { name: "Server-owned baseline reference" });
-    expect(evidence).toHaveTextContent("Server-owned baseline reference evidence unavailable.");
+    const evidence = await screen.findByRole("region", { name: "תרחיש בסיס שנקבע בשרת" });
+    expect(evidence).toHaveTextContent("אסמכתת תרחיש הבסיס אינה זמינה.");
   });
 
   it.each([
@@ -417,8 +414,8 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m09.listM09SubjectRuns).mockResolvedValue([run("baseline")]);
     renderScreen();
 
-    await screen.findByText(/Comparison unavailable:/);
-    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
+    await screen.findByText(/ההשוואה אינה זמינה:/);
+    expect(screen.queryByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -431,8 +428,8 @@ describe("M10ComparisonScreen", () => {
     ]));
     renderScreen();
 
-    await screen.findByText(/no eligible current baseline run/);
-    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
+    await screen.findByText(/לא סיפק הרצת בסיס עדכנית וכשירה/);
+    expect(screen.queryByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).not.toBeInTheDocument();
   });
 
   it("keeps malformed optional baseline evidence separate from PKG-017 and comparator success", async () => {
@@ -447,11 +444,11 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
 
     await selectFirstCandidateAndCompare();
-    expect(screen.getByRole("region", { name: "Server-owned baseline reference" }))
-      .toHaveTextContent("Server-owned baseline reference evidence unavailable.");
-    expect(screen.getByRole("region", { name: "Selected scenario adjustment evidence" }))
+    expect(screen.getByRole("region", { name: "תרחיש בסיס שנקבע בשרת" }))
+      .toHaveTextContent("אסמכתת תרחיש הבסיס אינה זמינה.");
+    expect(screen.getByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" }))
       .toHaveTextContent("preserved-occurrence");
-    expect(await screen.findByRole("region", { name: "Comparator success evidence" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "ראיות לתוצאת ההשוואה" })).toBeInTheDocument();
     expect(m10.compareM10Runs).toHaveBeenCalledWith(1, {
       reference_run_id: "baseline-run",
       compared_run_id: "adjusted-run",
@@ -467,10 +464,10 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
 
-    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
-    expect(evidence).toHaveTextContent("Scenario subject ID: literal");
-    expect(evidence).toHaveTextContent("Declared additional monthly income");
-    expect(evidence).toHaveTextContent("Declared additional monthly expense");
+    const evidence = screen.getByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" });
+    expect(evidence).toHaveTextContent("מזהה תרחיש: literal");
+    expect(evidence).toHaveTextContent("הכנסה חודשית נוספת מוצהרת");
+    expect(evidence).toHaveTextContent("הוצאה חודשית נוספת מוצהרת");
     expect(evidence).toHaveTextContent("9007199254740993.00");
     expect(evidence).toHaveTextContent("999999999999999999.99");
     expect(evidence).toHaveTextContent("2026-01");
@@ -481,9 +478,9 @@ describe("M10ComparisonScreen", () => {
     const rows = within(evidence).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("occurrence-income");
-    expect(rows[0]).toHaveTextContent("Ordinal1");
+    expect(rows[0]).toHaveTextContent("סדר1");
     expect(rows[1]).toHaveTextContent("occurrence-expense");
-    expect(rows[1]).toHaveTextContent("Ordinal2");
+    expect(rows[1]).toHaveTextContent("סדר2");
   });
 
   it("preserves duplicate-looking occurrences and authoritative server array order without sorting", async () => {
@@ -496,7 +493,7 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
 
-    const rows = within(screen.getByRole("region", { name: "Selected scenario adjustment evidence" })).getAllByRole("listitem");
+    const rows = within(screen.getByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" })).getAllByRole("listitem");
     expect(rows).toHaveLength(3);
     expect(rows.map(row => row.textContent)).toEqual([
       expect.stringContaining("server-first"),
@@ -528,11 +525,11 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
 
-    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
-    expect(evidence).toHaveTextContent("Selected scenario adjustment evidence unavailable.");
+    const evidence = screen.getByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" });
+    expect(evidence).toHaveTextContent("ראיות התאמת התרחיש אינן זמינות.");
     expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
     expect(evidence).not.toHaveTextContent("valid-first");
-    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "חסם השוואה מוכר" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -540,8 +537,8 @@ describe("M10ComparisonScreen", () => {
     readyDiscovery([withAdjustments(subject("empty", "adjusted"), [])]);
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
-    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
-    expect(evidence).toHaveTextContent("Selected scenario adjustment evidence unavailable.");
+    const evidence = screen.getByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" });
+    expect(evidence).toHaveTextContent("ראיות התאמת התרחיש אינן זמינות.");
     expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
   });
 
@@ -557,8 +554,8 @@ describe("M10ComparisonScreen", () => {
     readyDiscovery([selected as unknown as m09.M09ScenarioSubject]);
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
-    const evidence = screen.getByRole("region", { name: "Selected scenario adjustment evidence" });
-    expect(evidence).toHaveTextContent("Selected scenario adjustment evidence unavailable.");
+    const evidence = screen.getByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" });
+    expect(evidence).toHaveTextContent("ראיות התאמת התרחיש אינן זמינות.");
     expect(within(evidence).queryByRole("list")).not.toBeInTheDocument();
   });
 
@@ -568,7 +565,7 @@ describe("M10ComparisonScreen", () => {
     readyDiscovery([s1, s2]);
     renderScreen();
     const radios = await screen.findAllByRole("radio");
-    expect(screen.queryByRole("region", { name: "Selected scenario adjustment evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "ראיות ההתאמה של התרחיש שנבחר" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Clear selected scenario" })).not.toBeInTheDocument();
     fireEvent.click(radios[0]);
     expect(screen.getByText("S1-occurrence")).toBeInTheDocument();
@@ -588,15 +585,15 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("1-occurrence")).toBeInTheDocument();
-    expect(screen.getByText("Subject ID: 1-baseline")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
+    expect(screen.getByText("מזהה תרחיש: 1-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     expect(screen.queryByText("1-occurrence")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("2-occurrence")).toBeInTheDocument();
-    expect(screen.getByText("Subject ID: 2-baseline")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
+    expect(screen.getByText("מזהה תרחיש: 2-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).toBeInTheDocument();
     expect(screen.queryByText("111.11")).not.toBeInTheDocument();
   });
 
@@ -616,25 +613,25 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("A-old-occurrence")).toBeInTheDocument();
-    expect(screen.getByText("Subject ID: A-old-baseline")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
+    expect(screen.getByText("מזהה תרחיש: A-old-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
-    await screen.findByText(/No eligible current adjusted run/);
-    expect(screen.getByText("Subject ID: B-baseline")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
+    await screen.findByText(/לא סיפק הרצה מותאמת עדכנית וכשירה/);
+    expect(screen.getByText("מזהה תרחיש: B-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
     expect(screen.queryByText("A-old-occurrence")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Server-owned baseline reference" })).not.toBeInTheDocument();
-    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).not.toBeInTheDocument();
+    expect(screen.getByText("טוען הרצות M09 כשירות…")).toBeInTheDocument();
     await act(async () => newA.resolve([
       subject("A-new-baseline", "baseline"),
       withAdjustments(subject("A-new-adjusted", "adjusted"), [adjustment("A-new-occurrence", 1, "declared_additional_monthly_expense", "999999999999999999.99", "2028-11", "2028-12")]),
     ]));
     fireEvent.click(await screen.findByRole("radio"));
     expect(screen.getByText("A-new-occurrence")).toBeInTheDocument();
-    expect(screen.getByText("Subject ID: A-new-baseline")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Server-owned baseline reference" })).toBeInTheDocument();
-    expect(screen.queryByText("Subject ID: A-old-baseline")).not.toBeInTheDocument();
+    expect(screen.getByText("מזהה תרחיש: A-new-baseline")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "תרחיש בסיס שנקבע בשרת" })).toBeInTheDocument();
+    expect(screen.queryByText("מזהה תרחיש: A-old-baseline")).not.toBeInTheDocument();
     expect(screen.queryByText("A-old-occurrence")).not.toBeInTheDocument();
     expect(screen.queryByText("9007199254740993.00")).not.toBeInTheDocument();
   });
@@ -651,7 +648,7 @@ describe("M10ComparisonScreen", () => {
       reference_run_id: "baseline-run",
       compared_run_id: "adjusted-run",
     });
-    const evidence = await screen.findByRole("region", { name: "Comparator success evidence" });
+    const evidence = await screen.findByRole("region", { name: "ראיות לתוצאת ההשוואה" });
     expect(evidence).toHaveTextContent("new-comparison-fingerprint");
     expect(evidence).toHaveTextContent("m10-comparison-result-v2");
     expect(evidence).toHaveTextContent("compared_minus_reference");
@@ -674,11 +671,11 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m10.compareM10Runs).mockRejectedValue(structuredError(code));
     renderScreen();
     await selectFirstCandidateAndCompare();
-    const blocker = await screen.findByRole("region", { name: "Accepted comparator blocker" });
+    const blocker = await screen.findByRole("region", { name: "חסם השוואה מוכר" });
     expect(within(blocker).getByText(code)).toBeInTheDocument();
     expect(blocker).toHaveTextContent(`server-${code}`);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Comparator success evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "ראיות לתוצאת ההשוואה" })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -694,14 +691,14 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m10.compareM10Runs).mockRejectedValue(error);
     renderScreen();
     await selectFirstCandidateAndCompare();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Comparator request failed");
-    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("בקשת ההשוואה נכשלה");
+    expect(screen.queryByRole("region", { name: "חסם השוואה מוכר" })).not.toBeInTheDocument();
   });
 
   it("keeps discovery transport failure distinct from comparison blockers", async () => {
     vi.mocked(m09.listM09Subjects).mockRejectedValue(new Error("discovery offline"));
     renderScreen();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Eligible-run discovery failed: discovery offline");
+    expect(await screen.findByRole("alert")).toHaveTextContent("איתור ההרצות הכשירות נכשל: discovery offline");
     expect(screen.queryByText("Comparison blocked")).not.toBeInTheDocument();
   });
 
@@ -715,9 +712,9 @@ describe("M10ComparisonScreen", () => {
     expect(await screen.findByRole("radio", { name: /A adjusted/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
     expect(screen.queryByText(/A adjusted/)).not.toBeInTheDocument();
-    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הרצות M09 כשירות…")).toBeInTheDocument();
     await act(async () => pendingB.resolve([subject("B-baseline", "baseline")]));
-    expect(await screen.findByText(/No eligible current adjusted run/)).toBeInTheDocument();
+    expect(await screen.findByText(/לא סיפק הרצה מותאמת עדכנית וכשירה/)).toBeInTheDocument();
   });
 
   it("discards discovery A-old success after switching to B", async () => {
@@ -746,11 +743,11 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
-    await screen.findByText(/No eligible current adjusted run/);
+    await screen.findByText(/לא סיפק הרצה מותאמת עדכנית וכשירה/);
     fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
-    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הרצות M09 כשירות…")).toBeInTheDocument();
     await act(async () => oldA.reject(new Error("A-old discovery failed")));
-    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הרצות M09 כשירות…")).toBeInTheDocument();
     expect(screen.queryByText(/A-old discovery failed/)).not.toBeInTheDocument();
     await act(async () => newA.resolve([subject("A-new-baseline", "baseline"), subject("A-new-adjusted", "adjusted", undefined, "A new adjusted")]));
     expect(await screen.findByRole("radio", { name: /A new adjusted/ })).toBeInTheDocument();
@@ -769,22 +766,22 @@ describe("M10ComparisonScreen", () => {
     vi.mocked(m09.listM09SubjectRuns).mockImplementation((_clientId, subjectId) => Promise.resolve([run(subjectId)]));
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
-    await screen.findByText(/No eligible current adjusted run/);
+    await screen.findByText(/לא סיפק הרצה מותאמת עדכנית וכשירה/);
     fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
-    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הרצות M09 כשירות…")).toBeInTheDocument();
 
     await act(async () => oldA.resolve([
       subject("A-old-baseline", "baseline"),
       subject("A-old-adjusted", "adjusted", undefined, "A old adjusted"),
     ]));
 
-    expect(screen.getByText("Loading eligible M09 runs…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הרצות M09 כשירות…")).toBeInTheDocument();
     expect(screen.queryByText(/A old adjusted/)).not.toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "השוואת הזוג שנבחר" })).toBeDisabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Comparator success evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "חסם השוואה מוכר" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "ראיות לתוצאת ההשוואה" })).not.toBeInTheDocument();
 
     await act(async () => newA.resolve([
       subject("A-new-baseline", "baseline"),
@@ -792,8 +789,8 @@ describe("M10ComparisonScreen", () => {
     ]));
     expect(await screen.findByRole("radio", { name: /A new adjusted/ })).not.toBeChecked();
     expect(screen.queryByText(/A old adjusted/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading eligible M09 runs…")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.queryByText("טוען הרצות M09 כשירות…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "השוואת הזוג שנבחר" })).toBeDisabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -811,7 +808,7 @@ describe("M10ComparisonScreen", () => {
     expect(await screen.findByRole("radio", { name: /B adjusted/ })).toBeInTheDocument();
     await act(async () => oldCompare.resolve(comparisonResult("A-old", 1, "1-baseline-run", "1-adjusted-run")));
     expect(screen.queryByText("A-old-fingerprint")).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading comparator evidence…")).not.toBeInTheDocument();
+    expect(screen.queryByText("טוען את נתוני ההשוואה…")).not.toBeInTheDocument();
   });
 
   it("keeps A-new compare loading through A-old rejection and finally after A-to-B-to-A", async () => {
@@ -829,9 +826,9 @@ describe("M10ComparisonScreen", () => {
     await screen.findByRole("radio", { name: /B adjusted/ });
     fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
     await selectFirstCandidateAndCompare();
-    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טוען את נתוני ההשוואה…")).toBeInTheDocument();
     await act(async () => oldCompare.reject(new Error("A-old compare failed")));
-    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טוען את נתוני ההשוואה…")).toBeInTheDocument();
     expect(screen.queryByText(/A-old compare failed/)).not.toBeInTheDocument();
     await act(async () => newCompare.resolve(comparisonResult("A-new")));
     expect(await screen.findByText("A-new-fingerprint")).toBeInTheDocument();
@@ -863,37 +860,37 @@ describe("M10ComparisonScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Switch A" }));
     const newCandidate = await screen.findByRole("radio", { name: /A new adjusted/ });
     fireEvent.click(newCandidate);
-    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    fireEvent.click(screen.getByRole("button", { name: "השוואת הזוג שנבחר" }));
     expect(newCandidate).toBeChecked();
-    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טוען את נתוני ההשוואה…")).toBeInTheDocument();
 
     const oldResult = comparisonResult("A-old", 1, "A-old-baseline-run", "A-old-adjusted-run");
     oldResult.monthly_comparisons[0].gross_inflow_total.reference_value = "111.11";
     await act(async () => oldCompare.resolve(oldResult));
 
     expect(newCandidate).toBeChecked();
-    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare selected pair" })).toBeDisabled();
+    expect(screen.getByText("טוען את נתוני ההשוואה…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "השוואת הזוג שנבחר" })).toBeDisabled();
     expect(screen.queryByText("A-old-fingerprint")).not.toBeInTheDocument();
     expect(screen.queryByText("A-old-baseline-run")).not.toBeInTheDocument();
     expect(screen.queryByText("A-old-adjusted-run")).not.toBeInTheDocument();
     expect(screen.queryByText("111.11")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Comparator success evidence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "חסם השוואה מוכר" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "ראיות לתוצאת ההשוואה" })).not.toBeInTheDocument();
 
     const newResult = comparisonResult("A-new", 1, "A-new-baseline-run", "A-new-adjusted-run");
     newResult.monthly_comparisons[0].gross_inflow_total.reference_value = "222.22";
     await act(async () => newCompare.resolve(newResult));
-    const evidence = await screen.findByRole("region", { name: "Comparator success evidence" });
+    const evidence = await screen.findByRole("region", { name: "ראיות לתוצאת ההשוואה" });
     expect(evidence).toHaveTextContent("A-new-fingerprint");
     expect(evidence).toHaveTextContent("A-new-baseline-run");
     expect(evidence).toHaveTextContent("A-new-adjusted-run");
     expect(evidence).toHaveTextContent("222.22");
     expect(newCandidate).toBeChecked();
-    expect(screen.queryByText("Loading comparator evidence…")).not.toBeInTheDocument();
+    expect(screen.queryByText("טוען את נתוני ההשוואה…")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "חסם השוואה מוכר" })).not.toBeInTheDocument();
   });
 
   it("uses compare request ownership to prevent R1 from overwriting R2 in the same client generation", async () => {
@@ -906,15 +903,15 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     const radios = await screen.findAllByRole("radio");
     fireEvent.click(radios[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    fireEvent.click(screen.getByRole("button", { name: "השוואת הזוג שנבחר" }));
     fireEvent.click(radios[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    fireEvent.click(screen.getByRole("button", { name: "השוואת הזוג שנבחר" }));
     await act(async () => r1.resolve(comparisonResult("R1-old", 1, "baseline-run", "adjusted-1-run")));
     expect(screen.queryByText("R1-old-fingerprint")).not.toBeInTheDocument();
-    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טוען את נתוני ההשוואה…")).toBeInTheDocument();
     await act(async () => r2.resolve(comparisonResult("R2-new", 1, "baseline-run", "adjusted-2-run")));
     expect(await screen.findByText("R2-new-fingerprint")).toBeInTheDocument();
-    expect(screen.queryByText("Loading comparator evidence…")).not.toBeInTheDocument();
+    expect(screen.queryByText("טוען את נתוני ההשוואה…")).not.toBeInTheDocument();
   });
 
   it("makes stale same-generation rejection and finally a no-op for result, selection, error, and loading", async () => {
@@ -927,14 +924,14 @@ describe("M10ComparisonScreen", () => {
     renderScreen();
     const radios = await screen.findAllByRole("radio");
     fireEvent.click(radios[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    fireEvent.click(screen.getByRole("button", { name: "השוואת הזוג שנבחר" }));
     fireEvent.click(radios[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Compare selected pair" }));
+    fireEvent.click(screen.getByRole("button", { name: "השוואת הזוג שנבחר" }));
     await act(async () => r1.reject(structuredError("comparison_run_not_current")));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Accepted comparator blocker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "חסם השוואה מוכר" })).not.toBeInTheDocument();
     expect(radios[1]).toBeChecked();
-    expect(screen.getByText("Loading comparator evidence…")).toBeInTheDocument();
+    expect(screen.getByText("טוען את נתוני ההשוואה…")).toBeInTheDocument();
     await act(async () => r2.resolve(comparisonResult("R2-current", 1, "baseline-run", "adjusted-2-run")));
     expect(await screen.findByText("R2-current-fingerprint")).toBeInTheDocument();
   });

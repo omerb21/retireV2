@@ -22,7 +22,7 @@ function getSubmitErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unable to create client.";
+  return "לא ניתן ליצור את הלקוח.";
 }
 
 export function CreateClientScreen() {
@@ -41,12 +41,12 @@ export function CreateClientScreen() {
     const idNumber = formState.idNumber.trim();
 
     if (fullName.length === 0) {
-      setValidationMessage("Client name is required.");
+      setValidationMessage("יש להזין שם לקוח.");
       return;
     }
 
     if (idNumber.length === 0) {
-      setValidationMessage("ID number is required.");
+      setValidationMessage("יש להזין מספר זהות.");
       return;
     }
 
@@ -71,14 +71,14 @@ export function CreateClientScreen() {
 
   return (
     <section>
-      <h2>Create Client</h2>
+      <h2>יצירת לקוח</h2>
       <p>
-        <Link to="/clients">Cancel</Link>
+        <Link to="/clients">ביטול וחזרה לרשימה</Link>
       </p>
       <form onSubmit={handleSubmit}>
         <p>
           <label htmlFor="fullName">
-            Client Name
+            שם הלקוח
             <input
               id="fullName"
               name="fullName"
@@ -90,7 +90,7 @@ export function CreateClientScreen() {
         </p>
         <p>
           <label htmlFor="idNumber">
-            ID Number
+            מספר זהות
             <input
               id="idNumber"
               name="idNumber"
@@ -103,13 +103,13 @@ export function CreateClientScreen() {
         {validationMessage ? <p>{validationMessage}</p> : null}
         {submitErrorMessage ? (
           <>
-            <p>Unable to create client.</p>
+            <p>לא ניתן ליצור את הלקוח.</p>
             <pre>{submitErrorMessage}</pre>
           </>
         ) : null}
         <p>
           <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving client..." : "Save Client"}
+            {isSubmitting ? "שומר לקוח..." : "שמירת לקוח"}
           </button>
         </p>
       </form>

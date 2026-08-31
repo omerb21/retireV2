@@ -19,6 +19,9 @@ import {
   uploadM02Sources
 } from "../api/m02IntakeApi";
 import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
+import { HebrewDateInput } from "../components/HebrewDateInput";
+import { heLabel } from "../i18n/he";
+import { formatIsoDate, formatIsoTimestamp } from "../utils/dateFormat";
 
 const ACCEPTED_FILE_TYPES = ".pdf,.xml,.dat,.csv,.xlsx";
 const MAX_FILE_BYTES = 26_214_400;
@@ -121,7 +124,7 @@ function errorMessage(error: unknown): string {
       ? error.body
       : JSON.stringify(error.body, null, 2);
   }
-  return error instanceof Error ? error.message : "The M02 operation failed.";
+  return error instanceof Error ? error.message : "פעולת M02 נכשלה.";
 }
 
 export function M02PensionIntakeScreen() {
@@ -170,7 +173,7 @@ export function M02PensionIntakeScreen() {
     async function load() {
       if (validClientId === null) {
         if (isCurrentClientContext(context)) {
-          setLoadError("Client not found.");
+          setLoadError("הלקוח לא נמצא.");
           setIsLoading(false);
         }
         return;
@@ -243,7 +246,7 @@ export function M02PensionIntakeScreen() {
         setForm(emptyForm);
         setEditingIntakeId(null);
         setSuccessMessage(
-          editingIntakeId === null ? "Manual intake saved." : "Intake metadata updated."
+          editingIntakeId === null ? "הקליטה הידנית נשמרה." : "מטא־נתוני הקליטה עודכנו."
         );
       }
     } catch (error) {
@@ -273,7 +276,7 @@ export function M02PensionIntakeScreen() {
       || client?.m01_case?.lifecycle_status === "archived"
       || selectedFiles.length === 0
     ) {
-      setMutationError("Select at least one opaque source file.");
+      setMutationError("יש לבחור לפחות קובץ מקור אחד לשמירה.");
       return;
     }
     const oversized = selectedFiles.find((file) => file.size > MAX_FILE_BYTES);
@@ -383,23 +386,23 @@ export function M02PensionIntakeScreen() {
   }
 
   if (isLoading) {
-    return <section><h2>M02 Pension Intake</h2><p>Loading M02 intake history...</p></section>;
+    return <section><h2>M02 — קליטת נתוני פנסיה</h2><p>טוען היסטוריית קליטה...</p></section>;
   }
 
   return (
     <section>
-      <h2>M02 Controlled Pension Intake</h2>
+      <h2>M02 — קליטת נתוני פנסיה מבוקרת</h2>
       <p>
-        Active client: {client ? `${client.full_name} (#${client.client_id})` : "Unavailable"}
+        לקוח פעיל: {client ? `${client.full_name} (#${client.client_id})` : "לא זמין"}
       </p>
       <p>
-        M02 preserves declared metadata and opaque bytes only. It does not parse,
-        classify, approve, or make a source authoritative.
+        M02 שומר את הנתונים המוצהרים ואת קובצי המקור ללא פרשנות. השלב אינו מסווג,
+        מאשר או הופך מקור לסמכות מקצועית.
       </p>
       {loadError ? <pre>{loadError}</pre> : null}
 
       {client?.m01_case?.lifecycle_status === "archived" ? (
-        <p>Archived client case: M02 intake is read-only until the M01 case is reopened.</p>
+        <p>תיק הלקוח בארכיון: נתוני M02 לקריאה בלבד עד לפתיחת M01 מחדש.</p>
       ) : null}
 
       <form onSubmit={saveManual}>
@@ -410,22 +413,22 @@ export function M02PensionIntakeScreen() {
             || client.m01_case?.lifecycle_status === "archived"
           }
         >
-          <legend>{editingIntakeId ? "Correct intake metadata" : "Manual pension intake"}</legend>
-          <label>Source type <input value={form.sourceType} onChange={(event) => updateForm("sourceType", event.target.value)} required /></label>
-          <label>Declared provider <input value={form.declaredProviderName} onChange={(event) => updateForm("declaredProviderName", event.target.value)} /></label>
-          <label>Product/fund name <input value={form.productName} onChange={(event) => updateForm("productName", event.target.value)} /></label>
-          <label>Product/fund identifier <input value={form.productIdentifier} onChange={(event) => updateForm("productIdentifier", event.target.value)} /></label>
-          <label>Declared account/reference <input value={form.declaredAccountReference} onChange={(event) => updateForm("declaredAccountReference", event.target.value)} /></label>
-          <label>Declared total balance <input inputMode="decimal" value={form.declaredTotalBalanceAmount} onChange={(event) => updateForm("declaredTotalBalanceAmount", event.target.value)} /></label>
-          <label>Declared monthly pension <input inputMode="decimal" value={form.declaredMonthlyPensionAmount} onChange={(event) => updateForm("declaredMonthlyPensionAmount", event.target.value)} /></label>
-          <label>Declared components (one label=value per line) <textarea value={form.declaredComponentsText} onChange={(event) => updateForm("declaredComponentsText", event.target.value)} /></label>
-          <label>Declared statement/import date <input type="date" value={form.declaredStatementDate} onChange={(event) => updateForm("declaredStatementDate", event.target.value)} /></label>
-          <label>Declared start date <input type="date" value={form.declaredStartDate} onChange={(event) => updateForm("declaredStartDate", event.target.value)} /></label>
-          <label>Declared product-type text <input value={form.declaredProductType} onChange={(event) => updateForm("declaredProductType", event.target.value)} /></label>
-          <label>Declared basis <textarea value={form.declaredBasis} onChange={(event) => updateForm("declaredBasis", event.target.value)} /></label>
-          <label>Notes <textarea value={form.notes} onChange={(event) => updateForm("notes", event.target.value)} /></label>
-          <button type="submit">{isSaving ? "Saving..." : editingIntakeId ? "Save metadata correction" : "Save manual intake"}</button>
-          {editingIntakeId ? <button type="button" onClick={() => { setEditingIntakeId(null); setForm(emptyForm); }}>Cancel correction</button> : null}
+          <legend>{editingIntakeId ? "תיקון נתוני קליטה" : "קליטת נתוני פנסיה ידנית"}</legend>
+          <label>סוג מקור <input aria-label="סוג מקור" value={form.sourceType} onChange={(event) => updateForm("sourceType", event.target.value)} required /></label>
+          <label>גוף מנהל מוצהר <input value={form.declaredProviderName} onChange={(event) => updateForm("declaredProviderName", event.target.value)} /></label>
+          <label>שם מוצר או קרן <input aria-label="שם מוצר או קרן" value={form.productName} onChange={(event) => updateForm("productName", event.target.value)} /></label>
+          <label>מזהה מוצר או קרן <input value={form.productIdentifier} onChange={(event) => updateForm("productIdentifier", event.target.value)} /></label>
+          <label>חשבון או אסמכתה מוצהרים <input value={form.declaredAccountReference} onChange={(event) => updateForm("declaredAccountReference", event.target.value)} /></label>
+          <label>יתרה כוללת מוצהרת <input inputMode="decimal" value={form.declaredTotalBalanceAmount} onChange={(event) => updateForm("declaredTotalBalanceAmount", event.target.value)} /></label>
+          <label>קצבה חודשית מוצהרת <input inputMode="decimal" value={form.declaredMonthlyPensionAmount} onChange={(event) => updateForm("declaredMonthlyPensionAmount", event.target.value)} /></label>
+          <label>רכיבים מוצהרים (תיאור=ערך, שורה לכל רכיב) <textarea value={form.declaredComponentsText} onChange={(event) => updateForm("declaredComponentsText", event.target.value)} /></label>
+          <label>תאריך דוח או קליטה <HebrewDateInput value={form.declaredStatementDate} onChange={(value) => updateForm("declaredStatementDate", value)} /></label>
+          <label>תאריך התחלה מוצהר <HebrewDateInput ariaLabel="תאריך התחלה מוצהר" value={form.declaredStartDate} onChange={(value) => updateForm("declaredStartDate", value)} /></label>
+          <label>תיאור סוג מוצר מוצהר <input value={form.declaredProductType} onChange={(event) => updateForm("declaredProductType", event.target.value)} /></label>
+          <label>בסיס ההצהרה <textarea value={form.declaredBasis} onChange={(event) => updateForm("declaredBasis", event.target.value)} /></label>
+          <label>הערות <textarea value={form.notes} onChange={(event) => updateForm("notes", event.target.value)} /></label>
+          <button type="submit" aria-label={editingIntakeId ? "שמירת תיקון מטא־נתונים" : "שמירת קליטה ידנית"}>{isSaving ? "שומר..." : editingIntakeId ? "שמירת התיקון" : "שמירת קליטה ידנית"}</button>
+          {editingIntakeId ? <button type="button" onClick={() => { setEditingIntakeId(null); setForm(emptyForm); }}>ביטול התיקון</button> : null}
         </fieldset>
       </form>
 
@@ -437,26 +440,26 @@ export function M02PensionIntakeScreen() {
             || client.m01_case?.lifecycle_status === "archived"
           }
         >
-          <legend>Preserve opaque source files</legend>
-          <p>Accepted: PDF, XML, DAT, CSV, XLSX. Maximum 25 MiB per file. No content is parsed in M02.</p>
-          <input aria-label="Opaque source files" type="file" accept={ACCEPTED_FILE_TYPES} multiple onChange={selectFiles} />
+          <legend>שמירת קובצי מקור</legend>
+          <p>סוגים מותרים: PDF, XML, DAT, CSV, XLSX. עד 25 MiB לקובץ. תוכן הקובץ אינו מפוענח ב־M02.</p>
+          <input aria-label="קובצי מקור לשמירה" type="file" accept={ACCEPTED_FILE_TYPES} multiple onChange={selectFiles} />
           {selectedFiles.length ? (
-            <ul aria-label="Selected opaque files">
-              {selectedFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name} — {file.size} bytes</li>)}
+            <ul aria-label="קובצי מקור שנבחרו">
+              {selectedFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name} — {file.size} בתים</li>)}
             </ul>
           ) : null}
-          <button type="submit">{isUploading ? "Preserving files..." : "Preserve selected files"}</button>
+          <button type="submit" aria-label={isUploading ? "שומר קבצים..." : "שמירת הקבצים שנבחרו"}>{isUploading ? "שומר קבצים..." : "שמירת הקבצים שנבחרו"}</button>
         </fieldset>
       </form>
 
-      {batchError ? <p>Batch request error: {batchError}</p> : null}
+      {batchError ? <p>שגיאת בקשת אצווה: {batchError}</p> : null}
       {uploadResults.length ? (
         <section aria-labelledby="upload-results-heading">
-          <h3 id="upload-results-heading">Per-file results</h3>
+          <h3 id="upload-results-heading">תוצאות לפי קובץ</h3>
           <ul>
             {uploadResults.map((result) => (
               <li key={`${result.selection_index}-${result.original_filename}`}>
-                {result.original_filename}: {result.status}
+                {result.original_filename}: {heLabel(result.status)}
                 {result.error_code ? ` — ${result.error_code}: ${result.error_message}` : ""}
               </li>
             ))}
@@ -467,46 +470,47 @@ export function M02PensionIntakeScreen() {
       {successMessage ? <p>{successMessage}</p> : null}
 
       <section aria-labelledby="m02-history-heading">
-        <h3 id="m02-history-heading">Retained intake history</h3>
-        {intakes.length === 0 ? <p>No M02 intake records.</p> : (
+        <h3 id="m02-history-heading">היסטוריית קליטה שמורה</h3>
+        {intakes.length === 0 ? <p>אין רשומות קליטה ב־M02.</p> : (
           <ul>
             {intakes.map((intake) => (
               <li key={intake.intake_id}>
-                <h4>{intake.product_name ?? intake.declared_product_type ?? "Unclassified declared product"}</h4>
-                <p>Intake: {intake.intake_id}</p>
-                <p>Source type: {intake.source_type}</p>
-                <p>Lifecycle: {intake.lifecycle_status}; preservation: {intake.preservation_status}</p>
+                <h4>{intake.product_name ?? intake.declared_product_type ?? "מוצר מוצהר שטרם סווג"}</h4>
+                <p>מזהה קליטה: {intake.intake_id}</p>
+                <p>סוג מקור: {intake.source_type}</p>
+                <p>מצב נוכחי: {heLabel(intake.lifecycle_status)}; מצב שמירה: {heLabel(intake.preservation_status)}</p>
+                {intake.declared_statement_date ? <p>תאריך דוח: {formatIsoDate(intake.declared_statement_date)}</p> : null}
                 {intake.manual_technical_reference ? (
-                  <p>Operational technical reference (not an account): {intake.manual_technical_reference}</p>
+                  <p>אסמכתה תפעולית טכנית (אינה חשבון): {intake.manual_technical_reference}</p>
                 ) : null}
-                {intake.diagnostics.length ? <p>Diagnostics: {intake.diagnostics.join(", ")}</p> : null}
-                {intake.duplicate_candidate ? <p>Duplicate candidate only; same-client preserved bytes reused. Prior intake: {intake.duplicate_of_intake_id}</p> : null}
-                {intake.superseding_candidate ? <p>Superseding candidate only; no automatic authority or supersession. Older intake: {intake.superseding_intake_id}</p> : null}
+                {intake.diagnostics.length ? <p>אבחונים: {intake.diagnostics.join(", ")}</p> : null}
+                {intake.duplicate_candidate ? <p>מועמדת לכפילות בלבד; נעשה שימוש חוזר בנתונים השמורים של אותו לקוח. קליטה קודמת: {intake.duplicate_of_intake_id}</p> : null}
+                {intake.superseding_candidate ? <p>מועמדת להחלפה בלבד; אין סמכות או החלפה אוטומטית. קליטה ישנה יותר: {intake.superseding_intake_id}</p> : null}
                 {intake.source ? (
                   <>
-                    <p>File: {intake.source.original_filename}; {intake.source.byte_size} bytes</p>
+                    <p>קובץ: {intake.source.original_filename}; {intake.source.byte_size} בתים</p>
                     <p>SHA-256: {intake.source.sha256_checksum}</p>
-                    <p>Validated media: {intake.source.validated_media_type}; detected encoding: {intake.source.detected_text_encoding ?? "not applicable"}</p>
-                    <p>Preserved at: {intake.source.uploaded_at}</p>
-                    <button type="button" disabled={downloadingId === intake.intake_id} onClick={() => void download(intake)}>
-                      {downloadingId === intake.intake_id ? "Preparing attachment..." : "Download attachment"}
+                    <p>סוג מדיה מאומת: {intake.source.validated_media_type}; קידוד שזוהה: {intake.source.detected_text_encoding ?? "לא רלוונטי"}</p>
+                    <p>נשמר בתאריך: {formatIsoTimestamp(intake.source.uploaded_at)}</p>
+                    <button type="button" aria-label={downloadingId === intake.intake_id ? "מכין קובץ להורדה..." : "הורדת קובץ מצורף"} disabled={downloadingId === intake.intake_id} onClick={() => void download(intake)}>
+                      {downloadingId === intake.intake_id ? "מכין קובץ..." : "הורדת קובץ"}
                     </button>
                   </>
                 ) : null}
                 {client?.m01_case?.lifecycle_status !== "archived"
                   && (["uploaded", "metadata_review"] as M02LifecycleStatus[]).includes(intake.lifecycle_status) ? (
-                  <button type="button" onClick={() => { setEditingIntakeId(intake.intake_id); setForm(formFromIntake(intake)); setMutationError(null); }}>
-                    Correct metadata
+                  <button type="button" aria-label="תיקון מטא־נתונים" onClick={() => { setEditingIntakeId(intake.intake_id); setForm(formFromIntake(intake)); setMutationError(null); }}>
+                    תיקון נתונים
                   </button>
                 ) : null}
                 {client?.m01_case?.lifecycle_status === "archived" ? null : intake.allowed_lifecycle_targets.map((target) => (
-                  <button
+                  <button aria-label={`מעבר למצב ${heLabel(target)}`}
                     key={target}
                     type="button"
                     disabled={transitioningId === intake.intake_id}
                     onClick={() => void transition(intake, target)}
                   >
-                    Move to {target}
+                    מעבר למצב {heLabel(target)}
                   </button>
                 ))}
               </li>
@@ -514,7 +518,7 @@ export function M02PensionIntakeScreen() {
           </ul>
         )}
       </section>
-      <p><Link to={validClientId === null ? "/clients" : `/clients/${validClientId}`}>Back to M01 client case</Link></p>
+      <p><Link to={validClientId === null ? "/clients" : `/clients/${validClientId}`}>חזרה לתיק הלקוח M01</Link></p>
     </section>
   );
 }

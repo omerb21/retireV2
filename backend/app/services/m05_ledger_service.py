@@ -311,6 +311,11 @@ def _candidate_context(
     except M04ClassificationError as error:
         raise _conflict("m04_ineligible", "Current M04 authority is unavailable") from error
     revision = target.current_revision
+    if m04_gate.exclusion_reason == "m04_revalidation_required":
+        raise _conflict(
+            "upstream_revalidation_required",
+            "Current M04 classification requires explicit revalidation",
+        )
     if (
         not m04_gate.eligible_for_m05
         or not m04_gate.accepted_revision_id

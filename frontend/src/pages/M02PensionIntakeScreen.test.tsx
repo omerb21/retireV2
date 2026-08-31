@@ -192,16 +192,16 @@ describe("PKG-007 M02 controlled pension intake", () => {
 
     renderHarness();
 
-    expect(await screen.findByText("Active client: Client A (#1)")).toBeInTheDocument();
-    expect(screen.getByText(/does not parse, classify, approve/)).toBeInTheDocument();
-    expect(screen.getByText(/opaque.dat; 42 bytes/)).toBeInTheDocument();
+    expect(await screen.findByText("לקוח פעיל: Client A (#1)")).toBeInTheDocument();
+    expect(screen.getByText(/אינו מסווג/)).toBeInTheDocument();
+    expect(screen.getByText(/opaque.dat; 42 בתים/)).toBeInTheDocument();
     expect(screen.getByText(`SHA-256: ${"a".repeat(64)}`)).toBeInTheDocument();
-    expect(screen.getByText(/Duplicate candidate only/)).toBeInTheDocument();
-    expect(screen.getByText(/Superseding candidate only/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Move to metadata_review" })).toBeInTheDocument();
+    expect(screen.getByText(/מועמדת לכפילות בלבד/)).toBeInTheDocument();
+    expect(screen.getByText(/מועמדת להחלפה בלבד/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "מעבר למצב בדיקת מטא־נתונים" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to M01 client case" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "חזרה לתיק הלקוח M01" })).toHaveAttribute(
       "href",
       "/clients/1"
     );
@@ -256,23 +256,23 @@ describe("PKG-007 M02 controlled pension intake", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
-    const chooser = screen.getByLabelText("Opaque source files");
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    const chooser = screen.getByLabelText("קובצי מקור לשמירה");
     expect(chooser).toHaveAttribute("accept", ".pdf,.xml,.dat,.csv,.xlsx");
     const dat = new File(["opaque"], "source.dat", { type: "application/octet-stream" });
     const pdf = new File(["bad"], "statement.pdf", { type: "application/pdf" });
     fireEvent.change(chooser, { target: { files: [dat, pdf] } });
-    expect(screen.getByText(/source.dat — 6 bytes/)).toBeInTheDocument();
-    expect(screen.getByText(/statement.pdf — 3 bytes/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Source type"), {
+    expect(screen.getByText(/source.dat — 6 בתים/)).toBeInTheDocument();
+    expect(screen.getByText(/statement.pdf — 3 בתים/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("סוג מקור"), {
       target: { value: "clearinghouse" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
+    fireEvent.click(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" }));
 
     expect(await screen.findByText("source.dat: preserved")).toBeInTheDocument();
     expect(screen.getByText(/M02_STORAGE_CLEANUP_FAILED/)).toBeInTheDocument();
     expect(screen.getByText(/statement.pdf: failed — M02_SIGNATURE_MISMATCH/)).toBeInTheDocument();
-    expect(screen.getByText(/No content is parsed in M02/)).toBeInTheDocument();
+    expect(screen.getByText(/תוכן הקובץ אינו מפוענח ב־M02/)).toBeInTheDocument();
   });
 
   it("creates manual declared facts without a human identity or account claim", async () => {
@@ -296,15 +296,15 @@ describe("PKG-007 M02 controlled pension intake", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
-    fireEvent.change(screen.getByLabelText("Source type"), { target: { value: "manual" } });
-    fireEvent.change(screen.getByLabelText("Product/fund name"), { target: { value: "Declared Fund" } });
-    fireEvent.change(screen.getByLabelText("Declared start date"), { target: { value: "2000-01-01" } });
-    fireEvent.change(screen.getByLabelText("Declared product-type text"), { target: { value: "declared product" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save manual intake" }));
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    fireEvent.change(screen.getByLabelText("סוג מקור"), { target: { value: "manual" } });
+    fireEvent.change(screen.getByLabelText("שם מוצר או קרן"), { target: { value: "Declared Fund" } });
+    fireEvent.change(screen.getByLabelText("תאריך התחלה מוצהר"), { target: { value: "01/01/2000" } });
+    fireEvent.change(screen.getByLabelText("תיאור סוג מוצר מוצהר"), { target: { value: "declared product" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת קליטה ידנית" }));
 
-    expect(await screen.findByText("Manual intake saved.")).toBeInTheDocument();
-    expect(screen.getByText(/Operational technical reference \(not an account\)/)).toBeInTheDocument();
+    expect(await screen.findByText("הקליטה הידנית נשמרה.")).toBeInTheDocument();
+    expect(screen.getByText(/אסמכתה תפעולית טכנית \(אינה חשבון\)/)).toBeInTheDocument();
   });
 
   it("resets A immediately and ignores stale A load after switching to B", async () => {
@@ -320,12 +320,12 @@ describe("PKG-007 M02 controlled pension intake", () => {
     renderHarness();
 
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    expect(screen.getByText("Loading M02 intake history...")).toBeInTheDocument();
-    expect(await screen.findByText("Active client: Client B (#2)")).toBeInTheDocument();
+    expect(screen.getByText("טוען היסטוריית קליטה...")).toBeInTheDocument();
+    expect(await screen.findByText("לקוח פעיל: Client B (#2)")).toBeInTheDocument();
     oldAHistory.resolve(jsonResponse([intake(1, "STALE-A")]));
 
     await waitFor(() => expect(screen.queryByText(/STALE-A/)).not.toBeInTheDocument());
-    expect(screen.getByText("Active client: Client B (#2)")).toBeInTheDocument();
+    expect(screen.getByText("לקוח פעיל: Client B (#2)")).toBeInTheDocument();
   });
 
   it("ignores stale DAT batch success, error, and finally after A-to-B-to-A", async () => {
@@ -349,27 +349,27 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
+    await screen.findByText("לקוח פעיל: Client A (#1)");
     const firstDat = new File(["old"], "old.dat", { type: "text/plain" });
-    fireEvent.change(screen.getByLabelText("Opaque source files"), {
+    fireEvent.change(screen.getByLabelText("קובצי מקור לשמירה"), {
       target: { files: [firstDat] }
     });
-    fireEvent.change(screen.getByLabelText("Source type"), { target: { value: "manual" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
-    expect(screen.getByRole("button", { name: "Preserving files..." })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("סוג מקור"), { target: { value: "manual" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" }));
+    expect(screen.getByRole("button", { name: "שומר קבצים..." })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Active client: Client B (#2)");
+    await screen.findByText("לקוח פעיל: Client B (#2)");
     fireEvent.click(screen.getByRole("button", { name: "Go A" }));
-    await screen.findByText("Active client: Client A (#1)");
+    await screen.findByText("לקוח פעיל: Client A (#1)");
 
     const newDat = new File(["new"], "new.dat", { type: "text/plain" });
-    fireEvent.change(screen.getByLabelText("Opaque source files"), {
+    fireEvent.change(screen.getByLabelText("קובצי מקור לשמירה"), {
       target: { files: [newDat] }
     });
-    fireEvent.change(screen.getByLabelText("Source type"), { target: { value: "manual" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preserve selected files" }));
-    expect(screen.getByRole("button", { name: "Preserving files..." })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("סוג מקור"), { target: { value: "manual" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" }));
+    expect(screen.getByRole("button", { name: "שומר קבצים..." })).toBeDisabled();
 
     oldUpload.resolve(jsonResponse({
       results: [{
@@ -383,7 +383,7 @@ describe("PKG-007 M02 controlled pension intake", () => {
       request_error: { code: "STALE_ERROR", message: "old request" }
     }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Preserving files..." })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "שומר קבצים..." })).toBeDisabled();
       expect(screen.queryByText(/STALE-old|STALE_ERROR|STALE-I/)).not.toBeInTheDocument();
     });
 
@@ -399,7 +399,7 @@ describe("PKG-007 M02 controlled pension intake", () => {
       request_error: null
     }));
     expect(await screen.findByText(/new.dat: failed — M02_UNSUPPORTED_BINARY_TEXT/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Preserve selected files" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" })).toBeEnabled();
   });
 
   it("keeps archived M02 history and download readable while hiding mutation controls", async () => {
@@ -434,13 +434,13 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     renderHarness();
 
-    expect(await screen.findByText(/M02 intake is read-only/)).toBeInTheDocument();
-    expect(screen.getByText("Intake: I-ARCHIVED")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Correct metadata" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/נתוני M02 לקריאה בלבד/)).toBeInTheDocument();
+    expect(screen.getByText("מזהה קליטה: I-ARCHIVED")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "הורדת קובץ מצורף" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "תיקון מטא־נתונים" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Move to/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save manual intake" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Preserve selected files" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "שמירת קליטה ידנית" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" })).toBeDisabled();
   });
 
   it("performs browser download effects only for the current client generation", async () => {
@@ -485,20 +485,20 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
-    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "הורדת קובץ מצורף" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Active client: Client B (#2)");
+    await screen.findByText("לקוח פעיל: Client B (#2)");
     fireEvent.click(screen.getByRole("button", { name: "Go A" }));
-    await screen.findByText("Active client: Client A (#1)");
+    await screen.findByText("לקוח פעיל: Client A (#1)");
     oldDownload.resolve(downloadResponse("old"));
     await waitFor(() => {
       expect(createObjectURL).not.toHaveBeenCalled();
       expect(click).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "הורדת קובץ מצורף" })).toBeEnabled();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    fireEvent.click(screen.getByRole("button", { name: "הורדת קובץ מצורף" }));
     await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:current");
@@ -542,14 +542,14 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
-    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "הורדת קובץ מצורף" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Active client: Client B (#2)");
+    await screen.findByText("לקוח פעיל: Client B (#2)");
     oldDownload.reject(new Error("STALE DOWNLOAD REJECTION"));
 
     await waitFor(() => {
-      expect(screen.getByText("Active client: Client B (#2)")).toBeInTheDocument();
+      expect(screen.getByText("לקוח פעיל: Client B (#2)")).toBeInTheDocument();
       expect(screen.queryByText(/STALE DOWNLOAD REJECTION/)).not.toBeInTheDocument();
       expect(createObjectURL).not.toHaveBeenCalled();
       expect(click).not.toHaveBeenCalled();
@@ -598,19 +598,19 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
-    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "הורדת קובץ מצורף" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Active client: Client B (#2)");
+    await screen.findByText("לקוח פעיל: Client B (#2)");
     fireEvent.click(screen.getByRole("button", { name: "Go A" }));
-    await screen.findByText("Active client: Client A (#1)");
-    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
-    expect(screen.getByRole("button", { name: "Preparing attachment..." })).toBeDisabled();
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "הורדת קובץ מצורף" }));
+    expect(screen.getByRole("button", { name: "מכין קובץ להורדה..." })).toBeDisabled();
 
     oldDownload.reject(new Error("STALE OLD A REJECTION"));
     await waitFor(() => {
       expect(screen.queryByText(/STALE OLD A REJECTION/)).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Preparing attachment..." })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "מכין קובץ להורדה..." })).toBeDisabled();
       expect(createObjectURL).not.toHaveBeenCalled();
       expect(click).not.toHaveBeenCalled();
     });
@@ -619,7 +619,7 @@ describe("PKG-007 M02 controlled pension intake", () => {
     await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:new-a");
-    expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "הורדת קובץ מצורף" })).toBeEnabled();
     click.mockRestore();
   });
 
@@ -658,11 +658,11 @@ describe("PKG-007 M02 controlled pension intake", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Active client: Client A (#1)");
-    fireEvent.click(screen.getByRole("button", { name: "Download attachment" }));
+    await screen.findByText("לקוח פעיל: Client A (#1)");
+    fireEvent.click(screen.getByRole("button", { name: "הורדת קובץ מצורף" }));
     currentDownload.reject(new Error("CURRENT DOWNLOAD REJECTION"));
     expect(await screen.findByText(/CURRENT DOWNLOAD REJECTION/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download attachment" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "הורדת קובץ מצורף" })).toBeEnabled();
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
     expect(revokeObjectURL).not.toHaveBeenCalled();

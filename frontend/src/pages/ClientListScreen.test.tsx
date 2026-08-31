@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("ClientListScreen", () => {
-  it("shows Create Client in the empty state", async () => {
+  it("shows יצירת לקוח in the empty state", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(mockJsonResponse([])));
 
     render(
@@ -30,11 +30,11 @@ describe("ClientListScreen", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("No clients yet")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create Client" })).toHaveAttribute("href", "/clients/new");
+    expect(await screen.findByText("טרם נוצרו לקוחות")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "יצירת לקוח" })).toHaveAttribute("href", "/clients/new");
   });
 
-  it("shows Create Client when clients exist", async () => {
+  it("shows יצירת לקוח when clients exist", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValueOnce(
@@ -58,9 +58,9 @@ describe("ClientListScreen", () => {
     );
 
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
-    expect(await screen.findByText("File Status: file_created")).toBeInTheDocument();
-    expect(await screen.findByText("Professional Identification: professionally_identified")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create Client" })).toHaveAttribute("href", "/clients/new");
+    expect(await screen.findByText("מצב תיק: התיק נוצר")).toBeInTheDocument();
+    expect(await screen.findByText("מצב זיהוי מקצועי: זוהה מקצועית")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "יצירת לקוח" })).toHaveAttribute("href", "/clients/new");
   });
 
   it("shows an error instead of crashing when the client list response is not an array", async () => {
@@ -72,8 +72,8 @@ describe("ClientListScreen", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("Unable to load clients.")).toBeInTheDocument();
+    expect(await screen.findByText("לא ניתן לטעון את רשימת הלקוחות.")).toBeInTheDocument();
     expect(await screen.findByText("Unexpected clients response shape.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create Client" })).toHaveAttribute("href", "/clients/new");
+    expect(screen.getByRole("link", { name: "יצירת לקוח" })).toHaveAttribute("href", "/clients/new");
   });
 });

@@ -7,9 +7,10 @@ import {
   type M09Run, type M09RunSummary,
 } from "../api/m09CashflowApi";
 import { M09ScenarioSubjects } from "./M09ScenarioSubjects";
+import { heBoolean, heLabel } from "../i18n/he";
 
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : "M09 request failed";
-const codes = (values: string[]) => values.length ? values.join(", ") : "none";
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : "בקשת M09 נכשלה";
+const codes = (values: string[]) => values.length ? values.join(", ") : "אין";
 
 export function M09CashflowScreen() {
   const { clientId: raw } = useParams(); const location = useLocation();
@@ -62,29 +63,29 @@ export function M09CashflowScreen() {
     } catch (cause) { if (owns()) setError(errorMessage(cause)); } finally { finish(loading); }
   };
 
-  if (clientId === null) return <p role="alert">Invalid client ID.</p>;
+  if (clientId === null) return <p role="alert">מזהה הלקוח אינו תקין.</p>;
   const horizonValid = /^\d{4}-(0[1-9]|1[0-2])$/.test(startMonth) && /^\d{4}-(0[1-9]|1[0-2])$/.test(endMonth) && endMonth >= startMonth;
-  return <main><h2>M09 Deterministic monthly cashflow</h2>
-    <p>Orchestration and exact aggregation only. This is not professional, tax, calculation-readiness, recommendation, or M10 authority.</p>
-    <p><Link to={`/clients/${clientId}`}>Back to client</Link></p>
-    {error ? <p role="alert">{error}</p> : null}{busyCount ? <p>Loading M09 evidence…</p> : null}
-    <section><h3>Explicit full-month horizon</h3>
-      <label>Start month <input aria-label="Start month" type="month" value={startMonth} onChange={(event) => setStartMonth(event.target.value)} /></label>
-      <label>End month <input aria-label="End month" type="month" value={endMonth} onChange={(event) => setEndMonth(event.target.value)} /></label>
-      <button type="button" disabled={!horizonValid || busyCount > 0} onClick={() => void assess()}>Assess server inventory</button>
-      <button type="button" disabled={!horizonValid || busyCount > 0} onClick={() => void execute()}>Execute complete inventory</button>
-      <p>Family: {M09_FAMILY}/{M09_VERSION}. The server owns all component inclusion, exclusion and none evidence.</p>
+  return <main><h2>M09 — תזרים מזומנים חודשי דטרמיניסטי</h2>
+    <p>תזמור וסיכום מדויק בלבד; אין בכך המלצה או סמכות מקצועית או מיסויית.</p>
+    <p><Link to={`/clients/${clientId}`}>חזרה ללקוח</Link></p>
+    {error ? <p role="alert">{error}</p> : null}{busyCount ? <p>טוען נתוני M09…</p> : null}
+    <section><h3>טווח חודשים מלא ומפורש</h3>
+      <label>חודש התחלה <input aria-label="חודש התחלה" type="month" value={startMonth} onChange={(event) => setStartMonth(event.target.value)} /></label>
+      <label>חודש סיום <input aria-label="חודש סיום" type="month" value={endMonth} onChange={(event) => setEndMonth(event.target.value)} /></label>
+      <button type="button" aria-label="בדיקת מלאי נתונים בשרת" disabled={!horizonValid || busyCount > 0} onClick={() => void assess()}>בדיקת מלאי נתונים בשרת</button>
+      <button type="button" aria-label="הרצת המלאי המלא" disabled={!horizonValid || busyCount > 0} onClick={() => void execute()}>הרצת המלאי המלא</button>
+      <p>משפחה: {M09_FAMILY}/{M09_VERSION}. השרת קובע את כל ראיות ההכללה, ההחרגה והיעדר הנתונים של הרכיבים.</p>
     </section>
-    {inventory ? <section><h3>Server-resolved component inventory</h3><p>Complete: {String(inventory.complete)}; blockers: {codes(inventory.blocker_codes)}.</p>
+    {inventory ? <section><h3>מלאי רכיבים שנקבע בשרת</h3><p>שלם: {heBoolean(inventory.complete)}; חסמים: {codes(inventory.blocker_codes)}.</p>
       <ul>{inventory.domains.map((domain, index) => <li key={`${String(domain.domain ?? "domain")}-${index}`}><strong>{String(domain.domain ?? "domain")}</strong><pre>{JSON.stringify(domain, null, 2)}</pre></li>)}</ul>
-      <p>Fingerprint: {inventory.inventory_fingerprint}</p></section> : null}
-    {run ? <section><h3>Saved run result</h3><p>Run {run.run_sequence}: {run.status}; blockers: {codes(run.blocker_codes)}.</p>
-      <p>Current: {String(run.currentness.is_current)} ({codes(run.currentness.reason_codes)}). M10 technical eligibility only: {String(run.m10_eligibility.eligible_for_m10)} ({codes(run.m10_eligibility.reason_codes)}).</p>
-      {run.monthly_results.length ? <table><thead><tr><th>Month</th><th>Inflows (ILS)</th><th>Outflows (ILS)</th><th>Net (ILS)</th></tr></thead><tbody>{run.monthly_results.map((row) => <tr key={row.monthly_result_id}><td>{row.month}</td><td>{row.gross_inflow_total}</td><td>{row.gross_outflow_total}</td><td>{row.period_net}</td></tr>)}</tbody></table> : <p>No authoritative monthly result rows.</p>}
-      {run.range_totals ? <p>Range totals: inflows {run.range_totals.gross_inflow_total}; outflows {run.range_totals.gross_outflow_total}; net {run.range_totals.period_net}.</p> : null}
-      <details><summary>Immutable assumption and upstream evidence</summary><pre>{JSON.stringify({ assumption_manifest: run.assumption_manifest, upstream_snapshot: run.upstream_snapshot }, null, 2)}</pre></details>
+      <p>טביעת אצבע: {inventory.inventory_fingerprint}</p></section> : null}
+    {run ? <section><h3>תוצאת הרצה שמורה</h3><p>הרצה {run.run_sequence}: {heLabel(run.status)}; חסמים: {codes(run.blocker_codes)}.</p>
+      <p>עדכנית: {heBoolean(run.currentness.is_current)} ({codes(run.currentness.reason_codes)}). כשירות טכנית ל־M10: {heBoolean(run.m10_eligibility.eligible_for_m10)} ({codes(run.m10_eligibility.reason_codes)}).</p>
+      {run.monthly_results.length ? <table><thead><tr><th>חודש</th><th>תקבולים (ש״ח)</th><th>תשלומים (ש״ח)</th><th>נטו (ש״ח)</th></tr></thead><tbody>{run.monthly_results.map((row) => <tr key={row.monthly_result_id}><td>{row.month}</td><td>{row.gross_inflow_total}</td><td>{row.gross_outflow_total}</td><td>{row.period_net}</td></tr>)}</tbody></table> : <p>לא קיימות שורות תוצאה חודשיות מוסמכות.</p>}
+      {run.range_totals ? <p>סיכום הטווח: תקבולים {run.range_totals.gross_inflow_total}; תשלומים {run.range_totals.gross_outflow_total}; נטו {run.range_totals.period_net}.</p> : null}
+      <details><summary>הנחות וראיות מקור בלתי ניתנות לשינוי</summary><pre>{JSON.stringify({ assumption_manifest: run.assumption_manifest, upstream_snapshot: run.upstream_snapshot }, null, 2)}</pre></details>
     </section> : null}
-    <section><h3>Saved immutable runs</h3>{history.length ? <ol>{history.map((item) => <li key={item.run_id}><button type="button" onClick={() => void loadRun(item.run_id)}>Load run {item.run_sequence}</button> — {item.status}; {item.start_month}–{item.end_month}; current {String(item.is_current)}</li>)}</ol> : <p>No saved M09 runs.</p>}</section>
+    <section><h3>הרצות שמורות ובלתי ניתנות לשינוי</h3>{history.length ? <ol>{history.map((item) => <li key={item.run_id}><button type="button" aria-label={`טעינת הרצה ${item.run_sequence}`} onClick={() => void loadRun(item.run_id)}>טעינת הרצה {item.run_sequence}</button> — {heLabel(item.status)}; {item.start_month}–{item.end_month}; עדכנית {heBoolean(item.is_current)}</li>)}</ol> : <p>אין הרצות M09 שמורות.</p>}</section>
     <M09ScenarioSubjects clientId={clientId} />
   </main>;
 }

@@ -10,6 +10,8 @@ import {
   startM05, type M05Candidate, type M05Revision, type M05Subject,
 } from "../api/m05LedgerApi";
 import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
+import { heBoolean, heLabel, technicalCode } from "../i18n/he";
+import { formatIsoDate, formatIsoTimestamp } from "../utils/dateFormat";
 
 const errorMessage = (error: unknown) => {
   if (error instanceof ApiTransportError &&
@@ -19,75 +21,75 @@ const errorMessage = (error: unknown) => {
       const code = (detail as { code?: unknown }).code;
       const detailMessage = (detail as { message?: unknown }).message;
       if (typeof detailMessage === "string" || typeof code === "string") {
-        return `${typeof detailMessage === "string" ? detailMessage : "M05 request failed"}${typeof code === "string" ? ` (Technical code: ${code})` : ""}`;
+        return `${typeof detailMessage === "string" ? detailMessage : "בקשת M05 נכשלה"}${typeof code === "string" ? ` (קוד טכני: ${code})` : ""}`;
       }
     }
   }
-  return error instanceof Error ? error.message : "M05 request failed";
+  return error instanceof Error ? error.message : "בקשת M05 נכשלה";
 };
 const CANDIDATE_EXPLANATIONS: Record<string, string> = {
-  archived_case: "The client case is archived and read-only.",
-  ledger_chain_inconsistent: "The retained ledger history failed its integrity checks.",
-  no_authoritative_candidate: "Another current record is authoritative for this provider and account.",
-  authoritative_candidate_tie: "More than one record has the same authority rank; selection is blocked.",
-  upstream_source_ineligible: "The M02 record is not a current eligible manual source.",
-  m03_ineligible: "The source review is missing, stale, or not currently accepted.",
-  m04_ineligible: "The classification is missing, stale, unresolved, or not currently accepted.",
-  upstream_revalidation_required: "Upstream evidence changed and requires explicit revalidation.",
-  required_value_missing: "A required provider, account, statement date, balance, or component value is missing.",
-  currency_or_unit_invalid: "The required ILS currency confirmation is missing or invalid.",
-  component_mapping_invalid: "The M02 component evidence does not match the accepted classification mapping.",
-  component_set_incomplete: "A complete non-empty set of reconcilable components is required.",
-  statement_date_invalid: "The statement date is missing, invalid, or in the future.",
+  archived_case: "תיק הלקוח בארכיון ולקריאה בלבד.",
+  ledger_chain_inconsistent: "היסטוריית הכרטסת השמורה נכשלה בבדיקות התקינות.",
+  no_authoritative_candidate: "רשומה עדכנית אחרת היא הסמכותית עבור הגוף המנהל והחשבון.",
+  authoritative_candidate_tie: "ליותר מרשומה אחת אותה דרגת סמכות ולכן הבחירה חסומה.",
+  upstream_source_ineligible: "רשומת M02 אינה מקור ידני עדכני וכשיר.",
+  m03_ineligible: "בדיקת המקור M03 חסרה או אינה עדכנית.",
+  m04_ineligible: "הסיווג M04 חסר, לא הוכרע או אינו מאושר.",
+  upstream_revalidation_required: "נדרש אימות מחדש של הסיווג מול נתוני המקור העדכניים.",
+  required_value_missing: "חסר ערך חובה של גוף מנהל, חשבון, תאריך דוח, יתרה או רכיב.",
+  currency_or_unit_invalid: "אישור מטבע הש״ח הנדרש חסר או אינו תקין.",
+  component_mapping_invalid: "ראיות רכיבי M02 אינן תואמות למיפוי הסיווג המאושר.",
+  component_set_incomplete: "נדרשת קבוצה מלאה ולא ריקה של רכיבים הניתנים להתאמה.",
+  statement_date_invalid: "תאריך הדוח חסר, אינו תקין או נמצא בעתיד.",
 };
 const candidateExplanation = (candidate: M05Candidate) => candidate.exclusion_reason
   ? CANDIDATE_EXPLANATIONS[candidate.exclusion_reason] ??
-    "This candidate is excluded by a technical eligibility gate."
+    "הרשומה חסומה על ידי שער כשירות טכני."
   : candidate.authoritative_current
-    ? "This is the current technically authoritative candidate."
-    : "This candidate is not the current authoritative record.";
+    ? "זוהי הרשומה הטכנית העדכנית."
+    : "רשומה זו אינה הרשומה העדכנית.";
 const text = (value: unknown) => value === null || value === undefined || value === ""
-  ? "not present" : typeof value === "string" ? value : JSON.stringify(value);
+  ? "לא קיים" : typeof value === "string" ? value : JSON.stringify(value);
 
 function ProductContextView({ context, label }: { context: Record<string, unknown>; label: string }) {
   const entries = Object.entries(context).filter(([, value]) =>
     value !== null && value !== undefined && value !== ""
   );
   return <div aria-label={label}>
-    <strong>Persisted product context (source values; no inference):</strong>
+    <strong>הקשר מוצר שנשמר (ערכי מקור, ללא הסקה):</strong>
     {entries.length ? <dl>{entries.map(([key, value]) => <div key={key}>
       <dt>{key}</dt><dd>{text(value)}</dd>
-    </div>)}</dl> : <p>Product context unavailable.</p>}
+    </div>)}</dl> : <p>הקשר המוצר אינו זמין.</p>}
   </div>;
 }
 
 function RevisionView({ revision, current }: { revision: M05Revision; current: boolean }) {
   return <li>
-    <h4>Revision #{revision.revision_sequence} — {current ? "current" : "historical"}</h4>
-    <p>State: {revision.state}; action: {revision.action_type}; revision: {revision.revision_id}; predecessor: {revision.predecessor_revision_id ?? "root"}.</p>
-    <p>Server actor: {revision.actor}; timestamp: {revision.created_at}. This is operational provenance, not authentication or professional approval.</p>
-    <p>Candidate: {revision.candidate_id}; M02: {revision.intake_id}; M03: {revision.m03_revision_id}; M04: {revision.m04_revision_id}.</p>
-    <ProductContextView context={revision.product_context} label={`Revision ${revision.revision_sequence} product context`} />
-    <p>Statement date: {revision.statement_date}; evaluation date: {revision.evaluation_date}; stale: {String(revision.is_stale)}.</p>
-    <p>Currency: {revision.currency}; explicit confirmation: {String(revision.currency_confirmed)}.</p>
-    <p>Source total: {text(revision.source_total_value)} ({revision.source_total_state}); effective total: {text(revision.effective_total_value)} ({revision.effective_total_state}).</p>
-    <p>Signed discrepancy: {text(revision.signed_discrepancy)}; absolute discrepancy: {text(revision.absolute_discrepancy)}; tolerance satisfied: {String(revision.tolerance_satisfied)}.</p>
-    <p>Algorithm: {revision.algorithm_version}; source digest: {revision.source_snapshot_digest}; mapping digest: {revision.mapping_digest}.</p>
-    <h5>Source and effective values</h5>
-    <table><thead><tr><th>Identity</th><th>Kind</th><th>Source</th><th>Effective</th><th>Mapping</th></tr></thead>
+    <h4>גרסה #{revision.revision_sequence} — {current ? "נוכחית" : "היסטורית"}</h4>
+    <p>מצב: {heLabel(revision.state)}; פעולה: {heLabel(revision.action_type)}; מזהה גרסה: {revision.revision_id}; גרסה קודמת: {revision.predecessor_revision_id ?? "ראשונה"}.</p>
+    <p>גורם מערכת: {revision.actor}; מועד: {formatIsoTimestamp(revision.created_at)}. זהו תיעוד תפעולי ולא אישור מקצועי.</p>
+    <p>רשומה: {revision.candidate_id}; M02: {revision.intake_id}; M03: {revision.m03_revision_id}; M04: {revision.m04_revision_id}.</p>
+    <ProductContextView context={revision.product_context} label={`הקשר המוצר של גרסה ${revision.revision_sequence}`} />
+    <p>תאריך דוח: {formatIsoDate(revision.statement_date)}; תאריך הערכה: {formatIsoDate(revision.evaluation_date)}; לא עדכני: {heBoolean(revision.is_stale)}.</p>
+    <p>מטבע: {revision.currency}; אישור מפורש: {String(revision.currency_confirmed)}.</p>
+    <p>סך מקור: {text(revision.source_total_value)} ({heLabel(revision.source_total_state)}); סך אפקטיבי: {text(revision.effective_total_value)} ({heLabel(revision.effective_total_state)}).</p>
+    <p>פער עם סימן: {text(revision.signed_discrepancy)}; פער מוחלט: {text(revision.absolute_discrepancy)}; עמידה בסבילות: {String(revision.tolerance_satisfied)}.</p>
+    <p>אלגוריתם: {revision.algorithm_version}; תקציר מקור: {revision.source_snapshot_digest}; תקציר מיפוי: {revision.mapping_digest}.</p>
+    <h5>ערכי מקור וערכים אפקטיביים</h5>
+    <table><thead><tr><th>זהות</th><th>סוג</th><th>מקור</th><th>אפקטיבי</th><th>מיפוי</th></tr></thead>
       <tbody>{revision.values.map((value) => <tr key={value.value_id}>
-        <td>{value.evidence_identity}<br />index {text(value.component_index)}; label {text(value.original_label)}; code {text(value.original_code)}</td>
+        <td>{value.evidence_identity}<br />אינדקס {text(value.component_index)}; תיאור {text(value.original_label)}; קוד {text(value.original_code)}</td>
         <td>{value.component_kind}</td>
-        <td>{text(value.source_value)} ({value.source_state})</td>
-        <td>{text(value.effective_value)} ({value.effective_state})</td>
-        <td>{value.included_in_reconciliation ? "included exactly once" : `excluded: ${text(value.exclusion_reason)}`}</td>
+        <td>{text(value.source_value)} ({heLabel(value.source_state)})</td>
+        <td>{text(value.effective_value)} ({heLabel(value.effective_state)})</td>
+        <td>{value.included_in_reconciliation ? "נכלל פעם אחת בדיוק" : `הוחרג: ${text(value.exclusion_reason)}`}</td>
       </tr>)}</tbody>
     </table>
-    <p>Included evidence: {JSON.stringify(revision.included_evidence)}</p>
-    <p>Excluded evidence: {JSON.stringify(revision.excluded_evidence)}</p>
-    <p>Warnings: {JSON.stringify(revision.warnings)}; dispositions: {JSON.stringify(revision.warning_dispositions)}</p>
-    <p>Provenance: {JSON.stringify(revision.provenance)}</p>
-    {revision.adjustment ? <p>Adjustment: {revision.adjustment.evidence_identity}, {revision.adjustment.previous_effective_value} → {revision.adjustment.new_effective_value}; {revision.adjustment.reason_code}; {revision.adjustment.explanation}.</p> : null}
+    <p>ראיות שנכללו: {JSON.stringify(revision.included_evidence)}</p>
+    <p>ראיות שהוחרגו: {JSON.stringify(revision.excluded_evidence)}</p>
+    <p>אזהרות: {JSON.stringify(revision.warnings)}; החלטות: {JSON.stringify(revision.warning_dispositions)}</p>
+    <p>מקור: {JSON.stringify(revision.provenance)}</p>
+    {revision.adjustment ? <p>תיקון: {revision.adjustment.evidence_identity}, {revision.adjustment.previous_effective_value} → {revision.adjustment.new_effective_value}; {revision.adjustment.reason_code}; {revision.adjustment.explanation}.</p> : null}
   </li>;
 }
 
@@ -211,7 +213,7 @@ export function M05LedgerScreen() {
     }
   };
 
-  if (clientId === null) return <p role="alert">Invalid client ID.</p>;
+  if (clientId === null) return <p role="alert">מזהה הלקוח אינו תקין.</p>;
   const current = subject?.current_revision ?? null;
   const currentEligibility = subject?.eligibility ?? null;
   const selectedCandidateRow = candidates.find((row) => row.candidate_id === selectedCandidateId) ?? null;
@@ -223,65 +225,65 @@ export function M05LedgerScreen() {
   } : null;
 
   return <main>
-    <h2>M05 Manual Pension Balance Ledger</h2>
-    <p>Client: {client?.full_name ?? clientId}. Manual records only. M06 remains separately unauthorized.</p>
-    <p><Link to={`/clients/${clientId}`}>Back to client</Link></p>
+    <h2>M05 — כרטסת יתרות פנסיה</h2>
+    <p>לקוח: {client?.full_name ?? clientId}. מוצגות רשומות ידניות בלבד.</p>
+    <p><Link to={`/clients/${clientId}`}>חזרה ללקוח</Link></p>
     {error ? <p role="alert">{error}</p> : null}
-    {loading ? <p>Loading M05 evidence…</p> : null}
+    {loading ? <p>טוען נתוני M05…</p> : null}
 
-    <section><h3>Manual candidates</h3>
+    <section><h3>רשומות ידניות מועמדות</h3>
       {candidates.length ? <ul>{candidates.map((candidate) => <li key={candidate.candidate_id}>
-        <button type="button" onClick={() => chooseCandidate(candidate.candidate_id)}>
-          {candidate.provider_name ?? "Provider unavailable"} / {candidate.account_reference ?? "Account unavailable"} / {candidate.statement_date ?? "Statement date unavailable"}
+        <button type="button" aria-label={`${candidate.provider_name ?? "גוף מנהל לא זמין"} / ${candidate.account_reference ?? "חשבון לא זמין"} / ${candidate.statement_date ?? "תאריך דוח לא זמין"}`} onClick={() => chooseCandidate(candidate.candidate_id)}>
+          {candidate.provider_name ?? "גוף מנהל לא זמין"} / {candidate.account_reference ?? "חשבון לא זמין"} / {formatIsoDate(candidate.statement_date) || "תאריך דוח לא זמין"}
         </button>
         <span> — {candidateExplanation(candidate)}</span>
-        <ProductContextView context={candidate.product_context} label={`Candidate ${candidate.candidate_id} product context`} />
-      </li>)}</ul> : <p>No manual M05 candidates.</p>}
-      {selectedCandidateRow ? <section aria-label="Selected candidate explanation">
-        <h4>Why this candidate is or is not usable</h4>
+        <ProductContextView context={candidate.product_context} label={`הקשר המוצר של רשומה ${candidate.candidate_id}`} />
+      </li>)}</ul> : <p>אין רשומות ידניות מועמדות ל־M05.</p>}
+      {selectedCandidateRow ? <section aria-label="הסבר כשירות הרשומה שנבחרה">
+        <h4>כשירות הרשומה להמשך</h4>
         <p>{candidateExplanation(selectedCandidateRow)}</p>
-        <p>Provider: {selectedCandidateRow.provider_name ?? "not supplied"}; account: {selectedCandidateRow.account_reference ?? "not supplied"}; statement date: {selectedCandidateRow.statement_date ?? "not supplied"}.</p>
-        <p>Technical eligibility: {String(selectedCandidateRow.eligible)}; current authority: {String(selectedCandidateRow.authoritative_current)}.</p>
+        <p>גוף מנהל: {selectedCandidateRow.provider_name ?? "לא נמסר"}; חשבון: {selectedCandidateRow.account_reference ?? "לא נמסר"}; תאריך דוח: {formatIsoDate(selectedCandidateRow.statement_date) || "לא נמסר"}.</p>
+        <p>כשירות טכנית: {heBoolean(selectedCandidateRow.eligible)}; רשומה נוכחית: {heBoolean(selectedCandidateRow.authoritative_current)}.</p>
         {selectedCandidateRow.exclusion_reason
-          ? <p><small>Technical exclusion code: {selectedCandidateRow.exclusion_reason}</small></p>
+          ? <p><small>{technicalCode(selectedCandidateRow.exclusion_reason)}</small></p>
           : null}
         {selectedCandidateRow.informational_warnings.length
-          ? <p>Technical informational warnings: {selectedCandidateRow.informational_warnings.join(", ")}</p>
+          ? <p>אזהרות מידע טכניות: {selectedCandidateRow.informational_warnings.join(", ")}</p>
           : null}
       </section> : null}
-      <label><input type="checkbox" checked={confirmCurrency} onChange={(event) => setConfirmCurrency(event.target.checked)} /> Confirm currency ILS for this current candidate</label>
-      <button type="button" disabled={!selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current || submitting} onClick={() => void mutate(() => startM05(clientId, selectedCandidateId, confirmCurrency))}>Start ledger</button>
+      <label><input aria-label="אישור מטבע ש״ח" type="checkbox" checked={confirmCurrency} onChange={(event) => setConfirmCurrency(event.target.checked)} /> אישור שמטבע הרשומה הוא ש״ח</label>
+      <button type="button" aria-label="התחלת כרטסת" disabled={!selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current || submitting} onClick={() => void mutate(() => startM05(clientId, selectedCandidateId, confirmCurrency))}>התחלת כרטסת</button>
     </section>
 
-    <section><h3>Ledger subjects</h3>
+    <section><h3>כרטסות קיימות</h3>
       {subjects.length ? <ul>{subjects.map((row) => <li key={row.subject_id}>
         <button type="button" onClick={() => void loadSubject(row.subject_id)}>{row.provider_name} / {row.account_reference}</button>
-        <span> — {row.current_revision?.state ?? "no revision"}; M06 technical eligibility: {String(row.eligibility.eligible_for_m06)}</span>
-      </li>)}</ul> : <p>No M05 ledger subjects.</p>}
+        <span> — {heLabel(row.current_revision?.state, "ללא גרסה")}; כשירות טכנית ל־M06: {heBoolean(row.eligibility.eligible_for_m06)}</span>
+      </li>)}</ul> : <p>אין כרטסות M05.</p>}
     </section>
 
-    {current ? <section><h3>Current ledger</h3>
+    {current ? <section><h3>כרטסת נוכחית</h3>
       <RevisionView revision={current} current />
-      <h4>Technical M06 eligibility</h4>
-      <p>{currentEligibility?.meaning}. Eligible: {String(currentEligibility?.eligible_for_m06)}.</p>
-      <p>Exclusions: {currentEligibility?.exclusion_reasons.join(", ") || "none"}; informational warnings: {currentEligibility?.informational_warnings.join(", ") || "none"}.</p>
-      <p>This result does not authorize conversion, coefficients, tax, fixation, liquidity, withdrawal, pension commencement, or reports.</p>
-      <h4>Action intent</h4>
-      <label>Reason code <input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} /></label>
-      <label>Explanation <textarea value={explanation} onChange={(event) => setExplanation(event.target.value)} /></label>
-      <button type="button" disabled={submitting || current.state !== "draft"} onClick={() => void mutate(() => reconcileM05(clientId, current.subject_id, current.revision_id, confirmCurrency))}>Reconcile</button>
-      <button type="button" disabled={submitting || !reasonPayload || current.state !== "draft" || !mandatory.length} onClick={() => reasonPayload && void mutate(() => reviewWarningsM05(clientId, current.subject_id, { ...reasonPayload, mandatory_warning_ids: mandatory, confirmed: true, ...(confirmCurrency ? { confirm_currency_ils: true as const } : {}) }))}>Review exact mandatory warning set</button>
-      <button type="button" disabled={submitting || !reasonPayload || !["draft", "reconciled", "warning_reviewed"].includes(current.state)} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "mark-blocked", reasonPayload))}>Mark blocked</button>
-      <button type="button" disabled={submitting || !reasonPayload || current.state === "superseded"} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "supersede", reasonPayload))}>Supersede</button>
-      <h4>Single-value adjustment</h4>
-      <select value={adjustIdentity} onChange={(event) => setAdjustIdentity(event.target.value)}><option value="">Select value</option>{current.values.map((value) => <option key={value.value_id} value={value.evidence_identity}>{value.evidence_identity}</option>)}</select>
-      <input aria-label="New effective value" value={adjustValue} onChange={(event) => setAdjustValue(event.target.value)} placeholder="0.00" />
-      <button type="button" disabled={submitting || !reasonPayload || current.state === "superseded" || !adjustIdentity || !adjustValue} onClick={() => reasonPayload && void mutate(() => adjustM05(clientId, current.subject_id, { ...reasonPayload, evidence_identity: adjustIdentity, new_effective_value: adjustValue, confirmed: true }))}>Adjust one value</button>
-      <h4>Revalidate</h4>
-      <button type="button" disabled={submitting || !reasonPayload || current.state === "superseded" || !selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current} onClick={() => reasonPayload && void mutate(() => revalidateM05(clientId, current.subject_id, { ...reasonPayload, candidate_id: selectedCandidateId }))}>Revalidate against selected current candidate</button>
-      <h4>Current provenance and warnings</h4><p>{JSON.stringify(provenance)}</p><p>{JSON.stringify(warnings)}</p>
+      <h4>כשירות טכנית ל־M06</h4>
+      <p>{currentEligibility?.meaning}. כשיר: {String(currentEligibility?.eligible_for_m06)}.</p>
+      <p>החרגות: {currentEligibility?.exclusion_reasons.join(", ") || "אין"}; אזהרות מידע: {currentEligibility?.informational_warnings.join(", ") || "אין"}.</p>
+      <p>תוצאה זו אינה מאשרת המרה, מקדמים, מס, קיבוע זכויות, נזילות, משיכה, תחילת קצבה או דוחות.</p>
+      <h4>הפעולה הבאה</h4>
+      <label>קוד נימוק <input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} /></label>
+      <label>הסבר <textarea value={explanation} onChange={(event) => setExplanation(event.target.value)} /></label>
+      <button type="button" aria-label="התאמת יתרות" disabled={submitting || current.state !== "draft"} onClick={() => void mutate(() => reconcileM05(clientId, current.subject_id, current.revision_id, confirmCurrency))}>התאמת יתרות</button>
+      <button type="button" aria-label="בדיקת קבוצת אזהרות החובה" disabled={submitting || !reasonPayload || current.state !== "draft" || !mandatory.length} onClick={() => reasonPayload && void mutate(() => reviewWarningsM05(clientId, current.subject_id, { ...reasonPayload, mandatory_warning_ids: mandatory, confirmed: true, ...(confirmCurrency ? { confirm_currency_ils: true as const } : {}) }))}>בדיקת קבוצת אזהרות החובה</button>
+      <button type="button" aria-label="סימון כחסום" disabled={submitting || !reasonPayload || !["draft", "reconciled", "warning_reviewed"].includes(current.state)} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "mark-blocked", reasonPayload))}>סימון כחסום</button>
+      <button type="button" aria-label="החלפת הגרסה הנוכחית" disabled={submitting || !reasonPayload || current.state === "superseded"} onClick={() => reasonPayload && void mutate(() => reasonActionM05(clientId, current.subject_id, "supersede", reasonPayload))}>החלפת הגרסה הנוכחית</button>
+      <h4>תיקון ערך יחיד</h4>
+      <select value={adjustIdentity} onChange={(event) => setAdjustIdentity(event.target.value)}><option value="">בחירת ערך</option>{current.values.map((value) => <option key={value.value_id} value={value.evidence_identity}>{value.evidence_identity}</option>)}</select>
+      <input aria-label="ערך אפקטיבי חדש" value={adjustValue} onChange={(event) => setAdjustValue(event.target.value)} placeholder="0.00" />
+      <button type="button" aria-label="תיקון ערך יחיד" disabled={submitting || !reasonPayload || current.state === "superseded" || !adjustIdentity || !adjustValue} onClick={() => reasonPayload && void mutate(() => adjustM05(clientId, current.subject_id, { ...reasonPayload, evidence_identity: adjustIdentity, new_effective_value: adjustValue, confirmed: true }))}>תיקון ערך יחיד</button>
+      <h4>אימות מחדש</h4>
+      <button type="button" aria-label="אימות מחדש מול הרשומה העדכנית שנבחרה" disabled={submitting || !reasonPayload || current.state === "superseded" || !selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current} onClick={() => reasonPayload && void mutate(() => revalidateM05(clientId, current.subject_id, { ...reasonPayload, candidate_id: selectedCandidateId }))}>אימות מחדש מול הרשומה העדכנית שנבחרה</button>
+      <h4>מקור ואזהרות נוכחיים</h4><p>{JSON.stringify(provenance)}</p><p>{JSON.stringify(warnings)}</p>
     </section> : null}
 
-    {history.length ? <section><h3>Immutable history</h3><ol>{history.map((revision) => <RevisionView key={revision.revision_id} revision={revision} current={revision.revision_id === current?.revision_id} />)}</ol></section> : null}
+    {history.length ? <section><h3>היסטוריה בלתי ניתנת לשינוי</h3><ol>{history.map((revision) => <RevisionView key={revision.revision_id} revision={revision} current={revision.revision_id === current?.revision_id} />)}</ol></section> : null}
   </main>;
 }

@@ -2318,7 +2318,8 @@ def test_archived_reopen_requires_explicit_revalidation_after_upstream_change(ap
         f"/api/clients/1/m05/subjects/{started['subject_id']}/m06-eligibility"
     ).json()
     assert gate["eligible_for_m06"] is False
-    assert "m04_ineligible" in gate["exclusion_reasons"]
+    assert "upstream_revalidation_required" in gate["exclusion_reasons"]
+    assert "m03_ineligible" not in gate["exclusion_reasons"]
     assert client.get(
         f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
     ).json()[-1]["revision_id"] == started["revision_id"]
@@ -3753,7 +3754,7 @@ def test_ac010_006_candidate_tuple_is_server_resolved_current_and_unique(api) ->
     assert accepted.status_code == 201
     m04_target = client.get("/api/clients/1/m04/targets/manual-ok").json()
     revalidation = client.post(
-        "/api/clients/1/m04/targets/manual-ok/reopen",
+        "/api/clients/1/m04/targets/manual-ok/start-revalidation",
         json={
             "expected_current_revision_id": m04_target["current_revision"]["revision_id"],
             "reason_code": "upstream_revision_changed",

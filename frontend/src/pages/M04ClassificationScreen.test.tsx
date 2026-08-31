@@ -123,15 +123,15 @@ const fullRule = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 const ACTION_CASES = [
-  { action: "start", state: null, button: "Start classification", endpoint: "/start" },
-  { action: "proposal", state: "under_review", button: "Create proposal", endpoint: "/proposal" },
-  { action: "unresolved", state: "under_review", button: "Mark unresolved", endpoint: "/unresolved", reason: true },
-  { action: "accept", state: "proposed", button: "Accept proposal", endpoint: "/accept", reason: true },
-  { action: "reject", state: "proposed", button: "Reject proposal", endpoint: "/reject", reason: true },
-  { action: "reopen", state: "accepted", button: "Reopen classification", endpoint: "/reopen", reason: true },
-  { action: "override", state: "proposed", button: "Create override proposal", endpoint: "/override", reason: true },
-  { action: "undo", state: "proposed", button: "Create undo proposal", endpoint: "/undo", reason: true },
-  { action: "start_revalidation", state: "accepted", button: "Start revalidation", endpoint: "/start-revalidation", reason: true, revalidation: true },
+  { action: "start", state: null, button: "התחלת סיווג", endpoint: "/start" },
+  { action: "proposal", state: "under_review", button: "יצירת הצעת סיווג", endpoint: "/proposal" },
+  { action: "unresolved", state: "under_review", button: "סימון כלא מוכרע", endpoint: "/unresolved", reason: true },
+  { action: "accept", state: "proposed", button: "אישור ההצעה", endpoint: "/accept", reason: true },
+  { action: "reject", state: "proposed", button: "דחיית ההצעה", endpoint: "/reject", reason: true },
+  { action: "reopen", state: "accepted", button: "פתיחת הסיווג מחדש", endpoint: "/reopen", reason: true },
+  { action: "override", state: "proposed", button: "יצירת הצעת הכרעה ידנית", endpoint: "/override", reason: true },
+  { action: "undo", state: "proposed", button: "יצירת הצעת ביטול", endpoint: "/undo", reason: true },
+  { action: "start_revalidation", state: "accepted", button: "התחלת אימות מחדש", endpoint: "/start-revalidation", reason: true, revalidation: true },
 ] as const;
 
 type Deferred<T> = {
@@ -209,15 +209,15 @@ describe("M04ClassificationScreen", () => {
       throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
-    expect(await screen.findByText(/no external source\/blob\/checksum evidence/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Start classification" }));
-    expect(await screen.findByRole("heading", { name: /Revision #1 — current/ })).toBeInTheDocument();
-    expect(screen.getByText(/State: under_review; action: start/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Preview exact rules" }));
-    expect(await screen.findByText(/Catalogue: m04-rules-v1/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Create proposal" }));
-    expect(await screen.findByRole("button", { name: "Accept proposal" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+    expect(await screen.findByText(/ללא קובץ מקור או checksum/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "התחלת סיווג" }));
+    expect(await screen.findByRole("heading", { name: /גרסה #1 — הגרסה הנוכחית/ })).toBeInTheDocument();
+    expect(screen.getByText(/מצב: בבדיקה; פעולה: התחלת בדיקה/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" }));
+    expect(await screen.findByText(/קטלוג: m04-rules-v1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "יצירת הצעת סיווג" }));
+    expect(await screen.findByRole("button", { name: "אישור ההצעה" })).toBeInTheDocument();
     expect(postedBodies).toHaveLength(1);
   });
 
@@ -234,11 +234,11 @@ describe("M04ClassificationScreen", () => {
       throw new Error(`unexpected ${url}`);
     }));
     renderPage("archived");
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
-    expect(await screen.findByText(/Archived case: M04 is read-only/)).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Lifecycle actions" })).toBeDisabled();
-    expect(screen.getByRole("heading", { name: /Revision #4 — current/ })).toBeInTheDocument();
-    expect(screen.getByText(/State: accepted; action: accept/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+    expect(await screen.findByText(/התיק בארכיון: M04 זמין לקריאה בלבד/)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "פעולות זמינות" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: /גרסה #4 — הגרסה הנוכחית/ })).toBeInTheDocument();
+    expect(screen.getByText(/מצב: אושר; פעולה: אישור/)).toBeInTheDocument();
   });
 
   it("binds proposal decisions to the displayed revision and reloads structured conflicts", async () => {
@@ -278,19 +278,19 @@ describe("M04ClassificationScreen", () => {
       throw new Error(`unexpected ${init?.method ?? "GET"} ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
-    fireEvent.change(await screen.findByLabelText("Explanation"), {
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+    fireEvent.change(await screen.findByLabelText("הסבר"), {
       target: { value: "accept displayed proposal" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Accept proposal" }));
+    fireEvent.click(screen.getByRole("button", { name: "אישור ההצעה" }));
     await waitFor(() => expect(posted).toMatchObject({
       expected_current_revision_id: displayed.revision_id,
     }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /proposal changed.*reloaded.*M04_STALE_CURRENT_REVISION/i,
+      /הצעת הסיווג השתנתה.*נטען מחדש.*M04_STALE_CURRENT_REVISION/i,
     );
     expect(screen.getByRole("heading", {
-      name: /Revision #3 — current chain revision — bound to present upstream evidence/,
+      name: /גרסה #3 — הגרסה הנוכחית — קשורה לראיות המקור העדכניות/,
     })).toBeInTheDocument();
   });
 
@@ -331,7 +331,7 @@ describe("M04ClassificationScreen", () => {
       throw new Error(`unexpected ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
     expect((await screen.findAllByText("declared_product_type_exact")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("provident_fund").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Persisted Provider").length).toBeGreaterThan(0);
@@ -339,22 +339,22 @@ describe("M04ClassificationScreen", () => {
     expect(screen.getAllByText(/PKG_009_FINAL_PACKAGE_DEFINITION/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("unresolved").length).toBeGreaterThan(0);
     expect(screen.getByText("component_code_exact")).toBeInTheDocument();
-    expect(screen.getAllByText("not present").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("לא קיים").length).toBeGreaterThan(0);
     expect(screen.getByText(/Persisted unresolved explanation/)).toBeInTheDocument();
     expect(screen.getByText(/Planner retained unresolved evidence/)).toBeInTheDocument();
     expect(screen.getAllByText(/opaque_uploaded_facts_unavailable/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/conflicting-rule-a/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: /Revision #1 — historical/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Revision #2 — current/ })).toBeInTheDocument();
-    expect(screen.getByText(/not professional, tax, legal, liquidity, withdrawal, or M05 authority/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /גרסה #1 — היסטורית/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /גרסה #2 — הגרסה הנוכחית/ })).toBeInTheDocument();
+    expect(screen.getByText(/אין בו סמכות מקצועית, מיסויית, משפטית, נזילות, משיכה או סמכות M05/)).toBeInTheDocument();
   });
 
   it.each([
-    ["under_review", ["Preview exact rules", "Create proposal", "Mark unresolved"]],
-    ["proposed", ["Accept proposal", "Reject proposal", "Create override proposal", "Create undo proposal"]],
-    ["accepted", ["Reopen classification", "Create override proposal", "Create undo proposal"]],
-    ["unresolved", ["Reopen classification", "Create override proposal", "Create undo proposal"]],
-    ["rejected", ["Reopen classification", "Create override proposal", "Create undo proposal"]],
+    ["under_review", ["תצוגה מקדימה של הכללים המדויקים", "יצירת הצעת סיווג", "סימון כלא מוכרע"]],
+    ["proposed", ["אישור ההצעה", "דחיית ההצעה", "יצירת הצעת הכרעה ידנית", "יצירת הצעת ביטול"]],
+    ["accepted", ["פתיחת הסיווג מחדש", "יצירת הצעת הכרעה ידנית", "יצירת הצעת ביטול"]],
+    ["unresolved", ["פתיחת הסיווג מחדש", "יצירת הצעת הכרעה ידנית", "יצירת הצעת ביטול"]],
+    ["rejected", ["פתיחת הסיווג מחדש", "יצירת הצעת הכרעה ידנית", "יצירת הצעת ביטול"]],
   ] as const)("exposes the bounded action matrix for %s", async (state, buttons) => {
     const current = revision(state, 3);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -368,7 +368,7 @@ describe("M04ClassificationScreen", () => {
       throw new Error(`unexpected ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
     for (const button of buttons) {
       expect(await screen.findByRole("button", { name: button })).toBeInTheDocument();
     }
@@ -387,9 +387,29 @@ describe("M04ClassificationScreen", () => {
       throw new Error(`unexpected ${url}`);
     }));
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
-    expect(await screen.findByRole("button", { name: "Start revalidation" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reopen classification" })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+    expect(await screen.findByRole("button", { name: "התחלת אימות מחדש" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "פתיחת הסיווג מחדש" })).not.toBeInTheDocument();
+  });
+
+  it("shows explicit Hebrew revalidation for a stale proposed revision and disables stale decisions", async () => {
+    const proposed = revision("proposed", 4, "proposal");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/clients/1")) return json(client());
+      if (url.endsWith("/m04/targets")) return json([target(1, proposed, "m04_revalidation_required")]);
+      if (url.endsWith("/history")) return json([proposed]);
+      if (url.endsWith("/matched-rules")) return json([]);
+      if (url.endsWith("/eligibility")) return json(target(1, proposed, "m04_revalidation_required").eligibility);
+      if (url.endsWith("/manual-1")) return json(target(1, proposed, "m04_revalidation_required"));
+      throw new Error(`unexpected ${url}`);
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+    expect((await screen.findAllByText("נדרש אימות מחדש של הסיווג")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "התחלת אימות מחדש" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "אישור ההצעה" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "דחיית ההצעה" })).toBeDisabled();
   });
 
   it.each(["success", "rejected", "api-error"] as const)(
@@ -413,17 +433,17 @@ describe("M04ClassificationScreen", () => {
       renderPage();
       fireEvent.click(await screen.findByRole("button", { name: /target-x/ }));
       fireEvent.click(screen.getByRole("button", { name: /target-y/ }));
-      expect(await screen.findByText(/Provider: Provider Y current/)).toBeInTheDocument();
+      expect(await screen.findByText(/גוף מנהל: Provider Y current/)).toBeInTheDocument();
       await act(async () => {
         if (outcome === "success") oldX.resolve(json(x));
         else if (outcome === "api-error") oldX.resolve(json({ detail: { code: "OLD_X" } }, 409));
         else oldX.reject(new Error("old X rejection"));
         try { await oldX.promise; } catch { /* expected */ }
       });
-      expect(screen.getByText(/Provider: Provider Y current/)).toBeInTheDocument();
+      expect(screen.getByText(/גוף מנהל: Provider Y current/)).toBeInTheDocument();
       expect(screen.queryByText(/Provider X old/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument();
     },
   );
 
@@ -451,8 +471,8 @@ describe("M04ClassificationScreen", () => {
         throw new Error(`unexpected ${url}`);
       }));
       renderPage();
-      fireEvent.click(await screen.findByRole("button", { name: /Manual record/ }));
-      const button = await screen.findByRole("button", { name: "Preview exact rules" });
+      fireEvent.click(await screen.findByRole("button", { name: /רשומה ידנית/ }));
+      const button = await screen.findByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" });
       fireEvent.click(button); fireEvent.click(button);
       expect(await screen.findByText(/NEW_PREVIEW_AUTHORITATIVE/)).toBeInTheDocument();
       await act(async () => {
@@ -467,7 +487,7 @@ describe("M04ClassificationScreen", () => {
       expect(screen.getByText(/NEW_PREVIEW_AUTHORITATIVE/)).toBeInTheDocument();
       expect(screen.queryByText(/OLD_PREVIEW_STALE/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument();
     },
   );
 
@@ -502,9 +522,9 @@ describe("M04ClassificationScreen", () => {
       if (unit !== "target-list") {
         fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
         if (unit === "preview") {
-          fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+          fireEvent.click(await screen.findByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" }));
         } else if (unit === "mutation") {
-          fireEvent.click(await screen.findByRole("button", { name: "Start classification" }));
+          fireEvent.click(await screen.findByRole("button", { name: "התחלת סיווג" }));
         }
       } else {
         await waitFor(() => expect(urls.some((url) => url.endsWith("/m04/targets"))).toBe(true));
@@ -573,19 +593,19 @@ describe("M04ClassificationScreen", () => {
       }));
       renderPage();
       fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-      fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+      fireEvent.click(await screen.findByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" }));
       if ("reason" in actionCase && actionCase.reason) {
-        fireEvent.change(screen.getByLabelText("Explanation"), {
+        fireEvent.change(screen.getByLabelText("הסבר"), {
           target: { value: `${actionCase.action} explanation` },
         });
       }
       if (actionCase.action === "override") {
-        fireEvent.change(screen.getByLabelText("Interpretation"), {
+        fireEvent.change(screen.getByLabelText("פרשנות"), {
           target: { value: "pension" },
         });
       }
       if (actionCase.action === "undo") {
-        const historySelect = screen.getByLabelText("Historical revision for undo");
+        const historySelect = screen.getByLabelText("גרסה היסטורית לביטול");
         fireEvent.change(historySelect, { target: { value: "r-1" } });
       }
       fireEvent.click(screen.getByRole("button", { name: actionCase.button }));
@@ -603,7 +623,7 @@ describe("M04ClassificationScreen", () => {
       expect(screen.getByText(/POST_MUTATION_AUTHORITATIVE/)).toBeInTheDocument();
       expect(screen.queryByText(/OLD_PREVIEW_MUST_NOT_APPLY/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument();
     },
   );
 
@@ -631,7 +651,7 @@ describe("M04ClassificationScreen", () => {
       renderPage();
       const targetButton = await screen.findByRole("button", { name: /manual-1/ });
       fireEvent.click(targetButton);
-      fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+      fireEvent.click(await screen.findByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" }));
       fireEvent.click(targetButton);
       expect(await screen.findByText(/REVISION_R2_CURRENT/)).toBeInTheDocument();
       await act(async () => {
@@ -717,27 +737,27 @@ describe("M04ClassificationScreen", () => {
       }));
       renderPage();
       fireEvent.click(await screen.findByRole("button", { name: /manual-1/ }));
-      fireEvent.click(await screen.findByRole("button", { name: "Preview exact rules" }));
+      fireEvent.click(await screen.findByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" }));
       expect(previewCalls).toBe(1);
-      expect(screen.getByText(/Loading M04/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען את סיווג M04/)).toBeInTheDocument();
       if ("reason" in actionCase && actionCase.reason) {
-        fireEvent.change(screen.getByLabelText("Explanation"), {
+        fireEvent.change(screen.getByLabelText("הסבר"), {
           target: { value: `${actionCase.action} explanation` },
         });
       }
       if (actionCase.action === "override") {
-        fireEvent.change(screen.getByLabelText("Interpretation"), {
+        fireEvent.change(screen.getByLabelText("פרשנות"), {
           target: { value: "pension" },
         });
       }
       if (actionCase.action === "undo") {
-        fireEvent.change(screen.getByLabelText("Historical revision for undo"), {
+        fireEvent.change(screen.getByLabelText("גרסה היסטורית לביטול"), {
           target: { value: "r-1" },
         });
       }
       fireEvent.click(screen.getByRole("button", { name: actionCase.button }));
       expect(mutationCalls).toBe(1);
-      await waitFor(() => expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument());
 
       const reasonPayload = source ? {
         expected_current_revision_id: source.revision_id,
@@ -778,9 +798,9 @@ describe("M04ClassificationScreen", () => {
       expect(refreshUrls.filter((url) => url.endsWith("/matched-rules"))).toHaveLength(1);
       expect(refreshUrls.filter((url) => url.endsWith("/m04/targets"))).toHaveLength(1);
 
-      fireEvent.click(screen.getByRole("button", { name: "Preview exact rules" }));
+      fireEvent.click(screen.getByRole("button", { name: "תצוגה מקדימה של הכללים המדויקים" }));
       expect(previewCalls).toBe(2);
-      expect(screen.getByText(/Loading M04/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען את סיווג M04/)).toBeInTheDocument();
       await act(async () => { newPreview.resolve(json({
         ...preview,
         unresolved_reasons: [`NEW_PREVIEW_AFTER_${actionCase.action.toUpperCase()}`],
@@ -788,7 +808,7 @@ describe("M04ClassificationScreen", () => {
       expect(await screen.findByText(
         new RegExp(`NEW_PREVIEW_AFTER_${actionCase.action.toUpperCase()}`),
       )).toBeInTheDocument();
-      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument();
 
       await act(async () => { oldPreview.resolve(json({
         ...preview, unresolved_reasons: [`OLD_${actionCase.action.toUpperCase()}_PREVIEW_STALE`],
@@ -800,7 +820,7 @@ describe("M04ClassificationScreen", () => {
         new RegExp(`NEW_PREVIEW_AFTER_${actionCase.action.toUpperCase()}`),
       )).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument();
       expect(mutationCalls).toBe(1);
     },
   );
@@ -864,7 +884,11 @@ describe("M04ClassificationScreen", () => {
         : deferredPath === "history" ? `${authoritative}-history`
           : deferredPath === "matched-rules" ? `${authoritative}-matched-rules`
             : `${authoritative}-eligibility`;
-      expect(await screen.findByText(new RegExp(expectedMarker))).toBeInTheDocument();
+      if (deferredPath === "eligibility") {
+        expect((await screen.findAllByText(new RegExp(expectedMarker))).length).toBeGreaterThan(0);
+      } else {
+        expect(await screen.findByText(new RegExp(expectedMarker))).toBeInTheDocument();
+      }
       await act(async () => {
         if (outcome === "success") oldPart.resolve(
           bundleResponse(deferredPath, 1, "A-OLD"),
@@ -873,10 +897,14 @@ describe("M04ClassificationScreen", () => {
         else oldPart.reject(new Error("old bundle rejection"));
         try { await oldPart.promise; } catch { /* expected */ }
       });
-      expect(screen.getByText(new RegExp(expectedMarker))).toBeInTheDocument();
+      if (deferredPath === "eligibility") {
+        expect(screen.getAllByText(new RegExp(expectedMarker)).length).toBeGreaterThan(0);
+      } else {
+        expect(screen.getByText(new RegExp(expectedMarker))).toBeInTheDocument();
+      }
       expect(screen.queryByText(/A-OLD-(detail|history|matched-rules|eligibility)/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument();
     },
   );
 
@@ -924,7 +952,7 @@ describe("M04ClassificationScreen", () => {
       expect(screen.getByRole("button", {
         name: transition === "A-B" ? /B-current-intake/ : /A-new-intake/,
       })).toBeInTheDocument();
-      await waitFor(() => expect(screen.queryByText(/Loading M04/)).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText(/טוען את סיווג M04/)).not.toBeInTheDocument());
     },
   );
 
@@ -978,17 +1006,17 @@ describe("M04ClassificationScreen", () => {
         fireEvent.click(await screen.findByRole("button", { name: new RegExp(`manual-${id}`) }));
         const button = await screen.findByRole("button", { name: actionCase.button });
         if ("reason" in actionCase && actionCase.reason) {
-          fireEvent.change(screen.getByLabelText("Explanation"), {
+          fireEvent.change(screen.getByLabelText("הסבר"), {
             target: { value: `current ${actionCase.action} explanation` },
           });
         }
         if (actionCase.action === "override") {
-          fireEvent.change(screen.getByLabelText("Interpretation"), {
+          fireEvent.change(screen.getByLabelText("פרשנות"), {
             target: { value: "pension" },
           });
         }
         if (actionCase.action === "undo") {
-          fireEvent.change(screen.getByLabelText("Historical revision for undo"), {
+          fireEvent.change(screen.getByLabelText("גרסה היסטורית לביטול"), {
             target: { value: "r-1" },
           });
         }
@@ -1013,13 +1041,13 @@ describe("M04ClassificationScreen", () => {
         try { await oldMutation.promise; } catch { /* expected */ }
       });
       expect(detailReads).toBe(readsBeforeOldSettlement);
-      expect(screen.getByRole("group", { name: "Lifecycle actions" })).toBeDisabled();
+      expect(screen.getByRole("group", { name: "פעולות זמינות" })).toBeDisabled();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.getByText(new RegExp(`Provider: Provider ${transition === "A-B" ? 2 : 1}`))).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`גוף מנהל: Provider ${transition === "A-B" ? 2 : 1}`))).toBeInTheDocument();
 
       await act(async () => { currentMutation.resolve(json({ current: true }, 201)); });
       await waitFor(() => expect(detailReads).toBeGreaterThan(readsBeforeOldSettlement));
-      await waitFor(() => expect(screen.getByRole("group", { name: "Lifecycle actions" })).not.toBeDisabled());
+      await waitFor(() => expect(screen.getByRole("group", { name: "פעולות זמינות" })).not.toBeDisabled());
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(mutationCalls).toBe(2);
     },

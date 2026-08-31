@@ -26,14 +26,14 @@ describe("PKG-011 M06 conversion screen", () => {
       throw new Error(url);
     }));
     page(); await screen.findByRole("button", { name: /Provider 1/ }); fireEvent.click(screen.getByRole("button", { name: /Provider 1/ }));
-    fireEvent.change(screen.getByLabelText("Exact coefficient string"), { target: { value: "200.000" } });
-    fireEvent.change(screen.getByLabelText("Planner source note"), { target: { value: "planner evidence" } });
-    fireEvent.change(screen.getByLabelText("Coefficient evidence reason"), { target: { value: "bounded declaration" } });
-    fireEvent.click(screen.getByLabelText(/Declare applicability/)); fireEvent.click(screen.getByRole("button", { name: "Start immutable draft" }));
+    fireEvent.change(screen.getByLabelText("מקדם מדויק"), { target: { value: "200.000" } });
+    fireEvent.change(screen.getByLabelText("הערת מקור של המתכנן"), { target: { value: "planner evidence" } });
+    fireEvent.change(screen.getByLabelText("נימוק לאסמכתת המקדם"), { target: { value: "bounded declaration" } });
+    fireEvent.click(screen.getByLabelText(/הצהרה על תחולה/)); fireEvent.click(screen.getByRole("button", { name: "יצירת טיוטה בלתי ניתנת לשינוי" }));
     await waitFor(() => expect(posted).not.toBeNull());
     expect(posted).toMatchObject({ m05_subject_id: "m05-1", mode: "balance_to_monthly_pension", input_identity: "component-1", coefficient: { authority_class: "planner_declared", coefficient: "200.000", source_note: "planner evidence", applicability_declared: true } });
     expect(JSON.stringify(posted)).not.toMatch(/actor|input_amount|result|eligibility|fingerprint|timestamp/);
-    expect(screen.getByText(/not professional, financial, tax or downstream execution authority/)).toBeInTheDocument();
+    expect(screen.getByText(/אינו סמכות מקצועית, פיננסית או מיסויית/)).toBeInTheDocument();
   });
 
   it("rejects stale A overview success and finally after A-to-B-to-A", async () => {
@@ -66,10 +66,10 @@ describe("PKG-011 M06 conversion screen", () => {
     page(true); fireEvent.click(screen.getByRole("button", { name: "B" }));
     await act(async () => oldA.reject(new Error("stale overview rejection")));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText(/Loading M06 evidence/)).toBeInTheDocument();
+    expect(screen.getByText(/טוען נתוני M06/)).toBeInTheDocument();
     await act(async () => currentB.resolve(json([candidate(2)])));
     expect(await screen.findByText(/Provider 2/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText(/Loading M06 evidence/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/טוען נתוני M06/)).not.toBeInTheDocument());
   });
 
   it("rejects stale detail and history success after A-to-B-to-A", async () => {
@@ -91,7 +91,7 @@ describe("PKG-011 M06 conversion screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "B" })); await screen.findByText(/component-2/);
     fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
     fireEvent.click(await screen.findByRole("button", { name: /component-1/ }));
-    expect(await screen.findByText(/Current conversion revision/)).toBeInTheDocument();
+    expect(await screen.findByText(/גרסת ההמרה הנוכחית/)).toBeInTheDocument();
     await act(async () => oldHistory.resolve(json([revision({ revision_id: "STALE_DETAIL", revision_sequence: 99 })])));
     expect(screen.queryByText(/STALE_DETAIL/)).not.toBeInTheDocument();
     expect(screen.getByText(/revision-1/)).toBeInTheDocument();
@@ -114,10 +114,10 @@ describe("PKG-011 M06 conversion screen", () => {
     fireEvent.click(await screen.findByRole("button", { name: /component-2/ }));
     await act(async () => oldHistory.reject(new Error("stale detail rejection")));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText(/Loading M06 evidence/)).toBeInTheDocument();
+    expect(screen.getByText(/טוען נתוני M06/)).toBeInTheDocument();
     await act(async () => currentHistory.resolve(json([revisionB])));
     expect(await screen.findByText(/revision-b/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText(/Loading M06 evidence/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/טוען נתוני M06/)).not.toBeInTheDocument());
   });
 
   it("renders source provenance, exact zero, immutable history, and bounded eligibility", async () => {
@@ -133,11 +133,11 @@ describe("PKG-011 M06 conversion screen", () => {
     }));
     page();
     fireEvent.click(await screen.findByRole("button", { name: /component-1/ }));
-    expect(await screen.findByText(/Raw: 0.00\/200.000; displayed: 0.00/)).toBeInTheDocument();
-    expect(screen.getByText(/coefficient 200.000 \(documentary\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Technical downstream eligibility: true/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Immutable history" })).toBeInTheDocument();
-    expect(screen.getByText(/operational provenance, not authentication or approval/)).toBeInTheDocument();
+    expect(await screen.findByText(/ערך גולמי: 0.00\/200.000; מוצג: 0.00/)).toBeInTheDocument();
+    expect(screen.getByText(/מקדם 200.000 \(אסמכתה תיעודית\)/)).toBeInTheDocument();
+    expect(screen.getByText(/כשירות טכנית להמשך: כן/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "היסטוריה בלתי ניתנת לשינוי" })).toBeInTheDocument();
+    expect(screen.getByText(/תיעוד תפעולי ולא אישור/)).toBeInTheDocument();
     for (const forbidden of [/recommendation/i, /tax control/i, /scenario/i, /result editor/i, /formula editor/i]) {
       expect(screen.queryByText(forbidden)).not.toBeInTheDocument();
     }
@@ -156,15 +156,15 @@ describe("PKG-011 M06 conversion screen", () => {
       throw new Error(url);
     }));
     page(); fireEvent.click(await screen.findByRole("button", { name: /component-1/ }));
-    expect(await screen.findByText("No calculation result exists for this revision.")).toBeInTheDocument();
+    expect(await screen.findByText("לא קיימת תוצאת חישוב לגרסה זו.")).toBeInTheDocument();
     expect(screen.getByText(/input_amount_negative/)).toBeInTheDocument();
-    expect(screen.getByText(/Technical downstream eligibility: false/)).toBeInTheDocument();
+    expect(screen.getByText(/כשירות טכנית להמשך: לא/)).toBeInTheDocument();
   });
 
   it.each([
-    { label: "Resolve exact formula", current: revision({ state: "draft", action_type: "start", manifest: null }), suffix: "/resolve", needsReason: false },
-    { label: "Review exact mandatory warning set", current: revision({ state: "draft", action_type: "resolve", warnings: [{ warning_id: "planner_declared_coefficient_authority", classification: "mandatory" }] }), suffix: "/review-warning", needsReason: true },
-    { label: "Supersede current conversion", current: revision(), suffix: "/supersede", needsReason: true },
+    { label: "פתרון הנוסחה המדויקת", current: revision({ state: "draft", action_type: "start", manifest: null }), suffix: "/resolve", needsReason: false },
+    { label: "בדיקת קבוצת אזהרות החובה", current: revision({ state: "draft", action_type: "resolve", warnings: [{ warning_id: "planner_declared_coefficient_authority", classification: "mandatory" }] }), suffix: "/review-warning", needsReason: true },
+    { label: "החלפת ההמרה הנוכחית", current: revision(), suffix: "/supersede", needsReason: true },
   ])("sends server-bound $label intent for the owned subject and revision", async ({ label, current, suffix, needsReason }) => {
     const detail = detailedSubject(current); let posted: { url: string; body: Record<string, unknown> } | null = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -178,8 +178,8 @@ describe("PKG-011 M06 conversion screen", () => {
       throw new Error(url);
     }));
     page(); fireEvent.click(await screen.findByRole("button", { name: /component-1/ }));
-    await screen.findByText(/Current conversion revision/);
-    if (needsReason) fireEvent.change(screen.getByLabelText("Action reason / warning explanation"), { target: { value: "bounded action" } });
+    await screen.findByText(/גרסת ההמרה הנוכחית/);
+    if (needsReason) fireEvent.change(screen.getByLabelText("נימוק לפעולה או הסבר לאזהרה"), { target: { value: "bounded action" } });
     fireEvent.click(screen.getByRole("button", { name: label }));
     await waitFor(() => expect(posted).not.toBeNull());
     expect(posted!.url).toContain(`/subjects/subject-1${suffix}`);
@@ -200,17 +200,17 @@ describe("PKG-011 M06 conversion screen", () => {
       throw new Error(url);
     }));
     page(); fireEvent.click(await screen.findByRole("button", { name: /Provider 1/ }));
-    fireEvent.change(screen.getByLabelText("Authority"), { target: { value: "documentary" } });
-    fireEvent.change(screen.getByLabelText("Exact coefficient string"), { target: { value: "201.2500" } });
-    fireEvent.change(screen.getByLabelText("Accepted source intake"), { target: { value: "source-1" } });
-    fireEvent.change(screen.getByLabelText("Exact source locator"), { target: { value: "page 4 table 2" } });
-    fireEvent.change(screen.getByLabelText("Coefficient evidence reason"), { target: { value: "documented coefficient" } });
-    fireEvent.change(screen.getByLabelText("Age"), { target: { value: "67" } });
-    fireEvent.change(screen.getByLabelText("Pension option"), { target: { value: "option-a" } });
+    fireEvent.change(screen.getByLabelText("סוג סמכות"), { target: { value: "documentary" } });
+    fireEvent.change(screen.getByLabelText("מקדם מדויק"), { target: { value: "201.2500" } });
+    fireEvent.change(screen.getByLabelText("קליטת מקור מאושרת"), { target: { value: "source-1" } });
+    fireEvent.change(screen.getByLabelText("מיקום מדויק במקור"), { target: { value: "page 4 table 2" } });
+    fireEvent.change(screen.getByLabelText("נימוק לאסמכתת המקדם"), { target: { value: "documented coefficient" } });
+    fireEvent.change(screen.getByLabelText("גיל"), { target: { value: "67" } });
+    fireEvent.change(screen.getByLabelText("אפשרות קצבה"), { target: { value: "option-a" } });
     fireEvent.click(screen.getByRole("button", { name: /component-1/ }));
-    await screen.findByText(/Current conversion revision/);
-    fireEvent.change(screen.getByLabelText("Action reason / warning explanation"), { target: { value: "new evidence" } });
-    fireEvent.click(screen.getByRole("button", { name: "Append corrected coefficient draft" }));
+    await screen.findByText(/גרסת ההמרה הנוכחית/);
+    fireEvent.change(screen.getByLabelText("נימוק לפעולה או הסבר לאזהרה"), { target: { value: "new evidence" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוספת טיוטת מקדם מתוקנת" }));
     await waitFor(() => expect(posted).not.toBeNull());
     expect(posted).toMatchObject({ expected_current_revision_id: "revision-1", correction_reason: "new evidence", coefficient: { authority_class: "documentary", coefficient: "201.2500", source_intake_id: "source-1", source_locator: "page 4 table 2", metadata: { age: 67, pension_option: "option-a" } } });
   });
@@ -236,11 +236,11 @@ describe("PKG-011 M06 conversion screen", () => {
     page(true);
     const start = async () => {
       fireEvent.click(await screen.findByRole("button", { name: /Provider 1/ }));
-      fireEvent.change(screen.getByLabelText("Exact coefficient string"), { target: { value: "200" } });
-      fireEvent.change(screen.getByLabelText("Planner source note"), { target: { value: "note" } });
-      fireEvent.change(screen.getByLabelText("Coefficient evidence reason"), { target: { value: "reason" } });
-      fireEvent.click(screen.getByLabelText(/Declare applicability/));
-      fireEvent.click(screen.getByRole("button", { name: "Start immutable draft" }));
+      fireEvent.change(screen.getByLabelText("מקדם מדויק"), { target: { value: "200" } });
+      fireEvent.change(screen.getByLabelText("הערת מקור של המתכנן"), { target: { value: "note" } });
+      fireEvent.change(screen.getByLabelText("נימוק לאסמכתת המקדם"), { target: { value: "reason" } });
+      fireEvent.click(screen.getByLabelText(/הצהרה על תחולה/));
+      fireEvent.click(screen.getByRole("button", { name: "יצירת טיוטה בלתי ניתנת לשינוי" }));
     };
     await start(); fireEvent.click(screen.getByRole("button", { name: "B" })); await screen.findByText(/Provider 2/);
     fireEvent.click(screen.getByRole("button", { name: "A revisit" })); await screen.findByText(/Provider 1/); await start();
@@ -249,14 +249,14 @@ describe("PKG-011 M06 conversion screen", () => {
     else await act(async () => oldMutation.reject(new Error("stale mutation rejection")));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/STALE_MUTATION/)).not.toBeInTheDocument();
-    expect(screen.getByText(/Loading M06 evidence/)).toBeInTheDocument();
+    expect(screen.getByText(/טוען נתוני M06/)).toBeInTheDocument();
     await act(async () => successorHistory.resolve(json([successor])));
-    expect(await screen.findByText(/Revision 1: resolved/)).toBeInTheDocument();
+    expect(await screen.findByText(/גרסה 1: נפתר/)).toBeInTheDocument();
     expect(screen.getByText(/revision-2/)).toBeInTheDocument();
     expect(requested.filter((url) => url.endsWith("/subjects/subject-1")).length).toBeGreaterThan(0);
     expect(requested.filter((url) => url.endsWith("/subjects/subject-1/history")).length).toBeGreaterThan(0);
     expect(requested.filter((url) => url.endsWith("/subjects/subject-1/eligibility")).length).toBeGreaterThan(0);
-    await waitFor(() => expect(screen.queryByText(/Loading M06 evidence/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/טוען נתוני M06/)).not.toBeInTheDocument());
   });
 
   it("suppresses a stale structured mutation error and stale finally after a client change", async () => {
@@ -269,11 +269,11 @@ describe("PKG-011 M06 conversion screen", () => {
       throw new Error(url);
     }));
     page(true); fireEvent.click(await screen.findByRole("button", { name: /Provider 1/ }));
-    fireEvent.change(screen.getByLabelText("Exact coefficient string"), { target: { value: "200" } });
-    fireEvent.change(screen.getByLabelText("Planner source note"), { target: { value: "note" } });
-    fireEvent.change(screen.getByLabelText("Coefficient evidence reason"), { target: { value: "reason" } });
-    fireEvent.click(screen.getByLabelText(/Declare applicability/));
-    fireEvent.click(screen.getByRole("button", { name: "Start immutable draft" }));
+    fireEvent.change(screen.getByLabelText("מקדם מדויק"), { target: { value: "200" } });
+    fireEvent.change(screen.getByLabelText("הערת מקור של המתכנן"), { target: { value: "note" } });
+    fireEvent.change(screen.getByLabelText("נימוק לאסמכתת המקדם"), { target: { value: "reason" } });
+    fireEvent.click(screen.getByLabelText(/הצהרה על תחולה/));
+    fireEvent.click(screen.getByRole("button", { name: "יצירת טיוטה בלתי ניתנת לשינוי" }));
     fireEvent.click(screen.getByRole("button", { name: "B" }));
     await screen.findByText(/Provider 2/);
     await act(async () => pending.resolve(({ ok: false, status: 409, statusText: "Conflict", headers: { get: () => "application/json" }, json: async () => ({ detail: { code: "STALE_ERROR", message: "must not surface" } }) }) as unknown as Response));

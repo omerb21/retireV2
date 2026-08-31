@@ -387,7 +387,7 @@ def _transition_is_valid(
             "proposed",
         ),
         "start_revalidation": (
-            {"accepted", "unresolved", "rejected"},
+            {"proposed", "accepted", "unresolved", "rejected"},
             "under_review",
         ),
     }
@@ -573,10 +573,21 @@ def _integrity_exclusion_reason(db: Session, context: M04Context) -> str:
 
 
 def _revalidation_required(
-    subject: M04ClassificationSubject | None,
+    context: M04Context,
     rows: list[M04ClassificationRevision],
 ) -> bool:
-    if subject is None or subject.archive_generation == 0:
+    subject = context.subject
+    leaf = rows[-1] if rows else None
+    if subject is None or leaf is None:
+        return False
+    current_m03_revision_id = context.m03.accepted_revision_id
+    upstream_authority_changed = bool(
+        context.m03.eligible
+        and current_m03_revision_id
+        and leaf.m03_revision_id != current_m03_revision_id
+    )
+    archive_revalidation_required = subject.archive_generation > 0
+    if not upstream_authority_changed and not archive_revalidation_required:
         return False
     revalidation = next(
         (
@@ -585,28 +596,29 @@ def _revalidation_required(
             if row.action_type == "start_revalidation"
             and row.input_snapshot.get("archive_generation")
             == subject.archive_generation
+            and row.m03_revision_id == current_m03_revision_id
         ),
         None,
     )
-    leaf = rows[-1] if rows else None
     return (
         revalidation is None
-        or leaf is None
         or leaf.state != "accepted"
         or leaf.revision_sequence <= revalidation.revision_sequence
     )
 
 
 def _current_revalidation_started(
-    subject: M04ClassificationSubject | None,
+    context: M04Context,
     rows: list[M04ClassificationRevision],
 ) -> bool:
+    subject = context.subject
     if subject is None:
         return False
     return any(
         row.action_type == "start_revalidation"
         and row.input_snapshot.get("archive_generation")
         == subject.archive_generation
+        and row.m03_revision_id == context.m03.accepted_revision_id
         for row in rows
     )
 
@@ -838,7 +850,7 @@ def eligibility(
         reason = "archived_case"
     elif not rows:
         reason = "no_classification"
-    elif _revalidation_required(context.subject, rows):
+    elif _revalidation_required(context, rows):
         reason = "m04_revalidation_required"
     elif not context.m03.eligible:
         reason = (
@@ -1055,8 +1067,8 @@ def create_proposal(
 ) -> M04ClassificationRevision:
     context, rows, _, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, expected)
-    if _revalidation_required(context.subject, rows) and not _current_revalidation_started(
-        context.subject, rows
+    if _revalidation_required(context, rows) and not _current_revalidation_started(
+        context, rows
     ):
         raise M04ClassificationError(
             409, "M04_REVALIDATION_REQUIRED", "Revalidation is required"
@@ -1103,8 +1115,8 @@ def mark_unresolved(
 ) -> M04ClassificationRevision:
     context, rows, _, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
-    if _revalidation_required(context.subject, rows) and not _current_revalidation_started(
-        context.subject, rows
+    if _revalidation_required(context, rows) and not _current_revalidation_started(
+        context, rows
     ):
         raise M04ClassificationError(
             409, "M04_REVALIDATION_REQUIRED", "Revalidation is required"
@@ -1170,8 +1182,14 @@ def decide_proposal(
     action: str,
     payload: M04ReasonRequest,
 ) -> M04ClassificationRevision:
-    context, _, component_map, leaf = _mutation_context(db, client_id, intake_id)
+    context, rows, component_map, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
+    if _revalidation_required(context, rows) and not _current_revalidation_started(
+        context, rows
+    ):
+        raise M04ClassificationError(
+            409, "M04_REVALIDATION_REQUIRED", "Use start_revalidation"
+        )
     if leaf.state != "proposed" or action not in {"accept", "reject"}:
         raise M04ClassificationError(
             409, "M04_INVALID_TRANSITION", "Decision requires a current proposal"
@@ -1212,7 +1230,7 @@ def reopen_classification(
 ) -> M04ClassificationRevision:
     context, rows, _, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
-    if _revalidation_required(context.subject, rows):
+    if _revalidation_required(context, rows):
         raise M04ClassificationError(
             409, "M04_REVALIDATION_REQUIRED", "Use start_revalidation"
         )
@@ -1247,8 +1265,8 @@ def override_classification(
 ) -> M04ClassificationRevision:
     context, rows, component_map, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
-    if _revalidation_required(context.subject, rows) and not _current_revalidation_started(
-        context.subject, rows
+    if _revalidation_required(context, rows) and not _current_revalidation_started(
+        context, rows
     ):
         raise M04ClassificationError(
             409, "M04_REVALIDATION_REQUIRED", "Use start_revalidation"
@@ -1337,7 +1355,7 @@ def undo_classification(
 ) -> M04ClassificationRevision:
     context, rows, component_map, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
-    if _revalidation_required(context.subject, rows):
+    if _revalidation_required(context, rows):
         raise M04ClassificationError(
             409, "M04_REVALIDATION_REQUIRED", "Use start_revalidation"
         )
@@ -1390,13 +1408,13 @@ def start_revalidation(
 ) -> M04ClassificationRevision:
     context, rows, component_map, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
-    if not _revalidation_required(context.subject, rows):
+    if not _revalidation_required(context, rows):
         raise M04ClassificationError(
             409,
             "M04_REVALIDATION_NOT_REQUIRED",
             "No prior archive requires revalidation",
         )
-    if leaf.state not in {"accepted", "unresolved", "rejected"}:
+    if leaf.state not in {"proposed", "accepted", "unresolved", "rejected"}:
         raise M04ClassificationError(
             409, "M04_INVALID_TRANSITION", "Revalidation is not allowed"
         )

@@ -129,7 +129,6 @@ function renderHarness(initialClient = 1) {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
-
 describe("PKG-006 M01 client case workspace", () => {
   it("renders, edits, and transitions from backend-authored case state", async () => {
     const updated = m01Case(1, "Updated Client", {
@@ -159,15 +158,15 @@ describe("PKG-006 M01 client case workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderHarness();
 
-    expect(await screen.findByRole("heading", { name: "Client Case Foundation" })).toBeInTheDocument();
-    expect(screen.getByText("Completeness Status: complete")).toBeInTheDocument();
-    expect(screen.getByText("Lifecycle Status: draft")).toBeInTheDocument();
-    expect(screen.getByLabelText("Employment Status")).toHaveValue("salaried_employee");
-    expect(screen.getByLabelText("Planned Retirement Age")).toHaveValue(67);
+    expect(await screen.findByRole("heading", { name: "תשתית תיק הלקוח" })).toBeInTheDocument();
+    expect(screen.getByText("שלמות נתונים: שלם")).toBeInTheDocument();
+    expect(screen.getByText("מצב נוכחי: טיוטה")).toBeInTheDocument();
+    expect(screen.getByLabelText("מצב תעסוקה")).toHaveValue("salaried_employee");
+    expect(screen.getByLabelText("גיל פרישה מתוכנן")).toHaveValue(67);
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Updated Client" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
-    expect(await screen.findByText("Client case facts saved.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("שם"), { target: { value: "Updated Client" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
+    expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/clients/1/case",
       expect.objectContaining({
@@ -176,10 +175,10 @@ describe("PKG-006 M01 client case workspace", () => {
       })
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Move to intake" }));
-    expect(await screen.findByText("Lifecycle Status: intake")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Move to draft" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Move to analysis" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "מעבר למצב קליטה" }));
+    expect(await screen.findByText("מצב נוכחי: קליטה")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "מעבר למצב טיוטה" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "מעבר למצב ניתוח" })).toBeInTheDocument();
   });
 
   it("ignores a stale successful read after A to B", async () => {
@@ -197,11 +196,11 @@ describe("PKG-006 M01 client case workspace", () => {
     renderHarness();
 
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
+    expect(await screen.findByText("שם מלא: Client B")).toBeInTheDocument();
     oldA.resolve(clientResponse(1, "Stale Client A"));
 
     await waitFor(() => expect(screen.queryByText(/Stale Client A/)).not.toBeInTheDocument());
-    expect(screen.getByText("Full Name: Client B")).toBeInTheDocument();
+    expect(screen.getByText("שם מלא: Client B")).toBeInTheDocument();
   });
 
   it("ignores a stale rejected read and its error after A to B", async () => {
@@ -219,7 +218,7 @@ describe("PKG-006 M01 client case workspace", () => {
     renderHarness();
 
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
+    expect(await screen.findByText("שם מלא: Client B")).toBeInTheDocument();
     oldA.reject(new Error("old A failed"));
 
     await waitFor(() => expect(screen.queryByText(/old A failed/)).not.toBeInTheDocument());
@@ -242,10 +241,10 @@ describe("PKG-006 M01 client case workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
     oldA.reject(new Error("old A failed"));
     await waitFor(() => {
-      expect(screen.getByText("Loading client details...")).toBeInTheDocument();
+      expect(screen.getByText("טוען את פרטי הלקוח...")).toBeInTheDocument();
     });
     currentB.resolve(clientResponse(2, "Client B"));
-    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
+    expect(await screen.findByText("שם מלא: Client B")).toBeInTheDocument();
   });
 
   it("ignores a stale successful mutation after A to B to A and accepts the new A mutation", async () => {
@@ -272,19 +271,19 @@ describe("PKG-006 M01 client case workspace", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Full Name: Client A");
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
+    await screen.findByText("שם מלא: Client A");
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Full Name: Client B");
+    await screen.findByText("שם מלא: Client B");
     fireEvent.click(screen.getByRole("button", { name: "Go A" }));
-    await screen.findByText("Full Name: Client A Revisited");
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
+    await screen.findByText("שם מלא: Client A Revisited");
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
     newMutation.resolve(jsonResponse(m01Case(1, "New A Mutation Result")));
-    expect(await screen.findByText("Full Name: New A Mutation Result")).toBeInTheDocument();
+    expect(await screen.findByText("שם מלא: New A Mutation Result")).toBeInTheDocument();
 
     oldMutation.resolve(jsonResponse(m01Case(1, "Stale A Mutation Result")));
     await waitFor(() => expect(screen.queryByText(/Stale A Mutation Result/)).not.toBeInTheDocument());
-    expect(screen.getByText("Full Name: New A Mutation Result")).toBeInTheDocument();
+    expect(screen.getByText("שם מלא: New A Mutation Result")).toBeInTheDocument();
   });
 
   it("ignores a stale rejected mutation and validation message after A to B", async () => {
@@ -304,10 +303,10 @@ describe("PKG-006 M01 client case workspace", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Full Name: Client A");
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
+    await screen.findByText("שם מלא: Client A");
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Full Name: Client B");
+    await screen.findByText("שם מלא: Client B");
     oldMutation.resolve(jsonResponse({
       detail: {
         code: "OLD_A_VALIDATION",
@@ -338,21 +337,21 @@ describe("PKG-006 M01 client case workspace", () => {
     }));
     renderHarness();
 
-    await screen.findByText("Full Name: Client A");
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
+    await screen.findByText("שם מלא: Client A");
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    await screen.findByText("Full Name: Client B");
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
-    expect(screen.getByRole("button", { name: "Saving Case Facts..." })).toBeDisabled();
+    await screen.findByText("שם מלא: Client B");
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
+    expect(screen.getByRole("button", { name: "שומר נתוני תיק..." })).toBeDisabled();
 
     oldMutation.resolve(jsonResponse(m01Case(1, "Old A Result")));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Saving Case Facts..." })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "שומר נתוני תיק..." })).toBeDisabled();
     });
 
     currentMutation.resolve(jsonResponse(m01Case(2, "Current B Result")));
-    expect(await screen.findByText("Full Name: Current B Result")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save Case Facts" })).toBeEnabled();
+    expect(await screen.findByText("שם מלא: Current B Result")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "שמירת נתוני התיק" })).toBeEnabled();
   });
 
   it("resets all visible A workspace state before B settles and fails B profile closed", async () => {
@@ -428,36 +427,36 @@ describe("PKG-006 M01 client case workspace", () => {
 
     expect(await screen.findByDisplayValue("A-CONTACT-SECRET")).toBeInTheDocument();
     expect(screen.getByText(/A-SNAPSHOT-SECRET/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Contact Method"), {
+    fireEvent.change(screen.getByLabelText("אמצעי קשר"), {
       target: { value: "A-CONTACT-DRAFT" }
     });
-    fireEvent.change(screen.getByLabelText("Snapshot Source File"), {
+    fireEvent.change(screen.getByLabelText("קובץ המקור של תמונת המצב"), {
       target: { value: "A-SNAPSHOT-DRAFT" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
-    expect(await screen.findByText("Client case facts saved.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
-    expect(screen.getByRole("button", { name: "Saving Profile..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
+    expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "שמירת פרופיל" }));
+    expect(screen.getByRole("button", { name: "שומר פרופיל..." })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
 
-    expect(screen.getByText("Loading client details...")).toBeInTheDocument();
+    expect(screen.getByText("טוען את פרטי הלקוח...")).toBeInTheDocument();
     expect(screen.queryByText(/A-SNAPSHOT-SECRET/)).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("A-CONTACT-DRAFT")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("A-SNAPSHOT-DRAFT")).not.toBeInTheDocument();
-    expect(screen.queryByText("Client case facts saved.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Saving Profile..." })).not.toBeInTheDocument();
+    expect(screen.queryByText("נתוני תיק הלקוח נשמרו.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "שומר פרופיל..." })).not.toBeInTheDocument();
 
     bRead.resolve(clientResponse(2, "Client B"));
     bProfile.resolve(jsonResponse({ detail: { code: "B_PROFILE_FAILED" } }, 500));
 
-    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
-    expect(screen.getByText("Unable to load client profile.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Contact Method")).toHaveValue("");
-    expect(screen.getByLabelText("Snapshot Source File")).toHaveValue("");
+    expect(await screen.findByText("שם מלא: Client B")).toBeInTheDocument();
+    expect(screen.getByText("לא ניתן לטעון את פרופיל הלקוח.")).toBeInTheDocument();
+    expect(screen.getByLabelText("אמצעי קשר")).toHaveValue("");
+    expect(screen.getByLabelText("קובץ המקור של תמונת המצב")).toHaveValue("");
     expect(screen.queryByText(/A-SNAPSHOT-SECRET/)).not.toBeInTheDocument();
     expect(screen.queryByText(/A-CONTACT/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Client case facts saved.")).not.toBeInTheDocument();
+    expect(screen.queryByText("נתוני תיק הלקוח נשמרו.")).not.toBeInTheDocument();
 
     oldAProfileMutation.resolve(jsonResponse({
       profile: {
@@ -477,7 +476,7 @@ describe("PKG-006 M01 client case workspace", () => {
     await waitFor(() => {
       expect(screen.queryByText(/STALE-A-PROFILE|Stale Client A/)).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Full Name: Client B")).toBeInTheDocument();
+    expect(screen.getByText("שם מלא: Client B")).toBeInTheDocument();
   });
 
   it("keeps archived M01 and profile mutation paths read-only until reopen", async () => {
@@ -520,39 +519,39 @@ describe("PKG-006 M01 client case workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderHarness();
 
-    expect(await screen.findByText("Lifecycle Status: archived")).toBeInTheDocument();
-    expect(screen.getByText(/read-only until explicitly reopened/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Name")).toBeDisabled();
-    expect(screen.getByLabelText("Israeli ID or Client Identifier")).toBeDisabled();
-    expect(screen.getByLabelText("Employment Status")).toBeDisabled();
-    expect(screen.getByLabelText("Planned Retirement Age")).toBeDisabled();
-    for (const control of screen.getAllByLabelText("ID Number")) {
+    expect(await screen.findByText("מצב נוכחי: בארכיון")).toBeInTheDocument();
+    expect(screen.getByText(/לקריאה בלבד עד לפתיחה מפורשת מחדש/)).toBeInTheDocument();
+    expect(screen.getByLabelText("שם")).toBeDisabled();
+    expect(screen.getByLabelText("מספר זהות ישראלי או מזהה לקוח")).toBeDisabled();
+    expect(screen.getByLabelText("מצב תעסוקה")).toBeDisabled();
+    expect(screen.getByLabelText("גיל פרישה מתוכנן")).toBeDisabled();
+    for (const control of screen.getAllByLabelText("מספר זהות")) {
       expect(control).toBeDisabled();
     }
-    for (const control of screen.getAllByLabelText("Birth Date")) {
+    for (const control of screen.getAllByLabelText("תאריך לידה")) {
       expect(control).toBeDisabled();
     }
-    for (const control of screen.getAllByLabelText("Gender")) {
+    for (const control of screen.getAllByLabelText("מגדר")) {
       expect(control).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Save Case Facts" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save Profile" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move to delivered" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Move to intake" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "שמירת נתוני התיק" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "שמירת פרופיל" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "מעבר למצב נמסר" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "מעבר למצב קליטה" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Move to delivered" }));
+    fireEvent.click(screen.getByRole("button", { name: "מעבר למצב נמסר" }));
 
-    expect(await screen.findByText("Lifecycle Status: delivered")).toBeInTheDocument();
-    expect(screen.getByLabelText("Name")).toBeEnabled();
-    expect(screen.getByLabelText("Employment Status")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Save Case Facts" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Save Profile" })).toBeEnabled();
+    expect(await screen.findByText("מצב נוכחי: נמסר")).toBeInTheDocument();
+    expect(screen.getByLabelText("שם")).toBeEnabled();
+    expect(screen.getByLabelText("מצב תעסוקה")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "שמירת נתוני התיק" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "שמירת פרופיל" })).toBeEnabled();
 
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText("שם"), {
       target: { value: "Reopened Client" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save Case Facts" }));
-    expect(await screen.findByText("Full Name: Reopened Client")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
+    expect(await screen.findByText("שם מלא: Reopened Client")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/clients/1/case",
       expect.objectContaining({ method: "PUT" })
@@ -582,10 +581,10 @@ describe("PKG-006 M01 client case workspace", () => {
     }));
     renderHarness();
 
-    expect(await screen.findByText("Lifecycle Status: archived")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Move to delivered" }));
+    expect(await screen.findByText("מצב נוכחי: בארכיון")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "מעבר למצב נמסר" }));
     fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    expect(await screen.findByText("Full Name: Client B")).toBeInTheDocument();
+    expect(await screen.findByText("שם מלא: Client B")).toBeInTheDocument();
 
     reopen.resolve(jsonResponse(m01Case(1, "Reopened A", {
       lifecycle_status: "delivered",
@@ -595,7 +594,7 @@ describe("PKG-006 M01 client case workspace", () => {
     await waitFor(() => {
       expect(screen.queryByText(/Reopened A/)).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Full Name: Client B")).toBeInTheDocument();
-    expect(screen.getByText("Lifecycle Status: draft")).toBeInTheDocument();
+    expect(screen.getByText("שם מלא: Client B")).toBeInTheDocument();
+    expect(screen.getByText("מצב נוכחי: טיוטה")).toBeInTheDocument();
   });
 });

@@ -111,13 +111,13 @@ async function revisitRoute() {
   await waitFor(() => expect(screen.getByLabelText("route generation").textContent).not.toBe(previous));
 }
 const mutations = [
-  ["Start ledger", "/m05/start"],
-  ["Reconcile", "/reconcile"],
-  ["Review exact mandatory warning set", "/review-warning"],
-  ["Mark blocked", "/mark-blocked"],
-  ["Adjust one value", "/adjust"],
-  ["Supersede", "/supersede"],
-  ["Revalidate against selected current candidate", "/revalidate"],
+  ["התחלת כרטסת", "/m05/start"],
+  ["התאמת יתרות", "/reconcile"],
+  ["בדיקת קבוצת אזהרות החובה", "/review-warning"],
+  ["סימון כחסום", "/mark-blocked"],
+  ["תיקון ערך יחיד", "/adjust"],
+  ["החלפת הגרסה הנוכחית", "/supersede"],
+  ["אימות מחדש מול הרשומה העדכנית שנבחרה", "/revalidate"],
 ] as const;
 const settlements = ["success", "rejection", "api-error"] as const;
 type Settlement = typeof settlements[number];
@@ -165,15 +165,15 @@ const settle = async (pending: Deferred<Response>, outcome: Settlement, response
 };
 async function launchMutation(button: string, launch = true) {
   fireEvent.click(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ }));
-  if (button === "Start ledger") {
-    fireEvent.click(screen.getByLabelText(/Confirm currency ILS/));
+  if (button === "התחלת כרטסת") {
+    fireEvent.click(screen.getByLabelText(/אישור מטבע ש״ח/));
   } else {
     fireEvent.click(screen.getByRole("button", { name: "Provider 1 / Account 1" }));
-    await screen.findByText(/Current ledger/);
+    await screen.findByText(/כרטסת נוכחית/);
   }
-  if (button === "Adjust one value") {
+  if (button === "תיקון ערך יחיד") {
     fireEvent.change(await screen.findByRole("combobox"), { target: { value: "component:0" } });
-    fireEvent.change(screen.getByLabelText("New effective value"), { target: { value: "99.50" } });
+    fireEvent.change(screen.getByLabelText("ערך אפקטיבי חדש"), { target: { value: "99.50" } });
   }
   const control = await screen.findByRole("button", { name: button });
   if (launch) fireEvent.click(control);
@@ -186,15 +186,15 @@ describe("M05LedgerScreen", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => defaultResponse(path(input))));
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
-    expect((await screen.findAllByText(/Source total: 100.00/)).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/source digest:/i).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/סך מקור: 100.00/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/תקציר מקור:/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/warning_not_reviewed/)).toBeInTheDocument();
-    expect(screen.getByText(/does not authorize conversion, coefficients, tax, fixation/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/operational provenance, not authentication or professional approval/i).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("Candidate candidate-1 product context")).toHaveTextContent("product_nameProduct");
-    expect(screen.getAllByLabelText("Revision 1 product context")).toHaveLength(2);
-    expect(screen.getAllByLabelText("Revision 1 product context")[0]).toHaveTextContent("m04_product_familyprovident_fund");
-    expect(screen.getAllByText(/source values; no inference/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/אינה מאשרת המרה, מקדמים, מס, קיבוע זכויות/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/תיעוד תפעולי ולא אישור מקצועי/i).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("הקשר המוצר של רשומה candidate-1")).toHaveTextContent("product_nameProduct");
+    expect(screen.getAllByLabelText("הקשר המוצר של גרסה 1")).toHaveLength(2);
+    expect(screen.getAllByLabelText("הקשר המוצר של גרסה 1")[0]).toHaveTextContent("m04_product_familyprovident_fund");
+    expect(screen.getAllByText(/ערכי מקור, ללא הסקה/i).length).toBeGreaterThan(0);
   });
 
   it("renders explicit unavailable product context without inventing a fallback", async () => {
@@ -210,9 +210,9 @@ describe("M05LedgerScreen", () => {
       return defaultResponse(url);
     }));
     renderPage();
-    expect(await screen.findByLabelText("Candidate candidate-1 product context")).toHaveTextContent("Product context unavailable.");
+    expect(await screen.findByLabelText("הקשר המוצר של רשומה candidate-1")).toHaveTextContent("הקשר המוצר אינו זמין.");
     fireEvent.click(screen.getByRole("button", { name: "Provider 1 / Account 1" }));
-    await waitFor(() => expect(screen.getAllByText("Product context unavailable.")).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByText("הקשר המוצר אינו זמין.")).toHaveLength(3));
     expect(screen.queryByText(/unknown product|assumed product/i)).not.toBeInTheDocument();
   });
 
@@ -232,17 +232,17 @@ describe("M05LedgerScreen", () => {
     }));
     renderPage();
     fireEvent.click(await screen.findByRole("button", {
-      name: /Provider unavailable.*Statement date unavailable/,
+      name: /גוף מנהל לא זמין.*תאריך דוח לא זמין/,
     }));
-    const explanation = screen.getByLabelText("Selected candidate explanation");
+    const explanation = screen.getByLabelText("הסבר כשירות הרשומה שנבחרה");
     expect(explanation).toHaveTextContent(
-      "A required provider, account, statement date, balance, or component value is missing.",
+      "חסר ערך חובה של גוף מנהל, חשבון, תאריך דוח, יתרה או רכיב.",
     );
     expect(explanation).toHaveTextContent(
-      "Technical exclusion code: required_value_missing",
+      "קוד טכני: required_value_missing",
     );
-    expect(explanation).toHaveTextContent("Provider: not supplied");
-    expect(explanation).toHaveTextContent("statement date: not supplied");
+    expect(explanation).toHaveTextContent("גוף מנהל: לא נמסר");
+    expect(explanation).toHaveTextContent("תאריך דוח: לא נמסר");
   });
 
   it("shows structured API conflict detail instead of a raw HTTP status", async () => {
@@ -262,11 +262,11 @@ describe("M05LedgerScreen", () => {
     fireEvent.click(await screen.findByRole("button", {
       name: /Provider 1 \/ Account 1 \/ 2026/,
     }));
-    fireEvent.click(screen.getByLabelText(/Confirm currency ILS/));
-    fireEvent.click(screen.getByRole("button", { name: "Start ledger" }));
+    fireEvent.click(screen.getByLabelText(/אישור מטבע ש״ח/));
+    fireEvent.click(screen.getByRole("button", { name: "התחלת כרטסת" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Statement date is required");
-    expect(alert).toHaveTextContent("Technical code: required_value_missing");
+    expect(alert).toHaveTextContent("קוד טכני: required_value_missing");
     expect(alert).not.toHaveTextContent("HTTP 409 Conflict");
   });
 
@@ -282,12 +282,12 @@ describe("M05LedgerScreen", () => {
     }));
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
-    expect(await screen.findByRole("button", { name: "Reconcile" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Review exact mandatory warning set" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Mark blocked" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Supersede" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Adjust one value" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Revalidate against selected current candidate" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "התאמת יתרות" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "בדיקת קבוצת אזהרות החובה" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "סימון כחסום" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "החלפת הגרסה הנוכחית" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "תיקון ערך יחיד" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "אימות מחדש מול הרשומה העדכנית שנבחרה" })).toBeDisabled();
   });
 
   it("sends start intent without actor, authority tuple, timestamp, or eligibility", async () => {
@@ -299,8 +299,8 @@ describe("M05LedgerScreen", () => {
     }));
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ }));
-    fireEvent.click(screen.getByLabelText(/Confirm currency ILS/));
-    fireEvent.click(screen.getByRole("button", { name: "Start ledger" }));
+    fireEvent.click(screen.getByLabelText(/אישור מטבע ש״ח/));
+    fireEvent.click(screen.getByRole("button", { name: "התחלת כרטסת" }));
     await waitFor(() => expect(posted).toEqual({ candidate_id: "candidate-1", confirm_currency_ils: true }));
   });
 
@@ -319,7 +319,7 @@ describe("M05LedgerScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Provider X / Account X" }));
     expect(await screen.findByText(/Provider X/)).toBeInTheDocument();
     await act(async () => old.resolve(json(subject(1))));
-    expect(screen.queryByText(/Current ledger/)).toBeInTheDocument();
+    expect(screen.queryByText(/כרטסת נוכחית/)).toBeInTheDocument();
     expect(screen.getAllByText(/Provider X/).length).toBeGreaterThan(0);
   });
 
@@ -339,11 +339,11 @@ describe("M05LedgerScreen", () => {
       fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
     } else {
       fireEvent.click(screen.getByRole("button", { name: "B" }));
-      expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+      expect(await screen.findByText(/לקוח: Client 2/)).toBeInTheDocument();
       if (transition === "A-B-A") fireEvent.click(screen.getByRole("button", { name: "A" }));
     }
     if (transition !== "direct A-B") {
-      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      expect(await screen.findByText(/לקוח: Client 1/)).toBeInTheDocument();
       expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
     }
     await settle(old, outcome, json([staleCandidate]));
@@ -370,13 +370,13 @@ describe("M05LedgerScreen", () => {
         fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
       } else {
         fireEvent.click(screen.getByRole("button", { name: "B" }));
-        expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+        expect(await screen.findByText(/לקוח: Client 2/)).toBeInTheDocument();
         if (transition === "A-B-A") fireEvent.click(screen.getByRole("button", { name: "A" }));
       }
-      if (transition !== "direct A-B") expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      if (transition !== "direct A-B") expect(await screen.findByText(/לקוח: Client 1/)).toBeInTheDocument();
       await settle(old, outcome, staleReadResponse(unit));
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Current ledger/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/כרטסת נוכחית/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
@@ -403,7 +403,7 @@ describe("M05LedgerScreen", () => {
       renderPage();
       fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
       fireEvent.click(screen.getByRole("button", { name: "Provider Y / Account Y" }));
-      expect(await screen.findByText(/Current ledger/)).toBeInTheDocument();
+      expect(await screen.findByText(/כרטסת נוכחית/)).toBeInTheDocument();
       await settle(old, outcome, staleReadResponse(unit));
       expect(screen.getAllByText(/Provider Y/).length).toBeGreaterThan(0);
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
@@ -428,12 +428,12 @@ describe("M05LedgerScreen", () => {
       renderNavigable();
       fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
       fireEvent.click(screen.getByRole("button", { name: "B" }));
-      expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+      expect(await screen.findByText(/לקוח: Client 2/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "A" }));
-      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      expect(await screen.findByText(/לקוח: Client 1/)).toBeInTheDocument();
       await settle(old, outcome, staleReadResponse(unit));
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Current ledger/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/כרטסת נוכחית/)).not.toBeInTheDocument();
     },
   );
 
@@ -455,12 +455,12 @@ describe("M05LedgerScreen", () => {
       await revisitRoute();
       await waitFor(() => expect(calls).toBe(2));
       await settle(old, outcome, json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }]));
-      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען נתוני M05/)).toBeInTheDocument();
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       await act(async () => current.resolve(json([{ ...candidate(1), provider_name: "ACTIVE_NEW_OWNER" }])));
       expect(await screen.findByRole("button", { name: /ACTIVE_NEW_OWNER/ })).toBeInTheDocument();
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
     },
   );
 
@@ -488,12 +488,12 @@ describe("M05LedgerScreen", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Provider 1 / Account 1" }));
       await waitFor(() => expect(calls).toBe(2));
       await settle(old, outcome, staleReadResponse(unit));
-      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען נתוני M05/)).toBeInTheDocument();
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       await act(async () => current.resolve(ownedReadResponse(unit)));
       expect((await screen.findAllByText(/ACTIVE_NEW_OWNER/)).length).toBeGreaterThan(0);
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
@@ -533,14 +533,14 @@ describe("M05LedgerScreen", () => {
         ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])
         : staleReadResponse(unit);
       await settle(old, outcome, staleResponse);
-      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען נתוני M05/)).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       await act(async () => current.resolve(
         json({ detail: { code: "ACTIVE_NEW_ERROR" } }, 409, "ACTIVE_NEW_ERROR"),
       ));
       expect(await screen.findByRole("alert")).toHaveTextContent("ACTIVE_NEW_ERROR");
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
     },
   );
 
@@ -580,7 +580,7 @@ describe("M05LedgerScreen", () => {
       await settle(old, outcome, response);
       expect(screen.getByRole("alert")).toHaveTextContent("ACTIVE_NEW_ERROR");
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
     },
   );
 
@@ -624,10 +624,10 @@ describe("M05LedgerScreen", () => {
         fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
       } else {
         fireEvent.click(screen.getByRole("button", { name: "B" }));
-        expect(await screen.findByText(/Client: Client 2/)).toBeInTheDocument();
+        expect(await screen.findByText(/לקוח: Client 2/)).toBeInTheDocument();
         if (transition === "A-B-A") fireEvent.click(screen.getByRole("button", { name: "A" }));
       }
-      if (transition !== "direct A-B") expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      if (transition !== "direct A-B") expect(await screen.findByText(/לקוח: Client 1/)).toBeInTheDocument();
       const before = aGets;
       await settle(pending, outcome, json(revision(1), 201));
       expect(aGets).toBe(before);
@@ -677,7 +677,7 @@ describe("M05LedgerScreen", () => {
       ]) {
         await waitFor(() => expect(calls.some((call) => call.startsWith("GET ") && call.endsWith(suffix))).toBe(true));
       }
-      await waitFor(() => expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument());
     },
   );
 
@@ -738,7 +738,7 @@ describe("M05LedgerScreen", () => {
     renderPage();
     await launchMutation(button);
     fireEvent.click(screen.getByRole("button", { name: "Provider Y / Account Y" }));
-    expect(await screen.findByText(/Current ledger/)).toBeInTheDocument();
+    expect(await screen.findByText(/כרטסת נוכחית/)).toBeInTheDocument();
     const before = aGets;
     await settle(pending, outcome, json(revision(1), 201));
     expect(aGets).toBe(before);
@@ -795,7 +795,7 @@ describe("M05LedgerScreen", () => {
           calls.some((call) => call.startsWith("GET ") && call.endsWith(suffix)),
         ).toBe(true));
       }
-      await waitFor(() => expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument());
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } else {
       const beforeCurrent = gets;
@@ -855,8 +855,8 @@ describe("M05LedgerScreen", () => {
         ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])
         : staleReadResponse(unit);
       await settle(old, outcome, staleResponse);
-      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
-      expect(screen.getByText(/M05 Manual Pension Balance Ledger/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען נתוני M05/)).toBeInTheDocument();
+      expect(screen.getByText(/M05 — כרטסת יתרות פנסיה/)).toBeInTheDocument();
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(consoleError).not.toHaveBeenCalled();
@@ -878,7 +878,7 @@ describe("M05LedgerScreen", () => {
         expect(await screen.findByRole("alert")).toHaveTextContent("ACTIVE_REMOUNT_PENDING_ERROR");
         expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       }
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
       remounted.unmount();
     },
   );
@@ -901,16 +901,16 @@ describe("M05LedgerScreen", () => {
         return defaultResponse(url);
       }));
       renderNavigable();
-      await launchMutation("Reconcile");
+      await launchMutation("התאמת יתרות");
       await waitFor(() => expect(delayed).toBe(true));
       fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
-      expect(await screen.findByText(/Client: Client 1/)).toBeInTheDocument();
+      expect(await screen.findByText(/לקוח: Client 1/)).toBeInTheDocument();
       expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
       const response = unit === "overview" ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }]) : staleReadResponse(unit);
       await settle(pending, outcome, response);
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
     },
   );
 
@@ -942,7 +942,7 @@ describe("M05LedgerScreen", () => {
         return defaultResponse(url);
       }));
       renderNavigable();
-      await launchMutation("Reconcile");
+      await launchMutation("התאמת יתרות");
       await waitFor(() => expect(refreshCalls).toBe(1));
       currentGeneration = true;
       await revisitRoute();
@@ -956,14 +956,14 @@ describe("M05LedgerScreen", () => {
         ? json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])
         : staleReadResponse(unit);
       await settle(old, outcome, staleResponse);
-      expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+      expect(screen.getByText(/טוען נתוני M05/)).toBeInTheDocument();
       expect(screen.getByLabelText("route generation")).toHaveTextContent(activeGeneration ?? "");
       if (unit === "overview") {
-        expect(screen.getByText(/Client: 1\./)).toBeInTheDocument();
-        expect(screen.getByText("No manual M05 candidates.")).toBeInTheDocument();
-        expect(screen.getByText("No M05 ledger subjects.")).toBeInTheDocument();
+        expect(screen.getByText(/לקוח: 1\./)).toBeInTheDocument();
+        expect(screen.getByText("אין רשומות ידניות מועמדות ל־M05.")).toBeInTheDocument();
+        expect(screen.getByText("אין כרטסות M05.")).toBeInTheDocument();
       } else {
-        expect(screen.getByText(/Client: Client 1/)).toBeInTheDocument();
+        expect(screen.getByText(/לקוח: Client 1/)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Provider 1 / Account 1" })).toBeInTheDocument();
       }
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
@@ -986,7 +986,7 @@ describe("M05LedgerScreen", () => {
         expect(await screen.findByRole("alert")).toHaveTextContent("ACTIVE_REFRESH_PENDING_ERROR");
         expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
       }
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
       expect(screen.getByLabelText("route generation")).toHaveTextContent(activeGeneration ?? "");
     },
   );
@@ -1017,7 +1017,7 @@ describe("M05LedgerScreen", () => {
         return defaultResponse(url);
       }));
       renderNavigable();
-      await launchMutation("Reconcile");
+      await launchMutation("התאמת יתרות");
       await waitFor(() => expect(refreshCalls).toBe(1));
       currentGeneration = true;
       await revisitRoute();
@@ -1036,7 +1036,7 @@ describe("M05LedgerScreen", () => {
       await settle(old, outcome, staleResponse);
       expect(screen.getByRole("alert")).toHaveTextContent("ACTIVE_REFRESH_ERROR");
       expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
     },
   );
 
@@ -1053,16 +1053,16 @@ describe("M05LedgerScreen", () => {
       return defaultResponse(url);
     }));
     renderNavigable();
-    await launchMutation("Reconcile");
+    await launchMutation("התאמת יתרות");
     await waitFor(() => expect(candidateCall).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "A revisit" }));
     await waitFor(() => expect(candidateCall).toBe(3));
     await act(async () => stale.resolve(json([{ ...candidate(1), provider_name: "STALE_EVIDENCE" }])));
-    expect(screen.getByText(/Loading M05 evidence/)).toBeInTheDocument();
+    expect(screen.getByText(/טוען נתוני M05/)).toBeInTheDocument();
     await act(async () => current.resolve(json([candidate(1)])));
     expect(await screen.findByRole("button", { name: /Provider 1 \/ Account 1 \/ 2026/ })).toBeInTheDocument();
     expect(screen.queryByText(/STALE_EVIDENCE/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Loading M05 evidence/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/טוען נתוני M05/)).not.toBeInTheDocument();
   });
 
   it.each(mutations)("%s mutation is current-context bound and uses %s", async (button, endpoint) => {

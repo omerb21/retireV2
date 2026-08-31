@@ -28,6 +28,9 @@ import {
   type ClientContextToken,
   useClientContextGeneration
 } from "../hooks/useClientContextGeneration";
+import { HebrewDateInput } from "../components/HebrewDateInput";
+import { heLabel } from "../i18n/he";
+import { formatIsoDate } from "../utils/dateFormat";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
 import { PensionAnalysisRecordSection } from "./PensionAnalysisRecordSection";
 import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
@@ -47,7 +50,7 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unable to load client details.";
+  return "לא ניתן לטעון את פרטי הלקוח.";
 }
 
 export function ClientDetailScreen() {
@@ -369,7 +372,7 @@ export function ClientDetailScreen() {
       setBirthDate(nextCase.birth_date ?? "");
       setGender(nextCase.gender ?? "");
       setProfileExists(true);
-      setCaseSaveMessage("Client case facts saved.");
+      setCaseSaveMessage("נתוני תיק הלקוח נשמרו.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setCaseErrorMessage(getErrorMessage(error));
@@ -401,7 +404,7 @@ export function ClientDetailScreen() {
       setClient((current) =>
         current === null ? current : { ...current, m01_case: nextCase }
       );
-      setCaseSaveMessage(`Client case moved to ${nextCase.lifecycle_status}.`);
+      setCaseSaveMessage(`תיק הלקוח עבר למצב ${heLabel(nextCase.lifecycle_status)}.`);
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setCaseErrorMessage(getErrorMessage(error));
@@ -461,7 +464,7 @@ export function ClientDetailScreen() {
         );
       }
       setProfileExists(response.profile !== null);
-      setSaveSuccessMessage("Profile saved successfully.");
+      setSaveSuccessMessage("הפרופיל נשמר בהצלחה.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setSaveErrorMessage(getErrorMessage(error));
@@ -510,7 +513,7 @@ export function ClientDetailScreen() {
       setSnapshotSourceFile("");
       setSnapshotCollectionStatus("");
       setSnapshotCollectionNotes("");
-      setSnapshotSaveSuccessMessage("Clearinghouse snapshot registered.");
+      setSnapshotSaveSuccessMessage("תמונת המצב מהמסלקה נרשמה.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setSnapshotSaveErrorMessage(getErrorMessage(error));
@@ -561,7 +564,7 @@ export function ClientDetailScreen() {
       setDocumentCollectionDate("");
       setDocumentCollectionStatus("");
       setDocumentCollectionNotes("");
-      setDocumentSaveSuccessMessage("Retirement planning document registered.");
+      setDocumentSaveSuccessMessage("מסמך תכנון הפרישה נרשם.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setDocumentSaveErrorMessage(getErrorMessage(error));
@@ -598,7 +601,7 @@ export function ClientDetailScreen() {
       setClearinghouseSnapshots((current) => current.map((item) => (
         item.clearinghouse_snapshot_id === updated.clearinghouse_snapshot_id ? updated : item
       )));
-      setVerificationSaveMessage("Verification status saved.");
+      setVerificationSaveMessage("מצב האימות נשמר.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setVerificationErrorMessage(getErrorMessage(error));
@@ -630,7 +633,7 @@ export function ClientDetailScreen() {
       setRetirementPlanningDocuments((current) => current.map((item) => (
         item.document_id === updated.document_id ? updated : item
       )));
-      setVerificationSaveMessage("Verification status saved.");
+      setVerificationSaveMessage("מצב האימות נשמר.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setVerificationErrorMessage(getErrorMessage(error));
@@ -665,7 +668,7 @@ export function ClientDetailScreen() {
       setMissingItemLabel("");
       setMissingStatus("");
       setMissingNotes("");
-      setMissingSaveSuccessMessage("Missing item registered.");
+      setMissingSaveSuccessMessage("הפריט החסר נרשם.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
         setMissingSaveErrorMessage(getErrorMessage(error));
@@ -680,10 +683,10 @@ export function ClientDetailScreen() {
   if (isLoading) {
     return (
       <section>
-        <h2>Client Detail</h2>
-        <p>Loading client details...</p>
+        <h2>פרטי לקוח — M01</h2>
+        <p>טוען את פרטי הלקוח...</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -692,10 +695,10 @@ export function ClientDetailScreen() {
   if (isNotFound) {
     return (
       <section>
-        <h2>Client Detail</h2>
-        <p>Client not found.</p>
+        <h2>פרטי לקוח — M01</h2>
+        <p>הלקוח לא נמצא.</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -704,11 +707,11 @@ export function ClientDetailScreen() {
   if (errorMessage !== null) {
     return (
       <section>
-        <h2>Client Detail</h2>
-        <p>Unable to load client details.</p>
+        <h2>פרטי לקוח — M01</h2>
+        <p>לא ניתן לטעון את פרטי הלקוח.</p>
         <p>{errorMessage}</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -724,10 +727,10 @@ export function ClientDetailScreen() {
   if (client === null || !clientOwnsActiveRoute) {
     return (
       <section>
-        <h2>Client Detail</h2>
-        <p>Client details are unavailable.</p>
+        <h2>פרטי לקוח — M01</h2>
+        <p>פרטי הלקוח אינם זמינים.</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -735,18 +738,18 @@ export function ClientDetailScreen() {
 
   return (
     <section>
-      <h2>Client Detail</h2>
-      <p>Client ID: {client.client_id}</p>
-      <p>Full Name: {client.full_name}</p>
-      <p>ID Number: {client.id_number ?? "Not provided"}</p>
+      <h2>פרטי לקוח — M01</h2>
+      <p>מזהה לקוח: {client.client_id}</p>
+      <p>שם מלא: {client.full_name}</p>
+      <p>מספר זהות: {client.id_number ?? "לא נמסר"}</p>
       {m01Case !== null ? (
         <section aria-labelledby="m01-case-foundation-heading">
-          <h3 id="m01-case-foundation-heading">Client Case Foundation</h3>
-          <p>Lifecycle Status: {m01Case.lifecycle_status}</p>
-          <p>Completeness Status: {m01Case.completeness.status}</p>
+          <h3 id="m01-case-foundation-heading">תשתית תיק הלקוח</h3>
+          <p>מצב נוכחי: {heLabel(m01Case.lifecycle_status)}</p>
+          <p>שלמות נתונים: {heLabel(m01Case.completeness.status)}</p>
           {m01Case.completeness.missing_field_ids.length > 0 ? (
             <>
-              <h4>Missing Minimum Facts</h4>
+              <h4>נתוני חובה חסרים</h4>
               <ul>
                 {m01Case.completeness.missing_field_ids.map((fieldId) => (
                   <li key={fieldId}>{fieldId}</li>
@@ -754,11 +757,11 @@ export function ClientDetailScreen() {
               </ul>
             </>
           ) : (
-            <p>No minimum facts are missing.</p>
+            <p>כל נתוני החובה קיימים.</p>
           )}
           {m01Case.completeness.conflicting_field_ids.length > 0 ? (
             <>
-              <h4>Conflicting Minimum Facts</h4>
+              <h4>נתוני חובה סותרים</h4>
               <ul>
                 {m01Case.completeness.conflicting_field_ids.map((fieldId) => (
                   <li key={fieldId}>{fieldId}</li>
@@ -767,15 +770,16 @@ export function ClientDetailScreen() {
             </>
           ) : null}
           {m01Case.lifecycle_status === "archived" ? (
-            <p>Archived client cases are read-only until explicitly reopened.</p>
+            <p>תיק בארכיון הוא לקריאה בלבד עד לפתיחה מפורשת מחדש.</p>
           ) : null}
           <form onSubmit={handleSaveCase}>
             <fieldset disabled={m01Case.lifecycle_status === "archived" || isSavingCase}>
-              <legend>Minimum Case Facts</legend>
+              <legend>נתוני יסוד של התיק</legend>
               <p>
-                <label htmlFor="m01-display-name">Name</label>
+                <label htmlFor="m01-display-name">שם</label>
                 <input
                   id="m01-display-name"
+                  aria-label="שם"
                   value={caseDisplayName}
                   onChange={(event) => {
                     setCaseDisplayName(event.target.value);
@@ -784,9 +788,10 @@ export function ClientDetailScreen() {
                 />
               </p>
               <p>
-                <label htmlFor="m01-id-number">Israeli ID or Client Identifier</label>
+                <label htmlFor="m01-id-number">מספר זהות ישראלי או מזהה לקוח</label>
                 <input
                   id="m01-id-number"
+                  aria-label="מספר זהות ישראלי או מזהה לקוח"
                   value={caseIdNumber}
                   onChange={(event) => {
                     setCaseIdNumber(event.target.value);
@@ -795,19 +800,18 @@ export function ClientDetailScreen() {
                 />
               </p>
               <p>
-                <label htmlFor="m01-birth-date">Birth Date</label>
-                <input
+                <label htmlFor="m01-birth-date">תאריך לידה</label>
+                <HebrewDateInput
                   id="m01-birth-date"
-                  type="date"
                   value={caseBirthDate}
-                  onChange={(event) => {
-                    setCaseBirthDate(event.target.value);
+                  onChange={(value) => {
+                    setCaseBirthDate(value);
                     setCaseSaveMessage(null);
                   }}
                 />
               </p>
               <p>
-                <label htmlFor="m01-gender">Gender</label>
+                <label htmlFor="m01-gender">מגדר</label>
                 <input
                   id="m01-gender"
                   value={caseGender}
@@ -818,27 +822,28 @@ export function ClientDetailScreen() {
                 />
               </p>
               <p>
-                <label htmlFor="m01-employment-status">Employment Status</label>
+                <label htmlFor="m01-employment-status">מצב תעסוקה</label>
                 <select
                   id="m01-employment-status"
+                  aria-label="מצב תעסוקה"
                   value={caseEmploymentStatus}
                   onChange={(event) => {
                     setCaseEmploymentStatus(event.target.value as M01EmploymentStatus | "");
                     setCaseSaveMessage(null);
                   }}
                 >
-                  <option value="">Not recorded</option>
-                  <option value="salaried_employee">salaried_employee</option>
-                  <option value="self_employed">self_employed</option>
+                  <option value="">לא תועד</option>
+                  <option value="salaried_employee">שכיר/ה</option>
+                  <option value="self_employed">עצמאי/ת</option>
                   <option value="salaried_and_self_employed">
-                    salaried_and_self_employed
+                    שכיר/ה ועצמאי/ת
                   </option>
-                  <option value="not_currently_working">not_currently_working</option>
-                  <option value="unknown">unknown</option>
+                  <option value="not_currently_working">אינו/ה עובד/ת כעת</option>
+                  <option value="unknown">לא ידוע</option>
                 </select>
               </p>
               <p>
-                <label htmlFor="m01-planned-retirement-mode">Planned Retirement Source</label>
+                <label htmlFor="m01-planned-retirement-mode">אופן תכנון מועד הפרישה</label>
                 <select
                   id="m01-planned-retirement-mode"
                   value={plannedRetirementMode}
@@ -854,16 +859,17 @@ export function ClientDetailScreen() {
                     setCaseSaveMessage(null);
                   }}
                 >
-                  <option value="">Not recorded</option>
-                  <option value="age">Planned retirement age</option>
-                  <option value="date">Planned retirement date</option>
+                  <option value="">לא תועד</option>
+                  <option value="age">גיל פרישה מתוכנן</option>
+                  <option value="date">תאריך פרישה מתוכנן</option>
                 </select>
               </p>
               {plannedRetirementMode === "age" ? (
                 <p>
-                  <label htmlFor="m01-planned-retirement-age">Planned Retirement Age</label>
+                  <label htmlFor="m01-planned-retirement-age">גיל פרישה מתוכנן</label>
                   <input
                     id="m01-planned-retirement-age"
+                    aria-label="גיל פרישה מתוכנן"
                     type="number"
                     min="18"
                     max="120"
@@ -877,38 +883,38 @@ export function ClientDetailScreen() {
               ) : null}
               {plannedRetirementMode === "date" ? (
                 <p>
-                  <label htmlFor="m01-planned-retirement-date">Planned Retirement Date</label>
-                  <input
+                  <label htmlFor="m01-planned-retirement-date">תאריך פרישה מתוכנן</label>
+                  <HebrewDateInput
                     id="m01-planned-retirement-date"
-                    type="date"
                     value={plannedRetirementDate}
-                    onChange={(event) => {
-                      setPlannedRetirementDate(event.target.value);
+                    onChange={(value) => {
+                      setPlannedRetirementDate(value);
                       setCaseSaveMessage(null);
                     }}
                   />
                 </p>
               ) : null}
-              <button type="submit">
-                {isSavingCase ? "Saving Case Facts..." : "Save Case Facts"}
+              <button type="submit" aria-label={isSavingCase ? "שומר נתוני תיק..." : "שמירת נתוני התיק"}>
+                {isSavingCase ? "שומר נתוני תיק..." : "שמירת נתוני התיק"}
               </button>
             </fieldset>
           </form>
-          <h4>Allowed Lifecycle Transitions</h4>
+          <h4>הפעולה הבאה הזמינה</h4>
           {m01Case.allowed_lifecycle_targets.length === 0 ? (
-            <p>No lifecycle transition is currently available.</p>
+            <p>אין כרגע מעבר מצב זמין.</p>
           ) : (
             <ul>
               {m01Case.allowed_lifecycle_targets.map((targetStatus) => (
                 <li key={targetStatus}>
                   <button
                     type="button"
+                    aria-label={`מעבר למצב ${heLabel(targetStatus)}`}
                     disabled={isTransitioningCase}
                     onClick={() => {
                       void handleLifecycleTransition(targetStatus);
                     }}
                   >
-                    Move to {targetStatus}
+                    מעבר למצב {heLabel(targetStatus)}
                   </button>
                 </li>
               ))}
@@ -917,32 +923,33 @@ export function ClientDetailScreen() {
           {caseSaveMessage ? <p>{caseSaveMessage}</p> : null}
           {caseErrorMessage ? (
             <>
-              <p>Unable to update client case.</p>
+              <p>לא ניתן לעדכן את תיק הלקוח.</p>
               <pre>{caseErrorMessage}</pre>
             </>
           ) : null}
-          <p>Intake module: Not available in PKG-006.</p>
+          <p>המשך התהליך: קליטת נתוני פנסיה ב־M02.</p>
         </section>
       ) : null}
       <section aria-labelledby="retirement-planning-file-heading">
-        <h3 id="retirement-planning-file-heading">Retirement Planning File</h3>
-        <p>File Status: {client.file_status}</p>
-        <p>Professional Identification: {professionalIdentificationStatus}</p>
+        <h3 id="retirement-planning-file-heading">תיק תכנון הפרישה</h3>
+        <p>מצב תיק: {heLabel(client.file_status)}</p>
+        <p>זיהוי מקצועי: {heLabel(professionalIdentificationStatus)}</p>
       </section>
-      {!profileExists && profileLoadErrorMessage === null ? <p>No client profile has been saved yet.</p> : null}
+      {!profileExists && profileLoadErrorMessage === null ? <p>טרם נשמר פרופיל לקוח.</p> : null}
       {profileLoadErrorMessage ? (
         <>
-          <p>Unable to load client profile.</p>
+          <p>לא ניתן לטעון את פרופיל הלקוח.</p>
           <pre>{profileLoadErrorMessage}</pre>
         </>
       ) : null}
       <form onSubmit={handleSaveProfile}>
         <fieldset disabled={m01Case?.lifecycle_status === "archived" || isSaving}>
-          <legend>Client Profile</legend>
+          <legend>פרופיל לקוח</legend>
           <p>
-            <label htmlFor="profile-id-number">ID Number</label>
+            <label htmlFor="profile-id-number">מספר זהות</label>
             <input
               id="profile-id-number"
+              aria-label="מספר זהות"
               value={idNumber}
               onChange={(event) => {
                 setIdNumber(event.target.value);
@@ -951,21 +958,22 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="profile-birth-date">Birth Date</label>
-            <input
+            <label htmlFor="profile-birth-date">תאריך לידה</label>
+            <HebrewDateInput
               id="profile-birth-date"
-              type="date"
+              ariaLabel="תאריך לידה"
               value={birthDate}
-              onChange={(event) => {
-                setBirthDate(event.target.value);
+              onChange={(value) => {
+                setBirthDate(value);
                 setSaveSuccessMessage(null);
               }}
             />
           </p>
           <p>
-            <label htmlFor="profile-gender">Gender</label>
+            <label htmlFor="profile-gender">מגדר</label>
             <input
               id="profile-gender"
+              aria-label="מגדר"
               value={gender}
               onChange={(event) => {
                 setGender(event.target.value);
@@ -974,9 +982,10 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="profile-contact-method">Contact Method</label>
+            <label htmlFor="profile-contact-method">אמצעי קשר</label>
             <input
               id="profile-contact-method"
+              aria-label="אמצעי קשר"
               value={contactMethod}
               onChange={(event) => {
                 setContactMethod(event.target.value);
@@ -985,9 +994,10 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="profile-contact-details">Contact Details</label>
+            <label htmlFor="profile-contact-details">פרטי קשר</label>
             <input
               id="profile-contact-details"
+              aria-label="פרטי קשר"
               value={contactDetails}
               onChange={(event) => {
                 setContactDetails(event.target.value);
@@ -996,9 +1006,10 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="profile-notes">Notes</label>
+            <label htmlFor="profile-notes">הערות</label>
             <textarea
               id="profile-notes"
+              aria-label="הערות"
               value={notes}
               onChange={(event) => {
                 setNotes(event.target.value);
@@ -1006,7 +1017,7 @@ export function ClientDetailScreen() {
               }}
             />
           </p>
-          <button
+          <button aria-label={isSaving ? "שומר פרופיל..." : "שמירת פרופיל"}
             type="submit"
             disabled={
               isSaving
@@ -1014,19 +1025,19 @@ export function ClientDetailScreen() {
               || m01Case?.lifecycle_status === "archived"
             }
           >
-            {isSaving ? "Saving Profile..." : "Save Profile"}
+            {isSaving ? "שומר פרופיל..." : "שמירת פרופיל"}
           </button>
         </fieldset>
       </form>
       {saveSuccessMessage ? <p>{saveSuccessMessage}</p> : null}
       {saveErrorMessage ? (
         <>
-          <p>Unable to save profile.</p>
+          <p>לא ניתן לשמור את הפרופיל.</p>
           <pre>{saveErrorMessage}</pre>
         </>
       ) : null}
       <section aria-labelledby="retirement-planning-data-matrix-heading">
-        <h3 id="retirement-planning-data-matrix-heading">Retirement Planning Data Matrix</h3>
+        <h3 id="retirement-planning-data-matrix-heading">מפת נתוני תכנון הפרישה</h3>
         <ul>
           <li>
             <RetirementPlanningFactsSection clientId={parsedClientId} />
@@ -1043,34 +1054,34 @@ export function ClientDetailScreen() {
           <li>
             <RetirementPlanningConsolidatedReviewSection clientId={parsedClientId} />
           </li>
-          <li>Documents</li>
-          <li>Calculated Artifacts</li>
-          <li>Workflow Status</li>
+          <li>מסמכים</li>
+          <li>תוצרים מחושבים</li>
+          <li>מצב תהליך העבודה</li>
         </ul>
       </section>
       <section aria-labelledby="clearinghouse-snapshots-heading">
-        <h3 id="clearinghouse-snapshots-heading">Clearinghouse Snapshots</h3>
+        <h3 id="clearinghouse-snapshots-heading">תמונות מצב מהמסלקה</h3>
         {collectionLoadErrorMessage ? (
           <>
-            <p>Unable to load collection metadata.</p>
+            <p>לא ניתן לטעון את נתוני האיסוף.</p>
             <pre>{collectionLoadErrorMessage}</pre>
           </>
         ) : null}
         <form onSubmit={handleCreateSnapshot}>
           <p>
-            <label htmlFor="snapshot-import-date">Snapshot Import Date</label>
-            <input
+            <label htmlFor="snapshot-import-date">תאריך קליטת תמונת המצב</label>
+            <HebrewDateInput
               id="snapshot-import-date"
-              type="date"
+              ariaLabel="תאריך קליטת תמונת המצב"
               value={snapshotImportDate}
-              onChange={(event) => {
-                setSnapshotImportDate(event.target.value);
+              onChange={(value) => {
+                setSnapshotImportDate(value);
                 setSnapshotSaveSuccessMessage(null);
               }}
             />
           </p>
           <p>
-            <label htmlFor="snapshot-source-type">Snapshot Source Type</label>
+            <label htmlFor="snapshot-source-type">סוג מקור של תמונת המצב</label>
             <input
               id="snapshot-source-type"
               value={snapshotSourceType}
@@ -1081,7 +1092,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="snapshot-source-file">Snapshot Source File</label>
+            <label htmlFor="snapshot-source-file">קובץ המקור של תמונת המצב</label>
             <input
               id="snapshot-source-file"
               value={snapshotSourceFile}
@@ -1092,7 +1103,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="snapshot-collection-status">Snapshot Collection Status</label>
+            <label htmlFor="snapshot-collection-status">מצב איסוף תמונת המצב</label>
             <input
               id="snapshot-collection-status"
               value={snapshotCollectionStatus}
@@ -1103,7 +1114,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="snapshot-collection-notes">Snapshot Collection Notes</label>
+            <label htmlFor="snapshot-collection-notes">הערות לאיסוף תמונת המצב</label>
             <textarea
               id="snapshot-collection-notes"
               value={snapshotCollectionNotes}
@@ -1114,29 +1125,29 @@ export function ClientDetailScreen() {
             />
           </p>
           <button type="submit" disabled={isSavingSnapshot || collectionLoadErrorMessage !== null}>
-            {isSavingSnapshot ? "Registering Snapshot..." : "Register Snapshot"}
+            {isSavingSnapshot ? "רושם תמונת מצב..." : "רישום תמונת מצב"}
           </button>
         </form>
         {snapshotSaveSuccessMessage ? <p>{snapshotSaveSuccessMessage}</p> : null}
         {snapshotSaveErrorMessage ? (
           <>
-            <p>Unable to register clearinghouse snapshot.</p>
+            <p>לא ניתן לרשום את תמונת המצב מהמסלקה.</p>
             <pre>{snapshotSaveErrorMessage}</pre>
           </>
         ) : null}
         {clearinghouseSnapshots.length === 0 ? (
-          <p>No clearinghouse snapshots registered.</p>
+          <p>לא נרשמו תמונות מצב מהמסלקה.</p>
         ) : (
           <ul>
             {clearinghouseSnapshots.map((snapshot) => (
               <li key={snapshot.clearinghouse_snapshot_id}>
-                {snapshot.import_date} - {snapshot.source_type} - {snapshot.source_file} -{" "}
-                {snapshot.collection_status}
+                {formatIsoDate(snapshot.import_date)} - {snapshot.source_type} - {snapshot.source_file} -{" "}
+                {heLabel(snapshot.collection_status)}
                 {snapshot.collection_notes ? ` - ${snapshot.collection_notes}` : ""}
-                <p>Verification Status: {snapshot.verification_status}</p>
+                <p>מצב אימות: {heLabel(snapshot.verification_status)}</p>
                 <p>
                   <label htmlFor={`snapshot-verification-status-${snapshot.clearinghouse_snapshot_id}`}>
-                    Snapshot Verification Status
+                    מצב אימות תמונת המצב
                   </label>
                   <input
                     id={`snapshot-verification-status-${snapshot.clearinghouse_snapshot_id}`}
@@ -1153,7 +1164,7 @@ export function ClientDetailScreen() {
                 </p>
                 <p>
                   <label htmlFor={`snapshot-verification-notes-${snapshot.clearinghouse_snapshot_id}`}>
-                    Snapshot Verification Notes
+                    הערות אימות לתמונת המצב
                   </label>
                   <textarea
                     id={`snapshot-verification-notes-${snapshot.clearinghouse_snapshot_id}`}
@@ -1175,7 +1186,7 @@ export function ClientDetailScreen() {
                     void handleUpdateSnapshotVerification(snapshot);
                   }}
                 >
-                  Save Snapshot Verification
+                  שמירת אימות תמונת המצב
                 </button>
               </li>
             ))}
@@ -1183,10 +1194,10 @@ export function ClientDetailScreen() {
         )}
       </section>
       <section aria-labelledby="retirement-documents-heading">
-        <h3 id="retirement-documents-heading">Retirement Planning Documents</h3>
+        <h3 id="retirement-documents-heading">מסמכי תכנון פרישה</h3>
         <form onSubmit={handleCreateDocument}>
           <p>
-            <label htmlFor="document-type">Document Type</label>
+            <label htmlFor="document-type">סוג מסמך</label>
             <input
               id="document-type"
               value={documentType}
@@ -1197,7 +1208,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="document-source-type">Document Source Type</label>
+            <label htmlFor="document-source-type">סוג מקור המסמך</label>
             <input
               id="document-source-type"
               value={documentSourceType}
@@ -1208,7 +1219,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="document-source-file">Document Source File</label>
+            <label htmlFor="document-source-file">קובץ מקור המסמך</label>
             <input
               id="document-source-file"
               value={documentSourceFile}
@@ -1219,19 +1230,19 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="document-collection-date">Document Collection Date</label>
-            <input
+            <label htmlFor="document-collection-date">תאריך איסוף המסמך</label>
+            <HebrewDateInput
               id="document-collection-date"
-              type="date"
+              ariaLabel="תאריך איסוף המסמך"
               value={documentCollectionDate}
-              onChange={(event) => {
-                setDocumentCollectionDate(event.target.value);
+              onChange={(value) => {
+                setDocumentCollectionDate(value);
                 setDocumentSaveSuccessMessage(null);
               }}
             />
           </p>
           <p>
-            <label htmlFor="document-collection-status">Document Collection Status</label>
+            <label htmlFor="document-collection-status">מצב איסוף המסמך</label>
             <input
               id="document-collection-status"
               value={documentCollectionStatus}
@@ -1242,7 +1253,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="document-collection-notes">Document Collection Notes</label>
+            <label htmlFor="document-collection-notes">הערות לאיסוף המסמך</label>
             <textarea
               id="document-collection-notes"
               value={documentCollectionNotes}
@@ -1253,29 +1264,29 @@ export function ClientDetailScreen() {
             />
           </p>
           <button type="submit" disabled={isSavingDocument || collectionLoadErrorMessage !== null}>
-            {isSavingDocument ? "Registering Document..." : "Register Document"}
+            {isSavingDocument ? "רושם מסמך..." : "רישום מסמך"}
           </button>
         </form>
         {documentSaveSuccessMessage ? <p>{documentSaveSuccessMessage}</p> : null}
         {documentSaveErrorMessage ? (
           <>
-            <p>Unable to register retirement planning document.</p>
+            <p>לא ניתן לרשום את מסמך תכנון הפרישה.</p>
             <pre>{documentSaveErrorMessage}</pre>
           </>
         ) : null}
         {retirementPlanningDocuments.length === 0 ? (
-          <p>No retirement planning documents registered.</p>
+          <p>לא נרשמו מסמכי תכנון פרישה.</p>
         ) : (
           <ul>
             {retirementPlanningDocuments.map((document) => (
               <li key={document.document_id}>
-                {document.collection_date} - {document.document_type} - {document.source_file} -{" "}
-                {document.collection_status}
+                {formatIsoDate(document.collection_date)} - {document.document_type} - {document.source_file} -{" "}
+                {heLabel(document.collection_status)}
                 {document.collection_notes ? ` - ${document.collection_notes}` : ""}
-                <p>Verification Status: {document.verification_status}</p>
+                <p>מצב אימות: {heLabel(document.verification_status)}</p>
                 <p>
                   <label htmlFor={`document-verification-status-${document.document_id}`}>
-                    Document Verification Status
+                    מצב אימות המסמך
                   </label>
                   <input
                     id={`document-verification-status-${document.document_id}`}
@@ -1291,7 +1302,7 @@ export function ClientDetailScreen() {
                 </p>
                 <p>
                   <label htmlFor={`document-verification-notes-${document.document_id}`}>
-                    Document Verification Notes
+                    הערות אימות למסמך
                   </label>
                   <textarea
                     id={`document-verification-notes-${document.document_id}`}
@@ -1311,7 +1322,7 @@ export function ClientDetailScreen() {
                     void handleUpdateDocumentVerification(document);
                   }}
                 >
-                  Save Document Verification
+                  שמירת אימות המסמך
                 </button>
               </li>
             ))}
@@ -1321,15 +1332,15 @@ export function ClientDetailScreen() {
       {verificationSaveMessage ? <p>{verificationSaveMessage}</p> : null}
       {verificationErrorMessage ? (
         <>
-          <p>Unable to save verification status.</p>
+          <p>לא ניתן לשמור את מצב האימות.</p>
           <pre>{verificationErrorMessage}</pre>
         </>
       ) : null}
       <section aria-labelledby="missing-data-heading">
-        <h3 id="missing-data-heading">Missing Data Tracking</h3>
+        <h3 id="missing-data-heading">מעקב אחר מידע חסר</h3>
         <form onSubmit={handleCreateMissingItem}>
           <p>
-            <label htmlFor="missing-item-type">Missing Item Type</label>
+            <label htmlFor="missing-item-type">סוג פריט חסר</label>
             <select
               id="missing-item-type"
               value={missingItemType}
@@ -1338,12 +1349,12 @@ export function ClientDetailScreen() {
                 setMissingSaveSuccessMessage(null);
               }}
             >
-              <option value="data">data</option>
-              <option value="document">document</option>
+              <option value="data">נתון</option>
+              <option value="document">מסמך</option>
             </select>
           </p>
           <p>
-            <label htmlFor="missing-item-label">Missing Item Label</label>
+            <label htmlFor="missing-item-label">תיאור הפריט החסר</label>
             <input
               id="missing-item-label"
               value={missingItemLabel}
@@ -1354,7 +1365,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="missing-status">Missing Status</label>
+            <label htmlFor="missing-status">מצב הפריט החסר</label>
             <input
               id="missing-status"
               value={missingStatus}
@@ -1365,7 +1376,7 @@ export function ClientDetailScreen() {
             />
           </p>
           <p>
-            <label htmlFor="missing-notes">Missing Notes</label>
+            <label htmlFor="missing-notes">הערות לפריט החסר</label>
             <textarea
               id="missing-notes"
               value={missingNotes}
@@ -1376,23 +1387,23 @@ export function ClientDetailScreen() {
             />
           </p>
           <button type="submit" disabled={isSavingMissingItem || collectionLoadErrorMessage !== null}>
-            {isSavingMissingItem ? "Registering Missing Item..." : "Register Missing Item"}
+            {isSavingMissingItem ? "רושם פריט חסר..." : "רישום פריט חסר"}
           </button>
         </form>
         {missingSaveSuccessMessage ? <p>{missingSaveSuccessMessage}</p> : null}
         {missingSaveErrorMessage ? (
           <>
-            <p>Unable to register missing item.</p>
+            <p>לא ניתן לרשום את הפריט החסר.</p>
             <pre>{missingSaveErrorMessage}</pre>
           </>
         ) : null}
         {missingDataItems.length === 0 ? (
-          <p>No missing items registered.</p>
+          <p>לא נרשמו פריטים חסרים.</p>
         ) : (
           <ul>
             {missingDataItems.map((item) => (
               <li key={item.missing_data_item_id}>
-                {item.missing_item_type} - {item.missing_item_label} - {item.missing_status}
+                {heLabel(item.missing_item_type)} - {item.missing_item_label} - {heLabel(item.missing_status)}
                 {item.notes ? ` - ${item.notes}` : ""}
               </li>
             ))}
@@ -1404,7 +1415,7 @@ export function ClientDetailScreen() {
           to={`/clients/${validRouteClientId}/pension-intake`}
           state={{ clientName: client.full_name }}
         >
-          M02 Pension Intake
+          M02 — קליטת נתוני פנסיה
         </Link>
       </p>
       <p>
@@ -1412,7 +1423,7 @@ export function ClientDetailScreen() {
           to={`/clients/${validRouteClientId}/source-review`}
           state={{ clientName: client.full_name }}
         >
-          M03 Source Review
+          M03 — בדיקת מקור
         </Link>
       </p>
       <p>
@@ -1420,7 +1431,7 @@ export function ClientDetailScreen() {
           to={`/clients/${validRouteClientId}/classification`}
           state={{ clientName: client.full_name }}
         >
-          M04 Classification
+          M04 — סיווג
         </Link>
       </p>
       <p>
@@ -1428,27 +1439,27 @@ export function ClientDetailScreen() {
           to={`/clients/${validRouteClientId}/pension-ledger`}
           state={{ clientName: client.full_name }}
         >
-          M05 Pension Balance Ledger
+          M05 — כרטסת יתרות פנסיה
         </Link>
         <Link
           className="button-link"
           to={`/clients/${validRouteClientId}/pension-conversion`}
         >
-          M06 Pension/Capital Conversion
+          M06 — המרת פנסיה והון
         </Link>
         <Link
           className="button-link"
           to={`/clients/${validRouteClientId}/monthly-cashflow`}
           state={{ clientName: client.full_name }}
         >
-          M09 Deterministic Monthly Cashflow
+          M09 — תזרים מזומנים חודשי
         </Link>
         <Link
           className="button-link"
           to={`/clients/${validRouteClientId}/scenario-comparison`}
           state={{ clientName: client.full_name }}
         >
-          M10 Scenario Comparison
+          M10 — השוואת תרחישים
         </Link>
       </p>
       <p>
@@ -1456,7 +1467,7 @@ export function ClientDetailScreen() {
           to={`/clients/${validRouteClientId}/fixation/workspace`}
           state={{ clientName: client.full_name }}
         >
-          Fixation Activity Workspace
+          סביבת עבודה לקיבוע זכויות
         </Link>
       </p>
       <p>
@@ -1464,11 +1475,11 @@ export function ClientDetailScreen() {
           to={`/clients/${validRouteClientId}/employment-history`}
           state={{ clientName: client.full_name }}
         >
-          Employment History
+          היסטוריית תעסוקה
         </Link>
       </p>
       <p>
-        <Link to="/clients">Back to client list</Link>
+        <Link to="/clients">חזרה לרשימת הלקוחות</Link>
       </p>
     </section>
   );

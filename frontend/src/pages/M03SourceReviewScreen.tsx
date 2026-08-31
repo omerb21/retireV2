@@ -7,8 +7,9 @@ import {
   type M03Annotation, type M03Revision, type M03Target
 } from "../api/m03ReviewApi";
 import { useClientContextGeneration } from "../hooks/useClientContextGeneration";
+import { heLabel, technicalCode } from "../i18n/he";
 
-const message = (error: unknown) => error instanceof Error ? error.message : "M03 request failed";
+const message = (error: unknown) => error instanceof Error ? error.message : "בקשת M03 נכשלה";
 
 export function M03SourceReviewScreen() {
   const { clientId: raw } = useParams();
@@ -90,54 +91,56 @@ export function M03SourceReviewScreen() {
     }
   };
 
-  if (clientId === null) return <p>Invalid client ID.</p>;
+  if (clientId === null) return <p>מזהה הלקוח אינו תקין.</p>;
   const archived = client?.m01_case?.lifecycle_status === "archived";
   const current = target?.current_revision ?? null;
   return (
     <section>
-      <h2>M03 Source Review</h2>
-      <p>Review eligibility is technical only. It is not parsing, classification, professional authority, calculation readiness, M04 acceptance, or M05 readiness.</p>
-      {archived ? <p>Archived case: review and annotation history are read-only.</p> : null}
-      {loading ? <p>Loading M03 review...</p> : null}
+      <h2>M03 — בדיקת מקור</h2>
+      <p>בדיקת המקור היא שלב טכני בלבד ואינה סיווג, אישור מקצועי או מוכנות לחישוב.</p>
+      {archived ? <p>התיק בארכיון: הבדיקה וההערות זמינות לקריאה בלבד.</p> : null}
+      {loading ? <p>טוען את בדיקת M03...</p> : null}
       {error ? <pre>{error}</pre> : null}
-      <h3>Review candidates</h3>
-      {candidates.length === 0 ? <p>No M02 records currently accepted for review.</p> : (
+      <h3>רשומות הממתינות לבדיקה</h3>
+      {candidates.length === 0 ? <p>אין כרגע רשומות M02 שהתקבלו לבדיקה.</p> : (
         <ul>{candidates.map((row) => <li key={row.intake_id}>
-          <button type="button" onClick={() => void loadTarget(row.intake_id)}>
-            {row.target_kind === "manual_record_review" ? "Manual record" : "Uploaded source"} — {row.intake_id}
+          <button type="button" aria-label={`${row.target_kind === "manual_record_review" ? "רשומה ידנית" : "מקור שהועלה"} — ${row.intake_id}`} onClick={() => void loadTarget(row.intake_id)}>
+            {heLabel(row.target_kind)} — {row.intake_id}
           </button>
         </li>)}</ul>
       )}
-      <label>Open retained review by M02 intake ID
-        <input value={retainedIntakeId} onChange={(event) => setRetainedIntakeId(event.target.value)} />
+      <label>פתיחת בדיקה היסטורית לפי מזהה קליטת M02
+        <input aria-label="פתיחת בדיקה שמורה לפי מזהה קליטת M02" value={retainedIntakeId} onChange={(event) => setRetainedIntakeId(event.target.value)} />
       </label>
-      <button type="button" disabled={!retainedIntakeId.trim()} onClick={() => void loadTarget(retainedIntakeId.trim())}>
-        Open retained review
+      <button type="button" aria-label="פתיחת בדיקה שמורה" disabled={!retainedIntakeId.trim()} onClick={() => void loadTarget(retainedIntakeId.trim())}>
+        פתיחת בדיקה היסטורית
       </button>
       {target ? <section>
-        <h3>Review target</h3>
-        <p>Kind: {target.target_kind}; M02 lifecycle: {target.m02_lifecycle_status}</p>
+        <h3>פרטי הרשומה הנבדקת</h3>
+        <p>סוג: {heLabel(target.target_kind)}; מצב M02: {heLabel(target.m02_lifecycle_status)}</p>
         {target.target_kind === "manual_record_review"
-          ? <p>Manual record: no external source, blob, or checksum evidence.</p>
-          : <><p>Source: {target.source_id}; blob: {target.blob_id}; checksum: {target.sha256_checksum}</p>
-            <button type="button" onClick={() => target.source_id && void downloadM03Source(clientId, target.source_id)}>Download preserved M02 source</button></>}
-        <p>Eligibility: {target.eligible ? "eligible for a separately authorized downstream transformation" : `not eligible — ${target.exclusion_reason}`}</p>
+          ? <p>רשומה ידנית: אין קובץ מקור חיצוני או checksum.</p>
+          : <><p>מקור: {target.source_id}; קובץ נתונים: {target.blob_id}; checksum: {target.sha256_checksum}</p>
+            <button type="button" onClick={() => target.source_id && void downloadM03Source(clientId, target.source_id)}>הורדת מקור M02 השמור</button></>}
+        <p>מצב נוכחי: {target.eligible ? "הבדיקה אושרה והיא עדכנית" : heLabel(target.exclusion_reason)}
+        </p>
+        {!target.eligible && target.exclusion_reason ? <small>{technicalCode(target.exclusion_reason)}</small> : null}
         <fieldset disabled={archived || submitting}>
-          {!current ? <button type="button" onClick={() => void mutate(() => startM03Review(clientId, target.intake_id))}>Start review</button> : null}
-          <label>Decision/reopen reason <textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          {!current ? <button type="button" aria-label="התחלת בדיקה" onClick={() => void mutate(() => startM03Review(clientId, target.intake_id))}>התחלת בדיקה</button> : null}
+          <label>נימוק להחלטה או לפתיחה מחדש <textarea aria-label="נימוק להחלטה או לפתיחה מחדש" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
           {current?.state === "under_review" ? <>
-            <button type="button" disabled={!reason.trim()} onClick={() => void mutate(() => decideM03Review(clientId, target.intake_id, "accept", reason, current.revision_id))}>Accept review</button>
-            <button type="button" disabled={!reason.trim()} onClick={() => void mutate(() => decideM03Review(clientId, target.intake_id, "reject", reason, current.revision_id))}>Reject review</button>
+            <button type="button" aria-label="אישור הבדיקה" disabled={!reason.trim()} onClick={() => void mutate(() => decideM03Review(clientId, target.intake_id, "accept", reason, current.revision_id))}>אישור הבדיקה</button>
+            <button type="button" aria-label="דחיית הבדיקה" disabled={!reason.trim()} onClick={() => void mutate(() => decideM03Review(clientId, target.intake_id, "reject", reason, current.revision_id))}>דחיית הבדיקה</button>
           </> : null}
-          {current && current.state !== "under_review" ? <button type="button" disabled={!reason.trim()} onClick={() => void mutate(() => decideM03Review(clientId, target.intake_id, "reopen", reason, current.revision_id))}>Reopen review</button> : null}
+          {current && current.state !== "under_review" ? <button type="button" aria-label="פתיחת הבדיקה מחדש" disabled={!reason.trim()} onClick={() => void mutate(() => decideM03Review(clientId, target.intake_id, "reopen", reason, current.revision_id))}>פתיחת הבדיקה מחדש</button> : null}
           {current ? <>
-            <h4>Add annotation</h4>
-            <label>Topic <input value={topic} onChange={(event) => setTopic(event.target.value)} /></label>
-            <label>Note <textarea value={note} onChange={(event) => setNote(event.target.value)} /></label>
-            <label>Reason <textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-            <label>Supersede existing annotation
-              <select value={supersedesAnnotationId} onChange={(event) => setSupersedesAnnotationId(event.target.value)}>
-                <option value="">None — add a new annotation</option>
+            <h4>הוספת הערה</h4>
+            <label>נושא <input aria-label="נושא" value={topic} onChange={(event) => setTopic(event.target.value)} /></label>
+            <label>הערה <textarea aria-label="הערה" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+            <label>נימוק <textarea aria-label="נימוק" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+            <label>החלפת הערה קיימת
+              <select aria-label="החלפת הערה קיימת" value={supersedesAnnotationId} onChange={(event) => setSupersedesAnnotationId(event.target.value)}>
+                <option value="">ללא — הוספת הערה חדשה</option>
                 {annotations.map((row) => (
                   <option key={row.annotation_id} value={row.annotation_id}>
                     {row.topic}: {row.annotation_id}
@@ -151,18 +154,18 @@ export function M03SourceReviewScreen() {
               note,
               reason,
               ...(supersedesAnnotationId ? { supersedes_annotation_id: supersedesAnnotationId } : {}),
-            }))}>Save annotation</button>
+            }))} aria-label="שמירת הערה">שמירת הערה</button>
           </> : null}
         </fieldset>
-        <h4>Immutable review history</h4>
-        <ol>{history.map((row) => <li key={row.revision_id}>#{row.revision_sequence} {row.state} — {row.reason ?? "started"} — {row.actor}</li>)}</ol>
-        <h4>Annotation history</h4>
+        <h4>היסטוריית בדיקה בלתי ניתנת לשינוי</h4>
+        <ol>{history.map((row) => <li key={row.revision_id}>#{row.revision_sequence} {heLabel(row.state)} — {row.reason ?? "התחלה"} — {row.actor}</li>)}</ol>
+        <h4>היסטוריית הערות</h4>
         <ul>{annotations.map((row) => <li key={row.annotation_id}>
           {row.topic}: {row.note} — {row.reason}
-          {row.supersedes_annotation_id ? ` — supersedes ${row.supersedes_annotation_id}` : ""}
+          {row.supersedes_annotation_id ? ` — מחליפה את ${row.supersedes_annotation_id}` : ""}
         </li>)}</ul>
       </section> : null}
-      <p><Link to={`/clients/${clientId}`}>Back to M01 client case</Link></p>
+      <p><Link to={`/clients/${clientId}`}>חזרה לתיק הלקוח M01</Link></p>
     </section>
   );
 }

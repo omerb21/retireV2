@@ -504,13 +504,18 @@ def test_material_m02_change_preserves_history_and_requires_m03_m04_rereview(api
         "/api/clients/1/m04/targets/manual-1/eligibility"
     ).json()
     assert still_stale["eligible_for_m05"] is False
-    assert still_stale["exclusion_reason"] == "m03_ineligible"
+    assert still_stale["exclusion_reason"] == "m04_revalidation_required"
     assert still_stale["m03_revision_id"] == accepted_m03_b["revision_id"]
 
     reopened_m04 = client.post(
-        "/api/clients/1/m04/targets/manual-1/reopen",
+        "/api/clients/1/m04/targets/manual-1/start-revalidation",
         json=_reason(accepted_a["revision_id"], "classify version B"),
     ).json()
+    assert reopened_m04["action_type"] == "start_revalidation"
+    assert (
+        reopened_m04["input_snapshot"]["accepted_m03_revision_id"]
+        == accepted_m03_b["revision_id"]
+    )
     proposal_b = client.post(
         "/api/clients/1/m04/targets/manual-1/proposal",
         json={"expected_current_revision_id": reopened_m04["revision_id"]},
@@ -568,6 +573,101 @@ def test_old_m04_proposal_cannot_be_accepted_after_material_m02_change(api) -> N
     assert client.get(
         "/api/clients/1/m04/targets/manual-1/history"
     ).json() == history_before
+
+
+def test_stale_proposed_can_start_append_only_revalidation_against_current_m03(api) -> None:
+    client, _sessions = api
+    started = client.post("/api/clients/1/m04/targets/manual-1/start").json()
+    proposal_a = client.post(
+        "/api/clients/1/m04/targets/manual-1/proposal",
+        json={"expected_current_revision_id": started["revision_id"]},
+    ).json()
+    m03_a = client.get(
+        "/api/clients/1/m03/targets/manual-1"
+    ).json()["current_revision"]
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "metadata_review"},
+    ).raise_for_status()
+    client.put(
+        "/api/clients/1/m02/intakes/manual-1",
+        json={
+            "declared_statement_date": "2026-07-01",
+            "declared_account_reference": "A-001",
+            "declared_total_balance_amount": "1000.00",
+            "declared_component_values": [
+                {"label": "Updated contributions", "value": "1000.00"}
+            ],
+        },
+    ).raise_for_status()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-1/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+    reopened_m03 = client.post(
+        "/api/clients/1/m03/targets/manual-1/reopen",
+        json={
+            "reason": "review current evidence",
+            "expected_current_revision_id": m03_a["revision_id"],
+        },
+    ).json()
+    accepted_m03_b = client.post(
+        "/api/clients/1/m03/targets/manual-1/accept",
+        json={
+            "reason": "accept current evidence",
+            "expected_current_revision_id": reopened_m03["revision_id"],
+        },
+    ).json()
+
+    gate = client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()
+    assert gate["exclusion_reason"] == "m04_revalidation_required"
+    m05_candidate = next(
+        row
+        for row in client.get("/api/clients/1/m05/candidates").json()
+        if row["intake_id"] == "manual-1"
+    )
+    assert m05_candidate["eligible"] is False
+    assert m05_candidate["exclusion_reason"] == "upstream_revalidation_required"
+    for action in ("accept", "reject"):
+        blocked = client.post(
+            f"/api/clients/1/m04/targets/manual-1/{action}",
+            json=_reason(proposal_a["revision_id"], "stale decision is forbidden"),
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "M04_REVALIDATION_REQUIRED"
+
+    history_before = client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json()
+    revalidation = client.post(
+        "/api/clients/1/m04/targets/manual-1/start-revalidation",
+        json=_reason(proposal_a["revision_id"], "bind classification to current M03"),
+    )
+    assert revalidation.status_code == 201
+    current = revalidation.json()
+    assert current["state"] == "under_review"
+    assert current["action_type"] == "start_revalidation"
+    assert current["predecessor_revision_id"] == proposal_a["revision_id"]
+    assert current["historical_revision_id"] == proposal_a["revision_id"]
+    assert (
+        current["input_snapshot"]["accepted_m03_revision_id"]
+        == accepted_m03_b["revision_id"]
+    )
+    assert current["components"] == []
+    history_after = client.get(
+        "/api/clients/1/m04/targets/manual-1/history"
+    ).json()
+    assert history_after[:-1] == history_before
+    assert history_after[-1]["revision_id"] == current["revision_id"]
+    preview = client.get(
+        "/api/clients/1/m04/targets/manual-1/preview"
+    )
+    assert preview.status_code == 200
+    assert client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()["eligible_for_m05"] is False
 
 
 def test_foreign_ids_and_caller_forgery_are_rejected(api) -> None:

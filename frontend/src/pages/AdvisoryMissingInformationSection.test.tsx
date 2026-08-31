@@ -164,6 +164,11 @@ describe("AdvisoryMissingInformationSection", () => {
       "resolved",
       "no longer relevant"
     ]);
+    expect(Array.from(statusSelect.options).map((option) => option.textContent)).toEqual([
+      "פתוח",
+      "נפתר",
+      "אינו רלוונטי עוד"
+    ]);
     fireEvent.change(statusSelect, { target: { value: "no longer relevant" } });
     fireEvent.click(section.getByRole("button", { name: "ביטול העריכה" }));
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "PUT")).toBe(false);

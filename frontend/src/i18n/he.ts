@@ -1,5 +1,6 @@
 const LABELS: Record<string, string> = {
   under_review: "בבדיקה", proposed: "הצעה ממתינה להחלטה", accepted: "אושר", resolved: "נפתר",
+  open: "פתוח",
   unresolved: "לא הוכרע", rejected: "נדחה", superseded: "הוחלף",
   draft: "טיוטה", review: "בדיקה", reconciled: "מותאם", warning_reviewed: "האזהרות נבדקו",
   blocked: "חסום", manual_record_review: "בדיקת רשומה ידנית",

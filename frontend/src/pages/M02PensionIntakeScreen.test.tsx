@@ -269,9 +269,9 @@ describe("PKG-007 M02 controlled pension intake", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" }));
 
-    expect(await screen.findByText("source.dat: preserved")).toBeInTheDocument();
+    expect(await screen.findByText("source.dat: נשמר")).toBeInTheDocument();
     expect(screen.getByText(/M02_STORAGE_CLEANUP_FAILED/)).toBeInTheDocument();
-    expect(screen.getByText(/statement.pdf: failed — M02_SIGNATURE_MISMATCH/)).toBeInTheDocument();
+    expect(screen.getByText(/statement.pdf: נכשל — M02_SIGNATURE_MISMATCH/)).toBeInTheDocument();
     expect(screen.getByText(/תוכן הקובץ אינו מפוענח ב־M02/)).toBeInTheDocument();
   });
 
@@ -398,7 +398,7 @@ describe("PKG-007 M02 controlled pension intake", () => {
       }],
       request_error: null
     }));
-    expect(await screen.findByText(/new.dat: failed — M02_UNSUPPORTED_BINARY_TEXT/)).toBeInTheDocument();
+    expect(await screen.findByText(/new.dat: נכשל — M02_UNSUPPORTED_BINARY_TEXT/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "שמירת הקבצים שנבחרו" })).toBeEnabled();
   });
 

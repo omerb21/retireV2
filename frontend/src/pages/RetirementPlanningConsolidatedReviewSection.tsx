@@ -17,6 +17,8 @@ import {
   type RecurringIncomeItem,
   type RetirementTimingWorkIntentionItem
 } from "../api/clientsApi";
+import { heLabel } from "../i18n/he";
+import { formatIsoDate } from "../utils/dateFormat";
 
 type RetirementPlanningConsolidatedReviewSectionProps = {
   clientId: number;
@@ -47,27 +49,27 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unable to load retirement planning consolidated review.";
+  return "לא ניתן לטעון את הסקירה המאוחדת לתכנון פרישה.";
 }
 
 function displayValue(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") {
-    return "Not recorded";
+    return "לא תועד";
   }
 
   return String(value);
 }
 
 function advisoryPlanningDomain(value: string | null): string {
-  return value ?? "No planning-domain classification recorded";
+  return value === null ? "לא תועד סיווג לתחום תכנון" : heLabel(value);
 }
 
 function advisoryStatus(value: string | null): string {
-  return value ?? "No advisory status recorded";
+  return value === null ? "לא תועד מצב ייעוץ" : heLabel(value);
 }
 
 function advisoryNeutralReason(value: string | null): string {
-  return value ?? "No neutral reason recorded";
+  return value ?? "לא תועדה סיבה ניטרלית";
 }
 
 function headingId(heading: string): string {
@@ -91,10 +93,10 @@ function ReadOnlyGroup<T>({
     <section aria-labelledby={id}>
       <h4 id={id}>{heading}</h4>
       {state.isLoading ? (
-        <p>Loading {heading.toLowerCase()}...</p>
+        <p>טוען {heading}…</p>
       ) : state.errorMessage !== null ? (
         <>
-          <p>Unable to load {heading.toLowerCase()}.</p>
+          <p>לא ניתן לטעון {heading}.</p>
           <pre>{state.errorMessage}</pre>
         </>
       ) : state.items.length === 0 ? (
@@ -164,130 +166,130 @@ export function RetirementPlanningConsolidatedReviewSection({
 
   return (
     <section aria-labelledby="retirement-planning-consolidated-review-heading">
-      <h3 id="retirement-planning-consolidated-review-heading">Retirement Planning Consolidated Review</h3>
+      <h3 id="retirement-planning-consolidated-review-heading">סקירה מאוחדת לתכנון פרישה</h3>
       <ReadOnlyGroup
-        heading="Pension Holdings"
+        heading="אחזקות פנסיוניות"
         state={pensionHoldings}
-        emptyMessage="No pension holdings recorded."
+        emptyMessage="לא תועדו אחזקות פנסיוניות."
         renderItem={(item) => (
           <li key={item.id}>
             <article>
               <h5>{displayValue(item.provider_name)}</h5>
-              <p>Product Type: {displayValue(item.product_type)}</p>
-              <p>Product Name: {displayValue(item.product_name)}</p>
-              <p>Account Reference: {displayValue(item.account_reference)}</p>
-              <p>Known Balance Amount: {displayValue(item.known_balance_amount)}</p>
-              <p>Balance As Of Date: {displayValue(item.balance_as_of_date)}</p>
-              <p>Known Monthly Pension Amount: {displayValue(item.known_monthly_pension_amount)}</p>
-              <p>Pension Amount As Of Date: {displayValue(item.pension_amount_as_of_date)}</p>
+              <p>סוג מוצר: {heLabel(item.product_type)}</p>
+              <p>שם מוצר: {displayValue(item.product_name)}</p>
+              <p>אסמכתת חשבון: {displayValue(item.account_reference)}</p>
+              <p>יתרה ידועה: {displayValue(item.known_balance_amount)}</p>
+              <p>תאריך נכונות היתרה: {formatIsoDate(item.balance_as_of_date) || "לא תועד"}</p>
+              <p>קצבה חודשית ידועה: {displayValue(item.known_monthly_pension_amount)}</p>
+              <p>תאריך נכונות הקצבה: {formatIsoDate(item.pension_amount_as_of_date) || "לא תועד"}</p>
             </article>
           </li>
         )}
       />
       <ReadOnlyGroup
-        heading="Capital Assets"
+        heading="נכסי הון"
         state={capitalAssets}
-        emptyMessage="No capital assets recorded."
+        emptyMessage="לא תועדו נכסי הון."
         renderItem={(item) => (
           <li key={item.id}>
             <article>
               <h5>{displayValue(item.asset_description)}</h5>
-              <p>Asset Category: {displayValue(item.asset_category)}</p>
-              <p>Known Value Amount: {displayValue(item.known_value_amount)}</p>
-              <p>Value As Of Date: {displayValue(item.value_as_of_date)}</p>
-              <p>Liquidity Note: {displayValue(item.liquidity_note)}</p>
-              <p>Restriction Note: {displayValue(item.restriction_note)}</p>
+              <p>קטגוריית נכס: {heLabel(item.asset_category)}</p>
+              <p>שווי ידוע: {displayValue(item.known_value_amount)}</p>
+              <p>תאריך נכונות השווי: {formatIsoDate(item.value_as_of_date) || "לא תועד"}</p>
+              <p>הערת נזילות: {displayValue(item.liquidity_note)}</p>
+              <p>הערת מגבלה: {displayValue(item.restriction_note)}</p>
             </article>
           </li>
         )}
       />
       <ReadOnlyGroup
-        heading="Recurring Income"
+        heading="הכנסות שוטפות"
         state={recurringIncomes}
-        emptyMessage="No recurring income recorded."
+        emptyMessage="לא תועדו הכנסות שוטפות."
         renderItem={(item) => (
           <li key={item.id}>
             <article>
               <h5>{displayValue(item.description)}</h5>
-              <p>Income Category: {displayValue(item.income_category)}</p>
-              <p>Amount: {displayValue(item.amount)}</p>
-              <p>Amount Basis: {displayValue(item.amount_basis)}</p>
-              <p>Frequency: {displayValue(item.frequency)}</p>
-              <p>Continuation Status: {displayValue(item.continuation_status)}</p>
-              <p>Start Date: {displayValue(item.start_date)}</p>
-              <p>End Date: {displayValue(item.end_date)}</p>
+              <p>קטגוריית הכנסה: {heLabel(item.income_category)}</p>
+              <p>סכום: {displayValue(item.amount)}</p>
+              <p>בסיס הסכום: {heLabel(item.amount_basis)}</p>
+              <p>תדירות: {heLabel(item.frequency)}</p>
+              <p>מצב המשכיות: {heLabel(item.continuation_status)}</p>
+              <p>תאריך התחלה: {formatIsoDate(item.start_date) || "לא תועד"}</p>
+              <p>תאריך סיום: {formatIsoDate(item.end_date) || "לא תועד"}</p>
             </article>
           </li>
         )}
       />
       <ReadOnlyGroup
-        heading="Recurring Expenses"
+        heading="הוצאות שוטפות"
         state={recurringExpenses}
-        emptyMessage="No recurring expenses recorded."
+        emptyMessage="לא תועדו הוצאות שוטפות."
         renderItem={(item) => (
           <li key={item.id}>
             <article>
               <h5>{displayValue(item.description)}</h5>
-              <p>Expense Category: {displayValue(item.expense_category)}</p>
-              <p>Amount: {displayValue(item.amount)}</p>
-              <p>Frequency: {displayValue(item.frequency)}</p>
-              <p>Expense Type: {displayValue(item.expense_type)}</p>
-              <p>Continuation Status: {displayValue(item.continuation_status)}</p>
-              <p>Start Date: {displayValue(item.start_date)}</p>
-              <p>End Date: {displayValue(item.end_date)}</p>
+              <p>קטגוריית הוצאה: {heLabel(item.expense_category)}</p>
+              <p>סכום: {displayValue(item.amount)}</p>
+              <p>תדירות: {heLabel(item.frequency)}</p>
+              <p>סוג הוצאה: {heLabel(item.expense_type)}</p>
+              <p>מצב המשכיות: {heLabel(item.continuation_status)}</p>
+              <p>תאריך התחלה: {formatIsoDate(item.start_date) || "לא תועד"}</p>
+              <p>תאריך סיום: {formatIsoDate(item.end_date) || "לא תועד"}</p>
             </article>
           </li>
         )}
       />
       <ReadOnlyGroup
-        heading="Retirement Timing and Work Intentions"
+        heading="עיתוי פרישה וכוונות עבודה"
         state={retirementTiming}
-        emptyMessage="No retirement timing and work intentions recorded."
+        emptyMessage="לא תועדו נתוני עיתוי פרישה וכוונות עבודה."
         renderItem={(item) => (
           <li key={item.id}>
             <article>
-              <h5>{displayValue(item.timing_confidence)}</h5>
-              <p>Work After Retirement Intention: {displayValue(item.work_after_retirement_intention)}</p>
-              <p>Planned Work End Date: {displayValue(item.planned_work_end_date)}</p>
-              <p>Intended Pension Start Date: {displayValue(item.intended_pension_start_date)}</p>
-              <p>Other Known Retirement Date: {displayValue(item.other_known_retirement_date)}</p>
-              <p>Other Known Retirement Date Label: {displayValue(item.other_known_retirement_date_label)}</p>
-              <p>Anticipated Work End Date: {displayValue(item.anticipated_work_end_date)}</p>
-              <p>Work Intention Note: {displayValue(item.work_intention_note)}</p>
+              <h5>{heLabel(item.timing_confidence)}</h5>
+              <p>כוונת עבודה לאחר הפרישה: {heLabel(item.work_after_retirement_intention)}</p>
+              <p>תאריך מתוכנן לסיום העבודה: {formatIsoDate(item.planned_work_end_date) || "לא תועד"}</p>
+              <p>תאריך מיועד לתחילת הקצבה: {formatIsoDate(item.intended_pension_start_date) || "לא תועד"}</p>
+              <p>תאריך פרישה ידוע נוסף: {formatIsoDate(item.other_known_retirement_date) || "לא תועד"}</p>
+              <p>תיאור תאריך הפרישה הידוע הנוסף: {displayValue(item.other_known_retirement_date_label)}</p>
+              <p>תאריך משוער לסיום העבודה: {formatIsoDate(item.anticipated_work_end_date) || "לא תועד"}</p>
+              <p>הערת כוונת עבודה: {displayValue(item.work_intention_note)}</p>
             </article>
           </li>
         )}
       />
       <ReadOnlyGroup
-        heading="Planner Assumptions"
+        heading="הנחות מתכנן"
         state={plannerAssumptions}
-        emptyMessage="No planner assumptions recorded."
+        emptyMessage="לא תועדו הנחות מתכנן."
         renderItem={(item) => (
           <li key={item.id}>
             <article>
               <h5>{displayValue(item.title)}</h5>
-              <p>Assumption Category: {displayValue(item.assumption_category)}</p>
-              <p>Assumption Value: {displayValue(item.assumption_value_text)}</p>
-              <p>Rationale: {displayValue(item.rationale)}</p>
-              <p>Owner: {displayValue(item.owner)}</p>
-              <p>Effective Start Date: {displayValue(item.effective_start_date)}</p>
-              <p>Effective End Date: {displayValue(item.effective_end_date)}</p>
-              <p>Review Date: {displayValue(item.review_date)}</p>
+              <p>קטגוריית הנחה: {heLabel(item.assumption_category)}</p>
+              <p>ערך ההנחה: {displayValue(item.assumption_value_text)}</p>
+              <p>נימוק: {displayValue(item.rationale)}</p>
+              <p>אחראי: {heLabel(item.owner)}</p>
+              <p>תאריך תחילת תוקף: {formatIsoDate(item.effective_start_date) || "לא תועד"}</p>
+              <p>תאריך סיום תוקף: {formatIsoDate(item.effective_end_date) || "לא תועד"}</p>
+              <p>תאריך בדיקה: {formatIsoDate(item.review_date) || "לא תועד"}</p>
             </article>
           </li>
         )}
       />
       <ReadOnlyGroup
-        heading="Advisory Missing Information"
+        heading="מידע חסר לייעוץ"
         state={advisoryMissingInformation}
-        emptyMessage="No advisory missing information recorded."
+        emptyMessage="לא תועד מידע חסר לייעוץ."
         renderItem={(item) => (
           <li key={item.missing_data_item_id}>
             <article>
               <h5>{item.missing_data_item_id}</h5>
-              <p>Planning Domain: {advisoryPlanningDomain(item.planning_domain)}</p>
-              <p>Advisory Status: {advisoryStatus(item.advisory_status)}</p>
-              <p>Neutral Reason: {advisoryNeutralReason(item.neutral_reason)}</p>
+              <p>תחום תכנון: {advisoryPlanningDomain(item.planning_domain)}</p>
+              <p>מצב ייעוץ: {advisoryStatus(item.advisory_status)}</p>
+              <p>סיבה ניטרלית: {advisoryNeutralReason(item.neutral_reason)}</p>
             </article>
           </li>
         )}

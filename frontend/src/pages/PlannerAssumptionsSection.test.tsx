@@ -16,7 +16,7 @@ function jsonResponse(body: unknown, status = 200, statusText = "OK") {
 }
 
 function sectionQueries(): ReturnType<typeof within> {
-  return within(screen.getByRole("heading", { name: "Planner Assumptions" }).closest("section") as HTMLElement);
+  return within(screen.getByRole("heading", { name: "הנחות מתכנן" }).closest("section") as HTMLElement);
 }
 
 function requestBody(call: unknown[]): Record<string, unknown> {
@@ -59,14 +59,14 @@ describe("PlannerAssumptionsSection", () => {
 
     const { unmount } = render(<PlannerAssumptionsSection clientId={7} />);
 
-    expect(screen.getByText("Loading planner assumptions...")).toBeInTheDocument();
-    expect(await screen.findByText("No planner assumptions found for the selected lifecycle filter.")).toBeInTheDocument();
+    expect(screen.getByText("טוען הנחות מתכנן…")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצאו הנחות מתכנן עבור מסנן מחזור החיים שנבחר.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/clients/7/planner-assumptions?lifecycle_status=current",
       expect.objectContaining({ method: "GET" })
     );
 
-    const lifecycleSelect = sectionQueries().getByLabelText("Lifecycle Filter") as HTMLSelectElement;
+    const lifecycleSelect = sectionQueries().getByLabelText("סינון לפי מצב מחזור חיים") as HTMLSelectElement;
     expect(Array.from(lifecycleSelect.options).map((option) => option.value)).toEqual([
       "current",
       "superseded",
@@ -108,16 +108,18 @@ describe("PlannerAssumptionsSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { unmount } = render(<PlannerAssumptionsSection clientId={7} />);
-    await screen.findByText("No planner assumptions found for the selected lifecycle filter.");
+    await screen.findByText("לא נמצאו הנחות מתכנן עבור מסנן מחזור החיים שנבחר.");
 
     const section = sectionQueries();
-    fireEvent.change(section.getByLabelText("Assumption Category"), { target: { value: "income" } });
-    fireEvent.change(section.getByLabelText("Title"), { target: { value: "Created assumption" } });
-    fireEvent.change(section.getByLabelText("Assumption Value"), { target: { value: "Value text" } });
-    fireEvent.change(section.getByLabelText("Rationale"), { target: { value: "Rationale text" } });
-    fireEvent.change(section.getByLabelText("Owner"), { target: { value: "planner" } });
-    fireEvent.change(section.getByLabelText("Effective Start Date"), { target: { value: "2026-01-01" } });
-    fireEvent.click(section.getByRole("button", { name: "Add Planner Assumption" }));
+    fireEvent.change(section.getByLabelText("קטגוריית הנחה"), { target: { value: "income" } });
+    fireEvent.change(section.getByLabelText("כותרת"), { target: { value: "Created assumption" } });
+    fireEvent.change(section.getByLabelText("ערך ההנחה"), { target: { value: "Value text" } });
+    fireEvent.change(section.getByLabelText("נימוק"), { target: { value: "Rationale text" } });
+    fireEvent.change(section.getByLabelText("אחראי"), { target: { value: "planner" } });
+    const effectiveStart = section.getByLabelText("תאריך תחילת תוקף");
+    expect(effectiveStart).not.toHaveAttribute("type", "date");
+    fireEvent.change(effectiveStart, { target: { value: "01/01/2026" } });
+    fireEvent.click(section.getByRole("button", { name: "הוספת הנחת מתכנן" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -148,9 +150,9 @@ describe("PlannerAssumptionsSection", () => {
     });
     vi.stubGlobal("fetch", failingFetchMock);
     render(<PlannerAssumptionsSection clientId={7} />);
-    await screen.findByText("No planner assumptions found for the selected lifecycle filter.");
-    fireEvent.click(sectionQueries().getByRole("button", { name: "Add Planner Assumption" }));
-    expect(await screen.findByText("Unable to save planner assumption.")).toBeInTheDocument();
+    await screen.findByText("לא נמצאו הנחות מתכנן עבור מסנן מחזור החיים שנבחר.");
+    fireEvent.click(sectionQueries().getByRole("button", { name: "הוספת הנחת מתכנן" }));
+    expect(await screen.findByText("לא ניתן לשמור את הנחת המתכנן.")).toBeInTheDocument();
     expect(await screen.findByText(/assumption_category is required/)).toBeInTheDocument();
   });
 
@@ -167,16 +169,21 @@ describe("PlannerAssumptionsSection", () => {
     expect(await screen.findByText("Existing assumption")).toBeInTheDocument();
 
     const section = sectionQueries();
-    fireEvent.click(section.getByRole("button", { name: "Edit Planner Assumption" }));
-    expect(section.getByLabelText("Title")).toHaveValue("Existing assumption");
-    expect(section.getByLabelText("Assumption Value")).toHaveValue("Existing value");
-    fireEvent.change(section.getByLabelText("Title"), { target: { value: "Canceled assumption" } });
-    fireEvent.click(section.getByRole("button", { name: "Cancel Edit" }));
+    expect(section.getByText("תאריך תחילת תוקף: 01/01/2026")).toBeInTheDocument();
+    expect(section.getByText("תאריך בדיקה: 01/06/2026")).toBeInTheDocument();
+    fireEvent.click(section.getByRole("button", { name: "עריכת הנחת מתכנן" }));
+    expect(section.getByLabelText("כותרת")).toHaveValue("Existing assumption");
+    expect(section.getByLabelText("ערך ההנחה")).toHaveValue("Existing value");
+    expect(section.getByLabelText("תאריך תחילת תוקף")).toHaveValue("01/01/2026");
+    expect(section.getByLabelText("תאריך בדיקה")).toHaveValue("01/06/2026");
+    expect(section.getByLabelText("תאריך תחילת תוקף")).not.toHaveAttribute("type", "date");
+    fireEvent.change(section.getByLabelText("כותרת"), { target: { value: "Canceled assumption" } });
+    fireEvent.click(section.getByRole("button", { name: "ביטול העריכה" }));
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "PUT")).toBe(false);
-    fireEvent.click(section.getByRole("button", { name: "Edit Planner Assumption" }));
-    fireEvent.change(section.getByLabelText("Title"), { target: { value: "Updated assumption" } });
-    fireEvent.change(section.getByLabelText("Review Date"), { target: { value: "" } });
-    fireEvent.click(section.getByRole("button", { name: "Save Planner Assumption" }));
+    fireEvent.click(section.getByRole("button", { name: "עריכת הנחת מתכנן" }));
+    fireEvent.change(section.getByLabelText("כותרת"), { target: { value: "Updated assumption" } });
+    fireEvent.change(section.getByLabelText("תאריך בדיקה"), { target: { value: "" } });
+    fireEvent.click(section.getByRole("button", { name: "שמירת הנחת מתכנן" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -207,8 +214,8 @@ describe("PlannerAssumptionsSection", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /supersede/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /change lifecycle/i })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Lifecycle Status")).not.toBeInTheDocument();
-    expect(screen.queryByText("Source Status")).not.toBeInTheDocument();
-    expect(screen.queryByText("Verification State")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("מצב מחזור חיים")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("מצב מקור")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("מצב אימות")).not.toBeInTheDocument();
   });
 });

@@ -9,6 +9,8 @@ import {
   type PensionHoldingItem,
   updatePensionAnalysisRecord
 } from "../api/clientsApi";
+import { heLabel } from "../i18n/he";
+import { formatIsoDate } from "../utils/dateFormat";
 
 type PensionAnalysisRecordSectionProps = {
   clientId: number;
@@ -27,12 +29,12 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unable to load pension analysis records.";
+  return "לא ניתן לטעון את רשומות הניתוח הפנסיוני.";
 }
 
 function displayValue(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") {
-    return "Not recorded";
+    return "לא תועד";
   }
 
   return String(value);
@@ -40,21 +42,21 @@ function displayValue(value: string | number | null | undefined): string {
 
 function factContext(holding: PensionHoldingItem) {
   return (
-    <section aria-label={`Pension holding fact context ${holding.id}`}>
-      <h5>Pension Holding Fact Context</h5>
-      <p>Provider Name: {displayValue(holding.provider_name)}</p>
-      <p>Product Type: {displayValue(holding.product_type)}</p>
-      <p>Product Name: {displayValue(holding.product_name)}</p>
-      <p>Account Reference: {displayValue(holding.account_reference)}</p>
-      <p>Known Balance Amount: {displayValue(holding.known_balance_amount)}</p>
-      <p>Balance As Of Date: {displayValue(holding.balance_as_of_date)}</p>
-      <p>Known Monthly Pension Amount: {displayValue(holding.known_monthly_pension_amount)}</p>
-      <p>Pension Amount As Of Date: {displayValue(holding.pension_amount_as_of_date)}</p>
-      <p>Source Status: {displayValue(holding.source_status)}</p>
-      <p>Verification State: {displayValue(holding.verification_state)}</p>
-      <p>Source Type: {displayValue(holding.source_type)}</p>
-      <p>Source Date: {displayValue(holding.source_date)}</p>
-      <p>Source Note: {displayValue(holding.source_note)}</p>
+    <section aria-label={`הקשר עובדתי של אחזקה פנסיונית ${holding.id}`}>
+      <h5>הקשר עובדתי של אחזקה פנסיונית</h5>
+      <p>שם הגוף המנהל: {displayValue(holding.provider_name)}</p>
+      <p>סוג מוצר: {heLabel(holding.product_type)}</p>
+      <p>שם מוצר: {displayValue(holding.product_name)}</p>
+      <p>אסמכתת חשבון: {displayValue(holding.account_reference)}</p>
+      <p>יתרה ידועה: {displayValue(holding.known_balance_amount)}</p>
+      <p>תאריך נכונות היתרה: {formatIsoDate(holding.balance_as_of_date) || "לא תועד"}</p>
+      <p>קצבה חודשית ידועה: {displayValue(holding.known_monthly_pension_amount)}</p>
+      <p>תאריך נכונות הקצבה: {formatIsoDate(holding.pension_amount_as_of_date) || "לא תועד"}</p>
+      <p>מצב מקור: {heLabel(holding.source_status)}</p>
+      <p>מצב אימות: {heLabel(holding.verification_state)}</p>
+      <p>סוג מקור: {displayValue(holding.source_type)}</p>
+      <p>תאריך מקור: {formatIsoDate(holding.source_date) || "לא תועד"}</p>
+      <p>הערת מקור: {displayValue(holding.source_note)}</p>
     </section>
   );
 }
@@ -134,7 +136,7 @@ export function PensionAnalysisRecordSection({ clientId }: PensionAnalysisRecord
         : await updatePensionAnalysisRecord(clientId, holdingId, payload);
       setRecordsByHoldingId((current) => ({ ...current, [holdingId]: saved }));
       setTextByHoldingId((current) => ({ ...current, [holdingId]: saved.analysis_record_text }));
-      setSaveSuccessMessage("Pension analysis record saved.");
+      setSaveSuccessMessage("רשומת הניתוח הפנסיוני נשמרה.");
     } catch (error) {
       setSaveErrorMessage(getErrorMessage(error));
     } finally {
@@ -144,16 +146,16 @@ export function PensionAnalysisRecordSection({ clientId }: PensionAnalysisRecord
 
   return (
     <section aria-labelledby="pension-analysis-records-heading">
-      <h3 id="pension-analysis-records-heading">Pension Analysis Records</h3>
+      <h3 id="pension-analysis-records-heading">רשומות ניתוח פנסיוני</h3>
       {isLoading ? (
-        <p>Loading pension analysis records...</p>
+        <p>טוען רשומות ניתוח פנסיוני…</p>
       ) : loadErrorMessage !== null ? (
         <>
-          <p>Unable to load pension analysis records.</p>
+          <p>לא ניתן לטעון את רשומות הניתוח הפנסיוני.</p>
           <pre>{loadErrorMessage}</pre>
         </>
       ) : holdings.length === 0 ? (
-        <p>No current pension holdings found for analysis records.</p>
+        <p>לא נמצאו אחזקות פנסיוניות עדכניות לצורך רשומת ניתוח.</p>
       ) : (
         <ul>
           {holdings.map((holding) => {
@@ -162,11 +164,11 @@ export function PensionAnalysisRecordSection({ clientId }: PensionAnalysisRecord
             return (
               <li key={holding.id}>
                 <article>
-                  <h4>Pension Holding {holding.id}</h4>
+                  <h4>אחזקה פנסיונית {holding.id}</h4>
                   {factContext(holding)}
                   <form onSubmit={(event) => handleSubmit(event, holding.id)}>
                     <p>
-                      <label htmlFor={`pension-analysis-record-text-${holding.id}`}>Analysis Record Text</label>
+                      <label htmlFor={`pension-analysis-record-text-${holding.id}`}>תוכן רשומת הניתוח</label>
                       <textarea
                         id={`pension-analysis-record-text-${holding.id}`}
                         value={textByHoldingId[holding.id] ?? ""}
@@ -174,7 +176,7 @@ export function PensionAnalysisRecordSection({ clientId }: PensionAnalysisRecord
                       />
                     </p>
                     <button type="submit" disabled={isSaving}>
-                      {isSaving ? "Saving Pension Analysis Record..." : record === null ? "Create Pension Analysis Record" : "Save Pension Analysis Record"}
+                      {isSaving ? "שומר רשומת ניתוח פנסיוני…" : record === null ? "יצירת רשומת ניתוח פנסיוני" : "שמירת רשומת ניתוח פנסיוני"}
                     </button>
                   </form>
                 </article>
@@ -186,7 +188,7 @@ export function PensionAnalysisRecordSection({ clientId }: PensionAnalysisRecord
       {saveSuccessMessage ? <p>{saveSuccessMessage}</p> : null}
       {saveErrorMessage ? (
         <>
-          <p>Unable to save pension analysis record.</p>
+          <p>לא ניתן לשמור את רשומת הניתוח הפנסיוני.</p>
           <pre>{saveErrorMessage}</pre>
         </>
       ) : null}

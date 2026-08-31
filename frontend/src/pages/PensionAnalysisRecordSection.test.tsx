@@ -80,22 +80,23 @@ describe("PensionAnalysisRecordSection", () => {
 
     render(<PensionAnalysisRecordSection clientId={7} />);
 
-    expect(screen.getByText("Loading pension analysis records...")).toBeInTheDocument();
+    expect(screen.getByText("טוען רשומות ניתוח פנסיוני…")).toBeInTheDocument();
     expect(
-      await screen.findByText((_, element) => element?.textContent === "Provider Name: Existing Pension Provider")
+      await screen.findByText((_, element) => element?.textContent === "שם הגוף המנהל: Existing Pension Provider")
     ).toBeInTheDocument();
-    expect(screen.getByText("Product Type: pension fund")).toBeInTheDocument();
-    expect(screen.getByText("Known Monthly Pension Amount: 200.00")).toBeInTheDocument();
-    expect(screen.getByText("Pension Amount As Of Date: 2026-01-02")).toBeInTheDocument();
-    expect(screen.getByText("Source Status: not recorded")).toBeInTheDocument();
-    expect(screen.getByText("Verification State: collected - not yet reviewed")).toBeInTheDocument();
-    expect(screen.getByText("Source Type: statement")).toBeInTheDocument();
-    expect(screen.getByText("Source Date: 2026-01-03")).toBeInTheDocument();
+    expect(screen.getByText("סוג מוצר: קרן פנסיה")).toBeInTheDocument();
+    expect(screen.getByText("קצבה חודשית ידועה: 200.00")).toBeInTheDocument();
+    expect(screen.getByText("תאריך נכונות הקצבה: 02/01/2026")).toBeInTheDocument();
+    expect(screen.getByText("מצב מקור: לא תועד")).toBeInTheDocument();
+    expect(screen.getByText("מצב אימות: נאסף וטרם נבדק")).toBeInTheDocument();
+    expect(screen.getByText("סוג מקור: statement")).toBeInTheDocument();
+    expect(screen.getByText("תאריך מקור: 03/01/2026")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "הקשר עובדתי של אחזקה פנסיונית 17" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Analysis Record Text"), {
+    fireEvent.change(screen.getByLabelText("תוכן רשומת הניתוח"), {
       target: { value: "New analysis record text" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create Pension Analysis Record" }));
+    fireEvent.click(screen.getByRole("button", { name: "יצירת רשומת ניתוח פנסיוני" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -108,7 +109,7 @@ describe("PensionAnalysisRecordSection", () => {
     expect(requestBody(postCall)).not.toHaveProperty("source_status");
     expect(requestBody(postCall)).not.toHaveProperty("verification_state");
     expect(requestBody(postCall)).not.toHaveProperty("lifecycle_status");
-    expect(await screen.findByText("Pension analysis record saved.")).toBeInTheDocument();
+    expect(await screen.findByText("רשומת הניתוח הפנסיוני נשמרה.")).toBeInTheDocument();
 
     expect(fetchMock.mock.calls.map(requestUrl)).toContain("/api/clients/7/pension-holdings?lifecycle_status=current");
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "DELETE")).toBe(false);
@@ -137,10 +138,10 @@ describe("PensionAnalysisRecordSection", () => {
     render(<PensionAnalysisRecordSection clientId={7} />);
 
     expect(await screen.findByDisplayValue("Existing analysis record text")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Analysis Record Text"), {
+    fireEvent.change(screen.getByLabelText("תוכן רשומת הניתוח"), {
       target: { value: "Updated analysis record text" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save Pension Analysis Record" }));
+    fireEvent.click(screen.getByRole("button", { name: "שמירת רשומת ניתוח פנסיוני" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -156,7 +157,7 @@ describe("PensionAnalysisRecordSection", () => {
     const emptyFetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
     vi.stubGlobal("fetch", emptyFetchMock);
     const { unmount } = render(<PensionAnalysisRecordSection clientId={7} />);
-    expect(await screen.findByText("No current pension holdings found for analysis records.")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצאו אחזקות פנסיוניות עדכניות לצורך רשומת ניתוח.")).toBeInTheDocument();
 
     unmount();
     vi.unstubAllGlobals();
@@ -166,7 +167,7 @@ describe("PensionAnalysisRecordSection", () => {
     vi.stubGlobal("fetch", failingFetchMock);
     render(<PensionAnalysisRecordSection clientId={7} />);
 
-    expect(await screen.findByText("Unable to load pension analysis records.")).toBeInTheDocument();
+    expect(await screen.findByText("לא ניתן לטעון את רשומות הניתוח הפנסיוני.")).toBeInTheDocument();
     expect(screen.getByText(/LOAD_FAILED/)).toBeInTheDocument();
   });
 });

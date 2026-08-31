@@ -10,6 +10,9 @@ import {
   type PlannerAssumptionUpdatePayload,
   updatePlannerAssumption
 } from "../api/clientsApi";
+import { HebrewDateInput } from "../components/HebrewDateInput";
+import { heLabel } from "../i18n/he";
+import { formatIsoDate } from "../utils/dateFormat";
 
 export type PlannerAssumptionsSectionProps = {
   clientId: number;
@@ -62,7 +65,7 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unable to load planner assumptions.";
+  return "לא ניתן לטעון את הנחות המתכנן.";
 }
 
 function formStateFromAssumption(assumption: PlannerAssumptionItem): PlannerAssumptionFormState {
@@ -193,9 +196,9 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
 
   return (
     <section aria-labelledby="planner-assumptions-heading">
-      <h3 id="planner-assumptions-heading">Planner Assumptions</h3>
+      <h3 id="planner-assumptions-heading">הנחות מתכנן</h3>
       <p>
-        <label htmlFor="planner-assumptions-lifecycle-filter">Lifecycle Filter</label>
+        <label htmlFor="planner-assumptions-lifecycle-filter">סינון לפי מצב מחזור חיים</label>
         <select
           id="planner-assumptions-lifecycle-filter"
           value={lifecycleStatus}
@@ -203,39 +206,39 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
         >
           {lifecycleOptions.map((option) => (
             <option key={option} value={option}>
-              {option}
+              {heLabel(option)}
             </option>
           ))}
         </select>
       </p>
       {isLoading ? (
-        <p>Loading planner assumptions...</p>
+        <p>טוען הנחות מתכנן…</p>
       ) : errorMessage !== null ? (
         <>
-          <p>Unable to load planner assumptions.</p>
+          <p>לא ניתן לטעון את הנחות המתכנן.</p>
           <pre>{errorMessage}</pre>
         </>
       ) : assumptions.length === 0 ? (
-        <p>No planner assumptions found for the selected lifecycle filter.</p>
+        <p>לא נמצאו הנחות מתכנן עבור מסנן מחזור החיים שנבחר.</p>
       ) : (
         <ul>
           {assumptions.map((assumption) => (
             <li key={assumption.id}>
               <article>
                 <h4>{assumption.title}</h4>
-                <p>Assumption Category: {assumption.assumption_category}</p>
-                <p>Assumption Value: {assumption.assumption_value_text}</p>
-                <p>Rationale: {assumption.rationale}</p>
-                <p>Owner: {assumption.owner}</p>
-                <p>Lifecycle Status: {assumption.lifecycle_status}</p>
+                <p>קטגוריית הנחה: {heLabel(assumption.assumption_category)}</p>
+                <p>ערך ההנחה: {assumption.assumption_value_text}</p>
+                <p>נימוק: {assumption.rationale}</p>
+                <p>אחראי: {heLabel(assumption.owner)}</p>
+                <p>מצב מחזור חיים: {heLabel(assumption.lifecycle_status)}</p>
                 {assumption.effective_start_date ? (
-                  <p>Effective Start Date: {assumption.effective_start_date}</p>
+                  <p>תאריך תחילת תוקף: {formatIsoDate(assumption.effective_start_date)}</p>
                 ) : null}
-                {assumption.effective_end_date ? <p>Effective End Date: {assumption.effective_end_date}</p> : null}
-                {assumption.review_date ? <p>Review Date: {assumption.review_date}</p> : null}
+                {assumption.effective_end_date ? <p>תאריך סיום תוקף: {formatIsoDate(assumption.effective_end_date)}</p> : null}
+                {assumption.review_date ? <p>תאריך בדיקה: {formatIsoDate(assumption.review_date)}</p> : null}
                 <p>
                   <button type="button" onClick={() => startEditing(assumption)} disabled={isSubmitting}>
-                    Edit Planner Assumption
+                    עריכת הנחת מתכנן
                   </button>
                 </p>
               </article>
@@ -244,24 +247,24 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
         </ul>
       )}
       <form onSubmit={handleSubmit}>
-        <h4>{editingId === null ? "Add Planner Assumption" : "Edit Planner Assumption"}</h4>
+        <h4>{editingId === null ? "הוספת הנחת מתכנן" : "עריכת הנחת מתכנן"}</h4>
         <p>
-          <label htmlFor="planner-assumption-category">Assumption Category</label>
+          <label htmlFor="planner-assumption-category">קטגוריית הנחה</label>
           <select
             id="planner-assumption-category"
             value={formState.assumption_category}
             onChange={(event) => updateFormField("assumption_category", event.target.value)}
           >
-            <option value="">Not selected</option>
+            <option value="">לא נבחר</option>
             {assumptionCategoryOptions.map((option) => (
               <option key={option} value={option}>
-                {option}
+                {heLabel(option)}
               </option>
             ))}
           </select>
         </p>
         <p>
-          <label htmlFor="planner-assumption-title">Title</label>
+          <label htmlFor="planner-assumption-title">כותרת</label>
           <input
             id="planner-assumption-title"
             value={formState.title}
@@ -269,7 +272,7 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
           />
         </p>
         <p>
-          <label htmlFor="planner-assumption-value">Assumption Value</label>
+          <label htmlFor="planner-assumption-value">ערך ההנחה</label>
           <textarea
             id="planner-assumption-value"
             value={formState.assumption_value_text}
@@ -277,7 +280,7 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
           />
         </p>
         <p>
-          <label htmlFor="planner-assumption-rationale">Rationale</label>
+          <label htmlFor="planner-assumption-rationale">נימוק</label>
           <textarea
             id="planner-assumption-rationale"
             value={formState.rationale}
@@ -285,60 +288,57 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
           />
         </p>
         <p>
-          <label htmlFor="planner-assumption-owner">Owner</label>
+          <label htmlFor="planner-assumption-owner">אחראי</label>
           <select
             id="planner-assumption-owner"
             value={formState.owner}
             onChange={(event) => updateFormField("owner", event.target.value)}
           >
-            <option value="">Not selected</option>
+            <option value="">לא נבחר</option>
             {ownerOptions.map((option) => (
               <option key={option} value={option}>
-                {option}
+                {heLabel(option)}
               </option>
             ))}
           </select>
         </p>
         <p>
-          <label htmlFor="planner-assumption-effective-start-date">Effective Start Date</label>
-          <input
+          <label htmlFor="planner-assumption-effective-start-date">תאריך תחילת תוקף</label>
+          <HebrewDateInput
             id="planner-assumption-effective-start-date"
-            type="date"
             value={formState.effective_start_date}
-            onChange={(event) => updateFormField("effective_start_date", event.target.value)}
+            onChange={(value) => updateFormField("effective_start_date", value)}
           />
         </p>
         <p>
-          <label htmlFor="planner-assumption-effective-end-date">Effective End Date</label>
-          <input
+          <label htmlFor="planner-assumption-effective-end-date">תאריך סיום תוקף</label>
+          <HebrewDateInput
             id="planner-assumption-effective-end-date"
-            type="date"
             value={formState.effective_end_date}
-            onChange={(event) => updateFormField("effective_end_date", event.target.value)}
+            onChange={(value) => updateFormField("effective_end_date", value)}
           />
         </p>
         <p>
-          <label htmlFor="planner-assumption-review-date">Review Date</label>
-          <input
+          <label htmlFor="planner-assumption-review-date">תאריך בדיקה</label>
+          <HebrewDateInput
             id="planner-assumption-review-date"
-            type="date"
             value={formState.review_date}
-            onChange={(event) => updateFormField("review_date", event.target.value)}
+            onChange={(value) => updateFormField("review_date", value)}
           />
         </p>
         {mutationErrorMessage ? (
           <>
-            <p>Unable to save planner assumption.</p>
+            <p>לא ניתן לשמור את הנחת המתכנן.</p>
             <pre>{mutationErrorMessage}</pre>
           </>
         ) : null}
         <p>
           <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : editingId === null ? "Add Planner Assumption" : "Save Planner Assumption"}
+            {isSubmitting ? "שומר…" : editingId === null ? "הוספת הנחת מתכנן" : "שמירת הנחת מתכנן"}
           </button>
           {editingId !== null ? (
             <button type="button" onClick={resetForm} disabled={isSubmitting}>
-              Cancel Edit
+              ביטול העריכה
             </button>
           ) : null}
         </p>

@@ -17,7 +17,7 @@ function jsonResponse(body: unknown, status = 200, statusText = "OK") {
 
 function sectionQueries(): ReturnType<typeof within> {
   return within(
-    screen.getByRole("heading", { name: "Advisory Missing Information" }).closest("section") as HTMLElement
+    screen.getByRole("heading", { name: "מידע חסר לייעוץ" }).closest("section") as HTMLElement
   );
 }
 
@@ -75,8 +75,8 @@ describe("AdvisoryMissingInformationSection", () => {
 
     const { unmount } = render(<AdvisoryMissingInformationSection clientId={7} />);
 
-    expect(screen.getByText("Loading advisory missing information...")).toBeInTheDocument();
-    expect(await screen.findByText("No advisory missing information found.")).toBeInTheDocument();
+    expect(screen.getByText("טוען מידע חסר לייעוץ…")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצא מידע חסר לייעוץ.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/clients/7/missing-items",
       expect.objectContaining({ method: "GET" })
@@ -84,10 +84,10 @@ describe("AdvisoryMissingInformationSection", () => {
 
     unmount();
     render(<AdvisoryMissingInformationSection clientId={7} />);
-    expect(await screen.findByText("Advisory Missing Information Record MD-LEGACY")).toBeInTheDocument();
-    expect(screen.getAllByText("Planning Domain: Not recorded")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("Advisory Status: Not recorded")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("Neutral Reason: Not recorded")[0]).toBeInTheDocument();
+    expect(await screen.findByText("רשומת מידע חסר לייעוץ MD-LEGACY")).toBeInTheDocument();
+    expect(screen.getAllByText("תחום תכנון: לא תועד")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("מצב ייעוץ: לא תועד")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("סיבה ניטרלית: לא תועד")[0]).toBeInTheDocument();
   });
 
   it("creates explicit open advisory missing information without linkage fields and displays 422 errors", async () => {
@@ -100,13 +100,13 @@ describe("AdvisoryMissingInformationSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { unmount } = render(<AdvisoryMissingInformationSection clientId={7} />);
-    await screen.findByText("No advisory missing information found.");
+    await screen.findByText("לא נמצא מידע חסר לייעוץ.");
 
     const section = sectionQueries();
-    fireEvent.change(section.getByLabelText("Planning Domain"), { target: { value: "pension holdings" } });
-    expect(section.getByLabelText("Advisory Status")).toHaveValue("open");
-    fireEvent.change(section.getByLabelText("Neutral Reason"), { target: { value: "Created reason" } });
-    fireEvent.click(section.getByRole("button", { name: "Add Advisory Missing Information" }));
+    fireEvent.change(section.getByLabelText("תחום תכנון"), { target: { value: "pension holdings" } });
+    expect(section.getByLabelText("מצב ייעוץ")).toHaveValue("open");
+    fireEvent.change(section.getByLabelText("סיבה ניטרלית"), { target: { value: "Created reason" } });
+    fireEvent.click(section.getByRole("button", { name: "הוספת מידע חסר לייעוץ" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -117,7 +117,7 @@ describe("AdvisoryMissingInformationSection", () => {
     const postCall = fetchMock.mock.calls.find((call) => requestMethod(call) === "POST") as unknown[];
     expect(requestBody(postCall)).toEqual({
       missing_item_type: "data",
-      missing_item_label: "Advisory missing information - pension holdings",
+      missing_item_label: "מידע חסר לייעוץ - pension holdings",
       missing_status: "missing",
       notes: null,
       planning_domain: "pension holdings",
@@ -137,9 +137,9 @@ describe("AdvisoryMissingInformationSection", () => {
     });
     vi.stubGlobal("fetch", failingFetchMock);
     render(<AdvisoryMissingInformationSection clientId={7} />);
-    await screen.findByText("No advisory missing information found.");
-    fireEvent.click(sectionQueries().getByRole("button", { name: "Add Advisory Missing Information" }));
-    expect(await screen.findByText("Unable to save advisory missing information.")).toBeInTheDocument();
+    await screen.findByText("לא נמצא מידע חסר לייעוץ.");
+    fireEvent.click(sectionQueries().getByRole("button", { name: "הוספת מידע חסר לייעוץ" }));
+    expect(await screen.findByText("לא ניתן לשמור מידע חסר לייעוץ.")).toBeInTheDocument();
     expect(await screen.findByText(/PLANNING_DOMAIN_REQUIRED/)).toBeInTheDocument();
   });
 
@@ -153,25 +153,25 @@ describe("AdvisoryMissingInformationSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AdvisoryMissingInformationSection clientId={7} />);
-    expect(await screen.findByText("Advisory Missing Information Record MD-V21")).toBeInTheDocument();
+    expect(await screen.findByText("רשומת מידע חסר לייעוץ MD-V21")).toBeInTheDocument();
 
     const section = sectionQueries();
-    fireEvent.click(section.getByRole("button", { name: "Edit Advisory Missing Information" }));
-    expect(section.getByLabelText("Planning Domain")).toHaveValue("pension holdings");
-    const statusSelect = section.getByLabelText("Advisory Status") as HTMLSelectElement;
+    fireEvent.click(section.getByRole("button", { name: "עריכת מידע חסר לייעוץ" }));
+    expect(section.getByLabelText("תחום תכנון")).toHaveValue("pension holdings");
+    const statusSelect = section.getByLabelText("מצב ייעוץ") as HTMLSelectElement;
     expect(Array.from(statusSelect.options).map((option) => option.value)).toEqual([
       "open",
       "resolved",
       "no longer relevant"
     ]);
     fireEvent.change(statusSelect, { target: { value: "no longer relevant" } });
-    fireEvent.click(section.getByRole("button", { name: "Cancel Edit" }));
+    fireEvent.click(section.getByRole("button", { name: "ביטול העריכה" }));
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "PUT")).toBe(false);
-    fireEvent.click(section.getByRole("button", { name: "Edit Advisory Missing Information" }));
-    const editStatusSelect = section.getByLabelText("Advisory Status") as HTMLSelectElement;
+    fireEvent.click(section.getByRole("button", { name: "עריכת מידע חסר לייעוץ" }));
+    const editStatusSelect = section.getByLabelText("מצב ייעוץ") as HTMLSelectElement;
     fireEvent.change(editStatusSelect, { target: { value: "resolved" } });
-    fireEvent.change(section.getByLabelText("Neutral Reason"), { target: { value: "" } });
-    fireEvent.click(section.getByRole("button", { name: "Save Advisory Missing Information" }));
+    fireEvent.change(section.getByLabelText("סיבה ניטרלית"), { target: { value: "" } });
+    fireEvent.click(section.getByRole("button", { name: "שמירת מידע חסר לייעוץ" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -193,7 +193,7 @@ describe("AdvisoryMissingInformationSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AdvisoryMissingInformationSection clientId={7} />);
-    expect(await screen.findByText("Advisory Missing Information Record MD-V21")).toBeInTheDocument();
+    expect(await screen.findByText("רשומת מידע חסר לייעוץ MD-V21")).toBeInTheDocument();
 
     expect(screen.queryByText("Related Record Type")).not.toBeInTheDocument();
     expect(screen.queryByText("Related Record ID")).not.toBeInTheDocument();

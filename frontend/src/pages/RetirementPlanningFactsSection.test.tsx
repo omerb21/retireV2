@@ -229,17 +229,17 @@ const rowsByResource: Record<ResourceName, Record<string, unknown>[]> = {
 const resourceConfigs: ResourceConfig[] = [
   {
     resourceName: "pension-holdings",
-    heading: "Pension holdings",
-    addButton: "Add Pension Holding",
-    editButton: "Edit Pension Holding",
-    saveButton: "Save Pension Holding",
+    heading: "אחזקות פנסיוניות",
+    addButton: "הוספת אחזקה פנסיונית",
+    editButton: "עריכת אחזקה פנסיונית",
+    saveButton: "שמירת אחזקה פנסיונית",
     rowId: 11,
-    rowText: "Provider Name: Existing Pension Provider",
+    rowText: "שם הגוף המנהל: Existing Pension Provider",
     fillCreate: (section) => {
-      fireEvent.change(section.getByLabelText("Provider Name"), { target: { value: "Migdal" } });
-      fireEvent.change(section.getByLabelText("Product Type"), { target: { value: "pension fund" } });
-      fireEvent.change(section.getByLabelText("Known Balance Amount"), { target: { value: "123.45" } });
-      fireEvent.change(section.getByLabelText("Balance As Of Date"), { target: { value: "2026-02-01" } });
+      fireEvent.change(section.getByLabelText("שם הגוף המנהל"), { target: { value: "Migdal" } });
+      fireEvent.change(section.getByLabelText("סוג מוצר"), { target: { value: "pension fund" } });
+      fireEvent.change(section.getByLabelText("יתרה ידועה"), { target: { value: "123.45" } });
+      fireEvent.change(section.getByLabelText("תאריך נכונות היתרה"), { target: { value: "01/02/2026" } });
     },
     createPayload: {
       provider_name: "Migdal",
@@ -247,11 +247,11 @@ const resourceConfigs: ResourceConfig[] = [
       known_balance_amount: "123.45",
       balance_as_of_date: "2026-02-01"
     },
-    firstEditLabel: "Provider Name",
+    firstEditLabel: "שם הגוף המנהל",
     firstEditValue: "Existing Pension Provider",
-    changedEditLabel: "Provider Name",
+    changedEditLabel: "שם הגוף המנהל",
     changedEditValue: "Updated Provider",
-    blankEditLabel: "Product Name",
+    blankEditLabel: "שם מוצר",
     updatePayload: {
       provider_name: "Updated Provider",
       product_name: null
@@ -260,17 +260,17 @@ const resourceConfigs: ResourceConfig[] = [
   },
   {
     resourceName: "capital-assets",
-    heading: "Capital assets",
-    addButton: "Add Capital Asset",
-    editButton: "Edit Capital Asset",
-    saveButton: "Save Capital Asset",
+    heading: "נכסי הון",
+    addButton: "הוספת נכס הון",
+    editButton: "עריכת נכס הון",
+    saveButton: "שמירת נכס הון",
     rowId: 21,
-    rowText: "Asset Description: Existing deposit",
+    rowText: "תיאור הנכס: Existing deposit",
     fillCreate: (section) => {
-      fireEvent.change(section.getByLabelText("Asset Category"), { target: { value: "bank deposit" } });
-      fireEvent.change(section.getByLabelText("Asset Description"), { target: { value: "Savings account" } });
-      fireEvent.change(section.getByLabelText("Known Value Amount"), { target: { value: "456.78" } });
-      fireEvent.change(section.getByLabelText("Value As Of Date"), { target: { value: "2026-02-02" } });
+      fireEvent.change(section.getByLabelText("קטגוריית נכס"), { target: { value: "bank deposit" } });
+      fireEvent.change(section.getByLabelText("תיאור הנכס"), { target: { value: "Savings account" } });
+      fireEvent.change(section.getByLabelText("שווי ידוע"), { target: { value: "456.78" } });
+      fireEvent.change(section.getByLabelText("תאריך נכונות השווי"), { target: { value: "02/02/2026" } });
     },
     createPayload: {
       asset_category: "bank deposit",
@@ -278,11 +278,11 @@ const resourceConfigs: ResourceConfig[] = [
       known_value_amount: "456.78",
       value_as_of_date: "2026-02-02"
     },
-    firstEditLabel: "Asset Description",
+    firstEditLabel: "תיאור הנכס",
     firstEditValue: "Existing deposit",
-    changedEditLabel: "Asset Description",
+    changedEditLabel: "תיאור הנכס",
     changedEditValue: "Updated deposit",
-    blankEditLabel: "Liquidity Note",
+    blankEditLabel: "הערת נזילות",
     updatePayload: {
       asset_description: "Updated deposit",
       liquidity_note: null
@@ -291,19 +291,19 @@ const resourceConfigs: ResourceConfig[] = [
   },
   {
     resourceName: "recurring-incomes",
-    heading: "Recurring incomes",
-    addButton: "Add Recurring Income",
-    editButton: "Edit Recurring Income",
-    saveButton: "Save Recurring Income",
+    heading: "הכנסות שוטפות",
+    addButton: "הוספת הכנסה שוטפת",
+    editButton: "עריכת הכנסה שוטפת",
+    saveButton: "שמירת הכנסה שוטפת",
     rowId: 31,
-    rowText: "Description: Existing income",
+    rowText: "תיאור: Existing income",
     fillCreate: (section) => {
-      fireEvent.change(section.getByLabelText("Income Category"), { target: { value: "employment" } });
-      fireEvent.change(section.getByLabelText("Description"), { target: { value: "Salary" } });
-      fireEvent.change(section.getByLabelText("Amount"), { target: { value: "1000.00" } });
-      fireEvent.change(section.getByLabelText("Amount Basis"), { target: { value: "gross" } });
-      fireEvent.change(section.getByLabelText("Frequency"), { target: { value: "monthly" } });
-      fireEvent.change(section.getByLabelText("Continuation Status"), { target: { value: "ongoing" } });
+      fireEvent.change(section.getByLabelText("קטגוריית הכנסה"), { target: { value: "employment" } });
+      fireEvent.change(section.getByLabelText("תיאור"), { target: { value: "Salary" } });
+      fireEvent.change(section.getByLabelText("סכום"), { target: { value: "1000.00" } });
+      fireEvent.change(section.getByLabelText("בסיס הסכום"), { target: { value: "gross" } });
+      fireEvent.change(section.getByLabelText("תדירות"), { target: { value: "monthly" } });
+      fireEvent.change(section.getByLabelText("מצב המשכיות"), { target: { value: "ongoing" } });
     },
     createPayload: {
       income_category: "employment",
@@ -313,11 +313,11 @@ const resourceConfigs: ResourceConfig[] = [
       frequency: "monthly",
       continuation_status: "ongoing"
     },
-    firstEditLabel: "Description",
+    firstEditLabel: "תיאור",
     firstEditValue: "Existing income",
-    changedEditLabel: "Description",
+    changedEditLabel: "תיאור",
     changedEditValue: "Updated income",
-    blankEditLabel: "Start Date",
+    blankEditLabel: "תאריך התחלה",
     updatePayload: {
       description: "Updated income",
       start_date: null
@@ -326,19 +326,19 @@ const resourceConfigs: ResourceConfig[] = [
   },
   {
     resourceName: "recurring-expenses",
-    heading: "Recurring expenses",
-    addButton: "Add Recurring Expense",
-    editButton: "Edit Recurring Expense",
-    saveButton: "Save Recurring Expense",
+    heading: "הוצאות שוטפות",
+    addButton: "הוספת הוצאה שוטפת",
+    editButton: "עריכת הוצאה שוטפת",
+    saveButton: "שמירת הוצאה שוטפת",
     rowId: 41,
-    rowText: "Description: Existing expense",
+    rowText: "תיאור: Existing expense",
     fillCreate: (section) => {
-      fireEvent.change(section.getByLabelText("Expense Category"), { target: { value: "housing" } });
-      fireEvent.change(section.getByLabelText("Description"), { target: { value: "Rent" } });
-      fireEvent.change(section.getByLabelText("Amount"), { target: { value: "200.00" } });
-      fireEvent.change(section.getByLabelText("Frequency"), { target: { value: "monthly" } });
-      fireEvent.change(section.getByLabelText("Expense Type"), { target: { value: "mandatory" } });
-      fireEvent.change(section.getByLabelText("Continuation Status"), { target: { value: "ongoing" } });
+      fireEvent.change(section.getByLabelText("קטגוריית הוצאה"), { target: { value: "housing" } });
+      fireEvent.change(section.getByLabelText("תיאור"), { target: { value: "Rent" } });
+      fireEvent.change(section.getByLabelText("סכום"), { target: { value: "200.00" } });
+      fireEvent.change(section.getByLabelText("תדירות"), { target: { value: "monthly" } });
+      fireEvent.change(section.getByLabelText("סוג הוצאה"), { target: { value: "mandatory" } });
+      fireEvent.change(section.getByLabelText("מצב המשכיות"), { target: { value: "ongoing" } });
     },
     createPayload: {
       expense_category: "housing",
@@ -348,11 +348,11 @@ const resourceConfigs: ResourceConfig[] = [
       expense_type: "mandatory",
       continuation_status: "ongoing"
     },
-    firstEditLabel: "Description",
+    firstEditLabel: "תיאור",
     firstEditValue: "Existing expense",
-    changedEditLabel: "Description",
+    changedEditLabel: "תיאור",
     changedEditValue: "Updated expense",
-    blankEditLabel: "Start Date",
+    blankEditLabel: "תאריך התחלה",
     updatePayload: {
       description: "Updated expense",
       start_date: null
@@ -361,19 +361,19 @@ const resourceConfigs: ResourceConfig[] = [
   },
   {
     resourceName: "retirement-timing-work-intentions",
-    heading: "Retirement timing and work intentions",
-    addButton: "Add Retirement Timing and Work Intention",
-    editButton: "Edit Retirement Timing and Work Intention",
-    saveButton: "Save Retirement Timing and Work Intention",
+    heading: "עיתוי פרישה וכוונות עבודה",
+    addButton: "הוספת עיתוי פרישה וכוונת עבודה",
+    editButton: "עריכת עיתוי פרישה וכוונת עבודה",
+    saveButton: "שמירת עיתוי פרישה וכוונת עבודה",
     rowId: 51,
-    rowText: "Work After Retirement Intention: undecided",
+    rowText: "כוונת עבודה לאחר הפרישה: טרם הוחלט",
     fillCreate: (section) => {
-      fireEvent.change(section.getByLabelText("Timing Confidence"), { target: { value: "known" } });
-      fireEvent.change(section.getByLabelText("Work After Retirement Intention"), {
+      fireEvent.change(section.getByLabelText("ודאות העיתוי"), { target: { value: "known" } });
+      fireEvent.change(section.getByLabelText("כוונת עבודה לאחר הפרישה"), {
         target: { value: "continue working" }
       });
-      fireEvent.change(section.getByLabelText("Other Known Retirement Date"), { target: { value: "2030-01-01" } });
-      fireEvent.change(section.getByLabelText("Other Known Retirement Date Label"), {
+      fireEvent.change(section.getByLabelText("תאריך פרישה ידוע נוסף"), { target: { value: "01/01/2030" } });
+      fireEvent.change(section.getByLabelText("תיאור תאריך הפרישה הידוע הנוסף"), {
         target: { value: "Client target" }
       });
     },
@@ -383,11 +383,11 @@ const resourceConfigs: ResourceConfig[] = [
       other_known_retirement_date: "2030-01-01",
       other_known_retirement_date_label: "Client target"
     },
-    firstEditLabel: "Work After Retirement Intention",
+    firstEditLabel: "כוונת עבודה לאחר הפרישה",
     firstEditValue: "undecided",
-    changedEditLabel: "Work Intention Note",
+    changedEditLabel: "הערת כוונת עבודה",
     changedEditValue: "Updated timing note",
-    blankEditLabel: "Planned Work End Date",
+    blankEditLabel: "תאריך מתוכנן לסיום העבודה",
     updatePayload: {
       work_intention_note: "Updated timing note",
       planned_work_end_date: null
@@ -434,7 +434,7 @@ describe("RetirementPlanningFactsSection", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole("heading", { name: "Retirement Planning Facts" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "עובדות תכנון פרישה" })).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/clients/7/pension-holdings?lifecycle_status=current",
@@ -442,11 +442,16 @@ describe("RetirementPlanningFactsSection", () => {
       );
     });
 
-    const retirementPlanningFactsRegion = screen.getByRole("region", { name: "Retirement Planning Facts" });
+    const retirementPlanningFactsRegion = screen.getByRole("region", { name: "עובדות תכנון פרישה" });
     for (const config of resourceConfigs) {
       expect(within(retirementPlanningFactsRegion).getByRole("heading", { name: config.heading })).toBeInTheDocument();
     }
-    expect(within(retirementPlanningFactsRegion).getAllByLabelText("Lifecycle Filter")).toHaveLength(resourceConfigs.length);
+    expect(within(retirementPlanningFactsRegion).getAllByLabelText("סינון לפי מצב מחזור חיים")).toHaveLength(resourceConfigs.length);
+    expect(screen.getByRole("heading", { name: "רשומות ניתוח פנסיוני", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "הנחות מתכנן", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "מידע חסר לייעוץ", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "סקירה מאוחדת לתכנון פרישה", level: 3 })).toBeInTheDocument();
+    expect(document.querySelector('input[type="date"]')).not.toBeInTheDocument();
     expect(screen.queryByText("PlannerAssumption")).not.toBeInTheDocument();
     expect(screen.queryByText("Planner Assumption")).not.toBeInTheDocument();
     expect(screen.queryByText("MissingDataItem maintenance")).not.toBeInTheDocument();
@@ -466,22 +471,22 @@ describe("RetirementPlanningFactsSection", () => {
 
     render(<RetirementPlanningFactsSection clientId={7} />);
 
-    expect(screen.getByText("Loading pension holdings...")).toBeInTheDocument();
-    expect(screen.getByText("Loading capital assets...")).toBeInTheDocument();
-    expect(screen.getByText("Loading recurring incomes...")).toBeInTheDocument();
-    expect(screen.getByText("Loading recurring expenses...")).toBeInTheDocument();
-    expect(screen.getByText("Loading retirement timing and work intentions...")).toBeInTheDocument();
+    expect(screen.getByText("טוען אחזקות פנסיוניות…")).toBeInTheDocument();
+    expect(screen.getByText("טוען נכסי הון…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הכנסות שוטפות…")).toBeInTheDocument();
+    expect(screen.getByText("טוען הוצאות שוטפות…")).toBeInTheDocument();
+    expect(screen.getByText("טוען נתוני עיתוי פרישה וכוונות עבודה…")).toBeInTheDocument();
 
     for (const resolveRequest of pendingRequests) {
       resolveRequest();
     }
 
-    expect(await screen.findByText("No pension holdings found for the selected lifecycle filter.")).toBeInTheDocument();
-    expect(await screen.findByText("No capital assets found for the selected lifecycle filter.")).toBeInTheDocument();
-    expect(await screen.findByText("No recurring incomes found for the selected lifecycle filter.")).toBeInTheDocument();
-    expect(await screen.findByText("No recurring expenses found for the selected lifecycle filter.")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצאו אחזקות פנסיוניות עבור מסנן מחזור החיים שנבחר.")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצאו נכסי הון עבור מסנן מחזור החיים שנבחר.")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצאו הכנסות שוטפות עבור מסנן מחזור החיים שנבחר.")).toBeInTheDocument();
+    expect(await screen.findByText("לא נמצאו הוצאות שוטפות עבור מסנן מחזור החיים שנבחר.")).toBeInTheDocument();
     expect(
-      await screen.findByText("No retirement timing and work intentions found for the selected lifecycle filter.")
+      await screen.findByText("לא נמצאו נתוני עיתוי פרישה וכוונות עבודה עבור מסנן מחזור החיים שנבחר.")
     ).toBeInTheDocument();
   });
 
@@ -490,14 +495,14 @@ describe("RetirementPlanningFactsSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RetirementPlanningFactsSection clientId={7} />);
-    await screen.findByText("No pension holdings found for the selected lifecycle filter.");
+    await screen.findByText("לא נמצאו אחזקות פנסיוניות עבור מסנן מחזור החיים שנבחר.");
 
     for (const config of resourceConfigs) {
       expect(fetchMock).toHaveBeenCalledWith(
         `/api/clients/7/${config.resourceName}?lifecycle_status=current`,
         expect.objectContaining({ method: "GET" })
       );
-      const lifecycleSelect = sectionQueries(config.heading).getByLabelText("Lifecycle Filter") as HTMLSelectElement;
+      const lifecycleSelect = sectionQueries(config.heading).getByLabelText("סינון לפי מצב מחזור חיים") as HTMLSelectElement;
       expect(Array.from(lifecycleSelect.options).map((option) => option.value)).toEqual([
         "current",
         "superseded",
@@ -506,7 +511,7 @@ describe("RetirementPlanningFactsSection", () => {
     }
 
     const callsAfterInitialLoad = fetchMock.mock.calls.length;
-    fireEvent.change(sectionQueries("Pension holdings").getByLabelText("Lifecycle Filter"), {
+    fireEvent.change(sectionQueries("אחזקות פנסיוניות").getByLabelText("סינון לפי מצב מחזור חיים"), {
       target: { value: "superseded" }
     });
     await waitFor(() => {
@@ -520,7 +525,7 @@ describe("RetirementPlanningFactsSection", () => {
     ]);
 
     const callsAfterSuperseded = fetchMock.mock.calls.length;
-    fireEvent.change(sectionQueries("Capital assets").getByLabelText("Lifecycle Filter"), {
+    fireEvent.change(sectionQueries("נכסי הון").getByLabelText("סינון לפי מצב מחזור חיים"), {
       target: { value: "all" }
     });
     await waitFor(() => {
@@ -580,7 +585,7 @@ describe("RetirementPlanningFactsSection", () => {
 
     fireEvent.click(section.getByRole("button", { name: config.editButton }));
     expect(section.getByLabelText(config.firstEditLabel)).toHaveValue(config.firstEditValue);
-    fireEvent.click(section.getByRole("button", { name: "Cancel Edit" }));
+    fireEvent.click(section.getByRole("button", { name: "ביטול העריכה" }));
     expect(callsFor(fetchMock, config.resourceName, "PUT")).toHaveLength(0);
     expect(callsFor(fetchMock, config.resourceName, "POST")).toHaveLength(0);
 
@@ -623,10 +628,10 @@ describe("RetirementPlanningFactsSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RetirementPlanningFactsSection clientId={7} />);
-    await screen.findByText("No pension holdings found for the selected lifecycle filter.");
-    fireEvent.click(sectionQueries("Pension holdings").getByRole("button", { name: "Add Pension Holding" }));
+    await screen.findByText("לא נמצאו אחזקות פנסיוניות עבור מסנן מחזור החיים שנבחר.");
+    fireEvent.click(sectionQueries("אחזקות פנסיוניות").getByRole("button", { name: "הוספת אחזקה פנסיונית" }));
 
-    expect(await screen.findByText("Unable to save pension holdings.")).toBeInTheDocument();
+    expect(await screen.findByText("לא ניתן לשמור את הרשומה.")).toBeInTheDocument();
     expect(await screen.findByText(/provider_name is required/)).toBeInTheDocument();
   });
 
@@ -635,25 +640,25 @@ describe("RetirementPlanningFactsSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RetirementPlanningFactsSection clientId={7} />);
-    await screen.findByText("No pension holdings found for the selected lifecycle filter.");
+    await screen.findByText("לא נמצאו אחזקות פנסיוניות עבור מסנן מחזור החיים שנבחר.");
 
-    const pension = sectionQueries("Pension holdings");
-    expect(pension.queryByLabelText("Balance As Of Date")).not.toBeInTheDocument();
-    expect(pension.queryByLabelText("Pension Amount As Of Date")).not.toBeInTheDocument();
-    fireEvent.change(pension.getByLabelText("Known Balance Amount"), { target: { value: "123.45" } });
-    fireEvent.change(pension.getByLabelText("Known Monthly Pension Amount"), { target: { value: "67.89" } });
-    expect(pension.getByLabelText("Balance As Of Date")).toBeInTheDocument();
-    expect(pension.getByLabelText("Pension Amount As Of Date")).toBeInTheDocument();
+    const pension = sectionQueries("אחזקות פנסיוניות");
+    expect(pension.queryByLabelText("תאריך נכונות היתרה")).not.toBeInTheDocument();
+    expect(pension.queryByLabelText("תאריך נכונות הקצבה")).not.toBeInTheDocument();
+    fireEvent.change(pension.getByLabelText("יתרה ידועה"), { target: { value: "123.45" } });
+    fireEvent.change(pension.getByLabelText("קצבה חודשית ידועה"), { target: { value: "67.89" } });
+    expect(pension.getByLabelText("תאריך נכונות היתרה")).toBeInTheDocument();
+    expect(pension.getByLabelText("תאריך נכונות הקצבה")).toBeInTheDocument();
 
-    const capital = sectionQueries("Capital assets");
-    expect(capital.queryByLabelText("Value As Of Date")).not.toBeInTheDocument();
-    fireEvent.change(capital.getByLabelText("Known Value Amount"), { target: { value: "456.78" } });
-    expect(capital.getByLabelText("Value As Of Date")).toBeInTheDocument();
+    const capital = sectionQueries("נכסי הון");
+    expect(capital.queryByLabelText("תאריך נכונות השווי")).not.toBeInTheDocument();
+    fireEvent.change(capital.getByLabelText("שווי ידוע"), { target: { value: "456.78" } });
+    expect(capital.getByLabelText("תאריך נכונות השווי")).toBeInTheDocument();
 
-    const timing = sectionQueries("Retirement timing and work intentions");
-    expect(timing.queryByLabelText("Other Known Retirement Date Label")).not.toBeInTheDocument();
-    fireEvent.change(timing.getByLabelText("Other Known Retirement Date"), { target: { value: "2030-01-01" } });
-    expect(timing.getByLabelText("Other Known Retirement Date Label")).toBeInTheDocument();
+    const timing = sectionQueries("עיתוי פרישה וכוונות עבודה");
+    expect(timing.queryByLabelText("תיאור תאריך הפרישה הידוע הנוסף")).not.toBeInTheDocument();
+    fireEvent.change(timing.getByLabelText("תאריך פרישה ידוע נוסף"), { target: { value: "01/01/2030" } });
+    expect(timing.getByLabelText("תיאור תאריך הפרישה הידוע הנוסף")).toBeInTheDocument();
   });
 
   it("proves source and verification metadata are included only when explicitly changed and use neutral wording", async () => {
@@ -661,18 +666,18 @@ describe("RetirementPlanningFactsSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RetirementPlanningFactsSection clientId={7} />);
-    expect(await screen.findByText("Provider Name: Existing Pension Provider")).toBeInTheDocument();
-    expect(sectionQueries("Pension holdings").getByText("Verification State: reviewed")).toBeInTheDocument();
-    expect(sectionQueries("Capital assets").getByText("Verification State: verified")).toBeInTheDocument();
+    expect(await screen.findByText("שם הגוף המנהל: Existing Pension Provider")).toBeInTheDocument();
+    expect(sectionQueries("אחזקות פנסיוניות").getByText("מצב אימות: נבדק")).toBeInTheDocument();
+    expect(sectionQueries("נכסי הון").getByText("מצב אימות: אומת")).toBeInTheDocument();
     expect(screen.queryByText(/legally verified|legal conclusion/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/tax verified|tax conclusion/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/regulatory compliance|compliance approved/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/readiness approved|recommendation approved/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/suitability approved|professional correctness/i)).not.toBeInTheDocument();
 
-    const pension = sectionQueries("Pension holdings");
-    fireEvent.change(pension.getByLabelText("Provider Name"), { target: { value: "Metadata Untouched" } });
-    fireEvent.click(pension.getByRole("button", { name: "Add Pension Holding" }));
+    const pension = sectionQueries("אחזקות פנסיוניות");
+    fireEvent.change(pension.getByLabelText("שם הגוף המנהל"), { target: { value: "Metadata Untouched" } });
+    fireEvent.click(pension.getByRole("button", { name: "הוספת אחזקה פנסיונית" }));
     await waitFor(() => {
       expect(callsFor(fetchMock, "pension-holdings", "POST")).toHaveLength(1);
     });
@@ -680,12 +685,12 @@ describe("RetirementPlanningFactsSection", () => {
     expect(untouchedMetadataBody).not.toHaveProperty("source_status");
     expect(untouchedMetadataBody).not.toHaveProperty("verification_state");
 
-    const capital = sectionQueries("Capital assets");
-    fireEvent.change(capital.getByLabelText("Asset Category"), { target: { value: "bank deposit" } });
-    fireEvent.change(capital.getByLabelText("Asset Description"), { target: { value: "Metadata selected" } });
-    fireEvent.change(capital.getByLabelText("Source Status"), { target: { value: "external statement" } });
-    fireEvent.change(capital.getByLabelText("Verification State"), { target: { value: "verified" } });
-    fireEvent.click(capital.getByRole("button", { name: "Add Capital Asset" }));
+    const capital = sectionQueries("נכסי הון");
+    fireEvent.change(capital.getByLabelText("קטגוריית נכס"), { target: { value: "bank deposit" } });
+    fireEvent.change(capital.getByLabelText("תיאור הנכס"), { target: { value: "Metadata selected" } });
+    fireEvent.change(capital.getByLabelText("מצב מקור"), { target: { value: "external statement" } });
+    fireEvent.change(capital.getByLabelText("מצב אימות"), { target: { value: "verified" } });
+    fireEvent.click(capital.getByRole("button", { name: "הוספת נכס הון" }));
     await waitFor(() => {
       expect(callsFor(fetchMock, "capital-assets", "POST")).toHaveLength(1);
     });
@@ -695,14 +700,14 @@ describe("RetirementPlanningFactsSection", () => {
       verification_state: "verified"
     });
 
-    fireEvent.click(sectionQueries("Recurring incomes").getByRole("button", { name: "Edit Recurring Income" }));
-    fireEvent.change(sectionQueries("Recurring incomes").getByLabelText("Source Status"), {
+    fireEvent.click(sectionQueries("הכנסות שוטפות").getByRole("button", { name: "עריכת הכנסה שוטפת" }));
+    fireEvent.change(sectionQueries("הכנסות שוטפות").getByLabelText("מצב מקור"), {
       target: { value: "planner entered" }
     });
-    fireEvent.change(sectionQueries("Recurring incomes").getByLabelText("Verification State"), {
+    fireEvent.change(sectionQueries("הכנסות שוטפות").getByLabelText("מצב אימות"), {
       target: { value: "reviewed" }
     });
-    fireEvent.click(sectionQueries("Recurring incomes").getByRole("button", { name: "Save Recurring Income" }));
+    fireEvent.click(sectionQueries("הכנסות שוטפות").getByRole("button", { name: "שמירת הכנסה שוטפת" }));
     await waitFor(() => {
       expect(callsFor(fetchMock, "recurring-incomes", "PUT")).toHaveLength(1);
     });
@@ -717,11 +722,11 @@ describe("RetirementPlanningFactsSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RetirementPlanningFactsSection clientId={7} />);
-    expect(await screen.findByText("Provider Name: Existing Pension Provider")).toBeInTheDocument();
+    expect(await screen.findByText("שם הגוף המנהל: Existing Pension Provider")).toBeInTheDocument();
 
     for (const config of resourceConfigs) {
       fireEvent.click(sectionQueries(config.heading).getByRole("button", { name: config.editButton }));
-      fireEvent.click(sectionQueries(config.heading).getByRole("button", { name: "Cancel Edit" }));
+      fireEvent.click(sectionQueries(config.heading).getByRole("button", { name: "ביטול העריכה" }));
     }
 
     expectNoGetOneRequests(fetchMock);

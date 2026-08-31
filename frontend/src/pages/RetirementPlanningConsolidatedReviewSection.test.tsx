@@ -34,13 +34,13 @@ const approvedUrls = [
 ];
 
 const groupHeadings = [
-  "Pension Holdings",
-  "Capital Assets",
-  "Recurring Income",
-  "Recurring Expenses",
-  "Retirement Timing and Work Intentions",
-  "Planner Assumptions",
-  "Advisory Missing Information"
+  "אחזקות פנסיוניות",
+  "נכסי הון",
+  "הכנסות שוטפות",
+  "הוצאות שוטפות",
+  "עיתוי פרישה וכוונות עבודה",
+  "הנחות מתכנן",
+  "מידע חסר לייעוץ"
 ];
 
 function rowsForUrl(url: string): unknown[] {
@@ -202,13 +202,14 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
     for (const heading of groupHeadings) {
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
     }
-    expect(screen.getByText("Loading pension holdings...")).toBeInTheDocument();
+    expect(screen.getByText("טוען אחזקות פנסיוניות…")).toBeInTheDocument();
 
     expect(await screen.findByText("Existing Pension Provider")).toBeInTheDocument();
     expect(await screen.findByText("Salary assumption")).toBeInTheDocument();
-    expect(await screen.findByText(/No planning-domain classification recorded/)).toBeInTheDocument();
-    expect(screen.getByText(/No advisory status recorded/)).toBeInTheDocument();
-    expect(screen.getByText(/No neutral reason recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/לא תועד סיווג לתחום תכנון/)).toBeInTheDocument();
+    expect(screen.getByText(/לא תועד מצב ייעוץ/)).toBeInTheDocument();
+    expect(screen.getByText(/לא תועדה סיבה ניטרלית/)).toBeInTheDocument();
+    expect(screen.getByText("תאריך נכונות היתרה: 01/01/2026")).toBeInTheDocument();
 
     expect(fetchMock).toHaveBeenCalledTimes(7);
     expect(fetchMock.mock.calls.map(requestUrl)).toEqual(approvedUrls);
@@ -242,13 +243,13 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
 
     render(<RetirementPlanningConsolidatedReviewSection clientId={7} />);
 
-    expect(await screen.findByText("No pension holdings recorded.")).toBeInTheDocument();
-    expect(screen.getByText("No capital assets recorded.")).toBeInTheDocument();
-    expect(screen.getByText("No recurring income recorded.")).toBeInTheDocument();
-    expect(screen.getByText("No recurring expenses recorded.")).toBeInTheDocument();
-    expect(screen.getByText("No retirement timing and work intentions recorded.")).toBeInTheDocument();
-    expect(screen.getByText("No planner assumptions recorded.")).toBeInTheDocument();
-    expect(screen.getByText("No advisory missing information recorded.")).toBeInTheDocument();
+    expect(await screen.findByText("לא תועדו אחזקות פנסיוניות.")).toBeInTheDocument();
+    expect(screen.getByText("לא תועדו נכסי הון.")).toBeInTheDocument();
+    expect(screen.getByText("לא תועדו הכנסות שוטפות.")).toBeInTheDocument();
+    expect(screen.getByText("לא תועדו הוצאות שוטפות.")).toBeInTheDocument();
+    expect(screen.getByText("לא תועדו נתוני עיתוי פרישה וכוונות עבודה.")).toBeInTheDocument();
+    expect(screen.getByText("לא תועדו הנחות מתכנן.")).toBeInTheDocument();
+    expect(screen.getByText("לא תועד מידע חסר לייעוץ.")).toBeInTheDocument();
   });
 
   it("renders visible API error states", async () => {
@@ -257,7 +258,7 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
 
     render(<RetirementPlanningConsolidatedReviewSection clientId={7} />);
 
-    expect(await screen.findByText("Unable to load pension holdings.")).toBeInTheDocument();
+    expect(await screen.findByText("לא ניתן לטעון אחזקות פנסיוניות.")).toBeInTheDocument();
     expect(screen.getAllByText(/LOAD_FAILED/)).toHaveLength(7);
   });
 });

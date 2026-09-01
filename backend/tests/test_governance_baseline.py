@@ -174,6 +174,7 @@ APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS = {
     "frontend/src/pages/M05LedgerScreen.tsx",
 }
 APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
+    "backend/app/services/m02_intake_service.py",
     "backend/app/services/m03_review_service.py",
     "backend/app/services/m04_classification_service.py",
     "backend/app/services/m04_rule_catalogue.py",

@@ -72,6 +72,10 @@ def _not_found() -> M04ClassificationError:
     return M04ClassificationError(404, "M04_RESOURCE_NOT_FOUND", "Resource not found")
 
 
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _json_value(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
@@ -450,8 +454,8 @@ def _validated_history(
             if isinstance(snapshot, dict)
             else {}
         )
-        created_at = row.created_at
-        previous_created_at = previous.created_at if previous else None
+        created_at = _utc(row.created_at)
+        previous_created_at = _utc(previous.created_at) if previous else None
         if (
             REVISION_ID_PATTERN.fullmatch(row.revision_id) is None
             or context.subject is None
@@ -671,6 +675,7 @@ def _append(
     action_evidence: dict[str, Any] | None = None,
     historical_revision_id: str | None = None,
     components: list[dict[str, Any]] | None = None,
+    commit: bool = True,
 ) -> M04ClassificationRevision:
     component_rows = components or []
     sequence = 1 if previous is None else previous.revision_sequence + 1
@@ -750,7 +755,9 @@ def _append(
             )
             authorize_m04_insert(component_row)
             db.add(component_row)
-        db.commit()
+        db.flush()
+        if commit:
+            db.commit()
     except (IntegrityError, OperationalError, ValueError) as error:
         db.rollback()
         raise M04ClassificationError(
@@ -758,7 +765,8 @@ def _append(
             "M04_CONCURRENT_LEAF_CONFLICT",
             "Classification changed concurrently or violates append-only integrity",
         ) from error
-    db.refresh(row)
+    if commit:
+        db.refresh(row)
     return row
 
 
@@ -850,6 +858,8 @@ def _materialize_catalogue_result(
     db: Session,
     context: M04Context,
     leaf: M04ClassificationRevision,
+    *,
+    commit: bool,
 ) -> M04ClassificationRevision:
     result = evaluate_exact_catalogue(
         _snapshot(context, archive_generation=context.subject.archive_generation)
@@ -864,9 +874,11 @@ def _materialize_catalogue_result(
                 reason_code="professional_classification_required",
                 explanation="A specific professional classification decision is required.",
             ),
+            commit=commit,
         )
     proposal = create_proposal(
-        db, context.client.client_id, context.intake.intake_id, leaf.revision_id
+        db, context.client.client_id, context.intake.intake_id, leaf.revision_id,
+        commit=commit,
     )
     return _append(
         db,
@@ -889,13 +901,18 @@ def _materialize_catalogue_result(
             "non_material_axes_may_remain_unresolved": True,
         },
         components=[item for item in result["components"]],
+        commit=commit,
     )
 
 
 def ensure_current_classification(
-    db: Session, client_id: int, intake_id: str
+    db: Session,
+    client_id: int,
+    intake_id: str,
+    *,
+    commit: bool = True,
 ) -> M04ClassificationRevision | None:
-    """Lazily materialize current classification without authority ceremony."""
+    """Materialize classification at a server-owned mutation boundary."""
     context = _context(db, client_id, intake_id)
     if (
         context.intake.lifecycle_status != "accepted_for_review"
@@ -905,11 +922,11 @@ def ensure_current_classification(
         _ = rows
         return leaf
 
-    ensure_current_input_context(db, client_id, intake_id)
+    ensure_current_input_context(db, client_id, intake_id, commit=commit)
     context = _context(db, client_id, intake_id)
     _require_m03_eligible(context)
     if context.subject is None:
-        start_classification(db, client_id, intake_id)
+        start_classification(db, client_id, intake_id, commit=commit)
         context = _context(db, client_id, intake_id)
 
     rows, component_map, leaf = _current(db, context)
@@ -938,9 +955,12 @@ def ensure_current_classification(
                 "historical_values_are_authority": False,
             },
             historical_revision_id=leaf.revision_id,
+            commit=commit,
         )
         context = _context(db, client_id, intake_id)
-        return _materialize_catalogue_result(db, context, leaf)
+        return _materialize_catalogue_result(
+            db, context, leaf, commit=commit
+        )
 
     if leaf.state == "accepted" or leaf.state == "unresolved":
         return leaf
@@ -977,6 +997,7 @@ def ensure_current_classification(
                         "non_material_axes_may_remain_unresolved": True,
                     },
                     components=result["components"],
+                    commit=commit,
                 )
         return leaf
     if leaf.state == "rejected" and leaf.match_basis == "exact_rule_catalogue":
@@ -989,10 +1010,13 @@ def ensure_current_classification(
                 reason_code="simplified_current_classification",
                 explanation="Recompute current professional classification under the simplified workflow.",
             ),
+            commit=commit,
         )
         context = _context(db, client_id, intake_id)
     if leaf.state == "under_review":
-        return _materialize_catalogue_result(db, context, leaf)
+        return _materialize_catalogue_result(
+            db, context, leaf, commit=commit
+        )
     return leaf
 
 
@@ -1160,7 +1184,11 @@ def preview_rules(
 
 
 def start_classification(
-    db: Session, client_id: int, intake_id: str
+    db: Session,
+    client_id: int,
+    intake_id: str,
+    *,
+    commit: bool = True,
 ) -> M04ClassificationRevision:
     context = _context(db, client_id, intake_id)
     _require_active(context)
@@ -1195,6 +1223,7 @@ def start_classification(
             action_type="start",
             snapshot=_snapshot(context, archive_generation=0),
             match_basis="explicit_start",
+            commit=commit,
         )
     except M04ClassificationError:
         raise
@@ -1225,7 +1254,12 @@ def _mutation_context(
 
 
 def create_proposal(
-    db: Session, client_id: int, intake_id: str, expected: str
+    db: Session,
+    client_id: int,
+    intake_id: str,
+    expected: str,
+    *,
+    commit: bool = True,
 ) -> M04ClassificationRevision:
     context, rows, _, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, expected)
@@ -1266,6 +1300,7 @@ def create_proposal(
         match_basis="exact_rule_catalogue",
         action_evidence={"conflicts": [], "unresolved_reasons": result["unresolved_reasons"]},
         components=result["components"],
+        commit=commit,
     )
 
 
@@ -1274,6 +1309,8 @@ def mark_unresolved(
     client_id: int,
     intake_id: str,
     payload: M04ReasonRequest,
+    *,
+    commit: bool = True,
 ) -> M04ClassificationRevision:
     context, rows, _, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
@@ -1311,6 +1348,7 @@ def mark_unresolved(
             "unresolved_reasons": result["unresolved_reasons"],
         },
         components=result["components"],
+        commit=commit,
     )
 
 
@@ -1380,6 +1418,8 @@ def reopen_classification(
     client_id: int,
     intake_id: str,
     payload: M04ReasonRequest,
+    *,
+    commit: bool = True,
 ) -> M04ClassificationRevision:
     context, rows, _, leaf = _mutation_context(db, client_id, intake_id)
     _expect(leaf, payload.expected_current_revision_id)
@@ -1407,6 +1447,7 @@ def reopen_classification(
         reason=payload.explanation,
         match_basis="explicit_reopen",
         action_evidence={"prior_revision_id": leaf.revision_id},
+        commit=commit,
     )
 
 

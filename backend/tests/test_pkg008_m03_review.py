@@ -232,7 +232,7 @@ def test_append_only_accept_reopen_and_eligibility(api) -> None:
         assert terminal_row.state == "accepted"
 
 
-def test_material_m02_change_invalidates_authority_until_explicit_rereview(api) -> None:
+def test_material_m02_change_currentizes_provenance_without_explicit_rereview(api) -> None:
     client, sessions = api
     root = client.post("/api/clients/1/m03/targets/manual-1/start").json()
     accepted_a = client.post(
@@ -273,49 +273,29 @@ def test_material_m02_change_invalidates_authority_until_explicit_rereview(api) 
         json={"target_status": "accepted_for_review"},
     ).raise_for_status()
 
-    stale = client.get(
+    current = client.get(
         "/api/clients/1/m03/targets/manual-1/eligibility"
     ).json()
-    assert stale["eligible"] is False
-    assert stale["exclusion_reason"] == "upstream_m02_evidence_changed"
-    assert stale["accepted_revision_id"] is None
-    assert client.get(
+    assert current["eligible"] is True
+    assert current["exclusion_reason"] is None
+    history_b = client.get(
         "/api/clients/1/m03/targets/manual-1/history"
-    ).json() == history_a
+    ).json()
+    assert history_b[: len(history_a)] == history_a
+    assert [row["state"] for row in history_b[-2:]] == ["under_review", "accepted"]
+    assert history_b[-1]["reason"] == "system_current_user_provided_input"
     assert client.get(
         "/api/clients/2/m03/targets/manual-2/eligibility"
     ).json()["eligible"] is True
-
-    reopened = client.post(
-        "/api/clients/1/m03/targets/manual-1/reopen",
-        json={
-            "reason": "review version B",
-            "expected_current_revision_id": accepted_a["revision_id"],
-        },
-    ).json()
-    accepted_b_response = client.post(
-        "/api/clients/1/m03/targets/manual-1/accept",
-        json={
-            "reason": "accepted version B",
-            "expected_current_revision_id": reopened["revision_id"],
-        },
-    )
-    assert accepted_b_response.status_code == 201
-    accepted_b = accepted_b_response.json()
-    restored = client.get(
-        "/api/clients/1/m03/targets/manual-1/eligibility"
-    ).json()
-    assert restored["eligible"] is True
-    assert restored["accepted_revision_id"] == accepted_b["revision_id"]
     with sessions() as db:
         old = db.get(M03ReviewRevision, accepted_a["revision_id"])
-        new = db.get(M03ReviewRevision, accepted_b["revision_id"])
+        new = db.get(M03ReviewRevision, history_b[-1]["revision_id"])
         assert old.state == "accepted"
         assert old.reason == "accepted version A"
         assert old.m02_evidence_digest != new.m02_evidence_digest
 
 
-def test_stale_under_review_recovers_append_only_before_explicit_decision(api) -> None:
+def test_stale_under_review_currentizes_append_only_at_m02_acceptance(api) -> None:
     client, sessions = api
     started = client.post("/api/clients/1/m03/targets/manual-1/start").json()
     with sessions() as db:
@@ -341,11 +321,10 @@ def test_stale_under_review_recovers_append_only_before_explicit_decision(api) -
         json={"target_status": "accepted_for_review"},
     ).raise_for_status()
 
-    stale = client.get(
+    current = client.get(
         "/api/clients/1/m03/targets/manual-1/eligibility"
     ).json()
-    assert stale["eligible"] is False
-    assert stale["exclusion_reason"] == "upstream_m02_evidence_changed"
+    assert current["eligible"] is True
     for action in ("accept", "reject"):
         blocked = client.post(
             f"/api/clients/1/m03/targets/manual-1/{action}",
@@ -355,42 +334,14 @@ def test_stale_under_review_recovers_append_only_before_explicit_decision(api) -
             },
         )
         assert blocked.status_code == 409
-        assert blocked.json()["detail"]["code"] == "M03_UPSTREAM_EVIDENCE_CHANGED"
-
-    recovered_response = client.post(
-        "/api/clients/1/m03/targets/manual-1/reopen",
-        json={
-            "reason": "review current version B evidence",
-            "expected_current_revision_id": started["revision_id"],
-        },
-    )
-    assert recovered_response.status_code == 201
-    recovered = recovered_response.json()
-    assert recovered["state"] == "under_review"
-    assert recovered["revision_sequence"] == 2
-    assert recovered["predecessor_revision_id"] == started["revision_id"]
-    active = client.get(
-        "/api/clients/1/m03/targets/manual-1/eligibility"
-    ).json()
-    assert active["eligible"] is False
-    assert active["exclusion_reason"] == "review_under_review"
-
-    accepted = client.post(
-        "/api/clients/1/m03/targets/manual-1/accept",
-        json={
-            "reason": "explicitly accepted version B",
-            "expected_current_revision_id": recovered["revision_id"],
-        },
-    )
-    assert accepted.status_code == 201
-    restored = client.get(
-        "/api/clients/1/m03/targets/manual-1/eligibility"
-    ).json()
-    assert restored["eligible"] is True
-    assert restored["accepted_revision_id"] == accepted.json()["revision_id"]
+        assert blocked.json()["detail"]["code"] == "M03_WRONG_CURRENT_STATE"
+    history = client.get("/api/clients/1/m03/targets/manual-1/history").json()
+    assert [row["state"] for row in history] == [
+        "under_review", "under_review", "accepted"
+    ]
     with sessions() as db:
         original = db.get(M03ReviewRevision, started["revision_id"])
-        recovered_row = db.get(M03ReviewRevision, recovered["revision_id"])
+        recovered_row = db.get(M03ReviewRevision, history[-1]["revision_id"])
         assert _revision_snapshot(original) == original_snapshot
         assert recovered_row.m02_evidence_digest is not None
         assert recovered_row.m02_evidence_digest != original.m02_evidence_digest

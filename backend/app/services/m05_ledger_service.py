@@ -46,7 +46,6 @@ from app.services.m01_case_service import effective_lifecycle_status
 from app.services.m03_review_service import M03ReviewError, target_response as m03_target
 from app.services.m04_classification_service import (
     M04ClassificationError,
-    ensure_current_classification,
     eligibility as m04_eligibility,
     target_response as m04_target,
 )
@@ -293,7 +292,6 @@ def _candidate_context(
     total = _canonical_numeric(intake.declared_total_balance_amount)
 
     try:
-        ensure_current_classification(db, client.client_id, intake.intake_id)
         m03 = m03_target(db, client.client_id, intake.intake_id)
     except M03ReviewError as error:
         raise _conflict("provenance_invalid", "Current input provenance is invalid") from error

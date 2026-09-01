@@ -265,7 +265,11 @@ def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetRes
 
 
 def ensure_current_input_context(
-    db: Session, client_id: int, intake_id: str
+    db: Session,
+    client_id: int,
+    intake_id: str,
+    *,
+    commit: bool = True,
 ) -> M03TargetResponse:
     """Materialize the compatibility M03 anchor without a planner authority gate.
 
@@ -308,11 +312,18 @@ def ensure_current_input_context(
 
     reason = "system_current_user_provided_input"
     if leaf is None:
-        leaf = _append(db, intake, "under_review", None, None, require_empty=True)
+        leaf = _append(
+            db, intake, "under_review", None, None,
+            require_empty=True, commit=commit,
+        )
     elif not evidence_is_current or leaf.state in {"accepted", "rejected"}:
-        leaf = _append(db, intake, "under_review", reason, leaf.revision_id)
+        leaf = _append(
+            db, intake, "under_review", reason, leaf.revision_id, commit=commit
+        )
     if leaf.state == "under_review":
-        _append(db, intake, "accepted", reason, leaf.revision_id)
+        _append(
+            db, intake, "accepted", reason, leaf.revision_id, commit=commit
+        )
     return target_response(db, client_id, intake_id)
 
 
@@ -341,6 +352,7 @@ def _append(
     expected: str | None,
     *,
     require_empty: bool = False,
+    commit: bool = True,
 ) -> M03ReviewRevision:
     kind, source = _target(intake)
     rows = _history(db, intake.intake_id)
@@ -365,11 +377,15 @@ def _append(
     )
     db.add(row)
     try:
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except (IntegrityError, OperationalError) as error:
         db.rollback()
         raise M03ReviewError(409, "M03_CONCURRENT_LEAF_CONFLICT", "The review changed concurrently") from error
-    db.refresh(row)
+    if commit:
+        db.refresh(row)
     return row
 
 

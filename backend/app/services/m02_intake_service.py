@@ -55,6 +55,8 @@ METADATA_FIELDS = {
 }
 _blob_lock_guard = threading.Lock()
 _blob_locks: dict[tuple[int, str], threading.Lock] = {}
+_currentization_lock_guard = threading.Lock()
+_currentization_locks: dict[tuple[int, str], threading.Lock] = {}
 
 
 def require_client(db: Session, client_id: int) -> Client:
@@ -88,6 +90,28 @@ def _checksum_lock(db: Session, client_id: int, checksum: str):
         if db.bind is not None and db.bind.dialect.name == "postgresql":
             advisory_key = int.from_bytes(
                 hashlib.sha256(f"{client_id}:{checksum}".encode("ascii")).digest()[:8],
+                byteorder="big",
+                signed=True,
+            )
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": advisory_key},
+            )
+        yield
+
+
+@contextmanager
+def _currentization_lock(db: Session, client_id: int, intake_id: str):
+    """Serialize the accepted-current mutation in-process and on PostgreSQL."""
+    key = (client_id, intake_id)
+    with _currentization_lock_guard:
+        lock = _currentization_locks.setdefault(key, threading.Lock())
+    with lock:
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            advisory_key = int.from_bytes(
+                hashlib.sha256(
+                    f"m02-current:{client_id}:{intake_id}".encode("utf-8")
+                ).digest()[:8],
                 byteorder="big",
                 signed=True,
             )
@@ -199,8 +223,74 @@ def transition_intake(
     rejection_reason_code: str | None,
     notes: str | None = None,
 ) -> M02IntakeRecord:
+    if target_status == "accepted_for_review":
+        with _currentization_lock(db, client_id, intake_id):
+            return _transition_intake_locked(
+                db, client_id, intake_id, target_status,
+                rejection_reason_code, notes,
+            )
+    return _transition_intake_locked(
+        db, client_id, intake_id, target_status, rejection_reason_code, notes
+    )
+
+
+def _currentize_accepted_intake(
+    db: Session, client_id: int, intake_id: str
+) -> None:
+    from app.services.m03_review_service import M03ReviewError
+    from app.services.m04_classification_service import (
+        M04ClassificationError,
+        ensure_current_classification,
+    )
+
+    try:
+        ensure_current_classification(
+            db, client_id, intake_id, commit=False
+        )
+    except (M03ReviewError, M04ClassificationError) as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": error.message},
+        ) from error
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _transition_intake_locked(
+    db: Session,
+    client_id: int,
+    intake_id: str,
+    target_status: str,
+    rejection_reason_code: str | None,
+    notes: str | None = None,
+) -> M02IntakeRecord:
     require_mutable_client(db, client_id)
-    row = require_intake(db, client_id, intake_id)
+    if target_status == "accepted_for_review":
+        row = db.scalar(
+            select(M02IntakeRecord)
+            .where(
+                M02IntakeRecord.client_id == client_id,
+                M02IntakeRecord.intake_id == intake_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "M02_RESOURCE_NOT_FOUND",
+                    "message": "Resource not found",
+                },
+            )
+        if row.lifecycle_status == "accepted_for_review":
+            _currentize_accepted_intake(db, client_id, intake_id)
+            db.commit()
+            db.refresh(row)
+            return row
+    else:
+        row = require_intake(db, client_id, intake_id)
     if target_status not in ALLOWED_TRANSITIONS.get(row.lifecycle_status, set()):
         raise HTTPException(
             status_code=409,
@@ -246,6 +336,9 @@ def transition_intake(
         row.rejection_reason_code = rejection_reason_code.strip()
     if notes is not None:
         row.notes = _optional_text(notes)
+    if target_status == "accepted_for_review":
+        db.flush()
+        _currentize_accepted_intake(db, client_id, intake_id)
     db.commit()
     db.refresh(row)
     return row

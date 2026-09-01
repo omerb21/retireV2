@@ -21,7 +21,11 @@ from app.db.session import get_db
 from app.main import app
 from app.models.client import Client
 from app.models.m02_intake import M02IntakeRecord
-from app.models.m04_classification import M04ClassificationRevision
+from app.models.m03_review import M03ReviewRevision
+from app.models.m04_classification import (
+    M04ClassificationRevision,
+    M04ClassificationSubject,
+)
 from app.models.m05_ledger import (
     M05AdjustmentEvidence,
     M05CandidateLink,
@@ -203,21 +207,226 @@ def _start(client: TestClient, account: str, *, confirm: bool = True) -> dict:
     return response.json()
 
 
+def _currentization_counts(
+    sessions: sessionmaker[Session], intake_id: str
+) -> tuple[int, int, int]:
+    with sessions() as db:
+        return (
+            db.scalar(select(func.count()).select_from(M03ReviewRevision).where(
+                M03ReviewRevision.intake_id == intake_id
+            )),
+            db.scalar(select(func.count()).select_from(M04ClassificationSubject).where(
+                M04ClassificationSubject.intake_id == intake_id
+            )),
+            db.scalar(select(func.count()).select_from(M04ClassificationRevision).where(
+                M04ClassificationRevision.intake_id == intake_id
+            )),
+        )
+
+
+def _add_pending_current_input(
+    sessions: sessionmaker[Session], intake_id: str, account: str
+) -> None:
+    intake = _intake(
+        intake_id,
+        1,
+        provider=f"Provider {intake_id}",
+        account=account,
+        total="100.00",
+        contribution="60.00",
+        severance="40.00",
+    )
+    intake.lifecycle_status = "metadata_review"
+    with sessions() as db:
+        db.add(intake)
+        db.commit()
+
+
+def test_m05_candidate_get_is_pure_and_repeatable_after_explicit_currentization(api) -> None:
+    client, sessions = api
+    _add_pending_current_input(sessions, "pure-get", "PURE-GET")
+    client.post(
+        "/api/clients/1/m02/intakes/pure-get/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+    before = _currentization_counts(sessions, "pure-get")
+
+    first = client.get("/api/clients/1/m05/candidates")
+    second = client.get("/api/clients/1/m05/candidates")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert _candidate(client, "PURE-GET")["eligible"] is True
+    assert _currentization_counts(sessions, "pure-get") == before == (2, 1, 3)
+
+
+def test_m05_candidate_get_reports_missing_currentization_without_repair(api) -> None:
+    client, sessions = api
+    intake = _intake(
+        "legacy-not-currentized", 1,
+        provider="Legacy Provider", account="LEGACY-NOT-CURRENT",
+        total="100.00", contribution="60.00", severance="40.00",
+    )
+    with sessions() as db:
+        db.add(intake)
+        db.commit()
+
+    first = client.get("/api/clients/1/m05/candidates")
+    second = client.get("/api/clients/1/m05/candidates")
+    assert first.status_code == second.status_code == 200
+    first_row = next(
+        row for row in first.json() if row["intake_id"] == "legacy-not-currentized"
+    )
+    second_row = next(
+        row for row in second.json() if row["intake_id"] == "legacy-not-currentized"
+    )
+    assert first_row == second_row
+    assert first_row["eligible"] is False
+    assert first_row["exclusion_reason"] == "provenance_invalid"
+    assert _currentization_counts(sessions, "legacy-not-currentized") == (0, 0, 0)
+
+
+def test_concurrent_m05_candidate_gets_are_identical_and_do_not_persist(api) -> None:
+    client, sessions = api
+    _add_pending_current_input(sessions, "concurrent-get", "CONCURRENT-GET")
+    client.post(
+        "/api/clients/1/m02/intakes/concurrent-get/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+    before = _currentization_counts(sessions, "concurrent-get")
+
+    barrier = Barrier(2)
+
+    def read_candidates():
+        barrier.wait(timeout=10)
+        return client.get("/api/clients/1/m05/candidates")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = [future.result(timeout=20) for future in (
+            pool.submit(read_candidates), pool.submit(read_candidates)
+        )]
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert responses[0].json() == responses[1].json()
+    candidates = [
+        next(row for row in response.json() if row["intake_id"] == "concurrent-get")
+        for response in responses
+    ]
+    assert [row["eligible"] for row in candidates] == [True, True]
+    assert [row["exclusion_reason"] for row in candidates] == [None, None]
+    assert _currentization_counts(sessions, "concurrent-get") == before == (2, 1, 3)
+
+
+def test_concurrent_and_repeated_accepted_transition_currentizes_once(api) -> None:
+    client, sessions = api
+    _add_pending_current_input(sessions, "concurrent-current", "CONCURRENT-CURRENT")
+    endpoint = "/api/clients/1/m02/intakes/concurrent-current/lifecycle"
+    barrier = Barrier(2)
+
+    def accept_current():
+        barrier.wait(timeout=10)
+        return client.post(endpoint, json={"target_status": "accepted_for_review"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = [future.result(timeout=20) for future in (
+            pool.submit(accept_current), pool.submit(accept_current)
+        )]
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert _currentization_counts(sessions, "concurrent-current") == (2, 1, 3)
+    retry = client.post(endpoint, json={"target_status": "accepted_for_review"})
+    assert retry.status_code == 200
+    assert _currentization_counts(sessions, "concurrent-current") == (2, 1, 3)
+    candidate = _candidate(client, "CONCURRENT-CURRENT")
+    assert candidate["eligible"] is True
+    assert candidate["exclusion_reason"] is None
+
+
+def test_currentization_failure_rolls_back_m02_m03_and_m04(api, monkeypatch) -> None:
+    client, sessions = api
+    _add_pending_current_input(sessions, "atomic-failure", "ATOMIC-FAILURE")
+
+    def fail_catalogue(_snapshot):
+        raise RuntimeError("forced deterministic classification failure")
+
+    monkeypatch.setattr(
+        "app.services.m04_classification_service.evaluate_exact_catalogue",
+        fail_catalogue,
+    )
+    with pytest.raises(RuntimeError, match="forced deterministic classification failure"):
+        client.post(
+            "/api/clients/1/m02/intakes/atomic-failure/lifecycle",
+            json={"target_status": "accepted_for_review"},
+        )
+
+    with sessions() as db:
+        assert db.get(M02IntakeRecord, "atomic-failure").lifecycle_status == "metadata_review"
+    assert _currentization_counts(sessions, "atomic-failure") == (0, 0, 0)
+
+
+def test_currentization_rejects_foreign_invalid_lifecycle_and_incomplete_input(api) -> None:
+    client, sessions = api
+    _add_pending_current_input(sessions, "foreign-current", "FOREIGN-CURRENT")
+    foreign = client.post(
+        "/api/clients/2/m02/intakes/foreign-current/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    )
+    assert foreign.status_code == 404
+
+    invalid = _intake(
+        "invalid-lifecycle-current", 1,
+        provider="Invalid Provider", account="INVALID-LIFECYCLE",
+        total="100.00", contribution="60.00", severance="40.00",
+    )
+    invalid.lifecycle_status = "uploaded"
+    incomplete = _intake(
+        "incomplete-current", 1,
+        provider="Incomplete Provider", account="INCOMPLETE",
+        total="100.00", contribution="60.00", severance="40.00",
+    )
+    incomplete.lifecycle_status = "metadata_review"
+    incomplete.product_name = None
+    incomplete.product_identifier = None
+    incomplete.declared_product_type = None
+    with sessions() as db:
+        db.add_all([invalid, incomplete])
+        db.commit()
+    invalid_response = client.post(
+        "/api/clients/1/m02/intakes/invalid-lifecycle-current/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    )
+    incomplete_response = client.post(
+        "/api/clients/1/m02/intakes/incomplete-current/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    )
+    assert invalid_response.status_code == 409
+    assert incomplete_response.status_code == 409
+    for intake_id in (
+        "foreign-current", "invalid-lifecycle-current", "incomplete-current"
+    ):
+        assert _currentization_counts(sessions, intake_id) == (0, 0, 0)
+
+
 def test_fresh_structurally_valid_m02_materializes_internal_context_and_m05_ready_classification(api) -> None:
     client, sessions = api
     with sessions() as db:
-        db.add(
-            _intake(
-                "fresh-current-input",
-                1,
-                provider="Fresh Provider",
-                account="FRESH-001",
-                total="100.00",
-                contribution="60.00",
-                severance="40.00",
-            )
+        intake = _intake(
+            "fresh-current-input",
+            1,
+            provider="Fresh Provider",
+            account="FRESH-001",
+            total="100.00",
+            contribution="60.00",
+            severance="40.00",
         )
+        intake.lifecycle_status = "metadata_review"
+        db.add(intake)
         db.commit()
+
+    client.post(
+        "/api/clients/1/m02/intakes/fresh-current-input/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
 
     candidate = _candidate(client, "FRESH-001")
     assert candidate["eligible"] is True
@@ -246,9 +455,15 @@ def test_ambiguous_current_input_blocks_only_for_professional_classification_the
     intake.declared_component_values = [
         {"label": "רכיב לא מזוהה", "value": "100.00"}
     ]
+    intake.lifecycle_status = "metadata_review"
     with sessions() as db:
         db.add(intake)
         db.commit()
+
+    client.post(
+        "/api/clients/1/m02/intakes/ambiguous-current-input/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
 
     blocked = _candidate(client, "AMB-001")
     assert blocked["eligible"] is False
@@ -301,6 +516,7 @@ def test_material_m02_change_recomputes_current_classification_without_authority
     assert before["authoritative_current"] is True
     old_m03 = client.get("/api/clients/1/m03/targets/manual-ok").json()["current_revision"]
     old_m04 = client.get("/api/clients/1/m04/targets/manual-ok").json()["current_revision"]
+    old_counts = _currentization_counts(sessions, "manual-ok")
 
     client.post(
         "/api/clients/1/m02/intakes/manual-ok/lifecycle",
@@ -337,6 +553,11 @@ def test_material_m02_change_recomputes_current_classification_without_authority
     assert new_m03["revision_id"] != old_m03["revision_id"]
     assert new_m04["revision_id"] != old_m04["revision_id"]
     assert new_m04["state"] == "accepted"
+    assert _currentization_counts(sessions, "manual-ok") == (
+        old_counts[0] + 2,
+        old_counts[1],
+        old_counts[2] + 3,
+    )
     with sessions() as db:
         assert db.get(M04ClassificationRevision, old_m04["revision_id"]).state == "accepted"
     foreign = _candidate(client, "A-001", client_id=2)
@@ -674,19 +895,23 @@ def test_precedence_newer_current_input_and_ledger_refresh(api) -> None:
     client, sessions = api
     started = _start(client, "A-001")
     with sessions() as db:
-        db.add(
-            _intake(
-                "manual-newer-ineligible",
-                1,
-                provider="Exact Provider",
-                account="A-001",
-                total="110.00",
-                contribution="70.00",
-                severance="40.00",
-                statement_date=date(2026, 7, 2),
-            )
+        intake = _intake(
+            "manual-newer-ineligible",
+            1,
+            provider="Exact Provider",
+            account="A-001",
+            total="110.00",
+            contribution="70.00",
+            severance="40.00",
+            statement_date=date(2026, 7, 2),
         )
+        intake.lifecycle_status = "metadata_review"
+        db.add(intake)
         db.commit()
+    client.post(
+        "/api/clients/1/m02/intakes/manual-newer-ineligible/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
     rows = client.get("/api/clients/1/m05/candidates").json()
     old = next(row for row in rows if row["intake_id"] == "manual-ok")
     newer = next(
@@ -2411,12 +2636,20 @@ def test_archived_reopen_requires_explicit_revalidation_after_upstream_change(ap
     with sessions() as db:
         db.get(Client, 1).status = "delivered"
         db.commit()
-    _accept_upstream(client, 1, "manual-reopen-current")
+    client.post(
+        "/api/clients/1/m02/intakes/manual-reopen-current/lifecycle",
+        json={"target_status": "accepted_for_review"},
+    ).raise_for_status()
+    current_candidate = next(
+        row for row in client.get("/api/clients/1/m05/candidates").json()
+        if row["intake_id"] == "manual-reopen-current"
+    )
+    assert current_candidate["eligible"] is True, current_candidate
     gate = client.get(
         f"/api/clients/1/m05/subjects/{started['subject_id']}/m06-eligibility"
     ).json()
     assert gate["eligible_for_m06"] is False
-    assert "upstream_revalidation_required" in gate["exclusion_reasons"]
+    assert "m04_ineligible" in gate["exclusion_reasons"]
     assert "m03_ineligible" not in gate["exclusion_reasons"]
     assert client.get(
         f"/api/clients/1/m05/subjects/{started['subject_id']}/history"
@@ -2529,6 +2762,12 @@ def test_legacy_m03_m04_states_do_not_trap_current_deterministic_input(api) -> N
         },
     )
     assert rejected.status_code == 201, rejected.text
+
+    for intake_id in intake_ids:
+        client.post(
+            f"/api/clients/1/m02/intakes/{intake_id}/lifecycle",
+            json={"target_status": "accepted_for_review"},
+        ).raise_for_status()
 
     rows = {row["intake_id"]: row for row in client.get("/api/clients/1/m05/candidates").json()}
     for intake_id in intake_ids:
@@ -2853,20 +3092,23 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     ) -> dict:
         intake_id = f"elig-{suffix}"
         with sessions() as db:
-            db.add(
-                _intake(
-                    intake_id,
-                    1,
-                    provider=provider or f"Eligibility Provider {suffix}",
-                    account=account or f"ELIG-{suffix}",
-                    total=total,
-                    contribution=contribution,
-                    severance=severance,
-                    statement_date=statement_date,
-                )
+            intake = _intake(
+                intake_id,
+                1,
+                provider=provider or f"Eligibility Provider {suffix}",
+                account=account or f"ELIG-{suffix}",
+                total=total,
+                contribution=contribution,
+                severance=severance,
+                statement_date=statement_date,
             )
+            intake.lifecycle_status = "metadata_review"
+            db.add(intake)
             db.commit()
-        _accept_upstream(client, 1, intake_id)
+        client.post(
+            f"/api/clients/1/m02/intakes/{intake_id}/lifecycle",
+            json={"target_status": "accepted_for_review"},
+        ).raise_for_status()
         candidate = next(
             row
             for row in client.get("/api/clients/1/m05/candidates").json()
@@ -2976,9 +3218,9 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
                     {"label": "Changed", "code": "contribution_component", "value": "60.00"},
                     {"label": "Severance", "code": "severance_component", "value": "40.00"},
                 ],
-                "upstream_revalidation_required",
-            ),
-            ("incomplete", "declared_component_values", [], "m04_ineligible"),
+                    "provenance_invalid",
+                ),
+                ("incomplete", "declared_component_values", [], "provenance_invalid"),
         ("source", "lifecycle_status", "rejected", "upstream_source_ineligible"),
     ):
         started = create_source(suffix)
@@ -3001,7 +3243,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     )
     assert response.status_code == 201
     m03_gate = gate(m03)
-    assert m03_gate["exclusion_reasons"] == ["upstream_revalidation_required", "ledger_draft"]
+    assert m03_gate["exclusion_reasons"] == ["provenance_invalid", "ledger_draft"]
     observed.update(m03_gate["exclusion_reasons"])
 
     m04 = create_source("m04")
@@ -3016,7 +3258,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     )
     assert response.status_code == 201, response.text
     m04_gate = gate(m04)
-    assert m04_gate["exclusion_reasons"] == ["upstream_revalidation_required", "ledger_draft"]
+    assert m04_gate["exclusion_reasons"] == ["m04_ineligible", "ledger_draft"]
     observed.update(m04_gate["exclusion_reasons"])
 
     revalidation = create_source(

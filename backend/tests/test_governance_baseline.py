@@ -179,6 +179,7 @@ APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
     "backend/app/services/m04_rule_catalogue.py",
     "backend/app/services/m05_ledger_service.py",
     "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_pkg008_m03_review.py",
     "backend/tests/test_pkg009_m04_classification.py",
     "backend/tests/test_pkg010_m05_ledger.py",
     "frontend/src/i18n/he.ts",

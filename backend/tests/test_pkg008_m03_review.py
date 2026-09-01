@@ -25,7 +25,7 @@ from app.services.m02_evidence_digest import (
     digest_snapshot,
     evidence_from_snapshot,
 )
-from app.services.m03_review_service import ACTOR
+from app.services.m03_review_service import ACTOR, ensure_current_input_context
 
 
 def _revision_snapshot(row: M03ReviewRevision) -> dict[str, object]:
@@ -162,6 +162,29 @@ def test_candidate_reads_are_side_effect_free_and_target_kinds_are_exact(api) ->
     assert rows["upload-1"]["blob_id"] == "blob-1"
     with sessions() as db:
         assert db.scalar(text("SELECT COUNT(*) FROM m03_review_revisions")) == 0
+
+
+def test_uploaded_source_current_context_preserves_checksum_without_trust_certification(api) -> None:
+    _client, sessions = api
+    with sessions() as db:
+        response = ensure_current_input_context(db, 1, "upload-1")
+        source = db.get(M02PreservedSource, "source-1")
+        blob = db.get(M02PreservedBlob, "blob-1")
+        history = list(db.scalars(
+            select(M03ReviewRevision)
+            .where(M03ReviewRevision.intake_id == "upload-1")
+            .order_by(M03ReviewRevision.revision_sequence)
+        ))
+
+    assert response.eligible is True
+    assert response.target_kind == "source_evidence_review"
+    assert response.source_id == "source-1"
+    assert response.blob_id == "blob-1"
+    assert response.sha256_checksum == "a" * 64
+    assert source is not None and source.preservation_status == "preserved"
+    assert blob is not None and blob.sha256_checksum == "a" * 64
+    assert [row.state for row in history] == ["under_review", "accepted"]
+    assert history[-1].reason == "system_current_user_provided_input"
 
 
 def test_append_only_accept_reopen_and_eligibility(api) -> None:

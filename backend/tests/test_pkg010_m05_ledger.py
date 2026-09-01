@@ -35,6 +35,7 @@ from app.models.m05_ledger import (
     _sql_tokens,
     authorize_m05_insert,
 )
+from app.services.m02_evidence_digest import build_m02_evidence
 from app.services.m05_ledger_service import (
     ELIGIBILITY_REASON_ORDER,
     CandidateEvaluation,
@@ -340,6 +341,128 @@ def test_concurrent_and_repeated_accepted_transition_currentizes_once(api) -> No
     candidate = _candidate(client, "CONCURRENT-CURRENT")
     assert candidate["eligible"] is True
     assert candidate["exclusion_reason"] is None
+
+
+def test_concurrent_put_cannot_mutate_evidence_after_acceptance_currentization(
+    api, monkeypatch
+) -> None:
+    client, sessions = api
+    from app.api import m02_intake_routes
+    from app.services import m04_classification_service
+
+    original_currentize = m04_classification_service.ensure_current_classification
+    original_update = m02_intake_routes.update_intake
+    acceptance_gates: dict[str, tuple[Event, Event]] = {}
+    put_started: dict[str, Event] = {}
+
+    def paused_currentization(db, client_id, intake_id, *, commit=True):
+        gate = acceptance_gates.get(intake_id)
+        if gate is not None:
+            entered, release = gate
+            entered.set()
+            assert release.wait(timeout=10)
+        return original_currentize(
+            db, client_id, intake_id, commit=commit
+        )
+
+    def observed_update(db, client_id, intake_id, payload):
+        put_started[intake_id].set()
+        return original_update(db, client_id, intake_id, payload)
+
+    monkeypatch.setattr(
+        m04_classification_service,
+        "ensure_current_classification",
+        paused_currentization,
+    )
+    monkeypatch.setattr(m02_intake_routes, "update_intake", observed_update)
+
+    for iteration in range(5):
+        intake_id = f"put-accept-race-{iteration}"
+        account = f"PUT-ACCEPT-{iteration}"
+        _add_pending_current_input(sessions, intake_id, account)
+        entered = Event()
+        release = Event()
+        acceptance_gates[intake_id] = (entered, release)
+        put_started[intake_id] = Event()
+        endpoint = f"/api/clients/1/m02/intakes/{intake_id}"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            accepted_future = pool.submit(
+                client.post,
+                f"{endpoint}/lifecycle",
+                json={"target_status": "accepted_for_review"},
+            )
+            assert entered.wait(timeout=10)
+            update_future = pool.submit(
+                client.put,
+                endpoint,
+                json={
+                    "declared_total_balance_amount": "999.00",
+                    "declared_component_values": [
+                        {
+                            "label": "Contributions",
+                            "code": "contribution_component",
+                            "value": "959.00",
+                        },
+                        {
+                            "label": "Severance",
+                            "code": "severance_component",
+                            "value": "40.00",
+                        },
+                    ],
+                },
+            )
+            assert put_started[intake_id].wait(timeout=10)
+            release.set()
+            accepted = accepted_future.result(timeout=20)
+            stale_update = update_future.result(timeout=20)
+
+        assert accepted.status_code == 200, accepted.text
+        assert stale_update.status_code == 409, stale_update.text
+        assert (
+            stale_update.json()["detail"]["code"]
+            == "M02_TERMINAL_OR_LOCKED_RECORD"
+        )
+        assert _currentization_counts(sessions, intake_id) == (2, 1, 3)
+
+        with sessions() as db:
+            intake = db.get(M02IntakeRecord, intake_id)
+            assert intake.lifecycle_status == "accepted_for_review"
+            assert intake.declared_total_balance_amount == Decimal("100.00")
+            evidence = build_m02_evidence(intake, "manual_record_review")
+            m03_leaf = db.scalars(
+                select(M03ReviewRevision)
+                .where(M03ReviewRevision.intake_id == intake_id)
+                .order_by(M03ReviewRevision.revision_sequence.desc())
+            ).first()
+            m04_leaf = db.scalars(
+                select(M04ClassificationRevision)
+                .where(M04ClassificationRevision.intake_id == intake_id)
+                .order_by(M04ClassificationRevision.revision_sequence.desc())
+            ).first()
+            assert m03_leaf.state == "accepted"
+            assert m03_leaf.m02_evidence_digest == evidence.digest
+            assert m03_leaf.m02_evidence_snapshot_json == evidence.snapshot_json
+            assert m04_leaf.state == "accepted"
+            assert (
+                m04_leaf.input_snapshot["accepted_m03_revision_id"]
+                == m03_leaf.revision_id
+            )
+            assert [
+                component["declared_value"]
+                for component in m04_leaf.input_snapshot["components"]
+            ] == ["60.00", "40.00"]
+
+        first = client.get("/api/clients/1/m05/candidates")
+        second = client.get("/api/clients/1/m05/candidates")
+        assert first.status_code == second.status_code == 200
+        assert first.json() == second.json()
+        candidate = next(
+            row for row in first.json() if row["intake_id"] == intake_id
+        )
+        assert candidate["eligible"] is True
+        assert candidate["exclusion_reason"] is None
+        assert _currentization_counts(sessions, intake_id) == (2, 1, 3)
 
 
 def test_currentization_failure_rolls_back_m02_m03_and_m04(api, monkeypatch) -> None:
@@ -3360,17 +3483,24 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
         "tie-one", provider="Tie Gate Provider", account="TIE-GATE"
     )
     with sessions() as db:
+        db.get(M02IntakeRecord, "elig-tie-one").created_at = datetime(
+            2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc
+        )
+        tie_two = _intake(
+            "elig-tie-two",
+            1,
+            provider="Tie Gate Provider",
+            account="TIE-GATE",
+            total="100.00",
+            contribution="60.00",
+            severance="40.00",
+        )
+        tie_two.created_at = datetime(
+            2026, 7, 1, 12, 0, 1, tzinfo=timezone.utc
+        )
         db.add_all(
             [
-                _intake(
-                    "elig-tie-two",
-                    1,
-                    provider="Tie Gate Provider",
-                    account="TIE-GATE",
-                    total="100.00",
-                    contribution="60.00",
-                    severance="40.00",
-                ),
+                tie_two,
                 _intake(
                     "elig-tie-newer-ineligible",
                     1,

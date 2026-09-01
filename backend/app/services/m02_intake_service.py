@@ -55,8 +55,8 @@ METADATA_FIELDS = {
 }
 _blob_lock_guard = threading.Lock()
 _blob_locks: dict[tuple[int, str], threading.Lock] = {}
-_currentization_lock_guard = threading.Lock()
-_currentization_locks: dict[tuple[int, str], threading.Lock] = {}
+_intake_mutation_lock_guard = threading.Lock()
+_intake_mutation_locks: dict[tuple[int, str], threading.Lock] = {}
 
 
 def require_client(db: Session, client_id: int) -> Client:
@@ -101,16 +101,18 @@ def _checksum_lock(db: Session, client_id: int, checksum: str):
 
 
 @contextmanager
-def _currentization_lock(db: Session, client_id: int, intake_id: str):
-    """Serialize the accepted-current mutation in-process and on PostgreSQL."""
+def _locked_intake_mutation(
+    db: Session, client_id: int, intake_id: str
+):
+    """Serialize and lock one intake before validating or mutating its state."""
     key = (client_id, intake_id)
-    with _currentization_lock_guard:
-        lock = _currentization_locks.setdefault(key, threading.Lock())
+    with _intake_mutation_lock_guard:
+        lock = _intake_mutation_locks.setdefault(key, threading.Lock())
     with lock:
         if db.bind is not None and db.bind.dialect.name == "postgresql":
             advisory_key = int.from_bytes(
                 hashlib.sha256(
-                    f"m02-current:{client_id}:{intake_id}".encode("utf-8")
+                    f"m02-intake:{client_id}:{intake_id}".encode("utf-8")
                 ).digest()[:8],
                 byteorder="big",
                 signed=True,
@@ -119,7 +121,28 @@ def _currentization_lock(db: Session, client_id: int, intake_id: str):
                 text("SELECT pg_advisory_xact_lock(:lock_key)"),
                 {"lock_key": advisory_key},
             )
-        yield
+        row = db.scalar(
+            select(M02IntakeRecord)
+            .where(
+                M02IntakeRecord.client_id == client_id,
+                M02IntakeRecord.intake_id == intake_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "M02_RESOURCE_NOT_FOUND",
+                    "message": "Resource not found",
+                },
+            )
+        try:
+            yield row
+        except BaseException:
+            db.rollback()
+            raise
 
 
 def require_intake(db: Session, client_id: int, intake_id: str) -> M02IntakeRecord:
@@ -186,33 +209,33 @@ def update_intake(
     intake_id: str,
     payload: M02IntakeUpdateRequest,
 ) -> M02IntakeRecord:
-    require_mutable_client(db, client_id)
-    row = require_intake(db, client_id, intake_id)
-    if row.lifecycle_status not in EDITABLE_STATUSES:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "M02_TERMINAL_OR_LOCKED_RECORD",
-                "message": "The intake must be in an editable lifecycle state",
-            },
+    with _locked_intake_mutation(db, client_id, intake_id) as row:
+        require_mutable_client(db, client_id)
+        if row.lifecycle_status not in EDITABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "M02_TERMINAL_OR_LOCKED_RECORD",
+                    "message": "The intake must be in an editable lifecycle state",
+                },
+            )
+        values = _normalized_payload(
+            {field: getattr(payload, field) for field in payload.model_fields_set}
         )
-    values = _normalized_payload(
-        {field: getattr(payload, field) for field in payload.model_fields_set}
-    )
-    for field, value in values.items():
-        if field in METADATA_FIELDS:
-            setattr(row, field, value)
-    row.updated_by_actor = M02_ACTOR
-    row.superseding_candidate = False
-    row.superseding_intake_id = None
-    _apply_superseding_candidate(db, row)
-    row.diagnostics = _diagnostics(row)
-    if row.preserved_source is not None:
-        row.preserved_source.source_type = row.source_type
-        row.preserved_source.declared_statement_date = row.declared_statement_date
-    db.commit()
-    db.refresh(row)
-    return row
+        for field, value in values.items():
+            if field in METADATA_FIELDS:
+                setattr(row, field, value)
+        row.updated_by_actor = M02_ACTOR
+        row.superseding_candidate = False
+        row.superseding_intake_id = None
+        _apply_superseding_candidate(db, row)
+        row.diagnostics = _diagnostics(row)
+        if row.preserved_source is not None:
+            row.preserved_source.source_type = row.source_type
+            row.preserved_source.declared_statement_date = row.declared_statement_date
+        db.commit()
+        db.refresh(row)
+        return row
 
 
 def transition_intake(
@@ -223,15 +246,15 @@ def transition_intake(
     rejection_reason_code: str | None,
     notes: str | None = None,
 ) -> M02IntakeRecord:
-    if target_status == "accepted_for_review":
-        with _currentization_lock(db, client_id, intake_id):
-            return _transition_intake_locked(
-                db, client_id, intake_id, target_status,
-                rejection_reason_code, notes,
-            )
-    return _transition_intake_locked(
-        db, client_id, intake_id, target_status, rejection_reason_code, notes
-    )
+    with _locked_intake_mutation(db, client_id, intake_id) as row:
+        return _transition_intake_locked(
+            db,
+            client_id,
+            row,
+            target_status,
+            rejection_reason_code,
+            notes,
+        )
 
 
 def _currentize_accepted_intake(
@@ -261,36 +284,20 @@ def _currentize_accepted_intake(
 def _transition_intake_locked(
     db: Session,
     client_id: int,
-    intake_id: str,
+    row: M02IntakeRecord,
     target_status: str,
     rejection_reason_code: str | None,
     notes: str | None = None,
 ) -> M02IntakeRecord:
     require_mutable_client(db, client_id)
-    if target_status == "accepted_for_review":
-        row = db.scalar(
-            select(M02IntakeRecord)
-            .where(
-                M02IntakeRecord.client_id == client_id,
-                M02IntakeRecord.intake_id == intake_id,
-            )
-            .with_for_update()
-        )
-        if row is None:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "code": "M02_RESOURCE_NOT_FOUND",
-                    "message": "Resource not found",
-                },
-            )
-        if row.lifecycle_status == "accepted_for_review":
-            _currentize_accepted_intake(db, client_id, intake_id)
-            db.commit()
-            db.refresh(row)
-            return row
-    else:
-        row = require_intake(db, client_id, intake_id)
+    if (
+        target_status == "accepted_for_review"
+        and row.lifecycle_status == "accepted_for_review"
+    ):
+        _currentize_accepted_intake(db, client_id, row.intake_id)
+        db.commit()
+        db.refresh(row)
+        return row
     if target_status not in ALLOWED_TRANSITIONS.get(row.lifecycle_status, set()):
         raise HTTPException(
             status_code=409,
@@ -338,7 +345,7 @@ def _transition_intake_locked(
         row.notes = _optional_text(notes)
     if target_status == "accepted_for_review":
         db.flush()
-        _currentize_accepted_intake(db, client_id, intake_id)
+        _currentize_accepted_intake(db, client_id, row.intake_id)
     db.commit()
     db.refresh(row)
     return row

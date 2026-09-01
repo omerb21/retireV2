@@ -281,7 +281,7 @@ export function M02PensionIntakeScreen() {
     }
     const oversized = selectedFiles.find((file) => file.size > MAX_FILE_BYTES);
     if (oversized) {
-      setMutationError(`${oversized.name} exceeds the per-file 25 MiB limit.`);
+      setMutationError(`${oversized.name}: הקובץ חורג מהמגבלה של 25 MiB.`);
       return;
     }
     setIsUploading(true);
@@ -337,6 +337,9 @@ export function M02PensionIntakeScreen() {
       await transitionM02Intake(validClientId, intake.intake_id, target);
       if (isCurrentClientContext(context)) {
         await refresh(context);
+        if (target === "accepted_for_review") {
+          setSuccessMessage("נתוני הפנסיה התקבלו כקלט הנוכחי. הסיווג יתבצע אוטומטית ככל שניתן, ואפשר להמשיך לכרטסת M05.");
+        }
       }
     } catch (error) {
       if (isCurrentClientContext(context)) {
@@ -391,14 +394,15 @@ export function M02PensionIntakeScreen() {
 
   return (
     <section>
-      <h2>M02 — קליטת נתוני פנסיה מבוקרת</h2>
+      <h2>M02 — קליטת נתוני פנסיה</h2>
       <p>
         לקוח פעיל: {client ? `${client.full_name} (#${client.client_id})` : "לא זמין"}
       </p>
       <p>
-        M02 שומר את הנתונים המוצהרים ואת קובצי המקור ללא פרשנות. השלב אינו מסווג,
-        מאשר או הופך מקור לסמכות מקצועית.
+        האחריות לנכונות הנתונים המוזנים או המיובאים היא של המשתמש. המערכת בודקת
+        מבנה ושלמות, שומרת את המקור ומסווגת אוטומטית כאשר הכללים חד־משמעיים.
       </p>
+      <p><Link to={validClientId === null ? "/clients" : `/clients/${validClientId}/pension-ledger`}>המשך לכרטסת יתרות הפנסיה M05</Link></p>
       {loadError ? <pre>{loadError}</pre> : null}
 
       {client?.m01_case?.lifecycle_status === "archived" ? (

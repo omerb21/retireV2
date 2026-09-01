@@ -40,6 +40,7 @@ from app.schemas.m04_classification import (
 from app.services.m01_case_service import effective_lifecycle_status
 from app.services.m03_review_service import (
     M03ReviewError,
+    ensure_current_input_context,
     target_response as m03_target_response,
 )
 from app.services.m04_rule_catalogue import CATALOGUE, evaluate_exact_catalogue
@@ -387,7 +388,7 @@ def _transition_is_valid(
             "proposed",
         ),
         "start_revalidation": (
-            {"proposed", "accepted", "unresolved", "rejected"},
+            {"under_review", "proposed", "accepted", "unresolved", "rejected"},
             "under_review",
         ),
     }
@@ -830,6 +831,171 @@ def revision_response(
     )
 
 
+def _catalogue_result_is_m05_complete(result: dict[str, Any]) -> bool:
+    components = result.get("components")
+    return bool(
+        not result.get("conflicts")
+        and result.get("matched_rule_evidence")
+        and result.get("product_family") not in {None, "unknown_or_unresolved"}
+        and isinstance(components, list)
+        and components
+        and all(
+            item.get("component_kind") != "unknown_component"
+            for item in components
+        )
+    )
+
+
+def _materialize_catalogue_result(
+    db: Session,
+    context: M04Context,
+    leaf: M04ClassificationRevision,
+) -> M04ClassificationRevision:
+    result = evaluate_exact_catalogue(
+        _snapshot(context, archive_generation=context.subject.archive_generation)
+    )
+    if not _catalogue_result_is_m05_complete(result):
+        return mark_unresolved(
+            db,
+            context.client.client_id,
+            context.intake.intake_id,
+            M04ReasonRequest(
+                expected_current_revision_id=leaf.revision_id,
+                reason_code="professional_classification_required",
+                explanation="A specific professional classification decision is required.",
+            ),
+        )
+    proposal = create_proposal(
+        db, context.client.client_id, context.intake.intake_id, leaf.revision_id
+    )
+    return _append(
+        db,
+        context,
+        context.subject,
+        previous=proposal,
+        state="accepted",
+        action_type="accept",
+        snapshot=proposal.input_snapshot,
+        product_family=proposal.product_family,
+        aggregate_interpretation=proposal.aggregate_interpretation,
+        explanation="Deterministic rules resolved every classification axis required by M05.",
+        reason_code="deterministic_m05_classification",
+        reason="No planner authority review is required for M05 material axes.",
+        matched_rule_evidence=proposal.matched_rule_evidence,
+        match_basis=proposal.match_basis,
+        action_evidence={
+            "proposal_revision_id": proposal.revision_id,
+            "m05_material_axes": ["product_family", "component_kind"],
+            "non_material_axes_may_remain_unresolved": True,
+        },
+        components=[item for item in result["components"]],
+    )
+
+
+def ensure_current_classification(
+    db: Session, client_id: int, intake_id: str
+) -> M04ClassificationRevision | None:
+    """Lazily materialize current classification without authority ceremony."""
+    context = _context(db, client_id, intake_id)
+    if (
+        context.intake.lifecycle_status != "accepted_for_review"
+        or effective_lifecycle_status(context.client.status) == "archived"
+    ):
+        rows, _, leaf = _current(db, context)
+        _ = rows
+        return leaf
+
+    ensure_current_input_context(db, client_id, intake_id)
+    context = _context(db, client_id, intake_id)
+    _require_m03_eligible(context)
+    if context.subject is None:
+        start_classification(db, client_id, intake_id)
+        context = _context(db, client_id, intake_id)
+
+    rows, component_map, leaf = _current(db, context)
+    assert context.subject is not None and leaf is not None
+    current_anchor = context.m03.accepted_revision_id
+    current_generation = context.subject.archive_generation
+    bound_to_current = (
+        leaf.m03_revision_id == current_anchor
+        and leaf.input_snapshot.get("archive_generation") == current_generation
+    )
+    if not bound_to_current:
+        leaf = _append(
+            db,
+            context,
+            context.subject,
+            previous=leaf,
+            state="under_review",
+            action_type="start_revalidation",
+            snapshot=_snapshot(context, archive_generation=current_generation),
+            explanation="Current user-provided input changed; classification was recomputed.",
+            reason_code="upstream_input_changed",
+            reason="Current user-provided input changed.",
+            match_basis="system_stale_recomputation",
+            action_evidence={
+                "historical_revision_id": leaf.revision_id,
+                "historical_values_are_authority": False,
+            },
+            historical_revision_id=leaf.revision_id,
+        )
+        context = _context(db, client_id, intake_id)
+        return _materialize_catalogue_result(db, context, leaf)
+
+    if leaf.state == "accepted" or leaf.state == "unresolved":
+        return leaf
+    if leaf.state == "proposed":
+        if leaf.match_basis == "exact_rule_catalogue":
+            result = {
+                "conflicts": leaf.action_evidence.get("conflicts", []),
+                "matched_rule_evidence": leaf.matched_rule_evidence,
+                "product_family": leaf.product_family,
+                "components": [
+                    _component_data(item)
+                    for item in component_map.get(leaf.revision_id, [])
+                ],
+            }
+            if _catalogue_result_is_m05_complete(result):
+                return _append(
+                    db,
+                    context,
+                    context.subject,
+                    previous=leaf,
+                    state="accepted",
+                    action_type="accept",
+                    snapshot=leaf.input_snapshot,
+                    product_family=leaf.product_family,
+                    aggregate_interpretation=leaf.aggregate_interpretation,
+                    explanation="Deterministic rules resolved every classification axis required by M05.",
+                    reason_code="deterministic_m05_classification",
+                    reason="No planner authority review is required for M05 material axes.",
+                    matched_rule_evidence=leaf.matched_rule_evidence,
+                    match_basis=leaf.match_basis,
+                    action_evidence={
+                        "proposal_revision_id": leaf.revision_id,
+                        "m05_material_axes": ["product_family", "component_kind"],
+                        "non_material_axes_may_remain_unresolved": True,
+                    },
+                    components=result["components"],
+                )
+        return leaf
+    if leaf.state == "rejected" and leaf.match_basis == "exact_rule_catalogue":
+        leaf = reopen_classification(
+            db,
+            client_id,
+            intake_id,
+            M04ReasonRequest(
+                expected_current_revision_id=leaf.revision_id,
+                reason_code="simplified_current_classification",
+                explanation="Recompute current professional classification under the simplified workflow.",
+            ),
+        )
+        context = _context(db, client_id, intake_id)
+    if leaf.state == "under_review":
+        return _materialize_catalogue_result(db, context, leaf)
+    return leaf
+
+
 def eligibility(
     db: Session, client_id: int, intake_id: str
 ) -> M04EligibilityResponse:
@@ -885,13 +1051,10 @@ def eligibility(
         reason = "invalid_rule_evidence"
     elif leaf.product_family in (None, "unknown_or_unresolved"):
         reason = "classification_unresolved"
-    elif leaf.aggregate_interpretation in (None, "unresolved"):
-        reason = "unresolved_required_component"
     else:
         components = component_map.get(leaf.revision_id, [])
         if not components or any(
             component.component_kind == "unknown_component"
-            or component.interpretation == "unresolved"
             for component in components
         ):
             reason = "unresolved_required_component"
@@ -975,7 +1138,6 @@ def preview_rules(
 ) -> M04RulePreviewResponse:
     context = _context(db, client_id, intake_id)
     _require_active(context)
-    _require_m03_eligible(context)
     generation = context.subject.archive_generation if context.subject else 0
     result = evaluate_exact_catalogue(
         _snapshot(context, archive_generation=generation)
@@ -1152,24 +1314,15 @@ def mark_unresolved(
     )
 
 
-def _is_resolved(
+def _is_m05_materially_resolved(
     row: M04ClassificationRevision,
     components: list[M04ComponentDecision],
 ) -> bool:
     return (
         row.product_family not in (None, "unknown_or_unresolved")
-        and row.aggregate_interpretation not in (None, "unresolved")
         and bool(components)
-        and row.aggregate_interpretation
-        == _aggregate(
-            [
-                {"interpretation": component.interpretation}
-                for component in components
-            ]
-        )
         and all(
             component.component_kind != "unknown_component"
-            and component.interpretation != "unresolved"
             for component in components
         )
     )
@@ -1195,11 +1348,11 @@ def decide_proposal(
             409, "M04_INVALID_TRANSITION", "Decision requires a current proposal"
         )
     components = component_map[leaf.revision_id]
-    if action == "accept" and not _is_resolved(leaf, components):
+    if action == "accept" and not _is_m05_materially_resolved(leaf, components):
         raise M04ClassificationError(
             409,
             "M04_CLASSIFICATION_INCOMPLETE",
-            "Accepted classification must be fully resolved",
+            "Classification axes required by M05 must be resolved",
         )
     return _append(
         db,

@@ -46,6 +46,7 @@ from app.services.m01_case_service import effective_lifecycle_status
 from app.services.m03_review_service import M03ReviewError, target_response as m03_target
 from app.services.m04_classification_service import (
     M04ClassificationError,
+    ensure_current_classification,
     eligibility as m04_eligibility,
     target_response as m04_target,
 )
@@ -72,7 +73,7 @@ ELIGIBILITY_REASON_ORDER = (
     "no_authoritative_candidate",
     "authoritative_candidate_tie",
     "upstream_source_ineligible",
-    "m03_ineligible",
+    "provenance_invalid",
     "m04_ineligible",
     "upstream_revalidation_required",
     "ledger_draft",
@@ -86,7 +87,6 @@ ELIGIBILITY_REASON_ORDER = (
     "negative_value_review_required",
     "warning_disposition_invalid",
     "warning_not_reviewed",
-    "provenance_invalid",
     "statement_date_invalid",
 )
 
@@ -293,9 +293,12 @@ def _candidate_context(
     total = _canonical_numeric(intake.declared_total_balance_amount)
 
     try:
+        ensure_current_classification(db, client.client_id, intake.intake_id)
         m03 = m03_target(db, client.client_id, intake.intake_id)
     except M03ReviewError as error:
-        raise _conflict("m03_ineligible", "Current M03 authority is unavailable") from error
+        raise _conflict("provenance_invalid", "Current input provenance is invalid") from error
+    except M04ClassificationError as error:
+        raise _conflict("m04_ineligible", "Current professional classification is unavailable") from error
     if (
         not m03.eligible
         or m03.target_kind != M05_TARGET_KIND
@@ -303,7 +306,7 @@ def _candidate_context(
         or m03.current_revision is None
         or m03.current_revision.state != "accepted"
     ):
-        raise _conflict("m03_ineligible", "Current M03 authority is unavailable")
+        raise _conflict("provenance_invalid", "Current input provenance is invalid")
 
     try:
         m04_gate = m04_eligibility(db, client.client_id, intake.intake_id)
@@ -311,11 +314,6 @@ def _candidate_context(
     except M04ClassificationError as error:
         raise _conflict("m04_ineligible", "Current M04 authority is unavailable") from error
     revision = target.current_revision
-    if m04_gate.exclusion_reason == "m04_revalidation_required":
-        raise _conflict(
-            "upstream_revalidation_required",
-            "Current M04 classification requires explicit revalidation",
-        )
     if (
         not m04_gate.eligible_for_m05
         or not m04_gate.accepted_revision_id
@@ -487,8 +485,17 @@ def _evaluate_candidates(db: Session, client_id: int) -> list[CandidateEvaluatio
         _ = key
         best_date = max(rows[index].context.statement_date for index in indices if rows[index].context)
         date_indices = [index for index in indices if rows[index].context and rows[index].context.statement_date == best_date]
-        best_decided = max(rows[index].context.m03_decided_at for index in date_indices if rows[index].context)
-        winners = [index for index in date_indices if rows[index].context and rows[index].context.m03_decided_at == best_decided]
+        best_recorded = max(
+            _utc(rows[index].intake.created_at)
+            for index in date_indices
+            if rows[index].context
+        )
+        winners = [
+            index
+            for index in date_indices
+            if rows[index].context
+            and _utc(rows[index].intake.created_at) == best_recorded
+        ]
         newer_ineligible = any(
             row.context is None
             and row.intake.declared_provider_name == key[0].decode("utf-8")

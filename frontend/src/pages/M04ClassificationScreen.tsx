@@ -4,9 +4,9 @@ import {
   ApiTransportError, getClient, type ClientDetailItem,
 } from "../api/clientsApi";
 import {
-  actOnM04, createM04Proposal, getM04Eligibility, getM04History,
+  actOnM04, getM04Eligibility, getM04History,
   getM04MatchedRules, getM04Target, listM04Targets, overrideM04,
-  previewM04Rules, startM04, undoM04, type M04Component,
+  previewM04Rules, type M04Component,
   type M04ComponentInterpretation, type M04ComponentKind,
   type M04ProductFamily, type M04Revision, type M04RulePreview,
   type M04Target,
@@ -85,7 +85,7 @@ function RuleEvidenceView({ rule }: { rule: Record<string, unknown> }) {
 
 function ComponentEvidenceView({ component }: { component: M04Component }) {
   return <li>
-    <p>זהות ראיה: {component.evidence_identity}; תיאור מקורי: {component.original_label ?? "none"}; קוד מקורי: {component.original_code ?? "none"}.</p>
+    <p>זהות ראיה: {component.evidence_identity}; תיאור מקורי: {component.original_label ?? "אין"}; קוד מקורי: {component.original_code ?? "אין"}.</p>
     <p>החלטה: {component.component_kind}; פרשנות: {component.interpretation}; קשור למעסיק הנוכחי: {component.current_employer_related}.</p>
     <p>הסבר: {component.explanation}</p>
     <h6>כללים תואמים לרכיב</h6>
@@ -107,9 +107,9 @@ function RevisionEvidenceView({ revision, current, boundToCurrentEvidence }:
         : "הגרסה הנוכחית — אינה סמכותית לראיות המקור העדכניות"
       : "היסטורית"}</h5>
     <p>מצב: {heLabel(revision.state)}; פעולה: {heLabel(revision.action_type)}; גורם מבצע: {revision.actor}; מועד: {formatIsoTimestamp(revision.created_at)}.</p>
-    <p>גרסה קודמת: {revision.predecessor_revision_id ?? "root"}; קטלוג: {revision.catalogue_version}; בסיס התאמה: {revision.match_basis}.</p>
-    <p>קוד נימוק: {revision.reason_code ?? "none"}; נימוק: {revision.reason ?? "none"}; הסבר: {revision.explanation ?? "none"}.</p>
-    <p>החלטת משפחת מוצר: {revision.product_family ?? "none"}; תת־סוג: {revision.pension_subtype ?? "none"}; פרשנות מצרפית: {revision.aggregate_interpretation ?? "none"}.</p>
+    <p>גרסה קודמת: {revision.predecessor_revision_id ?? "ראשונה"}; קטלוג: {revision.catalogue_version}; בסיס התאמה: {revision.match_basis}.</p>
+    <p>קוד נימוק: {revision.reason_code ?? "אין"}; נימוק: {revision.reason ?? "אין"}; הסבר: {revision.explanation ?? "אין"}.</p>
+    <p>החלטת משפחת מוצר: {revision.product_family ?? "אין"}; תת־סוג: {revision.pension_subtype ?? "אין"}; פרשנות מצרפית: {revision.aggregate_interpretation ?? "אין"}.</p>
     <p>ראיות פעולה: {JSON.stringify(revision.action_evidence)}</p>
     {unresolved ? <p>נימוקי אי־הכרעה שנשמרו: {evidenceText(unresolved)}</p> : null}
     {conflicts ? <p>סתירות שנשמרו: {evidenceText(conflicts)}</p> : null}
@@ -143,7 +143,6 @@ export function M04ClassificationScreen() {
   const [explanation, setExplanation] = useState("");
   const [family, setFamily] = useState<M04ProductFamily>("unknown_or_unresolved");
   const [components, setComponents] = useState<ComponentDraft[]>([]);
-  const [historicalId, setHistoricalId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -171,7 +170,7 @@ export function M04ClassificationScreen() {
     selectedTarget.current = null; selectedRevision.current = null;
     setClient(null); setTargets([]); setTarget(null); setHistory([]);
     setPreview(null); setRules([]); setRetainedId(""); setExplanation("");
-    setFamily("unknown_or_unresolved"); setComponents([]); setHistoricalId("");
+    setFamily("unknown_or_unresolved"); setComponents([]);
     setError(null); setLoading(false); setSubmitting(false);
   }, [clientId, location.key]);
 
@@ -315,11 +314,6 @@ export function M04ClassificationScreen() {
   const current = target?.current_revision ?? null;
   const archived = target?.m01_lifecycle_status === "archived" ||
     client?.m01_case?.lifecycle_status === "archived";
-  const revalidationRequired =
-    target?.eligibility.exclusion_reason === "m04_revalidation_required";
-  const revalidationStarted = history.some(
-    (row) => row.action_type === "start_revalidation",
-  );
   const reasonReady = Boolean(reasonCode.trim() && explanation.trim());
   const reasonPayload = current ? {
     expected_current_revision_id: current.revision_id,
@@ -332,24 +326,23 @@ export function M04ClassificationScreen() {
   );
   const overrideReady = reasonReady && family !== "unknown_or_unresolved" &&
     components.length > 0 && components.every((row) =>
-      row.componentKind !== "unknown_component" &&
-      row.interpretation !== "unresolved" && row.explanation.trim());
+      row.componentKind !== "unknown_component" && row.explanation.trim());
   const updateComponent = (id: string, patch: Partial<ComponentDraft>) =>
     setComponents((rows) => rows.map((row) =>
       row.evidenceIdentity === id ? { ...row, ...patch } : row));
 
   return <section>
-    <h2>M04 — סיווג מבוסס ראיות</h2>
-    <p>הסיווג אינו יוצר כרטסת, אינו חישוב מס ואינו סמכות מקצועית לביצוע פעולה.</p>
+    <h2>M04 — סיווג מקצועי</h2>
+    <p>המערכת מסווגת אוטומטית כאשר הכללים חד־משמעיים. רק מקרה מקצועי לא מוכרע דורש החלטת מתכנן.</p>
     {archived ? <p>התיק בארכיון: M04 זמין לקריאה בלבד.</p> : null}
     {loading ? <p>טוען את סיווג M04...</p> : null}
     {error ? <pre role="alert">{error}</pre> : null}
-    <h3>רשומות נוכחיות והיסטוריות לסיווג</h3>
+    <h3>רשומות לסיווג</h3>
     {targets.length ? <ul>{targets.map((row) => <li key={row.intake_id}>
       <button type="button" aria-label={`${row.target_kind === "manual_record_review" ? "רשומה ידנית" : "מקור שהועלה"} — ${row.intake_id}`} onClick={() => void loadTarget(row.intake_id)}>
         {heLabel(row.target_kind)} — {row.intake_id}
       </button>
-    </li>)}</ul> : <p>אין רשומות M03 עדכניות או רשומות שסווגו בעבר.</p>}
+    </li>)}</ul> : <p>אין נתוני פנסיה שהתקבלו לסיווג.</p>}
     <label>פתיחת רשומה היסטורית לפי מזהה M02
       <input value={retainedId} onChange={(event) => setRetainedId(event.target.value)} />
     </label>
@@ -358,82 +351,28 @@ export function M04ClassificationScreen() {
 
     {target ? <section>
       <h3>הרשומה הנבחרת לסיווג</h3>
-      <p>{target.target_kind === "manual_record_review"
-        ? <span>רשומה ידנית — ללא קובץ מקור או checksum.</span>
-        : `מקור הרשומה שהועלתה: ${target.source_id ?? "לא זמין"}`}</p>
-      <p>גוף מנהל: {target.declared_provider_name ?? "unresolved"}; מוצר: {target.product_name ?? "unresolved"}; סוג: {target.declared_product_type ?? "unresolved"}; קוד: {target.product_identifier ?? "unresolved"}.</p>
-      <p>נתוני הרכיב המקוריים: {target.declared_component_values.length
-        ? JSON.stringify(target.declared_component_values) : "none"}</p>
-      <p>M03: {target.m03_eligible ? "הבדיקה עדכנית ומאושרת" : heLabel(target.m03_exclusion_reason)}</p>
-      <p>שער M05: {target.eligibility.eligible_for_m05
-        ? "הסיווג הטכני הנוכחי מאפשר מעבר ל־M05"
-        : heLabel(target.eligibility.exclusion_reason)}</p>
+      <p>גוף מנהל: {target.declared_provider_name ?? "לא נמסר"}; מוצר: {target.product_name ?? "לא נמסר"}; סוג: {target.declared_product_type ?? "לא נמסר"}.</p>
+      <p>מצב מקצועי: {target.eligibility.eligible_for_m05
+        ? "הסיווג הנוכחי הושלם ואפשר להמשיך לכרטסת M05."
+        : current?.state === "unresolved"
+          ? "נדרשת החלטה מקצועית לגבי סיווג המוצר והרכיבים."
+          : "הסיווג הנוכחי טרם הושלם."}</p>
+      {target.eligibility.eligible_for_m05 ? <p><Link to={`/clients/${clientId}/pension-ledger`}>המשך לכרטסת יתרות הפנסיה M05</Link></p> : null}
       {!target.eligibility.eligible_for_m05 && target.eligibility.exclusion_reason
         ? <small>{technicalCode(target.eligibility.exclusion_reason)}</small> : null}
-      {revalidationRequired ? <section role="status">
-        <h4>נדרש אימות מחדש של הסיווג</h4>
-        <p>הסיווג הקודם נשמר בהיסטוריה אך אינו תקף עוד לנתונים הנוכחיים.</p>
-        <p>הפעולה הבאה: הזנת נימוק ולחיצה על „התחלת אימות מחדש”.</p>
-      </section> : null}
 
       <fieldset disabled={archived || submitting}>
-        <legend aria-label="פעולות זמינות">פעולות זמינות</legend>
+        <legend aria-label="החלטת סיווג מקצועית">החלטת סיווג מקצועית</legend>
         <button type="button" aria-label="תצוגה מקדימה של הכללים המדויקים" onClick={() => void runPreview()}>תצוגה מקדימה של הכללים המדויקים</button>
-        {!current ? <button type="button" aria-label="התחלת סיווג"
-          onClick={() => void mutate(() => startM04(clientId, target.intake_id))}>
-          התחלת סיווג
-        </button> : null}
-        {current?.state === "under_review" ? <>
-          <button type="button" aria-label="יצירת הצעת סיווג" onClick={() => void mutate(() =>
-            createM04Proposal(clientId, target.intake_id, current.revision_id))}>
-            יצירת הצעת סיווג
-          </button>
-        </> : null}
         <label>קוד נימוק
           <input aria-label="קוד נימוק" value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} />
         </label>
         <label>הסבר
           <textarea aria-label="הסבר" value={explanation} onChange={(event) => setExplanation(event.target.value)} />
         </label>
-        {current?.state === "under_review" ? <button type="button" aria-label="סימון כלא מוכרע" disabled={!reasonReady}
-          onClick={() => reasonPayload && void mutate(() =>
-            actOnM04(clientId, target.intake_id, "unresolved", reasonPayload))}>
-          סימון כלא מוכרע
-        </button> : null}
-        {current?.state === "proposed" ? <>
-          <button type="button" aria-label="אישור ההצעה" disabled={!reasonReady || revalidationRequired}
-            onClick={() => reasonPayload && void mutate((expectedRevisionId) =>
-              actOnM04(clientId, target.intake_id, "accept", {
-                ...reasonPayload,
-                expected_current_revision_id: expectedRevisionId ?? "",
-              }))}>
-            אישור ההצעה
-          </button>
-          <button type="button" aria-label="דחיית ההצעה" disabled={!reasonReady || revalidationRequired}
-            onClick={() => reasonPayload && void mutate((expectedRevisionId) =>
-              actOnM04(clientId, target.intake_id, "reject", {
-                ...reasonPayload,
-                expected_current_revision_id: expectedRevisionId ?? "",
-              }))}>
-            דחיית ההצעה
-          </button>
-        </> : null}
-        {current && ["accepted", "unresolved", "rejected"].includes(current.state) &&
-          !revalidationRequired ? <button type="button" aria-label="פתיחת הסיווג מחדש" disabled={!reasonReady}
-            onClick={() => reasonPayload && void mutate(() =>
-              actOnM04(clientId, target.intake_id, "reopen", reasonPayload))}>
-            פתיחת הסיווג מחדש
-          </button> : null}
-        {current && revalidationRequired &&
-          ["proposed", "accepted", "unresolved", "rejected"].includes(current.state) ?
-          <button type="button" aria-label="התחלת אימות מחדש" disabled={!reasonReady}
-          onClick={() => reasonPayload && void mutate(() =>
-            actOnM04(clientId, target.intake_id, "start-revalidation", reasonPayload))}>
-          התחלת אימות מחדש
-        </button> : null}
-
-        {current && ["proposed", "accepted", "unresolved", "rejected"].includes(current.state) ? <section>
-          <h4>הצעת שינוי שנכתבה בידי המתכנן</h4>
+        {current && ["proposed", "unresolved", "rejected"].includes(current.state) ? <section>
+          <h4>הכרעה מקצועית נדרשת</h4>
+          <p>בחרו סיווג מלא עבור הנתונים הנוכחיים. השמירה משלימה את ההכרעה בפעולה אחת.</p>
           <label>משפחת מוצר
             <select value={family} onChange={(event) => setFamily(event.target.value as M04ProductFamily)}>
               {PRODUCT_FAMILIES.map((value) => <option key={value} value={value}>{heLabel(value)}</option>)}
@@ -458,9 +397,9 @@ export function M04ClassificationScreen() {
                 updateComponent(row.evidenceIdentity, { explanation: event.target.value })} />
             </label>
           </fieldset>)}
-          <button type="button" aria-label="יצירת הצעת הכרעה ידנית" disabled={!overrideReady || (revalidationRequired && !revalidationStarted)}
-            onClick={() => reasonPayload && void mutate(() => overrideM04(
-              clientId, target.intake_id, {
+          <button type="button" aria-label="שמירת ההכרעה המקצועית" disabled={!overrideReady}
+            onClick={() => reasonPayload && void mutate(async () => {
+              const proposal = await overrideM04(clientId, target.intake_id, {
                 ...reasonPayload, confirmed: true, product_family: family,
                 pension_subtype: null, components: components.map((row) => ({
                   evidence_identity: row.evidenceIdentity,
@@ -469,27 +408,14 @@ export function M04ClassificationScreen() {
                   current_employer_related: row.currentEmployerRelated,
                   explanation: row.explanation,
                 })),
-              }))}>
-            יצירת הצעת סיווג ידנית
-          </button>
-        </section> : null}
-
-        {current && ["proposed", "accepted", "unresolved", "rejected"].includes(current.state) ? <section>
-          <h4>ביטול באמצעות הצעה נוספת</h4>
-          <select aria-label="גרסה היסטורית לביטול" value={historicalId}
-            onChange={(event) => setHistoricalId(event.target.value)}>
-            <option value="">בחירת גרסה קודמת</option>
-            {history.filter((row) => row.revision_sequence < current.revision_sequence)
-              .map((row) => <option key={row.revision_id} value={row.revision_id}>
-                #{row.revision_sequence} {heLabel(row.state)}
-              </option>)}
-          </select>
-          <button type="button" aria-label="יצירת הצעת ביטול" disabled={!reasonReady || !historicalId || revalidationRequired}
-            onClick={() => reasonPayload && void mutate(() => undoM04(
-              clientId, target.intake_id, {
-                ...reasonPayload, confirmed: true, historical_revision_id: historicalId,
-              }))}>
-            יצירת הצעת ביטול
+              });
+              return actOnM04(clientId, target.intake_id, "accept", {
+                expected_current_revision_id: proposal.revision_id,
+                reason_code: reasonCode,
+                explanation,
+              });
+            })}>
+            שמירת ההכרעה המקצועית
           </button>
         </section> : null}
       </fieldset>
@@ -501,15 +427,23 @@ export function M04ClassificationScreen() {
         <p>נימוקי אי־הכרעה: {preview.unresolved_reasons.join(", ") || "אין"}</p>
         <p>סתירות: {preview.conflicts.join(", ") || "אין"}</p>
       </section> : null}
-      <h4>ראיות הכללים התואמים הנוכחיים</h4>
-      {rules.length ? rules.map((row, index) =>
-        <RuleEvidenceView key={String(row.rule_id ?? index)} rule={row} />)
-        : <p>לא נשמרו ראיות לכללים התואמים הנוכחיים.</p>}
-      <h4>היסטוריית סיווג בלתי ניתנת לשינוי</h4>
-      <p>זהו תיעוד מקור טכני בלבד; אין בו סמכות מקצועית, מיסויית, משפטית, נזילות, משיכה או סמכות M05.</p>
-      <ol>{history.map((row) => <RevisionEvidenceView key={row.revision_id}
-        revision={row} current={row.revision_id === current?.revision_id}
-        boundToCurrentEvidence={row.revision_id === current?.revision_id && currentBoundToEvidence} />)}</ol>
+      <details>
+        <summary>פרטים טכניים והיסטוריית ביקורת</summary>
+        <p>{target.target_kind === "manual_record_review"
+          ? "רשומה ידנית ללא קובץ מקור או checksum."
+          : `מזהה המקור שהועלה: ${target.source_id ?? "לא זמין"}`}</p>
+        <p>קוד מוצר: {target.product_identifier ?? "לא נמסר"}.</p>
+        <p>נתוני הרכיב המקוריים: {target.declared_component_values.length
+          ? JSON.stringify(target.declared_component_values) : "אין"}</p>
+        <h4>ראיות הכללים התואמים הנוכחיים</h4>
+        {rules.length ? rules.map((row, index) =>
+          <RuleEvidenceView key={String(row.rule_id ?? index)} rule={row} />)
+          : <p>לא נשמרו ראיות לכללים התואמים הנוכחיים.</p>}
+        <h4>היסטוריית סיווג בלתי ניתנת לשינוי</h4>
+        <ol>{history.map((row) => <RevisionEvidenceView key={row.revision_id}
+          revision={row} current={row.revision_id === current?.revision_id}
+          boundToCurrentEvidence={row.revision_id === current?.revision_id && currentBoundToEvidence} />)}</ol>
+      </details>
     </section> : null}
     <p><Link to={`/clients/${clientId}`}>חזרה לתיק הלקוח M01</Link></p>
   </section>;

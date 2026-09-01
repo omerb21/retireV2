@@ -61,6 +61,17 @@ CATALOGUE: tuple[ExactRule, ...] = (
         authority_reference="PKG_009_FINAL_PACKAGE_DEFINITION.md section 5.2",
     ),
     ExactRule(
+        rule_id="m04.component.label.severance-hebrew",
+        matcher_type="component_label_exact",
+        exact_matcher_value="פיצויים",
+        scope="component",
+        output_product_family=None,
+        output_component_kind="severance_component",
+        output_interpretation=None,
+        rationale="The accepted component contract explicitly states that severance_component represents פיצויים.",
+        authority_reference="PKG_009_FINAL_PACKAGE_DEFINITION.md section 5.2",
+    ),
+    ExactRule(
         rule_id="m04.component.token.contribution",
         matcher_type="component_code_exact",
         exact_matcher_value="contribution_component",

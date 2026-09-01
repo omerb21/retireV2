@@ -21,6 +21,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models.client import Client
 from app.models.m02_intake import M02IntakeRecord
+from app.models.m04_classification import M04ClassificationRevision
 from app.models.m05_ledger import (
     M05AdjustmentEvidence,
     M05CandidateLink,
@@ -202,11 +203,104 @@ def _start(client: TestClient, account: str, *, confirm: bool = True) -> dict:
     return response.json()
 
 
-def test_material_m02_change_removes_m05_candidate_authority_client_scoped(api) -> None:
-    client, _sessions = api
+def test_fresh_structurally_valid_m02_materializes_internal_context_and_m05_ready_classification(api) -> None:
+    client, sessions = api
+    with sessions() as db:
+        db.add(
+            _intake(
+                "fresh-current-input",
+                1,
+                provider="Fresh Provider",
+                account="FRESH-001",
+                total="100.00",
+                contribution="60.00",
+                severance="40.00",
+            )
+        )
+        db.commit()
+
+    candidate = _candidate(client, "FRESH-001")
+    assert candidate["eligible"] is True
+    assert candidate["authoritative_current"] is True
+    m03 = client.get("/api/clients/1/m03/targets/fresh-current-input").json()
+    assert m03["eligible"] is True
+    assert m03["current_revision"]["reason"] == "system_current_user_provided_input"
+    m04 = client.get("/api/clients/1/m04/targets/fresh-current-input").json()
+    assert m04["current_revision"]["state"] == "accepted"
+    assert m04["current_revision"]["reason_code"] == "deterministic_m05_classification"
+    assert m04["current_revision"]["aggregate_interpretation"] == "unresolved"
+    assert m04["eligibility"]["eligible_for_m05"] is True
+
+
+def test_ambiguous_current_input_blocks_only_for_professional_classification_then_progresses(api) -> None:
+    client, sessions = api
+    intake = _intake(
+        "ambiguous-current-input",
+        1,
+        provider="Ambiguous Provider",
+        account="AMB-001",
+        total="100.00",
+        contribution="100.00",
+        severance="0.00",
+    )
+    intake.declared_component_values = [
+        {"label": "רכיב לא מזוהה", "value": "100.00"}
+    ]
+    with sessions() as db:
+        db.add(intake)
+        db.commit()
+
+    blocked = _candidate(client, "AMB-001")
+    assert blocked["eligible"] is False
+    assert blocked["exclusion_reason"] == "m04_ineligible"
+    current = client.get(
+        "/api/clients/1/m04/targets/ambiguous-current-input"
+    ).json()["current_revision"]
+    assert current["state"] == "unresolved"
+    assert current["reason_code"] == "professional_classification_required"
+
+    proposal = client.post(
+        "/api/clients/1/m04/targets/ambiguous-current-input/override",
+        json={
+            "expected_current_revision_id": current["revision_id"],
+            "reason_code": "planner_professional_decision",
+            "explanation": "המתכנן הכריע את סיווג הרכיב עבור הנתונים הנוכחיים.",
+            "confirmed": True,
+            "product_family": "provident_fund",
+            "pension_subtype": None,
+            "components": [
+                {
+                    "evidence_identity": current["components"][0]["evidence_identity"],
+                    "component_kind": "contribution_component",
+                    "interpretation": "unresolved",
+                    "current_employer_related": "unknown",
+                    "explanation": "הכרעה מקצועית מפורשת.",
+                }
+            ],
+        },
+    ).json()
+    accepted = client.post(
+        "/api/clients/1/m04/targets/ambiguous-current-input/accept",
+        json={
+            "expected_current_revision_id": proposal["revision_id"],
+            "reason_code": "planner_professional_decision",
+            "explanation": "השלמת ההכרעה המקצועית.",
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["aggregate_interpretation"] == "unresolved"
+    ready = _candidate(client, "AMB-001")
+    assert ready["eligible"] is True
+    assert ready["exclusion_reason"] is None
+
+
+def test_material_m02_change_recomputes_current_classification_without_authority_rereview(api) -> None:
+    client, sessions = api
     before = _candidate(client, "A-001")
     assert before["eligible"] is True
     assert before["authoritative_current"] is True
+    old_m03 = client.get("/api/clients/1/m03/targets/manual-ok").json()["current_revision"]
+    old_m04 = client.get("/api/clients/1/m04/targets/manual-ok").json()["current_revision"]
 
     client.post(
         "/api/clients/1/m02/intakes/manual-ok/lifecycle",
@@ -217,8 +311,8 @@ def test_material_m02_change_removes_m05_candidate_authority_client_scoped(api) 
         json={
             "declared_total_balance_amount": "125.00",
             "declared_component_values": [
-                {"label": "Contributions", "value": "75.00"},
-                {"label": "Severance", "value": "50.00"},
+                {"label": "תגמולים", "value": "75.00"},
+                {"label": "פיצויים", "value": "50.00"},
             ],
         },
     ).raise_for_status()
@@ -232,9 +326,19 @@ def test_material_m02_change_removes_m05_candidate_authority_client_scoped(api) 
         for row in client.get("/api/clients/1/m05/candidates").json()
         if row["intake_id"] == "manual-ok"
     )
-    assert changed["eligible"] is False
-    assert changed["authoritative_current"] is False
-    assert changed["exclusion_reason"] == "m03_ineligible"
+    m04_after_candidate_read = client.get("/api/clients/1/m04/targets/manual-ok").json()
+    assert m04_after_candidate_read["current_revision"]["state"] == "accepted", m04_after_candidate_read
+    assert changed["exclusion_reason"] is None
+    assert changed["eligible"] is True
+    assert changed["authoritative_current"] is True
+    assert changed["exclusion_reason"] is None
+    new_m03 = client.get("/api/clients/1/m03/targets/manual-ok").json()["current_revision"]
+    new_m04 = client.get("/api/clients/1/m04/targets/manual-ok").json()["current_revision"]
+    assert new_m03["revision_id"] != old_m03["revision_id"]
+    assert new_m04["revision_id"] != old_m04["revision_id"]
+    assert new_m04["state"] == "accepted"
+    with sessions() as db:
+        assert db.get(M04ClassificationRevision, old_m04["revision_id"]).state == "accepted"
     foreign = _candidate(client, "A-001", client_id=2)
     assert foreign["eligible"] is True
     assert foreign["authoritative_current"] is True
@@ -566,7 +670,7 @@ def test_candidate_start_reconcile_and_m06_gate(api) -> None:
     assert "conversion" not in gate["meaning"]
 
 
-def test_precedence_newer_ineligible_and_revalidation(api) -> None:
+def test_precedence_newer_current_input_and_ledger_refresh(api) -> None:
     client, sessions = api
     started = _start(client, "A-001")
     with sessions() as db:
@@ -585,17 +689,12 @@ def test_precedence_newer_ineligible_and_revalidation(api) -> None:
         db.commit()
     rows = client.get("/api/clients/1/m05/candidates").json()
     old = next(row for row in rows if row["intake_id"] == "manual-ok")
-    assert old["authoritative_current"] is True
-    assert "newer_ineligible_candidate_exists" in old["informational_warnings"]
-
-    _accept_upstream(client, 1, "manual-newer-ineligible")
-    rows = client.get("/api/clients/1/m05/candidates").json()
-    old = next(row for row in rows if row["intake_id"] == "manual-ok")
     newer = next(
         row for row in rows if row["intake_id"] == "manual-newer-ineligible"
     )
     assert old["authoritative_current"] is False
     assert newer["authoritative_current"] is True
+    assert newer["eligible"] is True
     gate = client.get(
         f"/api/clients/1/m05/subjects/{started['subject_id']}/m06-eligibility"
     ).json()
@@ -1327,7 +1426,7 @@ def test_complete_eligibility_vocabulary_has_deterministic_order(api) -> None:
         "no_authoritative_candidate",
         "authoritative_candidate_tie",
         "upstream_source_ineligible",
-        "m03_ineligible",
+        "provenance_invalid",
         "m04_ineligible",
         "upstream_revalidation_required",
         "ledger_draft",
@@ -1341,7 +1440,6 @@ def test_complete_eligibility_vocabulary_has_deterministic_order(api) -> None:
         "negative_value_review_required",
         "warning_disposition_invalid",
         "warning_not_reviewed",
-        "provenance_invalid",
         "statement_date_invalid",
     ]
     assert list(ELIGIBILITY_REASON_ORDER) == required
@@ -2375,7 +2473,7 @@ def test_m02_fail_closed_input_matrix(api) -> None:
         db.rollback()
 
 
-def test_m03_m04_authority_state_matrix_is_revalidated(api) -> None:
+def test_legacy_m03_m04_states_do_not_trap_current_deterministic_input(api) -> None:
     client, sessions = api
     intake_ids = ("m03-none", "m03-rejected", "m03-reopened", "m04-unresolved", "m04-rejected")
     with sessions() as db:
@@ -2433,11 +2531,9 @@ def test_m03_m04_authority_state_matrix_is_revalidated(api) -> None:
     assert rejected.status_code == 201, rejected.text
 
     rows = {row["intake_id"]: row for row in client.get("/api/clients/1/m05/candidates").json()}
-    assert rows["m03-none"]["exclusion_reason"] == "m03_ineligible"
-    assert rows["m03-rejected"]["exclusion_reason"] == "m03_ineligible"
-    assert rows["m03-reopened"]["exclusion_reason"] == "m03_ineligible"
-    assert rows["m04-unresolved"]["exclusion_reason"] == "m04_ineligible"
-    assert rows["m04-rejected"]["exclusion_reason"] == "m04_ineligible"
+    for intake_id in intake_ids:
+        assert rows[intake_id]["exclusion_reason"] is None
+        assert rows[intake_id]["eligible"] is True
 
     forged = client.post(
         "/api/clients/1/m05/start",
@@ -2876,13 +2972,13 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
         (
             "mapping",
             "declared_component_values",
-            [
-                {"label": "Changed", "code": "contribution_component", "value": "60.00"},
-                {"label": "Severance", "code": "severance_component", "value": "40.00"},
-            ],
-            "m03_ineligible",
-        ),
-        ("incomplete", "declared_component_values", [], "m03_ineligible"),
+                [
+                    {"label": "Changed", "code": "contribution_component", "value": "60.00"},
+                    {"label": "Severance", "code": "severance_component", "value": "40.00"},
+                ],
+                "upstream_revalidation_required",
+            ),
+            ("incomplete", "declared_component_values", [], "m04_ineligible"),
         ("source", "lifecycle_status", "rejected", "upstream_source_ineligible"),
     ):
         started = create_source(suffix)
@@ -2905,7 +3001,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     )
     assert response.status_code == 201
     m03_gate = gate(m03)
-    assert m03_gate["exclusion_reasons"] == ["m03_ineligible", "ledger_draft"]
+    assert m03_gate["exclusion_reasons"] == ["upstream_revalidation_required", "ledger_draft"]
     observed.update(m03_gate["exclusion_reasons"])
 
     m04 = create_source("m04")
@@ -2920,7 +3016,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     )
     assert response.status_code == 201, response.text
     m04_gate = gate(m04)
-    assert m04_gate["exclusion_reasons"] == ["m04_ineligible", "ledger_draft"]
+    assert m04_gate["exclusion_reasons"] == ["upstream_revalidation_required", "ledger_draft"]
     observed.update(m04_gate["exclusion_reasons"])
 
     revalidation = create_source(
@@ -2973,7 +3069,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
     )
     _resign_revision(sessions, provenance["revision_id"])
     provenance_gate = gate(provenance)
-    assert provenance_gate["exclusion_reasons"] == ["ledger_draft", "provenance_invalid"]
+    assert provenance_gate["exclusion_reasons"] == ["provenance_invalid", "ledger_draft"]
     observed.update(provenance_gate["exclusion_reasons"])
 
     invalid_disposition = create_source(
@@ -3048,10 +3144,8 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
         db.commit()
     _accept_upstream(client, 1, "elig-tie-two")
     tie_gate = gate(tie)
-    assert tie_gate["exclusion_reasons"] == ["authoritative_candidate_tie", "ledger_draft"]
-    assert tie_gate["informational_warnings"] == [
-        "newer_ineligible_candidate_exists"
-    ]
+    assert tie_gate["exclusion_reasons"] == ["upstream_revalidation_required", "ledger_draft"]
+    assert tie_gate["informational_warnings"] == []
     observed.update(tie_gate["exclusion_reasons"])
     monkeypatch.undo()
 
@@ -3080,6 +3174,7 @@ def test_public_eligibility_endpoint_complete_reason_vocabulary_and_combinations
         {
             "component_mapping_invalid",
             "component_set_incomplete",
+            "authoritative_candidate_tie",
         }
     )
 

@@ -155,7 +155,7 @@ afterEach(() => {
 });
 
 describe("PKG-007 M02 controlled pension intake", () => {
-  it("renders retained state, authority boundaries, lifecycle, and no delete or preview", async () => {
+  it("renders retained state, user responsibility, direct M05 next step, and no delete or preview", async () => {
     const existing = intake(1, "I-1", {
       source: {
         source_id: "S-1",
@@ -193,7 +193,8 @@ describe("PKG-007 M02 controlled pension intake", () => {
     renderHarness();
 
     expect(await screen.findByText("לקוח פעיל: Client A (#1)")).toBeInTheDocument();
-    expect(screen.getByText(/אינו מסווג/)).toBeInTheDocument();
+    expect(screen.getByText(/האחריות לנכונות הנתונים.*של המשתמש/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /המשך לכרטסת.*M05/ })).toHaveAttribute("href", "/clients/1/pension-ledger");
     expect(screen.getByText(/opaque.dat; 42 בתים/)).toBeInTheDocument();
     expect(screen.getByText(`SHA-256: ${"a".repeat(64)}`)).toBeInTheDocument();
     expect(screen.getByText(/מועמדת לכפילות בלבד/)).toBeInTheDocument();

@@ -264,6 +264,58 @@ def target_response(db: Session, client_id: int, intake_id: str) -> M03TargetRes
     )
 
 
+def ensure_current_input_context(
+    db: Session, client_id: int, intake_id: str
+) -> M03TargetResponse:
+    """Materialize the compatibility M03 anchor without a planner authority gate.
+
+    M03 history remains append-only and inspectable, but an M02 record that has
+    passed its structural lifecycle gate is user-provided current input.  The
+    server records that fact internally so M04/M05 do not require a user to
+    certify the trustworthiness of their own data.
+    """
+    client = _client(db, client_id)
+    intake = _intake(db, client_id, intake_id)
+    if (
+        intake.lifecycle_status != "accepted_for_review"
+        or effective_lifecycle_status(client.status) == "archived"
+    ):
+        return target_response(db, client_id, intake_id)
+
+    kind, source = _target(intake)
+    rows = _history(db, intake_id)
+    leaf = _leaf(rows, intake, kind, source)
+    current_evidence = build_m02_evidence(intake, kind, source)
+    leaf_evidence = (
+        validate_stored_m02_evidence(
+            leaf.m02_evidence_snapshot_json,
+            leaf.m02_evidence_digest,
+            client_id=leaf.client_id,
+            intake_id=leaf.intake_id,
+            target_kind=leaf.target_kind,
+            source_id=leaf.source_id,
+        )
+        if leaf is not None
+        else None
+    )
+    evidence_is_current = bool(
+        leaf_evidence is not None
+        and leaf_evidence.digest == current_evidence.digest
+        and leaf_evidence.snapshot_json == current_evidence.snapshot_json
+    )
+    if leaf is not None and leaf.state == "accepted" and evidence_is_current:
+        return target_response(db, client_id, intake_id)
+
+    reason = "system_current_user_provided_input"
+    if leaf is None:
+        leaf = _append(db, intake, "under_review", None, None, require_empty=True)
+    elif not evidence_is_current or leaf.state in {"accepted", "rejected"}:
+        leaf = _append(db, intake, "under_review", reason, leaf.revision_id)
+    if leaf.state == "under_review":
+        _append(db, intake, "accepted", reason, leaf.revision_id)
+    return target_response(db, client_id, intake_id)
+
+
 def list_candidates(db: Session, client_id: int) -> list[M03TargetResponse]:
     _client(db, client_id)
     rows = db.scalars(select(M02IntakeRecord).where(

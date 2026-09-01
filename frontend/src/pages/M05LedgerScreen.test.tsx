@@ -117,7 +117,7 @@ const mutations = [
   ["סימון כחסום", "/mark-blocked"],
   ["תיקון ערך יחיד", "/adjust"],
   ["החלפת הגרסה הנוכחית", "/supersede"],
-  ["אימות מחדש מול הרשומה העדכנית שנבחרה", "/revalidate"],
+  ["עדכון הכרטסת לפי רשומת נתוני הפנסיה הנוכחית", "/revalidate"],
 ] as const;
 const settlements = ["success", "rejection", "api-error"] as const;
 type Settlement = typeof settlements[number];
@@ -194,7 +194,8 @@ describe("M05LedgerScreen", () => {
     expect(screen.getByLabelText("הקשר המוצר של רשומה candidate-1")).toHaveTextContent("product_nameProduct");
     expect(screen.getAllByLabelText("הקשר המוצר של גרסה 1")).toHaveLength(2);
     expect(screen.getAllByLabelText("הקשר המוצר של גרסה 1")[0]).toHaveTextContent("m04_product_familyprovident_fund");
-    expect(screen.getAllByText(/ערכי מקור, ללא הסקה/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("פרטי מוצר טכניים").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("פרטים טכניים והיסטוריית ביקורת")[0].closest("details")).not.toHaveAttribute("open");
   });
 
   it("renders explicit unavailable product context without inventing a fallback", async () => {
@@ -287,7 +288,7 @@ describe("M05LedgerScreen", () => {
     expect(screen.getByRole("button", { name: "סימון כחסום" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "החלפת הגרסה הנוכחית" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "תיקון ערך יחיד" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "אימות מחדש מול הרשומה העדכנית שנבחרה" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "עדכון הכרטסת לפי רשומת נתוני הפנסיה הנוכחית" })).toBeDisabled();
   });
 
   it("sends start intent without actor, authority tuple, timestamp, or eligibility", async () => {

@@ -263,7 +263,7 @@ def test_start_proposal_override_accept_and_m05_gate(api) -> None:
     assert "separately authorized M05" in eligibility["meaning"]
 
 
-def test_incomplete_proposal_cannot_be_accepted(api) -> None:
+def test_m05_materially_complete_proposal_can_keep_interpretation_unresolved(api) -> None:
     client, _ = api
     started = client.post("/api/clients/1/m04/targets/manual-1/start").json()
     proposal = client.post(
@@ -274,8 +274,11 @@ def test_incomplete_proposal_cannot_be_accepted(api) -> None:
         "/api/clients/1/m04/targets/manual-1/accept",
         json=_reason(proposal["revision_id"]),
     )
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "M04_CLASSIFICATION_INCOMPLETE"
+    assert response.status_code == 201, response.text
+    assert response.json()["aggregate_interpretation"] == "unresolved"
+    assert client.get(
+        "/api/clients/1/m04/targets/manual-1/eligibility"
+    ).json()["eligible_for_m05"] is True
 
 
 def test_override_reject_and_undo_never_reactivate_old_authority(api) -> None:
@@ -629,37 +632,27 @@ def test_stale_proposed_can_start_append_only_revalidation_against_current_m03(a
         if row["intake_id"] == "manual-1"
     )
     assert m05_candidate["eligible"] is False
-    assert m05_candidate["exclusion_reason"] == "upstream_revalidation_required"
+    assert m05_candidate["exclusion_reason"] == "m04_ineligible"
+    current = client.get(
+        "/api/clients/1/m04/targets/manual-1"
+    ).json()["current_revision"]
+    assert current["state"] == "unresolved"
+    assert current["reason_code"] == "professional_classification_required"
+    assert current["input_snapshot"]["accepted_m03_revision_id"] == accepted_m03_b["revision_id"]
     for action in ("accept", "reject"):
         blocked = client.post(
             f"/api/clients/1/m04/targets/manual-1/{action}",
             json=_reason(proposal_a["revision_id"], "stale decision is forbidden"),
         )
         assert blocked.status_code == 409
-        assert blocked.json()["detail"]["code"] == "M04_REVALIDATION_REQUIRED"
+        assert blocked.json()["detail"]["code"] == "M04_STALE_CURRENT_REVISION"
 
-    history_before = client.get(
-        "/api/clients/1/m04/targets/manual-1/history"
-    ).json()
-    revalidation = client.post(
-        "/api/clients/1/m04/targets/manual-1/start-revalidation",
-        json=_reason(proposal_a["revision_id"], "bind classification to current M03"),
-    )
-    assert revalidation.status_code == 201
-    current = revalidation.json()
-    assert current["state"] == "under_review"
-    assert current["action_type"] == "start_revalidation"
-    assert current["predecessor_revision_id"] == proposal_a["revision_id"]
-    assert current["historical_revision_id"] == proposal_a["revision_id"]
-    assert (
-        current["input_snapshot"]["accepted_m03_revision_id"]
-        == accepted_m03_b["revision_id"]
-    )
-    assert current["components"] == []
     history_after = client.get(
         "/api/clients/1/m04/targets/manual-1/history"
     ).json()
-    assert history_after[:-1] == history_before
+    assert history_after[1] == proposal_a
+    assert history_after[-2]["action_type"] == "start_revalidation"
+    assert history_after[-2]["historical_revision_id"] == proposal_a["revision_id"]
     assert history_after[-1]["revision_id"] == current["revision_id"]
     preview = client.get(
         "/api/clients/1/m04/targets/manual-1/preview"

@@ -30,12 +30,13 @@ const errorMessage = (error: unknown) => {
 const CANDIDATE_EXPLANATIONS: Record<string, string> = {
   archived_case: "תיק הלקוח בארכיון ולקריאה בלבד.",
   ledger_chain_inconsistent: "היסטוריית הכרטסת השמורה נכשלה בבדיקות התקינות.",
-  no_authoritative_candidate: "רשומה עדכנית אחרת היא הסמכותית עבור הגוף המנהל והחשבון.",
-  authoritative_candidate_tie: "ליותר מרשומה אחת אותה דרגת סמכות ולכן הבחירה חסומה.",
+  no_authoritative_candidate: "קיימת רשומה חדשה יותר עבור אותו גוף מנהל וחשבון.",
+  authoritative_candidate_tie: "לא ניתן לזהות רשומה נוכחית יחידה עבור אותו גוף מנהל וחשבון.",
   upstream_source_ineligible: "רשומת M02 אינה מקור ידני עדכני וכשיר.",
-  m03_ineligible: "בדיקת המקור M03 חסרה או אינה עדכנית.",
-  m04_ineligible: "הסיווג M04 חסר, לא הוכרע או אינו מאושר.",
-  upstream_revalidation_required: "נדרש אימות מחדש של הסיווג מול נתוני המקור העדכניים.",
+  m03_ineligible: "הקשר הטכני של הרשומה אינו תקין.",
+  provenance_invalid: "שלמות נתוני המקור או שיוכם ללקוח אינה תקינה.",
+  m04_ineligible: "נדרשת הכרעת סיווג מקצועית עבור הנתונים הנוכחיים.",
+  upstream_revalidation_required: "נתוני הפנסיה השתנו ויש לעדכן את הכרטסת לפי הנתונים הנוכחיים.",
   required_value_missing: "חסר ערך חובה של גוף מנהל, חשבון, תאריך דוח, יתרה או רכיב.",
   currency_or_unit_invalid: "אישור מטבע הש״ח הנדרש חסר או אינו תקין.",
   component_mapping_invalid: "ראיות רכיבי M02 אינן תואמות למיפוי הסיווג המאושר.",
@@ -46,7 +47,7 @@ const candidateExplanation = (candidate: M05Candidate) => candidate.exclusion_re
   ? CANDIDATE_EXPLANATIONS[candidate.exclusion_reason] ??
     "הרשומה חסומה על ידי שער כשירות טכני."
   : candidate.authoritative_current
-    ? "זוהי הרשומה הטכנית העדכנית."
+    ? "זוהי רשומת נתוני הפנסיה הנוכחית."
     : "רשומה זו אינה הרשומה העדכנית.";
 const text = (value: unknown) => value === null || value === undefined || value === ""
   ? "לא קיים" : typeof value === "string" ? value : JSON.stringify(value);
@@ -55,17 +56,17 @@ function ProductContextView({ context, label }: { context: Record<string, unknow
   const entries = Object.entries(context).filter(([, value]) =>
     value !== null && value !== undefined && value !== ""
   );
-  return <div aria-label={label}>
-    <strong>הקשר מוצר שנשמר (ערכי מקור, ללא הסקה):</strong>
+  return <details aria-label={label}>
+    <summary>פרטי מוצר טכניים</summary>
     {entries.length ? <dl>{entries.map(([key, value]) => <div key={key}>
       <dt>{key}</dt><dd>{text(value)}</dd>
     </div>)}</dl> : <p>הקשר המוצר אינו זמין.</p>}
-  </div>;
+  </details>;
 }
 
 function RevisionView({ revision, current }: { revision: M05Revision; current: boolean }) {
-  return <li>
-    <h4>גרסה #{revision.revision_sequence} — {current ? "נוכחית" : "היסטורית"}</h4>
+  return <details>
+    <summary>פרטים טכניים של גרסה #{revision.revision_sequence} — {current ? "נוכחית" : "היסטורית"}</summary>
     <p>מצב: {heLabel(revision.state)}; פעולה: {heLabel(revision.action_type)}; מזהה גרסה: {revision.revision_id}; גרסה קודמת: {revision.predecessor_revision_id ?? "ראשונה"}.</p>
     <p>גורם מערכת: {revision.actor}; מועד: {formatIsoTimestamp(revision.created_at)}. זהו תיעוד תפעולי ולא אישור מקצועי.</p>
     <p>רשומה: {revision.candidate_id}; M02: {revision.intake_id}; M03: {revision.m03_revision_id}; M04: {revision.m04_revision_id}.</p>
@@ -90,7 +91,7 @@ function RevisionView({ revision, current }: { revision: M05Revision; current: b
     <p>אזהרות: {JSON.stringify(revision.warnings)}; החלטות: {JSON.stringify(revision.warning_dispositions)}</p>
     <p>מקור: {JSON.stringify(revision.provenance)}</p>
     {revision.adjustment ? <p>תיקון: {revision.adjustment.evidence_identity}, {revision.adjustment.previous_effective_value} → {revision.adjustment.new_effective_value}; {revision.adjustment.reason_code}; {revision.adjustment.explanation}.</p> : null}
-  </li>;
+  </details>;
 }
 
 export function M05LedgerScreen() {
@@ -243,7 +244,10 @@ export function M05LedgerScreen() {
         <h4>כשירות הרשומה להמשך</h4>
         <p>{candidateExplanation(selectedCandidateRow)}</p>
         <p>גוף מנהל: {selectedCandidateRow.provider_name ?? "לא נמסר"}; חשבון: {selectedCandidateRow.account_reference ?? "לא נמסר"}; תאריך דוח: {formatIsoDate(selectedCandidateRow.statement_date) || "לא נמסר"}.</p>
-        <p>כשירות טכנית: {heBoolean(selectedCandidateRow.eligible)}; רשומה נוכחית: {heBoolean(selectedCandidateRow.authoritative_current)}.</p>
+        <p>מוכנה להמשך: {heBoolean(selectedCandidateRow.eligible)}; רשומת נתונים נוכחית: {heBoolean(selectedCandidateRow.authoritative_current)}.</p>
+        {selectedCandidateRow.exclusion_reason === "m04_ineligible"
+          ? <p><Link to={`/clients/${clientId}/classification`}>פתיחת משימת הסיווג המקצועית</Link></p>
+          : null}
         {selectedCandidateRow.exclusion_reason
           ? <p><small>{technicalCode(selectedCandidateRow.exclusion_reason)}</small></p>
           : null}
@@ -263,7 +267,7 @@ export function M05LedgerScreen() {
     </section>
 
     {current ? <section><h3>כרטסת נוכחית</h3>
-      <RevisionView revision={current} current />
+      <p>תאריך דוח: {formatIsoDate(current.statement_date)}; יתרה נוכחית: {text(current.effective_total_value)} ש״ח.</p>
       <h4>כשירות טכנית ל־M06</h4>
       <p>{currentEligibility?.meaning}. כשיר: {String(currentEligibility?.eligible_for_m06)}.</p>
       <p>החרגות: {currentEligibility?.exclusion_reasons.join(", ") || "אין"}; אזהרות מידע: {currentEligibility?.informational_warnings.join(", ") || "אין"}.</p>
@@ -279,11 +283,14 @@ export function M05LedgerScreen() {
       <select value={adjustIdentity} onChange={(event) => setAdjustIdentity(event.target.value)}><option value="">בחירת ערך</option>{current.values.map((value) => <option key={value.value_id} value={value.evidence_identity}>{value.evidence_identity}</option>)}</select>
       <input aria-label="ערך אפקטיבי חדש" value={adjustValue} onChange={(event) => setAdjustValue(event.target.value)} placeholder="0.00" />
       <button type="button" aria-label="תיקון ערך יחיד" disabled={submitting || !reasonPayload || current.state === "superseded" || !adjustIdentity || !adjustValue} onClick={() => reasonPayload && void mutate(() => adjustM05(clientId, current.subject_id, { ...reasonPayload, evidence_identity: adjustIdentity, new_effective_value: adjustValue, confirmed: true }))}>תיקון ערך יחיד</button>
-      <h4>אימות מחדש</h4>
-      <button type="button" aria-label="אימות מחדש מול הרשומה העדכנית שנבחרה" disabled={submitting || !reasonPayload || current.state === "superseded" || !selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current} onClick={() => reasonPayload && void mutate(() => revalidateM05(clientId, current.subject_id, { ...reasonPayload, candidate_id: selectedCandidateId }))}>אימות מחדש מול הרשומה העדכנית שנבחרה</button>
-      <h4>מקור ואזהרות נוכחיים</h4><p>{JSON.stringify(provenance)}</p><p>{JSON.stringify(warnings)}</p>
+      <h4>עדכון לפי נתוני הפנסיה הנוכחיים</h4>
+      <button type="button" aria-label="עדכון הכרטסת לפי רשומת נתוני הפנסיה הנוכחית" disabled={submitting || !reasonPayload || current.state === "superseded" || !selectedCandidateRow?.eligible || !selectedCandidateRow.authoritative_current} onClick={() => reasonPayload && void mutate(() => revalidateM05(clientId, current.subject_id, { ...reasonPayload, candidate_id: selectedCandidateId }))}>עדכון הכרטסת לפי הנתונים הנוכחיים</button>
+      <details><summary>פרטים טכניים והיסטוריית ביקורת</summary>
+        <RevisionView revision={current} current />
+        <h4>מקור ואזהרות נוכחיים</h4><p>{JSON.stringify(provenance)}</p><p>{JSON.stringify(warnings)}</p>
+      </details>
     </section> : null}
 
-    {history.length ? <section><h3>היסטוריה בלתי ניתנת לשינוי</h3><ol>{history.map((revision) => <RevisionView key={revision.revision_id} revision={revision} current={revision.revision_id === current?.revision_id} />)}</ol></section> : null}
+    {history.length ? <details><summary>היסטוריה בלתי ניתנת לשינוי</summary>{history.map((revision) => <RevisionView key={revision.revision_id} revision={revision} current={revision.revision_id === current?.revision_id} />)}</details> : null}
   </main>;
 }

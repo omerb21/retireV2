@@ -173,6 +173,24 @@ APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS = {
     "frontend/src/pages/M05LedgerScreen.test.tsx",
     "frontend/src/pages/M05LedgerScreen.tsx",
 }
+APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
+    "backend/app/services/m03_review_service.py",
+    "backend/app/services/m04_classification_service.py",
+    "backend/app/services/m04_rule_catalogue.py",
+    "backend/app/services/m05_ledger_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_pkg009_m04_classification.py",
+    "backend/tests/test_pkg010_m05_ledger.py",
+    "frontend/src/i18n/he.ts",
+    "frontend/src/pages/ClientDetailScreen.tsx",
+    "frontend/src/pages/M02PensionIntakeScreen.test.tsx",
+    "frontend/src/pages/M02PensionIntakeScreen.tsx",
+    "frontend/src/pages/M03SourceReviewScreen.tsx",
+    "frontend/src/pages/M04ClassificationScreen.test.tsx",
+    "frontend/src/pages/M04ClassificationScreen.tsx",
+    "frontend/src/pages/M05LedgerScreen.test.tsx",
+    "frontend/src/pages/M05LedgerScreen.tsx",
+}
 
 
 def _run_git_status_porcelain() -> list[str]:
@@ -207,6 +225,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_PKG_011_PATHS,
         *APPROVED_PKG_012_PATHS,
         *APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS,
+        *APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS,
     }
 
 
@@ -230,6 +249,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PKG_011_PATHS,
         *APPROVED_PKG_012_PATHS,
         *APPROVED_INTEGRATED_RUNTIME_CORRECTION_PATHS,
+        *APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS,
         "backend/app/api/clients_routes.py",
         "backend/app/models/actual_capitalization.py",
         "backend/app/models/client.py",

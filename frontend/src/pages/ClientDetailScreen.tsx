@@ -1420,22 +1420,6 @@ export function ClientDetailScreen() {
       </p>
       <p>
         <Link
-          to={`/clients/${validRouteClientId}/source-review`}
-          state={{ clientName: client.full_name }}
-        >
-          M03 — בדיקת מקור
-        </Link>
-      </p>
-      <p>
-        <Link
-          to={`/clients/${validRouteClientId}/classification`}
-          state={{ clientName: client.full_name }}
-        >
-          M04 — סיווג
-        </Link>
-      </p>
-      <p>
-        <Link
           to={`/clients/${validRouteClientId}/pension-ledger`}
           state={{ clientName: client.full_name }}
         >
@@ -1462,6 +1446,11 @@ export function ClientDetailScreen() {
           M10 — השוואת תרחישים
         </Link>
       </p>
+      <details>
+        <summary>כלי אבחון וסיווג חריג</summary>
+        <p><Link to={`/clients/${validRouteClientId}/source-review`} state={{ clientName: client.full_name }}>M03 — מקור והיסטוריית ביקורת</Link></p>
+        <p><Link to={`/clients/${validRouteClientId}/classification`} state={{ clientName: client.full_name }}>M04 — סיווג מקצועי</Link></p>
+      </details>
       <p>
         <Link
           to={`/clients/${validRouteClientId}/fixation/workspace`}

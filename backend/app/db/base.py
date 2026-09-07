@@ -32,5 +32,6 @@ def load_all_models() -> None:
     import app.models.m09_scenario_subject  # noqa: F401
     import app.models.m07_evidence  # noqa: F401
     import app.models.official_parameter_set  # noqa: F401
+    import app.models.pension_analysis_record  # noqa: F401
     import app.models.retirement_planning_document  # noqa: F401
     import app.models.retirement_facts  # noqa: F401

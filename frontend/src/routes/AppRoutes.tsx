@@ -10,10 +10,7 @@ import { FixationInputScreen } from "../pages/FixationInputScreen";
 import { GrantsScreen } from "../pages/GrantsScreen";
 import { RunDetailScreen } from "../pages/RunDetailScreen";
 import { RunHistoryScreen } from "../pages/RunHistoryScreen";
-import { M02PensionIntakeScreen } from "../pages/M02PensionIntakeScreen";
-import { M03SourceReviewScreen } from "../pages/M03SourceReviewScreen";
-import { M04ClassificationScreen } from "../pages/M04ClassificationScreen";
-import { M05LedgerScreen } from "../pages/M05LedgerScreen";
+import { PensionProductsScreen } from "../pages/PensionProductsScreen";
 import { M06ConversionScreen } from "../pages/M06ConversionScreen";
 import { M09CashflowScreen } from "../pages/M09CashflowScreen";
 import { M10ComparisonScreen } from "../pages/M10ComparisonScreen";
@@ -26,10 +23,7 @@ export function AppRoutes() {
       <Route path="/clients/new" element={<CreateClientScreen />} />
       <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
-      <Route path="/clients/:clientId/pension-intake" element={<M02PensionIntakeScreen />} />
-      <Route path="/clients/:clientId/source-review" element={<M03SourceReviewScreen />} />
-      <Route path="/clients/:clientId/classification" element={<M04ClassificationScreen />} />
-      <Route path="/clients/:clientId/pension-ledger" element={<M05LedgerScreen />} />
+      <Route path="/clients/:clientId/pension-products" element={<PensionProductsScreen />} />
       <Route path="/clients/:clientId/pension-conversion" element={<M06ConversionScreen />} />
       <Route path="/clients/:clientId/monthly-cashflow" element={<M09CashflowScreen />} />
       <Route path="/clients/:clientId/scenario-comparison" element={<M10ComparisonScreen />} />

@@ -3,23 +3,19 @@ import { type FormEvent, useEffect, useState } from "react";
 import {
   ApiTransportError,
   createCapitalAsset,
-  createPensionHolding,
   createRecurringExpense,
   createRecurringIncome,
   createRetirementTimingWorkIntention,
   getCapitalAssets,
-  getPensionHoldings,
   getRecurringExpenses,
   getRecurringIncomes,
   getRetirementTimingWorkIntentions,
   type CapitalAssetCreatePayload,
   type LifecycleStatusFilter,
-  type PensionHoldingCreatePayload,
   type RecurringExpenseCreatePayload,
   type RecurringIncomeCreatePayload,
   type RetirementTimingWorkIntentionCreatePayload,
   updateCapitalAsset,
-  updatePensionHolding,
   updateRecurringExpense,
   updateRecurringIncome,
   updateRetirementTimingWorkIntention
@@ -410,69 +406,6 @@ function FactMaintenanceSection({ clientId, config }: { clientId: number; config
 }
 
 const factSectionConfigs: FactSectionConfig[] = [
-  {
-    key: "pension-holdings",
-    heading: "אחזקות פנסיוניות",
-    recordHeading: "רשומת אחזקה פנסיונית",
-    emptyMessage: "לא נמצאו אחזקות פנסיוניות עבור מסנן מחזור החיים שנבחר.",
-    loadingMessage: "טוען אחזקות פנסיוניות…",
-    createHeading: "הוספת אחזקה פנסיונית",
-    editHeading: "עריכת אחזקה פנסיונית",
-    addButton: "הוספת אחזקה פנסיונית",
-    saveButton: "שמירת אחזקה פנסיונית",
-    editButton: "עריכת אחזקה פנסיונית",
-    fields: [
-      { name: "provider_name", label: "שם הגוף המנהל", kind: "text", optional: false },
-      {
-        name: "product_type",
-        label: "סוג מוצר",
-        kind: "select",
-        optional: false,
-        options: ["pension fund", "provident fund", "insurance policy", "other"]
-      },
-      { name: "product_name", label: "שם מוצר", kind: "text", optional: true },
-      { name: "account_reference", label: "אסמכתת חשבון", kind: "text", optional: true },
-      { name: "known_balance_amount", label: "יתרה ידועה", kind: "amount", optional: true },
-      {
-        name: "balance_as_of_date",
-        label: "תאריך נכונות היתרה",
-        kind: "date",
-        optional: true,
-        showWhen: (formState) => formState.known_balance_amount.trim() !== ""
-      },
-      {
-        name: "known_monthly_pension_amount",
-        label: "קצבה חודשית ידועה",
-        kind: "amount",
-        optional: true
-      },
-      {
-        name: "pension_amount_as_of_date",
-        label: "תאריך נכונות הקצבה",
-        kind: "date",
-        optional: true,
-        showWhen: (formState) => formState.known_monthly_pension_amount.trim() !== ""
-      },
-      ...metadataFields
-    ],
-    listFields: [
-      "provider_name",
-      "product_type",
-      "product_name",
-      "account_reference",
-      "known_balance_amount",
-      "balance_as_of_date",
-      "known_monthly_pension_amount",
-      "pension_amount_as_of_date",
-      "source_type",
-      "source_date",
-      "source_note"
-    ],
-    list: (clientId, lifecycleStatus) => getPensionHoldings(clientId, lifecycleStatus) as Promise<FactItem[]>,
-    create: (clientId, payload) =>
-      createPensionHolding(clientId, payload as unknown as PensionHoldingCreatePayload),
-    update: (clientId, id, payload) => updatePensionHolding(clientId, id, payload)
-  },
   {
     key: "capital-assets",
     heading: "נכסי הון",

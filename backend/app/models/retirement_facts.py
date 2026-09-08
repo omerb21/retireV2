@@ -51,6 +51,7 @@ FACT_CONTEXT_COLUMNS = (
 
 
 class PensionHolding(Base):
+    """ARCHIVE_ONLY_HISTORICAL_FK_TARGET; cutover DB triggers prohibit writes."""
     __tablename__ = "pension_holding"
     __table_args__ = (
         CheckConstraint(

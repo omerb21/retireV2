@@ -195,6 +195,145 @@ APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
 }
 
 
+
+# FIRST_RECOVERY_PKG_001 immutable definition + explicit PensionHolding disposition.
+# Exact inventory only; no directory wildcard or automatic acceptance of Git changes.
+APPROVED_FIRST_RECOVERY_PATHS = {
+    "frontend/src/pages/ClientDetailScreen.test.tsx",
+    "backend/alembic/versions/d3e9a6b2c410_canonical_pension_source.py",
+    "backend/app/api/clients_routes.py",
+    "backend/app/api/m02_intake_routes.py",
+    "backend/app/api/m03_review_routes.py",
+    "backend/app/api/m04_classification_routes.py",
+    "backend/app/api/m05_ledger_routes.py",
+    "backend/app/api/pension_product_routes.py",
+    "backend/app/db/base.py",
+    "backend/app/main.py",
+    "backend/app/models/m02_intake.py",
+    "backend/app/models/m03_review.py",
+    "backend/app/models/m04_classification.py",
+    "backend/app/models/m05_ledger.py",
+    "backend/app/models/pension_analysis_record.py",
+    "backend/app/models/pension_product.py",
+    "backend/app/models/retirement_facts.py",
+    "backend/app/schemas/m01_case.py",
+    "backend/app/schemas/m02_intake.py",
+    "backend/app/schemas/m03_review.py",
+    "backend/app/schemas/m04_classification.py",
+    "backend/app/schemas/m05_ledger.py",
+    "backend/app/schemas/pension_product.py",
+    "backend/app/services/canonical_pension_source_reader.py",
+    "backend/app/services/client_record_safety.py",
+    "backend/app/services/m01_case_service.py",
+    "backend/app/services/m02_evidence_digest.py",
+    "backend/app/services/m02_intake_service.py",
+    "backend/app/services/m03_review_service.py",
+    "backend/app/services/m04_classification_service.py",
+    "backend/app/services/m04_rule_catalogue.py",
+    "backend/app/services/m05_ledger_service.py",
+    "backend/app/services/m06_conversion_service.py",
+    "backend/app/services/m07_evidence_service.py",
+    "backend/app/services/m09_cashflow_service.py",
+    "backend/app/services/m09_scenario_subject_service.py",
+    "backend/app/services/pension_product_cutover_preflight.py",
+    "backend/app/services/pension_product_import_service.py",
+    "backend/app/services/pension_product_reconciliation.py",
+    "backend/app/services/pension_product_service.py",
+    "backend/app/services/pension_source_download.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_migration_safety.py",
+    "backend/tests/test_phase6_schema.py",
+    "backend/tests/test_phase7_persistence.py",
+    "backend/tests/test_phase9_api.py",
+    "backend/tests/test_pkg004b1_m07_evidence.py",
+    "backend/tests/test_pkg006_m01_case.py",
+    "backend/tests/test_pkg007_m02_intake.py",
+    "backend/tests/test_pkg008_m03_review.py",
+    "backend/tests/test_pkg009_m04_classification.py",
+    "backend/tests/test_pkg010_m05_ledger.py",
+    "backend/tests/test_pkg011_m06_conversion.py",
+    "backend/tests/test_pkg011_migration.py",
+    "backend/tests/test_pkg013_architecture.py",
+    "backend/tests/test_pkg013_migration.py",
+    "backend/tests/test_pkg014_migration.py",
+    "backend/tests/test_recovery_cutover_preflight.py",
+    "backend/tests/test_recovery_holding_archive.py",
+    "backend/tests/test_recovery_migration.py",
+    "backend/tests/test_recovery_pension_products.py",
+    "backend/tests/test_recovery_reachability.py",
+    "backend/tests/test_v21_package_a_persistence.py",
+    "backend/tests/test_v21_package_b_api.py",
+    "backend/tests/test_v22_slice1_analysis_record_api.py",
+    "frontend/src/api/clientsApi.ts",
+    "frontend/src/api/m02IntakeApi.ts",
+    "frontend/src/api/m03ReviewApi.ts",
+    "frontend/src/api/m04ClassificationApi.test.ts",
+    "frontend/src/api/m04ClassificationApi.ts",
+    "frontend/src/api/m05LedgerApi.ts",
+    "frontend/src/api/m06ConversionApi.ts",
+    "frontend/src/api/pensionProductsApi.ts",
+    "frontend/src/i18n/he.ts",
+    "frontend/src/pages/ClientDetailM01.test.tsx",
+    "frontend/src/pages/ClientDetailScreen.tsx",
+    "frontend/src/pages/M02PensionIntakeScreen.test.tsx",
+    "frontend/src/pages/M02PensionIntakeScreen.tsx",
+    "frontend/src/pages/M03SourceReviewScreen.test.tsx",
+    "frontend/src/pages/M03SourceReviewScreen.tsx",
+    "frontend/src/pages/M04ClassificationScreen.test.tsx",
+    "frontend/src/pages/M04ClassificationScreen.tsx",
+    "frontend/src/pages/M05LedgerScreen.test.tsx",
+    "frontend/src/pages/M05LedgerScreen.tsx",
+    "frontend/src/pages/M06ConversionScreen.test.tsx",
+    "frontend/src/pages/M06ConversionScreen.tsx",
+    "frontend/src/pages/PensionAnalysisRecordSection.test.tsx",
+    "frontend/src/pages/PensionAnalysisRecordSection.tsx",
+    "frontend/src/pages/PensionProductsScreen.test.tsx",
+    "frontend/src/pages/PensionProductsScreen.tsx",
+    "frontend/src/pages/RetirementPlanningConsolidatedReviewSection.test.tsx",
+    "frontend/src/pages/RetirementPlanningConsolidatedReviewSection.tsx",
+    "frontend/src/pages/RetirementPlanningFactsSection.test.tsx",
+    "frontend/src/pages/RetirementPlanningFactsSection.tsx",
+    "frontend/src/routes/AppRoutes.tsx",
+    "specs/runtime/FIRST_RECOVERY_PKG_001_implementation_progress.md",
+}
+APPROVED_FIRST_RECOVERY_REMOVALS = {
+    "backend/app/api/m02_intake_routes.py",
+    "backend/app/api/m03_review_routes.py",
+    "backend/app/api/m04_classification_routes.py",
+    "backend/app/api/m05_ledger_routes.py",
+    "backend/app/schemas/m02_intake.py",
+    "backend/app/schemas/m03_review.py",
+    "backend/app/schemas/m04_classification.py",
+    "backend/app/schemas/m05_ledger.py",
+    "backend/app/services/m02_evidence_digest.py",
+    "backend/app/services/m02_intake_service.py",
+    "backend/app/services/m03_review_service.py",
+    "backend/app/services/m04_classification_service.py",
+    "backend/app/services/m04_rule_catalogue.py",
+    "backend/app/services/m05_ledger_service.py",
+    "backend/app/services/pension_product_cutover_preflight.py",
+    "backend/tests/test_pkg008_m03_review.py",
+    "backend/tests/test_pkg009_m04_classification.py",
+    "backend/tests/test_pkg010_m05_ledger.py",
+    "backend/tests/test_v22_slice1_analysis_record_api.py",
+    "frontend/src/api/m02IntakeApi.ts",
+    "frontend/src/api/m03ReviewApi.ts",
+    "frontend/src/api/m04ClassificationApi.test.ts",
+    "frontend/src/api/m04ClassificationApi.ts",
+    "frontend/src/api/m05LedgerApi.ts",
+    "frontend/src/pages/M02PensionIntakeScreen.test.tsx",
+    "frontend/src/pages/M02PensionIntakeScreen.tsx",
+    "frontend/src/pages/M03SourceReviewScreen.test.tsx",
+    "frontend/src/pages/M03SourceReviewScreen.tsx",
+    "frontend/src/pages/M04ClassificationScreen.test.tsx",
+    "frontend/src/pages/M04ClassificationScreen.tsx",
+    "frontend/src/pages/M05LedgerScreen.test.tsx",
+    "frontend/src/pages/M05LedgerScreen.tsx",
+    "frontend/src/pages/PensionAnalysisRecordSection.test.tsx",
+    "frontend/src/pages/PensionAnalysisRecordSection.tsx",
+}
+
+
 def _run_git_status_porcelain() -> list[str]:
     result = subprocess.run(
         ["git", "status", "--porcelain"],
@@ -215,6 +354,7 @@ def _status_path(line: str) -> str:
 
 def _allowed_untracked_paths() -> set[str]:
     return {
+        *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         "backend/app/schemas/fixation_review.py",
@@ -242,6 +382,7 @@ def _unapproved_untracked(status_lines: list[str]) -> list[str]:
 
 def _approved_tracked_change_paths() -> set[str]:
     return {
+        *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,
         *APPROVED_PACKAGE_2_PATHS,
@@ -386,7 +527,7 @@ def test_repository_has_no_tracked_deletions_for_governance_gate() -> None:
     deleted = [
         line
         for line in _tracked_status_lines(status_lines)
-        if line[:2] in {" D", "D ", "DD"}
+        if line[:2] in {" D", "D ", "DD"} and _status_path(line) not in APPROVED_FIRST_RECOVERY_REMOVALS
     ]
     assert not deleted, f"tracked deletions detected: {deleted}"
 
@@ -434,3 +575,12 @@ def test_forbidden_paths_not_modified() -> None:
 def test_phase_closure_checklist_exists() -> None:
     checklist_path = REPO_ROOT / "specs/governance/phase_closure_checklist.md"
     assert checklist_path.exists(), "missing required phase closure checklist"
+
+
+def test_recovery_inventory_is_exact_and_does_not_authorize_definition_or_other_packages():
+    assert APPROVED_FIRST_RECOVERY_REMOVALS <= APPROVED_FIRST_RECOVERY_PATHS
+    for path in ("backend/app/api/m11_routes.py", "backend/alembic/versions/unknown.py",
+                 "specs/runtime/FIRST_RECOVERY_PKG_001_CANONICAL_PENSION_PRODUCT_AND_COMPONENT_SOURCE.md"):
+        assert path not in APPROVED_FIRST_RECOVERY_PATHS
+        assert _unapproved_untracked(["?? " + path]) == ["?? " + path]
+    assert _unapproved_untracked(["?? backend/tests/test_recovery_holding_archive.py"]) == []

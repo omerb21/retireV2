@@ -1769,7 +1769,7 @@ def _run_alembic(
 
 def test_migration_is_additive_unseeded_and_matches_models(tmp_path: Path) -> None:
     db_path = tmp_path / "pkg004b1.db"
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     inspector = sqlalchemy_inspect(engine)
     expected = {
@@ -1814,7 +1814,7 @@ def test_migration_is_additive_unseeded_and_matches_models(tmp_path: Path) -> No
 
 def test_migration_refuses_closed_evidence_loss(tmp_path: Path) -> None:
     db_path = tmp_path / "pkg004b1-retained.db"
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     with Session(engine) as db_session:
         db_session.execute(
@@ -1913,7 +1913,7 @@ def test_fact_identity_migration_derives_existing_key_and_downgrades_cleanly(
             )
         )
         db_session.commit()
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     inspector = sqlalchemy_inspect(engine)
     assert "fact_identity_key" in {
         column["name"] for column in inspector.get_columns("m07_fact_evidence")

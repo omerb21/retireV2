@@ -24,7 +24,7 @@ function requestUrl(call: unknown[]): string {
 }
 
 const approvedUrls = [
-  "/api/clients/7/pension-holdings?lifecycle_status=current",
+  "/api/clients/7/pension-products",
   "/api/clients/7/capital-assets?lifecycle_status=current",
   "/api/clients/7/recurring-incomes?lifecycle_status=current",
   "/api/clients/7/recurring-expenses?lifecycle_status=current",
@@ -34,7 +34,7 @@ const approvedUrls = [
 ];
 
 const groupHeadings = [
-  "אחזקות פנסיוניות",
+  "מוצרים פנסיוניים",
   "נכסי הון",
   "הכנסות שוטפות",
   "הוצאות שוטפות",
@@ -45,7 +45,7 @@ const groupHeadings = [
 
 function rowsForUrl(url: string): unknown[] {
   switch (url) {
-    case "/api/clients/7/pension-holdings?lifecycle_status=current":
+    case "/api/clients/7/pension-products":
       return [{
         id: 1,
         client_id: 7,
@@ -56,8 +56,10 @@ function rowsForUrl(url: string): unknown[] {
         verification_state: "reviewed",
         product_name: "Pension Product",
         account_reference: "ACC-1",
-        known_balance_amount: "1000.00",
-        balance_as_of_date: "2026-01-01",
+        reported_product_total: "1000.00",
+        reconciliation: { product_component_sum: "0.00" },
+        product_id: "canonical-1",
+        statement_date: "2026-01-01",
         known_monthly_pension_amount: null,
         pension_amount_as_of_date: null,
         source_type: "statement",
@@ -202,14 +204,14 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
     for (const heading of groupHeadings) {
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
     }
-    expect(screen.getByText("טוען אחזקות פנסיוניות…")).toBeInTheDocument();
+    expect(screen.getByText("טוען מוצרים פנסיוניים…")).toBeInTheDocument();
 
-    expect(await screen.findByText("Existing Pension Provider")).toBeInTheDocument();
+    expect(await screen.findByText("שם הגוף המנהל: Existing Pension Provider")).toBeInTheDocument();
     expect(await screen.findByText("Salary assumption")).toBeInTheDocument();
     expect(await screen.findByText(/לא תועד סיווג לתחום תכנון/)).toBeInTheDocument();
     expect(screen.getByText(/לא תועד מצב ייעוץ/)).toBeInTheDocument();
     expect(screen.getByText(/לא תועדה סיבה ניטרלית/)).toBeInTheDocument();
-    expect(screen.getByText("תאריך נכונות היתרה: 01/01/2026")).toBeInTheDocument();
+    expect(screen.getByText("תאריך הדוח: 01/01/2026")).toBeInTheDocument();
 
     expect(fetchMock).toHaveBeenCalledTimes(7);
     expect(fetchMock.mock.calls.map(requestUrl)).toEqual(approvedUrls);
@@ -243,7 +245,7 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
 
     render(<RetirementPlanningConsolidatedReviewSection clientId={7} />);
 
-    expect(await screen.findByText("לא תועדו אחזקות פנסיוניות.")).toBeInTheDocument();
+    expect(await screen.findByText("לא תועדו מוצרים פנסיוניים.")).toBeInTheDocument();
     expect(screen.getByText("לא תועדו נכסי הון.")).toBeInTheDocument();
     expect(screen.getByText("לא תועדו הכנסות שוטפות.")).toBeInTheDocument();
     expect(screen.getByText("לא תועדו הוצאות שוטפות.")).toBeInTheDocument();
@@ -258,7 +260,8 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
 
     render(<RetirementPlanningConsolidatedReviewSection clientId={7} />);
 
-    expect(await screen.findByText("לא ניתן לטעון אחזקות פנסיוניות.")).toBeInTheDocument();
-    expect(screen.getAllByText(/LOAD_FAILED/)).toHaveLength(7);
+    expect(await screen.findByText("לא ניתן לטעון מוצרים פנסיוניים.")).toBeInTheDocument();
+    expect(screen.getAllByText(/LOAD_FAILED/)).toHaveLength(6);
+    expect(screen.getByText("הפעולה לא הושלמה. יש לבדוק את הנתונים ולנסות שוב.")).toBeInTheDocument();
   });
 });

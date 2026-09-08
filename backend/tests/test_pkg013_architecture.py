@@ -42,7 +42,9 @@ def test_m09_consumes_the_m06_authoritative_handoff_without_formula_copy() -> No
     assert '"formula_owner": "M06"' in m09
     assert "raw_numerator" not in m09 and "raw_denominator" not in m09
     assert "authoritative_monthly_amount" in m06
-    assert '"rounding_owner": "M06"' in m06
+    # Current conversion is closed; historical manifests remain read-only.
+    assert "conversion_source_availability" in m06
+    assert "return _source_closed(db, client_id)" in m06
 
 
 def test_m09_request_and_ui_have_no_caller_portfolio_authority() -> None:

@@ -1,3 +1,4 @@
+import { listPensionProducts, type PensionProduct } from "../api/pensionProductsApi";
 import { useEffect, useState } from "react";
 
 import {
@@ -5,13 +6,11 @@ import {
   type CapitalAssetItem,
   getCapitalAssets,
   getMissingDataItems,
-  getPensionHoldings,
   getPlannerAssumptions,
   getRecurringExpenses,
   getRecurringIncomes,
   getRetirementTimingWorkIntentions,
   type MissingDataItem,
-  type PensionHoldingItem,
   type PlannerAssumptionItem,
   type RecurringExpenseItem,
   type RecurringIncomeItem,
@@ -111,8 +110,8 @@ function ReadOnlyGroup<T>({
 export function RetirementPlanningConsolidatedReviewSection({
   clientId
 }: RetirementPlanningConsolidatedReviewSectionProps) {
-  const [pensionHoldings, setPensionHoldings] = useState<GroupState<PensionHoldingItem>>(
-    emptyGroupState<PensionHoldingItem>()
+  const [pensionProducts, setPensionProducts] = useState<GroupState<PensionProduct>>(
+    emptyGroupState<PensionProduct>()
   );
   const [capitalAssets, setCapitalAssets] = useState<GroupState<CapitalAssetItem>>(
     emptyGroupState<CapitalAssetItem>()
@@ -151,7 +150,7 @@ export function RetirementPlanningConsolidatedReviewSection({
       }
     }
 
-    void loadGroup(() => getPensionHoldings(clientId, "current"), setPensionHoldings);
+    void loadGroup(() => listPensionProducts(clientId), setPensionProducts);
     void loadGroup(() => getCapitalAssets(clientId, "current"), setCapitalAssets);
     void loadGroup(() => getRecurringIncomes(clientId, "current"), setRecurringIncomes);
     void loadGroup(() => getRecurringExpenses(clientId, "current"), setRecurringExpenses);
@@ -168,20 +167,19 @@ export function RetirementPlanningConsolidatedReviewSection({
     <section aria-labelledby="retirement-planning-consolidated-review-heading">
       <h3 id="retirement-planning-consolidated-review-heading">סקירה מאוחדת לתכנון פרישה</h3>
       <ReadOnlyGroup
-        heading="אחזקות פנסיוניות"
-        state={pensionHoldings}
-        emptyMessage="לא תועדו אחזקות פנסיוניות."
+        heading="מוצרים פנסיוניים"
+        state={pensionProducts}
+        emptyMessage="לא תועדו מוצרים פנסיוניים."
         renderItem={(item) => (
-          <li key={item.id}>
+          <li key={item.product_id}>
             <article>
-              <h5>{displayValue(item.provider_name)}</h5>
+              <h5>{displayValue(item.product_name)}</h5>
+              <p>שם הגוף המנהל: {displayValue(item.provider_name)}</p>
               <p>סוג מוצר: {heLabel(item.product_type)}</p>
-              <p>שם מוצר: {displayValue(item.product_name)}</p>
               <p>אסמכתת חשבון: {displayValue(item.account_reference)}</p>
-              <p>יתרה ידועה: {displayValue(item.known_balance_amount)}</p>
-              <p>תאריך נכונות היתרה: {formatIsoDate(item.balance_as_of_date) || "לא תועד"}</p>
-              <p>קצבה חודשית ידועה: {displayValue(item.known_monthly_pension_amount)}</p>
-              <p>תאריך נכונות הקצבה: {formatIsoDate(item.pension_amount_as_of_date) || "לא תועד"}</p>
+              <p>סך מוצר מדווח: {displayValue(item.reported_product_total)}</p>
+              <p>סכום רכיבים: {displayValue(item.reconciliation.product_component_sum)}</p>
+              <p>תאריך הדוח: {formatIsoDate(item.statement_date) || "לא תועד"}</p>
             </article>
           </li>
         )}

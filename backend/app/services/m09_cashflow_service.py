@@ -34,8 +34,8 @@ from app.schemas.m09_cashflow import (
     M09RunResponse,
     M09RunSummaryResponse,
 )
-from app.services.m01_case_service import ensure_m01_editable
 from app.services.m06_conversion_service import list_subjects as list_m06_subjects
+from app.services.client_record_safety import ensure_client_record_writable
 
 
 FAMILY = "deterministic_monthly_cashflow"
@@ -872,8 +872,8 @@ def execute_run(
     db: Session, client_id: int, request: M09ContractRequest
 ) -> M09RunResponse:
     client = _require_client(db, client_id)
-    ensure_m01_editable(client)
     _validate_contract(request)
+    ensure_client_record_writable(client)
     inventory = _build_inventory(db, client_id, request)
     current = _current_run(db, client_id)
     run_id = new_m09_id("M09-R")

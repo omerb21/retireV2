@@ -133,7 +133,6 @@ def test_case_overview_derives_legacy_draft_and_missing_fields(
             ],
             "conflicting_field_ids": [],
         },
-        "allowed_lifecycle_targets": [],
         "updated_at": first.json()["m01_case"]["updated_at"],
     }
     assert second.json()["m01_case"]["lifecycle_status"] == "draft"
@@ -169,7 +168,6 @@ def test_minimum_facts_update_is_normalized_complete_and_does_not_touch_employme
         "missing_field_ids": [],
         "conflicting_field_ids": [],
     }
-    assert body["allowed_lifecycle_targets"] == ["intake"]
 
     with session_local() as session:
         employment = session.get(EmploymentRecord, "EMP-1")
@@ -365,15 +363,12 @@ def test_persisted_invalid_minimum_facts_fail_closed_without_rewrite(
     case = overview.json()["m01_case"]
     assert case["completeness"]["status"] == "incomplete"
     assert case["completeness"]["conflicting_field_ids"] == expected_conflicts
-    assert case["allowed_lifecycle_targets"] == []
 
     blocked = client.post(
         "/api/clients/1/case/lifecycle",
         json={"target_status": "intake"},
     )
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"]["code"] == "case_has_conflicting_fields"
-    assert blocked.json()["detail"]["conflicting_field_ids"] == expected_conflicts
+    assert blocked.status_code == 404  # Professional lifecycle route was removed.
 
     with session_local() as session:
         stored = session.execute(
@@ -412,141 +407,12 @@ def test_duplicate_identifier_is_safe_and_has_no_partial_write(
         ) == 0
 
 
-@pytest.mark.parametrize(
-    ("current", "target"),
-    [
-        ("draft", "intake"),
-        ("intake", "analysis"),
-        ("intake", "draft"),
-        ("analysis", "review"),
-        ("analysis", "intake"),
-        ("review", "delivered"),
-        ("review", "analysis"),
-        ("delivered", "archived"),
-        ("delivered", "review"),
-        ("archived", "delivered"),
-    ],
-)
-def test_every_allowed_lifecycle_transition(
-    api: tuple[TestClient, sessionmaker[Session]],
-    current: str,
-    target: str,
-) -> None:
-    client, session_local = api
-    _complete_client(client)
-    with session_local() as session:
-        persisted = session.get(Client, 1)
-        assert persisted is not None
-        persisted.status = current
-        session.commit()
-
-    response = client.post(
-        "/api/clients/1/case/lifecycle",
-        json={"target_status": target},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["lifecycle_status"] == target
 
 
-@pytest.mark.parametrize(
-    ("current", "target"),
-    [
-        ("draft", "draft"),
-        ("draft", "analysis"),
-        ("intake", "review"),
-        ("analysis", "draft"),
-        ("review", "archived"),
-        ("archived", "draft"),
-    ],
-)
-def test_invalid_same_state_and_skipped_transitions_are_rejected(
-    api: tuple[TestClient, sessionmaker[Session]],
-    current: str,
-    target: str,
-) -> None:
-    client, session_local = api
-    _complete_client(client)
-    with session_local() as session:
-        persisted = session.get(Client, 1)
-        assert persisted is not None
-        persisted.status = current
-        session.commit()
-
-    response = client.post(
-        "/api/clients/1/case/lifecycle",
-        json={"target_status": target},
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "invalid_lifecycle_transition"
-    with session_local() as session:
-        persisted = session.get(Client, 1)
-        assert persisted is not None
-        assert persisted.status == current
 
 
-def test_incomplete_forward_transition_reports_missing_fields_and_backward_is_allowed(
-    api: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    client, session_local = api
-
-    blocked = client.post(
-        "/api/clients/1/case/lifecycle",
-        json={"target_status": "intake"},
-    )
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"]["code"] == "case_incomplete"
-    assert blocked.json()["detail"]["missing_field_ids"] == [
-        "birth_date",
-        "gender",
-        "employment_status",
-        "planned_retirement",
-    ]
-
-    with session_local() as session:
-        persisted = session.get(Client, 1)
-        assert persisted is not None
-        persisted.status = "analysis"
-        session.commit()
-    backward = client.post(
-        "/api/clients/1/case/lifecycle",
-        json={"target_status": "intake"},
-    )
-    assert backward.status_code == 200
-    assert backward.json()["lifecycle_status"] == "intake"
 
 
-def test_archived_is_read_only_reopens_and_unsupported_status_fails_closed(
-    api: tuple[TestClient, sessionmaker[Session]],
-) -> None:
-    client, session_local = api
-    _complete_client(client)
-    with session_local() as session:
-        persisted = session.get(Client, 1)
-        assert persisted is not None
-        persisted.status = "archived"
-        session.commit()
-
-    edit = client.put("/api/clients/1/case", json=_complete_payload())
-    assert edit.status_code == 409
-    assert edit.json()["detail"]["code"] == "archived_case_read_only"
-
-    reopened = client.post(
-        "/api/clients/1/case/lifecycle",
-        json={"target_status": "delivered"},
-    )
-    assert reopened.status_code == 200
-    assert reopened.json()["lifecycle_status"] == "delivered"
-
-    with session_local() as session:
-        persisted = session.get(Client, 1)
-        assert persisted is not None
-        persisted.status = "mystery"
-        session.commit()
-    unsupported = client.get("/api/clients/1")
-    assert unsupported.status_code == 409
-    assert unsupported.json()["detail"]["code"] == "unsupported_client_status"
 
 
 def test_missing_client_case_routes_do_not_disclose_other_client_data(
@@ -563,7 +429,7 @@ def test_missing_client_case_routes_do_not_disclose_other_client_data(
     assert update.status_code == 404
     assert transition.status_code == 404
     assert update.json()["detail"]["code"] == "CLIENT_NOT_FOUND"
-    assert transition.json()["detail"]["code"] == "CLIENT_NOT_FOUND"
+    assert transition.json()["detail"] == "Not Found"
     assert "Client Two" not in update.text
     assert "Client Two" not in transition.text
 
@@ -627,3 +493,8 @@ def test_pkg006_migration_adds_only_nullable_fields_without_backfill_and_downgra
             text("SELECT COUNT(*) FROM clients WHERE client_id = 77 AND status = 'active'")
         ) == 1
     downgraded_engine.dispose()
+
+
+def test_professional_progression_endpoint_removed(api):
+    client, _ = api
+    assert client.post("/api/clients/1/case/lifecycle", json={"target_status": "intake"}).status_code == 404

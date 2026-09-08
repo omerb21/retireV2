@@ -19,7 +19,7 @@ def run(url: str, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_pkg014_is_single_additive_head() -> None:
-    assert run("sqlite:///:memory:", "heads").stdout.strip() == f"{HEAD} (head)"
+    assert run("sqlite:///:memory:", "heads").stdout.strip() == "d3e9a6b2c410 (head)"
 
 
 def test_pkg014_upgrade_downgrade_and_triggers(tmp_path: Path) -> None:

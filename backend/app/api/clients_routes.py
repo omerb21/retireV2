@@ -21,9 +21,7 @@ from app.models.grant import Grant
 from app.models.missing_data_item import MissingDataItem
 from app.models.pension_analysis_record import PensionAnalysisRecord
 from app.models.pension_analysis_record_contracts import (
-    PensionAnalysisRecordCreateRequest,
     PensionAnalysisRecordResponse,
-    PensionAnalysisRecordUpdateRequest,
 )
 from app.models.retirement_fact_contracts import (
     ADVISORY_STATUSES,
@@ -45,7 +43,6 @@ from app.models.retirement_fact_contracts import (
 )
 from app.models.retirement_facts import (
     CapitalAsset,
-    PensionHolding,
     PlannerAssumption,
     RecurringExpense,
     RecurringIncome,
@@ -56,15 +53,12 @@ from app.schemas.m01_case import (
     M01CaseResponse,
     M01CaseUpdateRequest,
     M01CompletenessResponse,
-    M01LifecycleTransitionRequest,
 )
 from app.services.m01_case_service import (
     EMPLOYMENT_STATUSES,
     M01CaseError,
     M01CaseSnapshot,
     build_case_snapshot,
-    ensure_m01_editable,
-    transition_lifecycle,
     update_minimum_facts,
     validate_birth_date_and_planned_retirement,
 )
@@ -421,101 +415,10 @@ def _validate_verification_state(value: str | None) -> str | None:
     return _validate_allowed_value(value, VERIFICATION_STATES, "verification_state")
 
 
-class PensionHoldingCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    provider_name: str
-    product_type: str
-    product_name: str | None = None
-    account_reference: str | None = None
-    known_balance_amount: Decimal | None = None
-    balance_as_of_date: date | None = None
-    known_monthly_pension_amount: Decimal | None = None
-    pension_amount_as_of_date: date | None = None
-    source_type: str | None = None
-    source_date: date | None = None
-    source_note: str | None = None
-    source_status: str | None = None
-    verification_state: str | None = None
-
-    @field_validator("product_type")
-    @classmethod
-    def validate_product_type(cls, value: str) -> str:
-        return _validate_allowed_value(value, PENSION_PRODUCT_TYPES, "product_type") or value
-
-    @field_validator("source_status")
-    @classmethod
-    def validate_source_status(cls, value: str | None) -> str | None:
-        return _validate_source_status(value)
-
-    @field_validator("verification_state")
-    @classmethod
-    def validate_verification_state(cls, value: str | None) -> str | None:
-        return _validate_verification_state(value)
-
-    @model_validator(mode="after")
-    def validate_required_dates(self) -> "PensionHoldingCreateRequest":
-        if self.known_balance_amount is not None and self.balance_as_of_date is None:
-            raise ValueError("balance_as_of_date is required when known_balance_amount is supplied")
-        if self.known_monthly_pension_amount is not None and self.pension_amount_as_of_date is None:
-            raise ValueError(
-                "pension_amount_as_of_date is required when known_monthly_pension_amount is supplied"
-            )
-        return self
 
 
-class PensionHoldingUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    provider_name: str | None = None
-    product_type: str | None = None
-    product_name: str | None = None
-    account_reference: str | None = None
-    known_balance_amount: Decimal | None = None
-    balance_as_of_date: date | None = None
-    known_monthly_pension_amount: Decimal | None = None
-    pension_amount_as_of_date: date | None = None
-    source_type: str | None = None
-    source_date: date | None = None
-    source_note: str | None = None
-    source_status: str | None = None
-    verification_state: str | None = None
-
-    @field_validator("product_type")
-    @classmethod
-    def validate_product_type(cls, value: str | None) -> str | None:
-        return _validate_allowed_value(value, PENSION_PRODUCT_TYPES, "product_type")
-
-    @field_validator("source_status")
-    @classmethod
-    def validate_source_status(cls, value: str | None) -> str | None:
-        return _validate_source_status(value)
-
-    @field_validator("verification_state")
-    @classmethod
-    def validate_verification_state(cls, value: str | None) -> str | None:
-        return _validate_verification_state(value)
 
 
-class PensionHoldingResponse(BaseModel):
-    id: int
-    client_id: int
-    provider_name: str
-    product_type: str
-    lifecycle_status: str
-    source_status: str
-    verification_state: str
-    product_name: str | None
-    account_reference: str | None
-    known_balance_amount: Decimal | None
-    balance_as_of_date: date | None
-    known_monthly_pension_amount: Decimal | None
-    pension_amount_as_of_date: date | None
-    source_type: str | None
-    source_date: date | None
-    source_note: str | None
-    created_at: datetime
-    updated_at: datetime
 
 
 class CapitalAssetCreateRequest(BaseModel):
@@ -1013,7 +916,6 @@ def _m01_case_to_response(snapshot: M01CaseSnapshot) -> M01CaseResponse:
             missing_field_ids=list(snapshot.completeness.missing_field_ids),
             conflicting_field_ids=list(snapshot.completeness.conflicting_field_ids),
         ),
-        allowed_lifecycle_targets=list(snapshot.allowed_lifecycle_targets),
         updated_at=snapshot.client.updated_at,
     )
 
@@ -1186,27 +1088,6 @@ def _planner_assumption_to_response(row: PlannerAssumption) -> PlannerAssumption
     )
 
 
-def _pension_holding_to_response(row: PensionHolding) -> PensionHoldingResponse:
-    return PensionHoldingResponse(
-        id=row.id,
-        client_id=row.client_id,
-        provider_name=row.provider_name,
-        product_type=row.product_type,
-        lifecycle_status=row.lifecycle_status,
-        source_status=row.source_status,
-        verification_state=row.verification_state,
-        product_name=row.product_name,
-        account_reference=row.account_reference,
-        known_balance_amount=row.known_balance_amount,
-        balance_as_of_date=row.balance_as_of_date,
-        known_monthly_pension_amount=row.known_monthly_pension_amount,
-        pension_amount_as_of_date=row.pension_amount_as_of_date,
-        source_type=row.source_type,
-        source_date=row.source_date,
-        source_note=row.source_note,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
 
 
 def _pension_analysis_record_to_response(row: PensionAnalysisRecord) -> PensionAnalysisRecordResponse:
@@ -1324,13 +1205,6 @@ def _validation_error(message: str) -> HTTPException:
     )
 
 
-def _validate_pension_holding_dates(row: PensionHolding) -> None:
-    if row.known_balance_amount is not None and row.balance_as_of_date is None:
-        raise _validation_error("balance_as_of_date is required when known_balance_amount is supplied")
-    if row.known_monthly_pension_amount is not None and row.pension_amount_as_of_date is None:
-        raise _validation_error(
-            "pension_amount_as_of_date is required when known_monthly_pension_amount is supplied"
-        )
 
 
 def _validate_capital_asset_value_date(row: CapitalAsset) -> None:
@@ -1393,38 +1267,9 @@ def _require_actual_capitalization(db: Session, client_id: int, capitalization_i
     return row
 
 
-def _require_pension_holding(db: Session, client_id: int, pension_holding_id: int) -> PensionHolding:
-    row = db.scalar(
-        select(PensionHolding).where(
-            PensionHolding.client_id == client_id,
-            PensionHolding.id == pension_holding_id,
-        )
-    )
-    if row is None:
-        raise _source_item_not_found(
-            "PENSION_HOLDING_NOT_FOUND",
-            f"Pension holding {pension_holding_id} was not found for client {client_id}",
-        )
-    return row
 
 
-def _require_pension_analysis_record(
-    db: Session,
-    client_id: int,
-    pension_holding_id: int,
-) -> PensionAnalysisRecord:
-    row = db.scalar(
-        select(PensionAnalysisRecord).where(
-            PensionAnalysisRecord.client_id == client_id,
-            PensionAnalysisRecord.pension_holding_id == pension_holding_id,
-        )
-    )
-    if row is None:
-        raise _source_item_not_found(
-            "PENSION_ANALYSIS_RECORD_NOT_FOUND",
-            f"Pension analysis record was not found for pension holding {pension_holding_id}",
-        )
-    return row
+
 
 
 def _require_capital_asset(db: Session, client_id: int, capital_asset_id: int) -> CapitalAsset:
@@ -1653,25 +1498,6 @@ def put_client_case(
     return _m01_case_to_response(build_case_snapshot(client, snapshot.profile))
 
 
-@router.post("/{client_id}/case/lifecycle", response_model=M01CaseResponse)
-def post_client_case_lifecycle(
-    client_id: int,
-    payload: M01LifecycleTransitionRequest,
-    db: Session = Depends(get_db),
-) -> M01CaseResponse:
-    client = _require_client(db, client_id)
-    try:
-        snapshot = transition_lifecycle(
-            db,
-            client=client,
-            target_status=payload.target_status,
-        )
-        db.commit()
-    except M01CaseError as error:
-        db.rollback()
-        raise _m01_error_to_http(error) from error
-    db.refresh(client)
-    return _m01_case_to_response(build_case_snapshot(client, snapshot.profile))
 
 
 @router.put("/{client_id}/profile")
@@ -1682,7 +1508,7 @@ def put_client_profile(
 ) -> dict:
     client = _require_client(db, client_id)
     try:
-        ensure_m01_editable(client)
+
         target_birth_date = (
             payload.birth_date
             if "birth_date" in payload.model_fields_set
@@ -1904,95 +1730,14 @@ def update_retirement_planning_document_verification(
     return _document_to_response(document)
 
 
-@router.post("/{client_id}/pension-holdings", response_model=PensionHoldingResponse)
-def create_pension_holding(
-    client_id: int,
-    payload: PensionHoldingCreateRequest,
-    db: Session = Depends(get_db),
-) -> PensionHoldingResponse:
-    _require_client(db, client_id)
-    row = PensionHolding(client_id=client_id, **payload.model_dump(exclude_none=True))
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return _pension_holding_to_response(row)
 
 
-@router.get("/{client_id}/pension-holdings", response_model=list[PensionHoldingResponse])
-def list_pension_holdings(
-    client_id: int,
-    lifecycle_status: LifecycleFilter = "current",
-    db: Session = Depends(get_db),
-) -> list[PensionHoldingResponse]:
-    _require_client(db, client_id)
-    statement = select(PensionHolding).where(PensionHolding.client_id == client_id)
-    statement = _apply_lifecycle_filter(statement, PensionHolding, lifecycle_status)
-    rows = db.scalars(statement.order_by(PensionHolding.created_at.desc(), PensionHolding.id.desc())).all()
-    return [_pension_holding_to_response(row) for row in rows]
 
 
-@router.get("/{client_id}/pension-holdings/{pension_holding_id}", response_model=PensionHoldingResponse)
-def get_pension_holding(
-    client_id: int,
-    pension_holding_id: int,
-    db: Session = Depends(get_db),
-) -> PensionHoldingResponse:
-    _require_client(db, client_id)
-    row = _require_pension_holding(db, client_id, pension_holding_id)
-    return _pension_holding_to_response(row)
 
 
-@router.put("/{client_id}/pension-holdings/{pension_holding_id}", response_model=PensionHoldingResponse)
-def update_pension_holding(
-    client_id: int,
-    pension_holding_id: int,
-    payload: PensionHoldingUpdateRequest,
-    db: Session = Depends(get_db),
-) -> PensionHoldingResponse:
-    _require_client(db, client_id)
-    row = _require_pension_holding(db, client_id, pension_holding_id)
-    _apply_fact_update(row, payload)
-    _validate_pension_holding_dates(row)
-    db.commit()
-    db.refresh(row)
-    return _pension_holding_to_response(row)
 
 
-@router.post(
-    "/{client_id}/pension-holdings/{pension_holding_id}/analysis-record",
-    response_model=PensionAnalysisRecordResponse,
-)
-def create_pension_analysis_record(
-    client_id: int,
-    pension_holding_id: int,
-    payload: PensionAnalysisRecordCreateRequest,
-    db: Session = Depends(get_db),
-) -> PensionAnalysisRecordResponse:
-    _require_client(db, client_id)
-    _require_pension_holding(db, client_id, pension_holding_id)
-    existing = db.scalar(
-        select(PensionAnalysisRecord).where(
-            PensionAnalysisRecord.client_id == client_id,
-            PensionAnalysisRecord.pension_holding_id == pension_holding_id,
-        )
-    )
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "PENSION_ANALYSIS_RECORD_EXISTS",
-                "message": f"Pension analysis record already exists for pension holding {pension_holding_id}",
-            },
-        )
-    row = PensionAnalysisRecord(
-        client_id=client_id,
-        pension_holding_id=pension_holding_id,
-        analysis_record_text=payload.analysis_record_text,
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return _pension_analysis_record_to_response(row)
 
 
 @router.get(
@@ -2005,7 +1750,7 @@ def get_pension_analysis_record(
     db: Session = Depends(get_db),
 ) -> PensionAnalysisRecordResponse | None:
     _require_client(db, client_id)
-    _require_pension_holding(db, client_id, pension_holding_id)
+    # Historical text retrieval only; no current holding fields are read.
     row = db.scalar(
         select(PensionAnalysisRecord).where(
             PensionAnalysisRecord.client_id == client_id,
@@ -2015,23 +1760,6 @@ def get_pension_analysis_record(
     return None if row is None else _pension_analysis_record_to_response(row)
 
 
-@router.put(
-    "/{client_id}/pension-holdings/{pension_holding_id}/analysis-record",
-    response_model=PensionAnalysisRecordResponse,
-)
-def update_pension_analysis_record(
-    client_id: int,
-    pension_holding_id: int,
-    payload: PensionAnalysisRecordUpdateRequest,
-    db: Session = Depends(get_db),
-) -> PensionAnalysisRecordResponse:
-    _require_client(db, client_id)
-    _require_pension_holding(db, client_id, pension_holding_id)
-    row = _require_pension_analysis_record(db, client_id, pension_holding_id)
-    row.analysis_record_text = payload.analysis_record_text
-    db.commit()
-    db.refresh(row)
-    return _pension_analysis_record_to_response(row)
 
 
 @router.post("/{client_id}/capital-assets", response_model=CapitalAssetResponse)

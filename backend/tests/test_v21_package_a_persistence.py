@@ -74,7 +74,8 @@ def _upgrade_sqlite_database(db_path: Path) -> str:
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
     result = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        # Historical persistence compatibility, before archive-only cutover.
+        ["alembic", "upgrade", "c2d8f5a1b309"],
         cwd=_backend_root(),
         env=env,
         capture_output=True,

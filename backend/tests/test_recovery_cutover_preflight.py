@@ -1,10 +1,16 @@
 from copy import deepcopy
 from decimal import Decimal
+import importlib.util
+from pathlib import Path
 
 import pytest
 
 from app.models.pension_product import COMPONENT_CODES
-from app.services.pension_product_cutover_preflight import CutoverConflict, build_cutover_plan
+_spec = importlib.util.spec_from_file_location("recovery_migration", Path(__file__).resolve().parents[1] / "alembic/versions/d3e9a6b2c410_canonical_pension_source.py")
+_migration = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_migration)
+CutoverConflict = _migration.CutoverConflict
+build_cutover_plan = _migration.build_cutover_plan
 
 
 def intake(identifier="A"):

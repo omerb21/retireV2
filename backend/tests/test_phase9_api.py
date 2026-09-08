@@ -33,6 +33,10 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "pension_products",
+    "pension_product_components",
+    "pension_product_source_links",
+    "pension_product_audit_events",
     "capital_asset",
     "fixation_dependency_manifests",
     "internal_planner_judgments",
@@ -735,7 +739,7 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
 
 def test_slice_1_actual_capitalization_metadata_migration_upgrade_and_downgrade(tmp_path: Path) -> None:
     db_path = tmp_path / "slice1_actual_capitalization_metadata.db"
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     inspector = inspect(engine)
     actual_cap_columns = {column["name"] for column in inspector.get_columns("actual_capitalizations")}

@@ -32,10 +32,6 @@ class M01CaseUpdateRequest(BaseModel):
     planned_retirement_age: int | None = Field(default=None, ge=18, le=120)
 
 
-class M01LifecycleTransitionRequest(BaseModel):
-    target_status: LifecycleStatus
-
-
 class M01CaseResponse(BaseModel):
     client_id: int
     display_name: str
@@ -47,5 +43,4 @@ class M01CaseResponse(BaseModel):
     planned_retirement_age: int | None
     lifecycle_status: LifecycleStatus
     completeness: M01CompletenessResponse
-    allowed_lifecycle_targets: list[LifecycleStatus]
     updated_at: datetime

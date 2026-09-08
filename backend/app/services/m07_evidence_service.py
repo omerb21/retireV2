@@ -51,7 +51,6 @@ M07_SOURCE_RECORD_KEYS = {
     "grants": "grant_id",
     "actual_capitalizations": "capitalization_id",
     "clearinghouse_snapshots": "clearinghouse_snapshot_id",
-    "pension_holding": "id",
     "capital_asset": "id",
     "recurring_income": "id",
     "recurring_expense": "id",

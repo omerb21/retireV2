@@ -112,10 +112,10 @@ def test_stage_a_passes_for_valid_numeric_client_ids(tmp_path: Path) -> None:
 
 def test_clean_db_downgrade_upgrade_path_works(tmp_path: Path) -> None:
     db_path = tmp_path / "stage_clean_path.db"
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     result = _run_alembic(db_path, "downgrade", "base")
     assert result.returncode == 0
-    result = _run_alembic(db_path, "upgrade", "head")
+    result = _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     assert result.returncode == 0
 
 
@@ -260,7 +260,7 @@ def test_pkg002_status_migration_preserves_existing_runs_and_supports_new_status
         )
         session.commit()
 
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
 
     with Session(create_engine(f"sqlite:///{db_path.as_posix()}")) as session:
         assert session.execute(
@@ -306,7 +306,7 @@ def test_pkg003_manifest_migration_preserves_legacy_runs_and_refuses_destructive
         )
         session.commit()
 
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
     with Session(engine) as session:
         assert session.execute(
             text(
@@ -360,7 +360,7 @@ def test_pkg004a_migration_is_additive_global_unseeded_and_preserves_history(
         )
         session.commit()
 
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
 
     with Session(engine) as session:
         columns = {
@@ -403,7 +403,7 @@ def test_pkg004a_migration_is_additive_global_unseeded_and_preserves_history(
 
 def test_pkg004a_migration_refuses_official_evidence_loss(tmp_path: Path) -> None:
     db_path = tmp_path / "pkg004a_downgrade.db"
-    _run_alembic(db_path, "upgrade", "head")
+    _run_alembic(db_path, "upgrade", "c2d8f5a1b309")
 
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     with Session(engine) as session:

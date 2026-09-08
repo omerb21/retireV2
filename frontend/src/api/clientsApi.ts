@@ -52,7 +52,6 @@ export interface M01CaseItem {
   planned_retirement_age: number | null;
   lifecycle_status: M01LifecycleStatus;
   completeness: M01Completeness;
-  allowed_lifecycle_targets: M01LifecycleStatus[];
   updated_at: string;
 }
 
@@ -299,52 +298,15 @@ export interface FactMetadataPayload {
   source_note?: string | null;
 }
 
-export interface PensionHoldingItem {
-  id: number;
-  client_id: number;
-  provider_name: string;
-  product_type: string;
-  lifecycle_status: string;
-  source_status: string;
-  verification_state: string;
-  product_name: string | null;
-  account_reference: string | null;
-  known_balance_amount: number | string | null;
-  balance_as_of_date: string | null;
-  known_monthly_pension_amount: number | string | null;
-  pension_amount_as_of_date: string | null;
-  source_type: string | null;
-  source_date: string | null;
-  source_note: string | null;
-  created_at: string;
-  updated_at: string;
-}
 
-export interface PensionHoldingCreatePayload extends FactMetadataPayload {
-  provider_name: string;
-  product_type: string;
-  product_name?: string | null;
-  account_reference?: string | null;
-  known_balance_amount?: string | null;
-  balance_as_of_date?: string | null;
-  known_monthly_pension_amount?: string | null;
-  pension_amount_as_of_date?: string | null;
-}
 
-export type PensionHoldingUpdatePayload = Partial<PensionHoldingCreatePayload>;
 
-export interface PensionAnalysisRecordItem {
-  id: number;
-  client_id: number;
-  pension_holding_id: number;
-  analysis_record_text: string;
-  created_at: string;
-  updated_at: string;
-}
 
-export interface PensionAnalysisRecordPayload {
-  analysis_record_text: string;
-}
+
+
+
+
+
 
 export interface CapitalAssetItem {
   id: number;
@@ -558,16 +520,6 @@ export function updateClientCase(
   return requestJson<M01CaseItem>(`/clients/${clientId}/case`, {
     method: "PUT",
     body: JSON.stringify(payload)
-  });
-}
-
-export function transitionClientCase(
-  clientId: number,
-  targetStatus: M01LifecycleStatus
-): Promise<M01CaseItem> {
-  return requestJson<M01CaseItem>(`/clients/${clientId}/case/lifecycle`, {
-    method: "POST",
-    body: JSON.stringify({ target_status: targetStatus })
   });
 }
 
@@ -791,75 +743,17 @@ export function updatePlannerAssumption(
   });
 }
 
-export function getPensionHoldings(
-  clientId: number,
-  lifecycleStatus: LifecycleStatusFilter = "current"
-): Promise<PensionHoldingItem[]> {
-  return requestJson<PensionHoldingItem[]>(factListPath(clientId, "pension-holdings", lifecycleStatus), {
-    method: "GET"
-  });
-}
 
-export function createPensionHolding(
-  clientId: number,
-  payload: PensionHoldingCreatePayload
-): Promise<PensionHoldingItem> {
-  return requestJson<PensionHoldingItem>(`/clients/${clientId}/pension-holdings`, {
-    method: "POST",
-    body: JSON.stringify(payload)
-  });
-}
 
-export function updatePensionHolding(
-  clientId: number,
-  pensionHoldingId: number,
-  payload: PensionHoldingUpdatePayload
-): Promise<PensionHoldingItem> {
-  return requestJson<PensionHoldingItem>(`/clients/${clientId}/pension-holdings/${pensionHoldingId}`, {
-    method: "PUT",
-    body: JSON.stringify(payload)
-  });
-}
 
-export function getPensionAnalysisRecord(
-  clientId: number,
-  pensionHoldingId: number
-): Promise<PensionAnalysisRecordItem | null> {
-  return requestJson<PensionAnalysisRecordItem | null>(
-    `/clients/${clientId}/pension-holdings/${pensionHoldingId}/analysis-record`,
-    {
-      method: "GET"
-    }
-  );
-}
 
-export function createPensionAnalysisRecord(
-  clientId: number,
-  pensionHoldingId: number,
-  payload: PensionAnalysisRecordPayload
-): Promise<PensionAnalysisRecordItem> {
-  return requestJson<PensionAnalysisRecordItem>(
-    `/clients/${clientId}/pension-holdings/${pensionHoldingId}/analysis-record`,
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }
-  );
-}
 
-export function updatePensionAnalysisRecord(
-  clientId: number,
-  pensionHoldingId: number,
-  payload: PensionAnalysisRecordPayload
-): Promise<PensionAnalysisRecordItem> {
-  return requestJson<PensionAnalysisRecordItem>(
-    `/clients/${clientId}/pension-holdings/${pensionHoldingId}/analysis-record`,
-    {
-      method: "PUT",
-      body: JSON.stringify(payload)
-    }
-  );
-}
+
+
+
+
+
+
 
 export function getCapitalAssets(
   clientId: number,

@@ -437,39 +437,8 @@ _M05_TABLE_NAMES = {item.__tablename__ for item in _M05_CLASSES}
 _TEXT_MUTATION_ERROR = "M05 append-only records cannot be updated or deleted"
 
 
-def authorize_m05_insert(target: object) -> None:
-    setattr(target, "_m05_server_insert_authorized", True)
-
-
 def _before_insert(_mapper, _connection, target: object) -> None:
-    if not getattr(target, "_m05_server_insert_authorized", False):
-        raise ValueError("M05 records may be inserted only by the M05 service")
-    if isinstance(target, M05LedgerSubject):
-        target.subject_id = _new("M05-S")
-    elif isinstance(target, M05CandidateLink):
-        if not target.candidate_id:
-            target.candidate_id = _new("M05-C")
-    elif isinstance(target, M05LedgerRevision):
-        if not target.revision_id:
-            target.revision_id = _new("M05-R")
-        if target.actor != M05_WORKFLOW_ACTOR:
-            raise ValueError("M05 actor must be server-controlled")
-        if target.created_at is None:
-            target.created_at = m05_server_timestamp()
-        if (
-            not isinstance(target.evidence_digest, str)
-            or len(target.evidence_digest) != 64
-            or any(character not in "0123456789abcdef" for character in target.evidence_digest)
-        ):
-            raise ValueError("M05 revision evidence digest must be server-controlled")
-    elif isinstance(target, M05LedgerValue):
-        target.value_id = _new("M05-V")
-    elif isinstance(target, M05AdjustmentEvidence):
-        if not target.adjustment_id:
-            target.adjustment_id = _new("M05-A")
-        target.actor = M05_WORKFLOW_ACTOR
-        if target.created_at is None:
-            target.created_at = m05_server_timestamp()
+    raise ValueError("LEGACY_PENSION_WORKFLOW_ARCHIVE_ONLY")
 
 
 def _prevent_update(_mapper, _connection, target: object) -> None:

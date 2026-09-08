@@ -39,6 +39,7 @@ M02_ALLOWED_EXTENSIONS = (".pdf", ".xml", ".dat", ".csv", ".xlsx")
 
 
 class M02IntakeRecord(Base):
+    """Frozen historical professional intake, retained for archive/FK integrity."""
     __tablename__ = "m02_intake_records"
     __table_args__ = (
         CheckConstraint(
@@ -319,3 +320,11 @@ def _prevent_blob_identity_mutation(_mapper, _connection, target: M02PreservedBl
     )
     if any(state.attrs[field].history.has_changes() for field in immutable_fields):
         raise ValueError("M02 preserved blob identity is immutable")
+
+
+def _archive_intake_only(_mapper, _connection, _target):
+    raise ValueError("LEGACY_PENSION_WORKFLOW_ARCHIVE_ONLY")
+
+
+for _archive_event in ("before_insert", "before_update", "before_delete"):
+    event.listen(M02IntakeRecord, _archive_event, _archive_intake_only)

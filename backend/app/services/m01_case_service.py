@@ -27,20 +27,6 @@ LIFECYCLE_STATUSES = (
     "delivered",
     "archived",
 )
-FORWARD_TRANSITIONS = {
-    "draft": "intake",
-    "intake": "analysis",
-    "analysis": "review",
-    "review": "delivered",
-    "delivered": "archived",
-}
-BACKWARD_TRANSITIONS = {
-    "intake": "draft",
-    "analysis": "intake",
-    "review": "analysis",
-    "delivered": "review",
-    "archived": "delivered",
-}
 MISSING_FIELD_ORDER = (
     "display_name",
     "id_number",
@@ -82,7 +68,6 @@ class M01CaseSnapshot:
     profile: ClientProfile | None
     lifecycle_status: str
     completeness: M01Completeness
-    allowed_lifecycle_targets: tuple[str, ...]
 
 
 def _has_text(value: str | None) -> bool:
@@ -180,21 +165,6 @@ def derive_completeness(client: Client, profile: ClientProfile | None) -> M01Com
     )
 
 
-def allowed_lifecycle_targets(
-    lifecycle_status: str,
-    completeness: M01Completeness,
-) -> tuple[str, ...]:
-    if lifecycle_status == "archived":
-        return ("delivered",)
-
-    targets: list[str] = []
-    backward = BACKWARD_TRANSITIONS.get(lifecycle_status)
-    if backward is not None:
-        targets.append(backward)
-    forward = FORWARD_TRANSITIONS.get(lifecycle_status)
-    if forward is not None and completeness.status == "complete":
-        targets.append(forward)
-    return tuple(targets)
 
 
 def get_client_profile(db: Session, client_id: int) -> ClientProfile | None:
@@ -213,17 +183,9 @@ def build_case_snapshot(
         profile=resolved_profile,
         lifecycle_status=lifecycle_status,
         completeness=completeness,
-        allowed_lifecycle_targets=allowed_lifecycle_targets(lifecycle_status, completeness),
     )
 
 
-def ensure_m01_editable(client: Client) -> None:
-    if effective_lifecycle_status(client.status) == "archived":
-        raise M01CaseError(
-            status_code=409,
-            code="archived_case_read_only",
-            message="Archived client cases are read-only until explicitly reopened",
-        )
 
 
 def update_minimum_facts(
@@ -232,7 +194,7 @@ def update_minimum_facts(
     client: Client,
     payload: Any,
 ) -> M01CaseSnapshot:
-    ensure_m01_editable(client)
+
 
     display_name = normalize_required_text(payload.display_name, "display_name")
     id_number = normalize_required_text(payload.id_number, "id_number")
@@ -274,46 +236,5 @@ def update_minimum_facts(
     client.planned_retirement_date = payload.planned_retirement_date
     client.planned_retirement_age = payload.planned_retirement_age
     profile.gender = gender
-    db.flush()
-    return build_case_snapshot(client, profile)
-
-
-def transition_lifecycle(
-    db: Session,
-    *,
-    client: Client,
-    target_status: str,
-) -> M01CaseSnapshot:
-    profile = get_client_profile(db, client.client_id)
-    snapshot = build_case_snapshot(client, profile)
-    current = snapshot.lifecycle_status
-
-    if target_status == current or (
-        FORWARD_TRANSITIONS.get(current) != target_status
-        and BACKWARD_TRANSITIONS.get(current) != target_status
-    ):
-        raise M01CaseError(
-            status_code=409,
-            code="invalid_lifecycle_transition",
-            message=f"Transition from {current} to {target_status} is not allowed",
-        )
-
-    if FORWARD_TRANSITIONS.get(current) == target_status:
-        if snapshot.completeness.conflicting_field_ids:
-            raise M01CaseError(
-                status_code=409,
-                code="case_has_conflicting_fields",
-                message="The client case has conflicting minimum facts",
-                conflicting_field_ids=snapshot.completeness.conflicting_field_ids,
-            )
-        if snapshot.completeness.status != "complete":
-            raise M01CaseError(
-                status_code=409,
-                code="case_incomplete",
-                message="The client case is incomplete and cannot move forward",
-                missing_field_ids=snapshot.completeness.missing_field_ids,
-            )
-
-    client.status = target_status
     db.flush()
     return build_case_snapshot(client, profile)

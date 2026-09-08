@@ -15,10 +15,8 @@ import {
   getRetirementPlanningDocuments,
   type M01CaseItem,
   type M01EmploymentStatus,
-  type M01LifecycleStatus,
   type MissingDataItem,
   type RetirementPlanningDocumentItem,
-  transitionClientCase,
   updateClearinghouseSnapshotVerification,
   updateClientCase,
   updateClientProfile,
@@ -32,7 +30,6 @@ import { HebrewDateInput } from "../components/HebrewDateInput";
 import { heLabel } from "../i18n/he";
 import { formatIsoDate } from "../utils/dateFormat";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
-import { PensionAnalysisRecordSection } from "./PensionAnalysisRecordSection";
 import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
 import { RetirementPlanningConsolidatedReviewSection } from "./RetirementPlanningConsolidatedReviewSection";
 import { RetirementPlanningFactsSection } from "./RetirementPlanningFactsSection";
@@ -125,7 +122,6 @@ export function ClientDetailScreen() {
   const [isSavingCase, setIsSavingCase] = useState(false);
   const [caseSaveMessage, setCaseSaveMessage] = useState<string | null>(null);
   const [caseErrorMessage, setCaseErrorMessage] = useState<string | null>(null);
-  const [isTransitioningCase, setIsTransitioningCase] = useState(false);
   const [loadedClientContext, setLoadedClientContext] =
     useState<ClientContextToken | null>(null);
 
@@ -218,7 +214,7 @@ export function ClientDetailScreen() {
     setIsSavingCase(false);
     setCaseSaveMessage(null);
     setCaseErrorMessage(null);
-    setIsTransitioningCase(false);
+
 
     async function loadClient() {
       if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
@@ -326,7 +322,6 @@ export function ClientDetailScreen() {
     if (
       client === null
       || m01Case === null
-      || m01Case.lifecycle_status === "archived"
     ) {
       return;
     }
@@ -384,42 +379,10 @@ export function ClientDetailScreen() {
     }
   }
 
-  async function handleLifecycleTransition(targetStatus: M01LifecycleStatus) {
-    if (client === null || m01Case === null) {
-      return;
-    }
-
-    const clientContext = captureClientContext();
-    const requestClientId = client.client_id;
-    setIsTransitioningCase(true);
-    setCaseSaveMessage(null);
-    setCaseErrorMessage(null);
-
-    try {
-      const nextCase = await transitionClientCase(requestClientId, targetStatus);
-      if (!isCurrentClientContext(clientContext)) {
-        return;
-      }
-      applyM01Case(nextCase);
-      setClient((current) =>
-        current === null ? current : { ...current, m01_case: nextCase }
-      );
-      setCaseSaveMessage(`תיק הלקוח עבר למצב ${heLabel(nextCase.lifecycle_status)}.`);
-    } catch (error) {
-      if (isCurrentClientContext(clientContext)) {
-        setCaseErrorMessage(getErrorMessage(error));
-      }
-    } finally {
-      if (isCurrentClientContext(clientContext)) {
-        setIsTransitioningCase(false);
-      }
-    }
-  }
-
   async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (client === null || m01Case?.lifecycle_status === "archived") {
+    if (client === null) {
       return;
     }
 
@@ -745,7 +708,6 @@ export function ClientDetailScreen() {
       {m01Case !== null ? (
         <section aria-labelledby="m01-case-foundation-heading">
           <h3 id="m01-case-foundation-heading">תשתית תיק הלקוח</h3>
-          <p>מצב נוכחי: {heLabel(m01Case.lifecycle_status)}</p>
           <p>שלמות נתונים: {heLabel(m01Case.completeness.status)}</p>
           {m01Case.completeness.missing_field_ids.length > 0 ? (
             <>
@@ -769,11 +731,8 @@ export function ClientDetailScreen() {
               </ul>
             </>
           ) : null}
-          {m01Case.lifecycle_status === "archived" ? (
-            <p>תיק בארכיון הוא לקריאה בלבד עד לפתיחה מפורשת מחדש.</p>
-          ) : null}
           <form onSubmit={handleSaveCase}>
-            <fieldset disabled={m01Case.lifecycle_status === "archived" || isSavingCase}>
+            <fieldset disabled={isSavingCase}>
               <legend>נתוני יסוד של התיק</legend>
               <p>
                 <label htmlFor="m01-display-name">שם</label>
@@ -899,27 +858,6 @@ export function ClientDetailScreen() {
               </button>
             </fieldset>
           </form>
-          <h4>הפעולה הבאה הזמינה</h4>
-          {m01Case.allowed_lifecycle_targets.length === 0 ? (
-            <p>אין כרגע מעבר מצב זמין.</p>
-          ) : (
-            <ul>
-              {m01Case.allowed_lifecycle_targets.map((targetStatus) => (
-                <li key={targetStatus}>
-                  <button
-                    type="button"
-                    aria-label={`מעבר למצב ${heLabel(targetStatus)}`}
-                    disabled={isTransitioningCase}
-                    onClick={() => {
-                      void handleLifecycleTransition(targetStatus);
-                    }}
-                  >
-                    מעבר למצב {heLabel(targetStatus)}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
           {caseSaveMessage ? <p>{caseSaveMessage}</p> : null}
           {caseErrorMessage ? (
             <>
@@ -927,7 +865,6 @@ export function ClientDetailScreen() {
               <pre>{caseErrorMessage}</pre>
             </>
           ) : null}
-          <p>המשך התהליך: קליטת נתוני פנסיה ב־M02.</p>
         </section>
       ) : null}
       <section aria-labelledby="retirement-planning-file-heading">
@@ -943,7 +880,7 @@ export function ClientDetailScreen() {
         </>
       ) : null}
       <form onSubmit={handleSaveProfile}>
-        <fieldset disabled={m01Case?.lifecycle_status === "archived" || isSaving}>
+        <fieldset disabled={isSaving}>
           <legend>פרופיל לקוח</legend>
           <p>
             <label htmlFor="profile-id-number">מספר זהות</label>
@@ -1022,7 +959,6 @@ export function ClientDetailScreen() {
             disabled={
               isSaving
               || profileLoadErrorMessage !== null
-              || m01Case?.lifecycle_status === "archived"
             }
           >
             {isSaving ? "שומר פרופיל..." : "שמירת פרופיל"}
@@ -1041,9 +977,6 @@ export function ClientDetailScreen() {
         <ul>
           <li>
             <RetirementPlanningFactsSection clientId={parsedClientId} />
-          </li>
-          <li>
-            <PensionAnalysisRecordSection clientId={parsedClientId} />
           </li>
           <li>
             <PlannerAssumptionsSection clientId={parsedClientId} />
@@ -1412,24 +1345,18 @@ export function ClientDetailScreen() {
       </section>
       <p>
         <Link
-          to={`/clients/${validRouteClientId}/pension-intake`}
+          to={`/clients/${validRouteClientId}/pension-products`}
           state={{ clientName: client.full_name }}
         >
-          M02 — קליטת נתוני פנסיה
+          מוצרים פנסיוניים
         </Link>
       </p>
       <p>
         <Link
-          to={`/clients/${validRouteClientId}/pension-ledger`}
-          state={{ clientName: client.full_name }}
-        >
-          M05 — כרטסת יתרות פנסיה
-        </Link>
-        <Link
           className="button-link"
           to={`/clients/${validRouteClientId}/pension-conversion`}
         >
-          M06 — המרת פנסיה והון
+          M06 — תיעוד המרות היסטורי
         </Link>
         <Link
           className="button-link"
@@ -1446,11 +1373,6 @@ export function ClientDetailScreen() {
           M10 — השוואת תרחישים
         </Link>
       </p>
-      <details>
-        <summary>כלי אבחון וסיווג חריג</summary>
-        <p><Link to={`/clients/${validRouteClientId}/source-review`} state={{ clientName: client.full_name }}>M03 — מקור והיסטוריית ביקורת</Link></p>
-        <p><Link to={`/clients/${validRouteClientId}/classification`} state={{ clientName: client.full_name }}>M04 — סיווג מקצועי</Link></p>
-      </details>
       <p>
         <Link
           to={`/clients/${validRouteClientId}/fixation/workspace`}

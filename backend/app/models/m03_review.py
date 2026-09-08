@@ -1,33 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from uuid import uuid4
+from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, func, inspect, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.services.m02_evidence_digest import (
-    load_authoritative_m02_evidence,
-    validate_stored_m02_evidence,
-)
-
-
-M03_TARGET_KINDS = ("source_evidence_review", "manual_record_review")
-M03_REVIEW_STATES = ("under_review", "accepted", "rejected")
-M03_WORKFLOW_ACTOR = "system:m03-review-ui:M03 review workflow"
-
-
-def new_m03_revision_id() -> str:
-    return f"M03-R-{uuid4().hex}"
-
-
-def new_m03_annotation_id() -> str:
-    return f"M03-A-{uuid4().hex}"
-
-
-def m03_server_timestamp() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class M03ReviewRevision(Base):
@@ -94,196 +72,14 @@ class M03Annotation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
-def _prevent_update(_mapper, _connection, target) -> None:
-    if inspect(target).persistent:
-        raise ValueError("M03 append-only records are immutable")
 
+# Frozen archive/FK targets only. No new professional revision is permitted.
+def _archive_only(_mapper, _connection, _target):
+    raise ValueError("LEGACY_PENSION_WORKFLOW_ARCHIVE_ONLY")
 
-def _prevent_delete(_mapper, _connection, _target) -> None:
-    raise ValueError("M03 append-only records cannot be deleted")
-
-
-def _validate_review_insert(_mapper, connection, target: M03ReviewRevision) -> None:
-    target.revision_id = new_m03_revision_id()
-    target.decided_at = m03_server_timestamp()
-    current_evidence = load_authoritative_m02_evidence(
-        connection,
-        client_id=target.client_id,
-        intake_id=target.intake_id,
-        target_kind=target.target_kind,
-        source_id=target.source_id,
-    )
-    if (
-        target.m02_evidence_snapshot_json != current_evidence.snapshot_json
-        or target.m02_evidence_digest != current_evidence.digest
-    ):
-        raise ValueError(
-            "M03 review evidence must equal authoritative current M02 evidence"
-        )
-
-    if target.actor != M03_WORKFLOW_ACTOR:
-        raise ValueError("M03 review actor must be server-controlled")
-    if target.reason is not None:
-        target.reason = target.reason.strip()
-
-    if target.revision_sequence == 1:
-        if (
-            target.predecessor_revision_id is not None
-            or target.state != "under_review"
-            or target.reason is not None
-        ):
-            raise ValueError("M03 root review revision is inconsistent")
-        return
-
-    if target.reason is None or not target.reason.strip():
-        raise ValueError("M03 state-changing revisions require a reason")
-    predecessor = connection.execute(
-        select(
-            M03ReviewRevision.client_id,
-            M03ReviewRevision.intake_id,
-            M03ReviewRevision.source_id,
-            M03ReviewRevision.target_kind,
-            M03ReviewRevision.revision_sequence,
-            M03ReviewRevision.state,
-            M03ReviewRevision.m02_evidence_digest,
-            M03ReviewRevision.m02_evidence_snapshot_json,
-        ).where(M03ReviewRevision.revision_id == target.predecessor_revision_id)
-    ).one_or_none()
-    if predecessor is None:
-        raise ValueError("M03 predecessor revision does not exist")
-    if (
-        predecessor.client_id != target.client_id
-        or predecessor.intake_id != target.intake_id
-        or predecessor.source_id != target.source_id
-        or predecessor.target_kind != target.target_kind
-        or predecessor.revision_sequence + 1 != target.revision_sequence
-    ):
-        raise ValueError("M03 predecessor must belong to the same target chain")
-    predecessor_evidence = validate_stored_m02_evidence(
-        predecessor.m02_evidence_snapshot_json,
-        predecessor.m02_evidence_digest,
-        client_id=predecessor.client_id,
-        intake_id=predecessor.intake_id,
-        target_kind=predecessor.target_kind,
-        source_id=predecessor.source_id,
-    )
-    if predecessor.state == "under_review" and target.state in {
-        "accepted",
-        "rejected",
-    }:
-        allowed = (
-            predecessor_evidence is not None
-            and predecessor_evidence.snapshot_json == current_evidence.snapshot_json
-            and predecessor_evidence.digest == current_evidence.digest
-        )
-    elif (
-        predecessor.state in {"accepted", "rejected"}
-        and target.state == "under_review"
-    ):
-        allowed = True
-    elif predecessor.state == "under_review" and target.state == "under_review":
-        allowed = (
-            predecessor_evidence is None
-            or predecessor_evidence.digest != current_evidence.digest
-        )
-    else:
-        allowed = False
-    if not allowed:
-        raise ValueError("M03 review lifecycle transition is invalid")
-
-
-def _validate_annotation_insert(_mapper, connection, target: M03Annotation) -> None:
-    from app.models.m02_intake import M02IntakeRecord, M02PreservedSource
-
-    target.annotation_id = new_m03_annotation_id()
-    target.created_at = m03_server_timestamp()
-
-    if target.actor != M03_WORKFLOW_ACTOR:
-        raise ValueError("M03 annotation actor must be server-controlled")
-    target.topic = target.topic.strip()
-    target.note = target.note.strip()
-    target.reason = target.reason.strip()
-    if any(not value.strip() for value in (target.topic, target.note, target.reason)):
-        raise ValueError("M03 annotation text must not be blank")
-
-    intake = connection.execute(
-        select(
-            M02IntakeRecord.client_id,
-            M02IntakeRecord.record_kind,
-        ).where(M02IntakeRecord.intake_id == target.intake_id)
-    ).one_or_none()
-    if intake is None or intake.client_id != target.client_id:
-        raise ValueError("M03 annotation target must belong to the same client")
-    if intake.record_kind == "manual":
-        if target.source_id is not None:
-            raise ValueError("M03 manual annotation cannot reference a source")
-    else:
-        source = connection.execute(
-            select(
-                M02PreservedSource.client_id,
-                M02PreservedSource.intake_id,
-            ).where(M02PreservedSource.source_id == target.source_id)
-        ).one_or_none()
-        if (
-            source is None
-            or source.client_id != target.client_id
-            or source.intake_id != target.intake_id
-        ):
-            raise ValueError("M03 uploaded annotation provenance is inconsistent")
-
-    revision = connection.execute(
-        select(
-            M03ReviewRevision.client_id,
-            M03ReviewRevision.intake_id,
-            M03ReviewRevision.source_id,
-        ).where(M03ReviewRevision.revision_id == target.review_revision_id)
-    ).one_or_none()
-    if (
-        revision is None
-        or revision.client_id != target.client_id
-        or revision.intake_id != target.intake_id
-        or revision.source_id != target.source_id
-    ):
-        raise ValueError("M03 annotation revision must belong to the same target chain")
-
-    if target.supersedes_annotation_id is None:
-        return
-    if target.supersedes_annotation_id == target.annotation_id:
-        raise ValueError("M03 annotation cannot supersede itself")
-    prior = connection.execute(
-        select(
-            M03Annotation.client_id,
-            M03Annotation.intake_id,
-            M03Annotation.source_id,
-            M03Annotation.review_revision_id,
-        ).where(M03Annotation.annotation_id == target.supersedes_annotation_id)
-    ).one_or_none()
-    if (
-        prior is None
-        or prior.client_id != target.client_id
-        or prior.intake_id != target.intake_id
-        or prior.source_id != target.source_id
-    ):
-        raise ValueError("M03 superseded annotation must belong to the same target")
-    prior_revision = connection.execute(
-        select(
-            M03ReviewRevision.client_id,
-            M03ReviewRevision.intake_id,
-            M03ReviewRevision.source_id,
-        ).where(M03ReviewRevision.revision_id == prior.review_revision_id)
-    ).one_or_none()
-    if (
-        prior_revision is None
-        or prior_revision.client_id != revision.client_id
-        or prior_revision.intake_id != revision.intake_id
-        or prior_revision.source_id != revision.source_id
-    ):
-        raise ValueError("M03 superseded annotation must belong to the same review chain")
-
-
-event.listen(M03ReviewRevision, "before_update", _prevent_update)
-event.listen(M03ReviewRevision, "before_delete", _prevent_delete)
-event.listen(M03ReviewRevision, "before_insert", _validate_review_insert)
-event.listen(M03Annotation, "before_update", _prevent_update)
-event.listen(M03Annotation, "before_delete", _prevent_delete)
-event.listen(M03Annotation, "before_insert", _validate_annotation_insert)
+event.listen(M03ReviewRevision, "before_insert", _archive_only)
+event.listen(M03ReviewRevision, "before_update", _archive_only)
+event.listen(M03ReviewRevision, "before_delete", _archive_only)
+event.listen(M03Annotation, "before_insert", _archive_only)
+event.listen(M03Annotation, "before_update", _archive_only)
+event.listen(M03Annotation, "before_delete", _archive_only)

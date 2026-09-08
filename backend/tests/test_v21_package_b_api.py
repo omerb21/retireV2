@@ -15,7 +15,6 @@ from app.main import app
 from app.models.missing_data_item import MissingDataItem
 from app.models.retirement_facts import (
     CapitalAsset,
-    PensionHolding,
     RecurringExpense,
     RecurringIncome,
     RetirementTimingWorkIntention,
@@ -70,22 +69,6 @@ def _create_client(client: TestClient, *, id_number: str) -> int:
 
 
 RESOURCE_CASES: list[dict[str, Any]] = [
-    {
-        "path": "pension-holdings",
-        "model": PensionHolding,
-        "not_found_code": "PENSION_HOLDING_NOT_FOUND",
-        "payload": {
-            "provider_name": "Provider",
-            "product_type": "pension fund",
-            "known_balance_amount": "1000.00",
-            "balance_as_of_date": "2026-01-01",
-            "source_type": "statement",
-        },
-        "update": {"product_name": "Updated product"},
-        "updated_field": "product_name",
-        "updated_value": "Updated product",
-        "invalid_enum": {"product_type": "retirement account"},
-    },
     {
         "path": "capital-assets",
         "model": CapitalAsset,
@@ -215,7 +198,7 @@ def test_fact_resource_create_list_read_one_partial_update_defaults_and_ownershi
         assert wrong_client_update.status_code == 404
         assert wrong_client_update.json()["detail"]["code"] == case["not_found_code"]
 
-        missing_client_resp = client.post("/api/clients/999999/pension-holdings", json=RESOURCE_CASES[0]["payload"])
+        missing_client_resp = client.post(f"/api/clients/999999/{case['path']}", json=case["payload"])
         assert missing_client_resp.status_code == 404
         assert missing_client_resp.json()["detail"]["code"] == "CLIENT_NOT_FOUND"
     finally:
@@ -361,26 +344,6 @@ def test_package_a_conditional_validation_is_enforced(tmp_path: Path) -> None:
     client, _ = _build_client(tmp_path)
     try:
         client_id = _create_client(client, id_number="B-4001")
-
-        pension_balance_resp = client.post(
-            f"/api/clients/{client_id}/pension-holdings",
-            json={
-                "provider_name": "Provider",
-                "product_type": "pension fund",
-                "known_balance_amount": "1000.00",
-            },
-        )
-        assert pension_balance_resp.status_code == 422
-
-        pension_amount_resp = client.post(
-            f"/api/clients/{client_id}/pension-holdings",
-            json={
-                "provider_name": "Provider",
-                "product_type": "pension fund",
-                "known_monthly_pension_amount": "100.00",
-            },
-        )
-        assert pension_amount_resp.status_code == 422
 
         asset_value_resp = client.post(
             f"/api/clients/{client_id}/capital-assets",

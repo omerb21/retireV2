@@ -7,12 +7,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
+from app.services.client_record_safety import ensure_client_record_writable
 
 from app.models.m09_cashflow import M09ResolvedComponentInventory, M09_WORKFLOW_ACTOR, authorize_m09_insert, m09_server_timestamp, new_m09_id
 from app.models.m09_scenario_subject import M09ScenarioAdjustment, M09ScenarioSubject, M09ScenarioSubjectSeal, M09SubjectMonthlyResult, M09SubjectRun, SUBJECT_FAMILY, SUBJECT_VERSION, authorize_subject_insert
 from app.schemas.m09_cashflow import M09ContractRequest, M09RangeTotalsResponse
 from app.schemas.m09_scenario_subject import AdjustmentResponse, CreateAdjustedSubjectRequest, ScenarioSubjectResponse, SubjectCurrentnessResponse, SubjectExecutionRequest, SubjectM10EligibilityResponse, SubjectMonthlyResultResponse, SubjectRunResponse, SubjectRunSummaryResponse
-from app.services.m01_case_service import ensure_m01_editable
 from app.services.m09_cashflow_service import DOMAIN_CONTRACT_VERSION, ENGINE_VERSION, FINGERPRINT_VERSION, M09CashflowError, M09NumericDomainError, RESULT_SCHEMA_VERSION, _build_inventory, _digest, _error, _included_components, _json_value, _month_range, _require_client, _typed_warnings, _validate_aggregate
 
 
@@ -134,7 +134,7 @@ def _require_subject(db: Session, client_id: int, subject_id: str) -> M09Scenari
 
 def resolve_baseline(db: Session, client_id: int) -> ScenarioSubjectResponse:
     client = _require_client(db, client_id)
-    ensure_m01_editable(client)
+    ensure_client_record_writable(client)
     _, _, semantic_fp = _manifest([], baseline=True)
     existing = db.scalar(select(M09ScenarioSubject).where(M09ScenarioSubject.client_id == client_id, M09ScenarioSubject.scenario_family == SUBJECT_FAMILY, M09ScenarioSubject.scenario_contract_version == SUBJECT_VERSION, M09ScenarioSubject.calculation_semantic_fingerprint == semantic_fp))
     if existing:
@@ -156,7 +156,8 @@ def resolve_baseline(db: Session, client_id: int) -> ScenarioSubjectResponse:
 
 
 def create_adjusted_subject(db: Session, client_id: int, request: CreateAdjustedSubjectRequest) -> ScenarioSubjectResponse:
-    client = _require_client(db, client_id); ensure_m01_editable(client)
+    client = _require_client(db, client_id)
+    ensure_client_record_writable(client)
     semantic = _semantic_adjustments(request.adjustments)
     manifest, manifest_fp, semantic_fp = _manifest(semantic, baseline=False)
     if db.scalar(select(M09ScenarioSubject.scenario_subject_id).where(M09ScenarioSubject.client_id == client_id, M09ScenarioSubject.scenario_family == SUBJECT_FAMILY, M09ScenarioSubject.scenario_contract_version == SUBJECT_VERSION, M09ScenarioSubject.calculation_semantic_fingerprint == semantic_fp)):
@@ -263,7 +264,7 @@ def _monthly_rows(run_id: str, subject: M09ScenarioSubject, months: list[str], c
 
 
 def execute_subject_run(db: Session, client_id: int, subject_id: str, request: SubjectExecutionRequest) -> SubjectRunResponse:
-    client=_require_client(db,client_id); ensure_m01_editable(client); subject=_require_subject(db,client_id,subject_id); _assert_manifest_integrity(db,subject)
+    client=_require_client(db,client_id); ensure_client_record_writable(client); subject=_require_subject(db,client_id,subject_id); _assert_manifest_integrity(db,subject)
     adjustments=_subject_rows(db,subject); months=_month_range(request.start_month,request.end_month); inventory=_legacy_inventory(db,client_id,request); factual_fp=_factual_material(inventory); current=_current_subject_run(db,subject); run_id=new_m09_id("M09-SR"); sequence=1 if current is None else current.run_sequence+1
     blockers=list(inventory.blocker_codes); status="success_complete" if inventory.complete else "dependency_failed"; rows=[]; totals=None; semantic_fp=None; integrity_fp=None
     snapshot={"snapshot_schema_version":"m09-subject-upstream-snapshot-v1","scenario_subject_id":subject_id,"scenario_family":SUBJECT_FAMILY,"scenario_contract_version":SUBJECT_VERSION,"start_month":request.start_month,"end_month":request.end_month,"component_domain_contract_version":DOMAIN_CONTRACT_VERSION,"factual_inventory":inventory.inventory_payload,"factual_inventory_fingerprint":inventory.inventory_fingerprint,"factual_baseline_material_fingerprint":factual_fp,"adjustment_manifest_fingerprint":subject.adjustment_manifest_fingerprint,"engine_version":SUBJECT_ENGINE_VERSION,"result_schema_version":SUBJECT_RESULT_SCHEMA_VERSION}

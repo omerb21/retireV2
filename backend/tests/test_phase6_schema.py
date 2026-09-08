@@ -43,6 +43,10 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "pension_products",
+    "pension_product_components",
+    "pension_product_source_links",
+    "pension_product_audit_events",
     "capital_asset",
     "fixation_dependency_manifests",
     "internal_planner_judgments",

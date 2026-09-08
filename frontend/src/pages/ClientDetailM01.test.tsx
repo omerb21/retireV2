@@ -68,7 +68,6 @@ function m01Case(
       missing_field_ids: [],
       conflicting_field_ids: []
     },
-    allowed_lifecycle_targets: ["intake"],
     updated_at: "2026-07-28T00:00:00Z",
     ...overrides
   };
@@ -130,56 +129,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("PKG-006 M01 client case workspace", () => {
-  it("renders, edits, and transitions from backend-authored case state", async () => {
-    const updated = m01Case(1, "Updated Client", {
-      lifecycle_status: "draft",
-      allowed_lifecycle_targets: ["intake"]
-    });
-    const transitioned = {
-      ...updated,
-      lifecycle_status: "intake" as M01LifecycleStatus,
-      allowed_lifecycle_targets: ["draft", "analysis"] as M01LifecycleStatus[]
-    };
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const ancillary = ancillaryResponse(url);
-      if (ancillary !== null) return Promise.resolve(ancillary);
-      if (url === "/api/clients/1" && (init?.method ?? "GET") === "GET") {
-        return Promise.resolve(clientResponse(1, "Client One"));
-      }
-      if (url === "/api/clients/1/case" && init?.method === "PUT") {
-        return Promise.resolve(jsonResponse(updated));
-      }
-      if (url === "/api/clients/1/case/lifecycle" && init?.method === "POST") {
-        return Promise.resolve(jsonResponse(transitioned));
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    renderHarness();
-
-    expect(await screen.findByRole("heading", { name: "תשתית תיק הלקוח" })).toBeInTheDocument();
-    expect(screen.getByText("שלמות נתונים: שלם")).toBeInTheDocument();
-    expect(screen.getByText("מצב נוכחי: טיוטה")).toBeInTheDocument();
-    expect(screen.getByLabelText("מצב תעסוקה")).toHaveValue("salaried_employee");
-    expect(screen.getByLabelText("גיל פרישה מתוכנן")).toHaveValue(67);
-
-    fireEvent.change(screen.getByLabelText("שם"), { target: { value: "Updated Client" } });
-    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
-    expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/clients/1/case",
-      expect.objectContaining({
-        method: "PUT",
-        body: expect.stringContaining('"employment_status":"salaried_employee"')
-      })
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "מעבר למצב קליטה" }));
-    expect(await screen.findByText("מצב נוכחי: קליטה")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "מעבר למצב טיוטה" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "מעבר למצב ניתוח" })).toBeInTheDocument();
-  });
 
   it("ignores a stale successful read after A to B", async () => {
     const oldA = deferred<Response>();
@@ -479,122 +428,4 @@ describe("PKG-006 M01 client case workspace", () => {
     expect(screen.getByText("שם מלא: Client B")).toBeInTheDocument();
   });
 
-  it("keeps archived M01 and profile mutation paths read-only until reopen", async () => {
-    const archived = m01Case(1, "Archived Client", {
-      lifecycle_status: "archived",
-      allowed_lifecycle_targets: ["delivered"]
-    });
-    const reopened = m01Case(1, "Archived Client", {
-      lifecycle_status: "delivered",
-      allowed_lifecycle_targets: ["review", "archived"]
-    });
-    const updated = { ...reopened, display_name: "Reopened Client" };
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url === "/api/clients/1" && method === "GET") {
-        return Promise.resolve(clientResponse(1, "Archived Client", archived));
-      }
-      if (url === "/api/clients/1/profile" && method === "GET") {
-        return Promise.resolve(jsonResponse({ profile: null }));
-      }
-      if (
-        (
-          url === "/api/clients/1/clearinghouse-snapshots"
-          || url === "/api/clients/1/documents"
-          || url === "/api/clients/1/missing-items"
-        )
-        && method === "GET"
-      ) {
-        return Promise.resolve(jsonResponse([]));
-      }
-      if (url === "/api/clients/1/case/lifecycle" && method === "POST") {
-        return Promise.resolve(jsonResponse(reopened));
-      }
-      if (url === "/api/clients/1/case" && method === "PUT") {
-        return Promise.resolve(jsonResponse(updated));
-      }
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    renderHarness();
-
-    expect(await screen.findByText("מצב נוכחי: בארכיון")).toBeInTheDocument();
-    expect(screen.getByText(/לקריאה בלבד עד לפתיחה מפורשת מחדש/)).toBeInTheDocument();
-    expect(screen.getByLabelText("שם")).toBeDisabled();
-    expect(screen.getByLabelText("מספר זהות ישראלי או מזהה לקוח")).toBeDisabled();
-    expect(screen.getByLabelText("מצב תעסוקה")).toBeDisabled();
-    expect(screen.getByLabelText("גיל פרישה מתוכנן")).toBeDisabled();
-    for (const control of screen.getAllByLabelText("מספר זהות")) {
-      expect(control).toBeDisabled();
-    }
-    for (const control of screen.getAllByLabelText("תאריך לידה")) {
-      expect(control).toBeDisabled();
-    }
-    for (const control of screen.getAllByLabelText("מגדר")) {
-      expect(control).toBeDisabled();
-    }
-    expect(screen.getByRole("button", { name: "שמירת נתוני התיק" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "שמירת פרופיל" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "מעבר למצב נמסר" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "מעבר למצב קליטה" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "מעבר למצב נמסר" }));
-
-    expect(await screen.findByText("מצב נוכחי: נמסר")).toBeInTheDocument();
-    expect(screen.getByLabelText("שם")).toBeEnabled();
-    expect(screen.getByLabelText("מצב תעסוקה")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "שמירת נתוני התיק" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "שמירת פרופיל" })).toBeEnabled();
-
-    fireEvent.change(screen.getByLabelText("שם"), {
-      target: { value: "Reopened Client" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
-    expect(await screen.findByText("שם מלא: Reopened Client")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/clients/1/case",
-      expect.objectContaining({ method: "PUT" })
-    );
-  });
-
-  it("does not apply a stale reopen result after switching clients", async () => {
-    const reopen = deferred<Response>();
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      const ancillary = ancillaryResponse(url);
-      if (ancillary !== null) return Promise.resolve(ancillary);
-      if (url === "/api/clients/1" && method === "GET") {
-        return Promise.resolve(clientResponse(1, "Archived A", {
-          lifecycle_status: "archived",
-          allowed_lifecycle_targets: ["delivered"]
-        }));
-      }
-      if (url === "/api/clients/2" && method === "GET") {
-        return Promise.resolve(clientResponse(2, "Client B"));
-      }
-      if (url === "/api/clients/1/case/lifecycle" && method === "POST") {
-        return reopen.promise;
-      }
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    }));
-    renderHarness();
-
-    expect(await screen.findByText("מצב נוכחי: בארכיון")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "מעבר למצב נמסר" }));
-    fireEvent.click(screen.getByRole("button", { name: "Go B" }));
-    expect(await screen.findByText("שם מלא: Client B")).toBeInTheDocument();
-
-    reopen.resolve(jsonResponse(m01Case(1, "Reopened A", {
-      lifecycle_status: "delivered",
-      allowed_lifecycle_targets: ["review", "archived"]
-    })));
-
-    await waitFor(() => {
-      expect(screen.queryByText(/Reopened A/)).not.toBeInTheDocument();
-    });
-    expect(screen.getByText("שם מלא: Client B")).toBeInTheDocument();
-    expect(screen.getByText("מצב נוכחי: טיוטה")).toBeInTheDocument();
-  });
 });

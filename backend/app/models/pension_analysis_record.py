@@ -9,6 +9,7 @@ from app.db.base import Base
 
 
 class PensionAnalysisRecord(Base):
+    """Persisted historical text only after canonical cutover; no recomputation."""
     __tablename__ = "pension_analysis_record"
     __table_args__ = (
         UniqueConstraint(

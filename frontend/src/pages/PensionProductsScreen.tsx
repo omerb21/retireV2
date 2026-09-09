@@ -67,7 +67,7 @@ function ProductsForClient({ clientId }: { clientId: number }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [manual, setManual] = useState(emptyMetadata);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   useEffect(() => {
     let active = true;
     listPensionProducts(clientId).then(next => { if (active) setProducts(next); }).catch(error => { if (active) setError(errorMessage(error)); }).finally(() => { if (active) setLoading(false); });
@@ -81,18 +81,19 @@ function ProductsForClient({ clientId }: { clientId: number }) {
     finally { setBusy(false); }
   }
   async function ingest(event: FormEvent) {
-    event.preventDefault(); if (!file) return; setBusy(true); setError(null); setMessage(null);
+    event.preventDefault(); if (!files.length) return; setBusy(true); setError(null); setMessage(null);
     try {
-      const imported = await importPensionProducts(clientId, file);
+      const batch = await importPensionProducts(clientId, files);
+      const imported = batch.products;
       setProducts(current => [...current.filter(product => !imported.some(item => item.product_id === product.product_id)), ...imported]);
-      setMessage("הייבוא הושלם. המוצרים והרכיבים זמינים בטבלה.");
+      setMessage(`הייבוא הושלם: ${batch.file_count} קבצים, ${batch.product_count} מוצרים. המוצרים והרכיבים זמינים בטבלה.`);
     } catch (error) { setError(errorMessage(error)); }
     finally { setBusy(false); }
   }
   return <section dir="rtl">
     <h2>מוצרים פנסיוניים</h2><p><Link to={`/clients/${clientId}`}>חזרה לפרטי הלקוח</Link></p>
     {loading && <p>טוען מוצרים...</p>}{error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
-    <form onSubmit={ingest}><fieldset disabled={busy || loading}><legend>ייבוא מקור</legend><label>קובץ מקור<input type="file" accept=".xml,.dat" required onChange={event => setFile(event.target.files?.[0] ?? null)} /></label><button type="submit" disabled={!file}>ייבוא מוצרים</button></fieldset></form>
+    <form onSubmit={ingest}><fieldset disabled={busy || loading}><legend>ייבוא מקורות יחד</legend><label>קובצי מקור<input type="file" multiple accept=".xml,.dat" required onChange={event => setFiles(Array.from(event.target.files ?? []))} /></label><p>נבחרו {files.length} קבצים</p><ul aria-label="קבצים שנבחרו">{files.map((file, index) => <li key={index}><bdi>{file.name}</bdi></li>)}</ul><button type="submit" disabled={!files.length}>ייבוא מוצרים</button></fieldset></form>
     <details><summary>יצירת מוצר ידנית</summary><form onSubmit={create}><fieldset disabled={busy || loading}><legend>מוצר חדש</legend><MetadataFields value={manual} onChange={setManual} /><p>כל אחד עשר הרכיבים ייווצרו ביתרה אפס. הסך המדווח לא יחולק בין הרכיבים.</p><button type="submit">יצירת מוצר</button></fieldset></form></details>
     {!loading && products.length === 0 && <p>אין מוצרים פנסיוניים. ניתן לייבא מקור או ליצור מוצר ידנית.</p>}
     {products.length > 0 && <table><caption>מוצרים פנסיוניים שמורים</caption><thead><tr><th>שם תכנית</th><th>גוף מנהל</th><th>חשבון</th><th>סך מדווח</th></tr></thead><tbody>{products.map(product => <tr key={product.product_id}><td>{product.product_name}</td><td>{product.provider_name ?? "לא נמסר"}</td><td><bdi>{product.account_reference}</bdi></td><td><bdi>{product.reported_product_total ?? "לא נמסר"}</bdi></td></tr>)}</tbody></table>}

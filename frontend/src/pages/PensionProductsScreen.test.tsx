@@ -69,16 +69,53 @@ describe("מוצרים פנסיוניים קנוניים", () => {
 
   it("imports directly into the table", async () => {
     vi.mocked(api.listPensionProducts).mockResolvedValue([]);
-    vi.mocked(api.importPensionProducts).mockResolvedValue([product()]);
+    vi.mocked(api.importPensionProducts).mockResolvedValue({ batch_identity: "batch", file_count: 1, product_count: 1, products: [product()], diagnostics: [] });
     open();
     await screen.findByText(/אין מוצרים פנסיוניים/);
     const file = new File(["<Root />"], "source.xml", { type: "application/xml" });
-    fireEvent.change(screen.getByLabelText("קובץ מקור"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText("קובצי מקור"), { target: { files: [file] } });
     // jsdom's synthetic files assignment does not populate the native file
     // input value used by browser constraint validation. Submit the form.
     fireEvent.submit(screen.getByRole("button", { name: "ייבוא מוצרים" }).closest("form")!);
     expect(await screen.findByRole("region", { name: "עריכת תכנית א" })).toBeInTheDocument();
-    expect(api.importPensionProducts).toHaveBeenCalledWith(1, file);
+    expect(api.importPensionProducts).toHaveBeenCalledWith(1, [file]);
+  });
+
+  it("selects all files, displays their names/count, and changes the table only after one complete batch", async () => {
+    let finish!: (batch: api.PensionSourceBatch) => void;
+    vi.mocked(api.importPensionProducts).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    open();
+    await screen.findByRole("region", { name: "עריכת תכנית א" });
+    const files = [new File(["a"], "a.xml"), new File(["b"], "b.dat")];
+    const input = screen.getByLabelText("קובצי מקור");
+    expect(input).toHaveAttribute("multiple");
+    expect(input).toHaveAttribute("accept", ".xml,.dat");
+    fireEvent.change(input, { target: { files } });
+    expect(screen.getByText("נבחרו 2 קבצים")).toBeInTheDocument();
+    const selected = screen.getByRole("list", { name: "קבצים שנבחרו" });
+    for (const file of files) expect(within(selected).getByText(file.name)).toBeInTheDocument();
+    fireEvent.submit(screen.getByRole("button", { name: "ייבוא מוצרים" }).closest("form")!);
+    expect(api.importPensionProducts).toHaveBeenCalledTimes(1);
+    expect(api.importPensionProducts).toHaveBeenCalledWith(1, files);
+    expect(screen.getByRole("region", { name: "עריכת תכנית א" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "עריכת תכנית ב" })).toBeNull();
+    finish({ batch_identity: "batch", file_count: 2, product_count: 1, products: [{ ...product(), product_name: "תכנית ב" }], diagnostics: [] });
+    expect(await screen.findByRole("region", { name: "עריכת תכנית ב" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "עריכת תכנית א" })).toBeNull();
+    expect(api.listPensionProducts).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the entire original table on batch failure and identifies the conflicting file", async () => {
+    vi.mocked(api.importPensionProducts).mockRejectedValue(new Error("נתוני מקור סותרים בקובץ bad.xml"));
+    open();
+    const original = await screen.findByRole("region", { name: "עריכת תכנית א" });
+    const before = original.innerHTML;
+    fireEvent.change(screen.getByLabelText("קובצי מקור"), { target: { files: [new File(["a"], "a.xml"), new File(["bad"], "bad.xml")] } });
+    fireEvent.submit(screen.getByRole("button", { name: "ייבוא מוצרים" }).closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("bad.xml");
+    expect(screen.getByRole("region", { name: "עריכת תכנית א" }).innerHTML).toBe(before);
+    expect(api.importPensionProducts).toHaveBeenCalledTimes(1);
+    expect(api.listPensionProducts).toHaveBeenCalledTimes(1);
   });
 
   it("rejects malformed client routes without sending a request", () => {

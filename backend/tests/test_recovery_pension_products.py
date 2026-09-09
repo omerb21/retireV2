@@ -13,7 +13,7 @@ from app.models.client import Client
 from app.models.pension_product import COMPONENT_CODES, PensionProduct, PensionProductAuditEvent, PensionProductComponent, PensionProductSourceLink
 from app.schemas.pension_product import ProductCreate, ProductUpdate, SaveSelected, exact_money
 from app.services.canonical_pension_source_reader import current_products, conversion_source_availability
-from app.services.pension_product_import_service import SEVERANCE_TAGS, import_source, parse_source, rewards_component
+from app.services.pension_product_import_service import SEVERANCE_TAGS, import_source_batch, _parse_source, rewards_component
 from app.services.pension_product_reconciliation import reconcile
 from app.services.pension_product_service import PensionProductError, create_product, delete_product, product_response, save_selected, update_product
 
@@ -75,24 +75,24 @@ def test_database_uniqueness_and_fixed_ontology(engine, code):
 def test_exact_rewards_mapping(role, person, period, suffix):
     code = f"תגמולי_{person}_{suffix}"
     assert rewards_component(role, period) == code
-    account = parse_source(source(layers=layer(role, period)))[0]
+    account = _parse_source(source(layers=layer(role, period)))[0]
     assert account["components"][code] == Decimal("12.34")
     assert sum(account["components"].values()) == Decimal("12.34")
 
 
 @pytest.mark.parametrize("tag,code", SEVERANCE_TAGS.items())
 def test_exact_severance_mapping(tag, code):
-    account = parse_source(source(fields=f"<{tag}>19.83</{tag}>"))[0]
+    account = _parse_source(source(fields=f"<{tag}>19.83</{tag}>"))[0]
     assert account["components"][code] == Decimal("19.83")
     assert sum(account["components"].values()) == Decimal("19.83")
 
 
 @pytest.mark.parametrize("role,period", [("4", "1"), ("2", "99"), ("", "2"), ("7", "2"), ("10", "1"), ("11", "1")])
 def test_unknown_mapping_no_generic_balance(role, period):
-    account = parse_source(source(layers=layer(role, period)))[0]
+    account = _parse_source(source(layers=layer(role, period)))[0]
     assert sum(account["components"].values()) == 0
     assert any(item["code"] == "unmapped_layer" for item in account["diagnostics"])
-    assert set(account["components"]) == set(COMPONENT_CODES)
+    assert account["components"] == {}  # Zero filling belongs after batch merge.
 
 
 def test_three_reconciliations_no_mutation():
@@ -166,15 +166,15 @@ def test_delete_restricts_downstream_fk_and_rolls_back(engine):
 def test_import_idempotency_newer_and_raw_checksum(engine):
     raw = source(layers=layer("2", "1"))
     with Session(engine) as db, db.begin():
-        product_id = import_source(db, 1, raw, "source.xml", "test")[0].product_id
+        product_id = import_source_batch(db, 1, [("source.xml", raw)], "test")["products"][0]["product_id"]
     with Session(engine) as db, db.begin():
-        assert import_source(db, 1, raw, "renamed.xml", "test")[0].product_id == product_id
+        assert import_source_batch(db, 1, [("renamed.xml", raw)], "test")["products"][0]["product_id"] == product_id
         assert db.scalar(select(func.count()).select_from(PensionProductSourceLink)) == 1
     with Session(engine) as db, db.begin():
-        product = import_source(db, 1, source(layers=layer("2", "1", "98.76"), statement="20260902"), "new.xml", "test")[0]
-        assert product.product_id == product_id
-        assert product.version == 2
-        assert product_response(db, product)["components"][COMPONENT_CODES[5]] == "98.76"
+        product = import_source_batch(db, 1, [("new.xml", source(layers=layer("2", "1", "98.76"), statement="20260902"))], "test")["products"][0]
+        assert product["product_id"] == product_id
+        assert product["version"] == 2
+        assert product["components"][COMPONENT_CODES[5]] == "98.76"
     with Session(engine) as db:
         assert raw in db.scalars(select(PensionProductSourceLink.raw_content)).all()
         assert db.scalar(select(func.count()).select_from(PensionProductSourceLink)) == 2
@@ -252,7 +252,7 @@ def test_concurrent_identical_import_one_product(engine):
     def ingest(_):
         barrier.wait(timeout=10)
         with Session(engine) as db, db.begin():
-            return import_source(db, 1, source(), "same.xml", "test")[0].product_id
+            return import_source_batch(db, 1, [("same.xml", source())], "test")["products"][0]["product_id"]
     with ThreadPoolExecutor(max_workers=2) as pool:
         ids = list(pool.map(ingest, range(2)))
     assert ids[0] == ids[1]
@@ -273,8 +273,8 @@ def test_full_precision_storage_without_float(engine):
 
 
 def test_nested_layer_total_not_product_summary():
-    account = parse_source(source(layers="<PerutYitrot><KOD-SUG-HAFRASHA>2</KOD-SUG-HAFRASHA><TOTAL-CHISACHON-MTZBR>100</TOTAL-CHISACHON-MTZBR></PerutYitrot>"))[0]
-    assert account["metadata"].reported_product_total is None
+    account = _parse_source(source(layers="<PerutYitrot><KOD-SUG-HAFRASHA>2</KOD-SUG-HAFRASHA><TOTAL-CHISACHON-MTZBR>100</TOTAL-CHISACHON-MTZBR></PerutYitrot>"))[0]
+    assert account["metadata"]["reported_product_total"] is None
     assert sum(account["components"].values()) == 0
 
 
@@ -314,12 +314,12 @@ def test_api_direct_access_and_no_legacy_records(api, engine):
 
 def test_api_import_atomic_rollback(api, engine):
     path = "/api/clients/1/pension-products/imports"
-    assert api.post(path, files={"file": ("source.xml", source(), "application/xml")}).status_code == 200
+    assert api.post(path, files={"files": ("source.xml", source(), "application/xml")}).status_code == 200
     # First account would be new; the second fails statement currentization.
     first = source(account="B").decode().split("<Account>", 1)[1].split("</Account>", 1)[0]
     second = source(statement="20260801").decode().split("<Account>", 1)[1].split("</Account>", 1)[0]
     raw = f"<Root><SHEM-YATZRAN>גוף מנהל</SHEM-YATZRAN><Account>{first}</Account><Account>{second}</Account></Root>".encode()
-    assert api.post(path, files={"file": ("source.xml", raw, "application/xml")}).status_code == 409
+    assert api.post(path, files={"files": ("source.xml", raw, "application/xml")}).status_code == 409
     with Session(engine) as db:
         assert db.scalar(select(func.count()).select_from(PensionProduct)) == 1
         assert db.scalar(select(func.count()).select_from(PensionProductComponent)) == 11

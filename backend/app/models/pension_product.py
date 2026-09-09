@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, UniqueConstraint, func
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -107,12 +107,14 @@ class PensionProductSourceLink(Base):
     __tablename__ = "pension_product_source_links"
     __table_args__ = (
         UniqueConstraint("client_id", "source_identity", "checksum", name="uq_pension_source_replay"),
+        Index("ix_pension_source_client_batch", "client_id", "batch_identity"),
     )
     source_link_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.client_id"))
     product_id: Mapped[str] = mapped_column(String(64), index=True)
     source_identity: Mapped[str] = mapped_column(String(64))
     checksum: Mapped[str] = mapped_column(String(64))
+    batch_identity: Mapped[str | None] = mapped_column(String(64), nullable=True)
     filename: Mapped[str | None] = mapped_column(String(255))
     raw_content: Mapped[bytes | None] = mapped_column(LargeBinary)
     legacy_intake_id: Mapped[str | None] = mapped_column(ForeignKey("m02_intake_records.intake_id"))

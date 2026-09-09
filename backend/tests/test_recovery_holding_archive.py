@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.main import app
-from test_recovery_migration import alembic, seed, PARENT, HEAD
+from test_recovery_migration import alembic, seed, PARENT
 
 
 def test_historical_holding_and_analysis_survive_without_current_authority(tmp_path):
@@ -19,7 +19,7 @@ def test_historical_holding_and_analysis_survive_without_current_authority(tmp_p
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("INSERT INTO pension_holding(id,client_id,provider_name,product_type,known_balance_amount,balance_as_of_date) VALUES(7,1,'Archived','pension fund',987654.32,'2020-01-01')")
         db.execute("INSERT INTO pension_analysis_record(id,client_id,pension_holding_id,analysis_record_text) VALUES(8,1,7,'Historical text')")
-    alembic(path, "upgrade", HEAD)
+    alembic(path, "upgrade", "head")
     with sqlite3.connect(path) as db:
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         assert db.execute("SELECT pension_holding_id,analysis_record_text FROM pension_analysis_record").fetchone() == (7, "Historical text")

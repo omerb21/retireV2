@@ -12,12 +12,12 @@ from decimal import Decimal
 from uuid import uuid4
 from xml.etree import ElementTree as ET
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.pension_product import COMPONENT_CODES, PensionProduct, PensionProductComponent, PensionProductSourceLink
 from app.schemas.pension_product import ProductMetadata, ProductUpdate, exact_money
-from app.services.pension_product_service import PensionProductError, _update_locked, audit, lock_client
+from app.services.pension_product_service import PensionProductError, _update_locked, audit, component_balances, lock_client, product_response
 
 
 ROLE_CODES = {"2": "עובד", "8": "עובד", "3": "מעביד", "9": "מעביד"}
@@ -80,7 +80,7 @@ def _date(value: str | None) -> date | None:
     raise PensionProductError("INVALID_SOURCE_DATE", "תאריך המקור אינו תקין", 422)
 
 
-def parse_source(raw: bytes) -> list[dict]:
+def _parse_source(raw: bytes) -> list[dict]:
     if not raw or len(raw) > 26_214_400:
         raise PensionProductError("INVALID_SOURCE_SIZE", "גודל קובץ המקור אינו תקין", 422)
     try:
@@ -123,19 +123,23 @@ def parse_source(raw: bytes) -> list[dict]:
         provider_id = provider_field(["KOD-MEZAHE-YATZRAN", "KOD-YATZRAN", "MEZAHE-YATZRAN"], "provider_identifier")
         account = field(["MISPAR-POLISA-O-HESHBON", "MISPAR-HESHBON", "MISPAR-POLISA"], "account_reference")
         identity = source_identity(provider_id, provider_name, account or "")
-        balances = dict.fromkeys(COMPONENT_CODES, Decimal("0.00"))
+        # Sparse facts: absence is not an explicitly reported zero.
+        balances: dict[str, Decimal] = {}
         for layer in node.iter("PerutYitraLeTkufa"):
+            layer_diagnostics_start = len(diagnostics)
             role = _one(layer, {"REKIV-ITRA-LETKUFA"}, diagnostics, "role")
             period = _one(layer, {"KOD-TECHULAT-SHICHVA"}, diagnostics, "period")
             amount = _one(layer, {"SACH-ITRA-LESHICHVA-BESHACH"}, diagnostics, "layer_amount")
             code = rewards_component(role or "", period or "")
+            if code is not None and any(item.get("field") == "layer_amount" and item.get("code") == "ambiguous_field" for item in diagnostics[layer_diagnostics_start:]):
+                raise PensionProductError("AMBIGUOUS_SOURCE_FACT", "סכום רכיב המקור אינו חד־משמעי", 422)
             if code is None or amount is None:
                 diagnostics.append({"code": "unmapped_layer", "role": role, "period": period, "value": amount})
             else:
-                balances[code] += exact_money(amount.replace(",", ""))
+                balances[code] = balances.get(code, Decimal("0.00")) + exact_money(amount.replace(",", ""))
         for tag, code in SEVERANCE_TAGS.items():
             for amount in _values(node, {tag}):
-                balances[code] += exact_money(amount.replace(",", ""))
+                balances[code] = balances.get(code, Decimal("0.00")) + exact_money(amount.replace(",", ""))
         def summary(tags, name):
             # A component/layer total nested inside an account is NOT proven to
             # be the account's summary. Preserve it in diagnostics, not here.
@@ -146,9 +150,9 @@ def parse_source(raw: bytes) -> list[dict]:
         product_type = field(["SUG-MUTZAR"], "product_type")
         if product_type and product_type not in PRODUCT_TYPE_LABELS:
             diagnostics.append({"code": "unmapped_product_type", "value": product_type})
-        metadata = ProductMetadata(
-            product_name=field(["SHEM-TOCHNIT", "TOCHNIT", "SHEM_TOCHNIT"], "product_name") or "שם תכנית לא נמסר",
-            product_type=PRODUCT_TYPE_LABELS.get(product_type, "סוג מוצר לא ממופה") if product_type else "סוג מוצר לא נמסר",
+        metadata = dict(
+            product_name=field(["SHEM-TOCHNIT", "TOCHNIT", "SHEM_TOCHNIT"], "product_name"),
+            product_type=product_type,
             provider_name=provider_name, provider_identifier=provider_id, account_reference=account,
             start_date=_date(field(["TAARICH-TCHILAT-HAFRASHA", "TAARICH-TCHILA", "TAARICH-HITZTARFUT-RISHON", "TAARICH-HITZTARFUT"], "start_date")),
             statement_date=_date(field(["TAARICH-NECHONUT-YITROT", "TAARICH-YITROT", "TAARICH-NECHONUT"], "statement_date")),
@@ -157,6 +161,8 @@ def parse_source(raw: bytes) -> list[dict]:
             reported_rewards_total=summary(["YITRAT-KASPEY-TAGMULIM"], "reported_rewards_total"),
             reported_severance_total=summary(["YITRAT-PITZUIM"], "reported_severance_total"),
         )
+        if any(item.get("code") == "ambiguous_field" and item.get("field") in metadata for item in diagnostics):
+            raise PensionProductError("AMBIGUOUS_SOURCE_FACT", "פרטי המקור אינם חד־משמעיים", 422)
         # Raw source is retained in full; enumerate non-authoritative fields too.
         diagnostics.append({"code": "source_fields", "fields": [{"tag": child.tag, "value": child.text.strip()} for child in node.iter() if not len(child) and child.text and child.text.strip()]})
         results.append({"identity": identity, "metadata": metadata, "components": {code: exact_money(value) for code, value in balances.items()}, "diagnostics": diagnostics})
@@ -165,33 +171,117 @@ def parse_source(raw: bytes) -> list[dict]:
     return results
 
 
-def import_source(db: Session, client_id: int, raw: bytes, filename: str, actor: str) -> list[PensionProduct]:
-    accounts = parse_source(raw)
-    checksum = hashlib.sha256(raw).hexdigest()
+def _prepare_batch(files: list[tuple[str, bytes]]) -> tuple[str, list[dict], list[dict]]:
+    if not files:
+        raise PensionProductError("EMPTY_SOURCE_BATCH", "יש לבחור לפחות קובץ אחד", 422)
+    selected = []
+    checksums: dict[str, str] = {}
+    for filename, raw in files:
+        if not raw or len(raw) > 26_214_400:
+            raise PensionProductError("INVALID_SOURCE_SIZE", f"גודל קובץ המקור אינו תקין: {filename}", 422)
+        checksum = hashlib.sha256(raw).hexdigest()
+        if checksum in checksums:
+            raise PensionProductError("DUPLICATE_BATCH_FILE", f"אותו תוכן נבחר פעמיים: {checksums[checksum]}, {filename}", 422)
+        checksums[checksum] = filename
+        selected.append({"filename": filename, "raw": raw, "checksum": checksum})
+    batch_identity = hashlib.sha256(("pension-source-batch-v1" + "".join(sorted(checksums))).encode()).hexdigest()
+    grouped: dict[str, dict] = {}
+    diagnostics = []
+    for source in sorted(selected, key=lambda item: item["checksum"]):
+        filename = source["filename"]
+        try:
+            accounts = _parse_source(source["raw"])
+        except PensionProductError as error:
+            raise PensionProductError(error.code, f"{error.message}: {filename}", error.status_code) from error
+        except ValueError as error:
+            raise PensionProductError("INVALID_SOURCE_FACT", f"נתון המקור אינו תקין: {filename}", 422) from error
+        for account in accounts:
+            identity = account["identity"]
+            merged = grouped.setdefault(identity, {"identity": identity, "metadata": {}, "components": {}, "sources": []})
+            names = sorted({filename, *(item["filename"] for item in merged["sources"])})
+            def conflict(field):
+                raise PensionProductError("SOURCE_BATCH_CONFLICT", f"נתוני מקור סותרים ({field}) בקבצים: {', '.join(names)}")
+            for field, value in account["metadata"].items():
+                if field == "historical_employers":
+                    merged["metadata"][field] = sorted(set(merged["metadata"].get(field, [])) | set(value))
+                elif value is not None:
+                    if field in merged["metadata"] and merged["metadata"][field] != value:
+                        conflict(field)
+                    merged["metadata"][field] = value
+            for code, value in account["components"].items():
+                if code in merged["components"] and merged["components"][code] != value:
+                    conflict(code)
+                merged["components"][code] = value
+            merged["sources"].append({**source, "statement_date": account["metadata"]["statement_date"], "diagnostics": account["diagnostics"]})
+            diagnostics.append({"filename": filename, "checksum": source["checksum"], "source_identity": identity, "diagnostics": account["diagnostics"]})
+    for merged in grouped.values():
+        metadata = merged["metadata"]
+        metadata.setdefault("product_name", "שם תכנית לא נמסר")
+        product_type = metadata.get("product_type")
+        metadata["product_type"] = PRODUCT_TYPE_LABELS.get(product_type, "סוג מוצר לא ממופה") if product_type else "סוג מוצר לא נמסר"
+        metadata.setdefault("reported_product_total", None)
+        try:
+            merged["metadata"] = ProductMetadata(**metadata)
+        except ValueError as error:
+            names = ", ".join(sorted(item["filename"] for item in merged["sources"]))
+            raise PensionProductError("INVALID_SOURCE_FACT", f"פרטי המקור אינם תקינים: {names}", 422) from error
+        merged["components"] = {code: merged["components"].get(code, Decimal("0.00")) for code in COMPONENT_CODES}
+    return batch_identity, [grouped[key] for key in sorted(grouped)], diagnostics
+
+
+def import_source_batch(db: Session, client_id: int, files: list[tuple[str, bytes]], actor: str) -> dict:
+    """The sole professional import engine; caller owns the single transaction."""
+    batch_identity, accounts, diagnostics = _prepare_batch(files)
+    checksums = {item["checksum"] for account in accounts for item in account["sources"]}
     lock_client(db, client_id)
-    products = []
+    previous = list(db.scalars(select(PensionProductSourceLink).where(
+        PensionProductSourceLink.client_id == client_id,
+        or_(PensionProductSourceLink.checksum.in_(checksums), PensionProductSourceLink.batch_identity == batch_identity),
+    )))
+    def response(products):
+        return {"batch_identity": batch_identity, "file_count": len(files), "product_count": len(products),
+                "products": [product_response(db, product) for product in products], "diagnostics": diagnostics}
+    if previous:
+        if {row.checksum for row in previous} != checksums or any(row.batch_identity != batch_identity for row in previous):
+            names = ", ".join(sorted(filename for filename, _ in files))
+            raise PensionProductError("PARTIAL_OVERLAP_SOURCE_BATCH", f"הקבצים חופפים לאצוות ייבוא קודמת אך אינם אותה אצווה: {names}")
+        ids = sorted({row.product_id for row in previous})
+        products = list(db.scalars(select(PensionProduct).where(PensionProduct.client_id == client_id, PensionProduct.product_id.in_(ids)).order_by(PensionProduct.product_id)))
+        if len(products) != len(ids):
+            names = ", ".join(sorted(filename for filename, _ in files))
+            raise PensionProductError("DELETED_SOURCE_PRODUCT", f"מוצר ממקור זה נמחק; ייבוא חוזר לא ישחזר אותו אוטומטית: {names}")
+        return response(products)
+
+    # All existing-product checks and request validation precede any product,
+    # component, source-link or audit mutation.
+    plan = []
     for account in accounts:
-        identity = account["identity"]
         metadata = account["metadata"]
-        product = db.scalar(select(PensionProduct).where(PensionProduct.client_id == client_id, PensionProduct.source_identity == identity).with_for_update().execution_options(populate_existing=True))
-        previous = db.scalar(select(PensionProductSourceLink).where(PensionProductSourceLink.client_id == client_id, PensionProductSourceLink.source_identity == identity, PensionProductSourceLink.checksum == checksum))
-        if previous:
-            if product is None:
-                raise PensionProductError("DELETED_SOURCE_PRODUCT", "המוצר ממקור זה נמחק; ייבוא חוזר לא ישחזר אותו אוטומטית")
-            products.append(product)
-            continue
+        product = db.scalar(select(PensionProduct).where(PensionProduct.client_id == client_id, PensionProduct.source_identity == account["identity"]).with_for_update().execution_options(populate_existing=True))
+        request = None
         if product:
             if metadata.statement_date is None or product.statement_date is None or metadata.statement_date <= product.statement_date:
-                raise PensionProductError("SOURCE_NOT_NEWER", "המקור אינו חדש יותר מהנתונים הקיימים")
-            product = _update_locked(db, client_id, product.product_id, ProductUpdate(**metadata.model_dump(), expected_version=product.version, components=account["components"]), actor)
+                names = ", ".join(sorted(item["filename"] for item in account["sources"]))
+                raise PensionProductError("SOURCE_NOT_NEWER", f"המקור אינו חדש יותר מהנתונים הקיימים: {names}")
+            component_balances(db, product.product_id)
+            request = ProductUpdate(**metadata.model_dump(), expected_version=product.version, components=account["components"])
+        plan.append((account, product, request))
+    products = []
+    for account, product, request in plan:
+        metadata = account["metadata"]
+        if product:
+            product = _update_locked(db, client_id, product.product_id, request, actor)
         else:
-            product = PensionProduct(product_id=uuid4().hex, client_id=client_id, source_kind="imported", source_identity=identity, version=1, created_by=actor, updated_by=actor, **metadata.model_dump())
+            product = PensionProduct(product_id=uuid4().hex, client_id=client_id, source_kind="imported", source_identity=account["identity"], version=1, created_by=actor, updated_by=actor, **metadata.model_dump())
             db.add(product)
             db.flush()
-            db.add_all([PensionProductComponent(component_id=uuid4().hex, product_id=product.product_id, component_code=code, balance=balance) for code, balance in account["components"].items()])
+            db.add_all([PensionProductComponent(component_id=uuid4().hex, product_id=product.product_id, component_code=code, balance=value) for code, value in account["components"].items()])
             db.flush()
             audit(db, product, "import", actor)
-        db.add(PensionProductSourceLink(source_link_id=uuid4().hex, client_id=client_id, product_id=product.product_id, source_identity=identity, checksum=checksum, filename=filename, raw_content=raw, statement_date=metadata.statement_date, diagnostics=account["diagnostics"]))
+        for source in account["sources"]:
+            db.add(PensionProductSourceLink(source_link_id=uuid4().hex, client_id=client_id, product_id=product.product_id,
+                source_identity=account["identity"], checksum=source["checksum"], batch_identity=batch_identity,
+                filename=source["filename"][:255], raw_content=source["raw"], statement_date=source["statement_date"], diagnostics=source["diagnostics"]))
         db.flush()
         products.append(product)
-    return products
+    return response(products)

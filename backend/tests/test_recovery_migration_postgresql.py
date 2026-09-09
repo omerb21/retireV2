@@ -1,12 +1,14 @@
 """Opt-in real PostgreSQL 16 cutover, never the user's configured database.
 
-Run with RECOVERY_POSTGRES_TEST=1 and a Docker daemon with postgres:16 available.
-The uniquely named container uses tmpfs, no host mounts and no normal DB URL.
+Run with RECOVERY_POSTGRES_TEST=1 and a Docker daemon with postgres:16 available,
+or RECOVERY_POSTGRES_BIN pointing to trusted portable PostgreSQL 16 binaries.
+Both modes create isolated databases, never consume the normal DATABASE_URL.
 """
 import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import time
 from uuid import uuid4
@@ -21,9 +23,35 @@ BACKEND = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def postgres_url():
+def postgres_url(tmp_path):
     if os.environ.get("RECOVERY_POSTGRES_TEST") != "1":
         pytest.skip("isolated live PostgreSQL test requires RECOVERY_POSTGRES_TEST=1")
+    if os.environ.get("RECOVERY_POSTGRES_BIN"):
+        # Portable alternative when Docker is unavailable; no installed service,
+        # shared database, external interface or pre-existing cluster is used.
+        binaries = Path(os.environ["RECOVERY_POSTGRES_BIN"]).resolve(strict=True)
+        cluster = tmp_path / "isolated-postgres"
+        assert not cluster.exists()
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        def pg(tool, *args):
+            return subprocess.run([str(binaries / tool), *map(str, args)], check=True,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                                  timeout=90, creationflags=flags)
+        pg("initdb", "-D", cluster, "-U", "postgres", "-A", "trust", "--encoding=UTF8", "--no-locale")
+        assert cluster.resolve().parent == tmp_path.resolve() and not cluster.is_symlink()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        try:
+            pg("pg_ctl", "-D", cluster, "-l", tmp_path / "postgres.log",
+               "-o", f"-h 127.0.0.1 -p {port}", "-w", "-t", "30", "start")
+            yield f"postgresql://postgres@127.0.0.1:{port}/postgres"
+        finally:
+            # Only the cluster created above is ever stopped; files remain in
+            # pytest's temporary directory for inspection, no recursive delete.
+            if (cluster / "postmaster.pid").exists():
+                pg("pg_ctl", "-D", cluster, "-m", "fast", "-w", "stop")
+        return
     name = "retire-listener-test-" + uuid4().hex
     def docker(*args):
         return subprocess.check_output(["docker", *args], text=True, timeout=120).strip()
@@ -67,7 +95,7 @@ def test_live_postgresql_cutover_and_archive_guards(postgres_url):
         cursor.execute("""INSERT INTO m02_intake_records(intake_id,client_id,record_kind,manual_technical_reference,declared_provider_name,declared_account_reference,product_name,declared_product_type,declared_total_balance_amount,declared_component_values,source_type,lifecycle_status,preservation_status,diagnostics,created_by_actor,updated_by_actor,lifecycle_decided_by_actor) VALUES('A',1,'manual','manual-A','Provider','Account','Product','provident_fund',100,'[]','manual','accepted_for_review','not_applicable','[]','test','test','test')""")
         cursor.execute("INSERT INTO m05_ledger_subjects(subject_id,client_id,provider_name,account_reference,provider_identity_digest,account_identity_digest) VALUES('S',1,'Provider','Account',%s,%s)", ("a" * 64, "b" * 64))
     assert '"products": 1' in alembic("upgrade", "d3e9a6b2c410")
-    assert alembic("heads").strip() == "d3e9a6b2c410 (head)"
+    assert alembic("heads").strip() == "e4f0b7c3d521 (head)"
     assert alembic("current").strip().startswith("d3e9a6b2c410")
     with psycopg2.connect(postgres_url) as db, db.cursor() as cursor:
         cursor.execute("SELECT count(*) FROM pension_products WHERE reported_product_total=100")

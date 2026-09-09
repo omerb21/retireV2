@@ -51,8 +51,9 @@ export const createPensionProduct = (clientId: number, body: PensionProductMetad
 export const savePensionProduct = (clientId: number, id: string, body: ProductSave) => request<PensionProduct>(clientId, `/${encodeURIComponent(id)}`, json("PUT", body));
 export const saveSelectedPensionProducts = (clientId: number, products: Array<ProductSave & { product_id: string }>) => request<PensionProduct[]>(clientId, "/save-selected", json("POST", { products }));
 export const deletePensionProduct = (clientId: number, id: string, version: number) => request<void>(clientId, `/${encodeURIComponent(id)}?expected_version=${version}`, { method: "DELETE" });
-export const importPensionProducts = (clientId: number, file: File) => {
+export interface PensionSourceBatch { batch_identity: string; file_count: number; product_count: number; products: PensionProduct[]; diagnostics: unknown[] }
+export const importPensionProducts = (clientId: number, files: File[]) => {
   const body = new FormData();
-  body.append("file", file);
-  return request<PensionProduct[]>(clientId, "/imports", { method: "POST", body });
+  files.forEach(file => body.append("files", file));
+  return request<PensionSourceBatch>(clientId, "/imports", { method: "POST", body });
 };

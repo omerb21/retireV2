@@ -1,5 +1,6 @@
 """Canonical product endpoints; registered only with the atomic legacy cutover."""
 from collections.abc import Callable
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.pension_product import ProductCreate, ProductUpdate, SaveSelected
 from app.services.canonical_pension_source_reader import current_products
-from app.services.pension_product_import_service import import_source
+from app.services.pension_product_import_service import import_source_batch
 from app.services.pension_product_service import PensionProductError, create_product, delete_product, get_product, lock_client, product_response, save_selected, update_product
 
 
@@ -52,13 +53,13 @@ def create(client_id: int, payload: ProductCreate, db: Session = Depends(get_db)
 
 
 @router.post("/imports")
-async def import_products(client_id: int, file: UploadFile, db: Session = Depends(get_db)):
+async def import_products(client_id: int, files: list[UploadFile], db: Session = Depends(get_db)):
     try:
         # Read at most the accepted size plus one, before any database mutation.
-        raw = await file.read(26_214_401)
-        return _write(db, lambda: [product_response(db, product) for product in import_source(db, client_id, raw, (file.filename or "source.xml")[:255], ACTOR)])
+        selected = [(upload.filename or "source.xml", await upload.read(26_214_401)) for upload in files]
+        return _write(db, lambda: import_source_batch(db, client_id, selected, ACTOR))
     finally:
-        await file.close()
+        await asyncio.gather(*(upload.close() for upload in files), return_exceptions=True)
 
 
 @router.post("/save-selected")

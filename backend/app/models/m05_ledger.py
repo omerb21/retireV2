@@ -487,7 +487,7 @@ class _SqlToken:
     value: str
 
 
-def _sql_tokens(sql: str) -> list[_SqlToken]:
+def _sql_tokens(sql: str, *, nested_comments: bool = False) -> list[_SqlToken]:
     """Tokenize executable SQL while discarding comments and string literals.
 
     This is intentionally a small lexical guard, not a SQL parser. It recognizes
@@ -507,13 +507,46 @@ def _sql_tokens(sql: str) -> list[_SqlToken]:
             index = length if newline < 0 else newline + 1
             continue
         if sql.startswith("/*", index):
+            if nested_comments:
+                depth = 1
+                index += 2
+                while index < length and depth:
+                    if sql.startswith("/*", index):
+                        depth += 1
+                        index += 2
+                    elif sql.startswith("*/", index):
+                        depth -= 1
+                        index += 2
+                    else:
+                        index += 1
+                continue
             end = sql.find("*/", index + 2)
             index = length if end < 0 else end + 2
             continue
+        if char == "$":
+            end = sql.find("$", index + 1)
+            tag = sql[index + 1:end] if end >= 0 else None
+            if tag is not None and (not tag or (
+                (tag[0].isalpha() or tag[0] == "_")
+                and all(c.isalnum() or c == "_" for c in tag)
+            )):
+                delimiter = sql[index:end + 1]
+                close = sql.find(delimiter, end + 1)
+                stop = length if close < 0 else close
+                tokens.append(_SqlToken("string_literal", sql[end + 1:stop]))
+                index = length if close < 0 else close + len(delimiter)
+                continue
         if char == "'":
+            escaped = index > 0 and sql[index - 1] in "eE" and (
+                index == 1 or not (sql[index - 2].isalnum() or sql[index - 2] in "_$")
+            )
             index += 1
             value: list[str] = []
             while index < length:
+                if escaped and sql[index] == "\\" and index + 1 < length:
+                    value.append(sql[index + 1])
+                    index += 2
+                    continue
                 if sql[index] == "'":
                     if index + 1 < length and sql[index + 1] == "'":
                         value.append("'")
@@ -606,8 +639,40 @@ def _plausibly_targets_m05(tokens: list[_SqlToken], start: int) -> bool:
     )
 
 
+def _outer_dml_tokens(tokens: list[_SqlToken]) -> list[_SqlToken]:
+    """Exclude outer DDL, not later statements or CTE-contained executable DML.
+
+    Quoted bodies are single lexical tokens, so their semicolons cannot hide
+    a subsequent statement.
+    This is a mutation guard, not a general SQL execution authorization parser.
+    """
+    result: list[_SqlToken] = []
+    start = 0
+    while start < len(tokens):
+        end = start
+        ddl = tokens[start].kind == "identifier" and tokens[start].value in {
+            "create", "alter", "drop"
+        }
+        while end < len(tokens):
+            token = tokens[end]
+            if token.kind == "separator":
+                break
+            end += 1
+        if not ddl:
+            result.extend(tokens[start:end])
+            result.append(_SqlToken("separator", ";"))
+        start = end + 1
+    return result
+
+
 def _sql_mutates_m05(sql: str) -> bool:
-    tokens = _sql_tokens(sql)
+    tokens = _outer_dml_tokens(_sql_tokens(sql))
+    # PostgreSQL nests block comments; SQLite does not. Preserve the existing
+    # default tokenizer contract (also used by historical guards), and reject
+    # a mutation under either dialect's interpretation. Comment text must not
+    # impersonate an outer CREATE and hide executable DML in the other dialect.
+    if "/*" in sql:
+        tokens += _outer_dml_tokens(_sql_tokens(sql, nested_comments=True))
     for index, token in enumerate(tokens):
         target_index: int | None = None
         if token.kind == "keyword" and token.value == "update":

@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from threading import Barrier
+from xml.etree import ElementTree as ET
 
 import pytest
 from pydantic import ValidationError
@@ -42,7 +43,16 @@ def edit(product, value="1.01", version=None):
 
 
 def source(*, layers="", fields="", account="A", statement="20260901"):
-    return f'<Root><SHEM-YATZRAN>גוף מנהל</SHEM-YATZRAN><Account><MISPAR-HESHBON>{account}</MISPAR-HESHBON><SHEM-TOCHNIT>תכנית</SHEM-TOCHNIT><SUG-MUTZAR>3</SUG-MUTZAR><TAARICH-NECHONUT-YITROT>{statement}</TAARICH-NECHONUT-YITROT>{fields}<BlockItrot>{layers}</BlockItrot></Account></Root>'.encode()
+    # Monetary fixture facts use the accepted current-balance hierarchy.
+    container = ET.fromstring(f"<Fields>{fields}</Fields>")
+    product_tags = {"TOTAL-CHISACHON-MTZBR", "TOTAL-ERKEI-PIDION"}
+    liquidity_tags = {"YITRAT-KASPEY-TAGMULIM", "YITRAT-PITZUIM"}
+    def selected(tags):
+        return "".join(ET.tostring(child, encoding="unicode") for child in container if child.tag in tags)
+    metadata = selected({child.tag for child in container} - product_tags - liquidity_tags)
+    product_total, liquidity = selected(product_tags), selected(liquidity_tags)
+    summaries = (f"<PerutYitrot>{product_total}</PerutYitrot>" if product_total else "") + (f"<NesilutTag>{liquidity}</NesilutTag>" if liquidity else "")
+    return f'<Root><SHEM-YATZRAN>גוף מנהל</SHEM-YATZRAN><Account><MISPAR-HESHBON>{account}</MISPAR-HESHBON><SHEM-TOCHNIT>תכנית</SHEM-TOCHNIT><SUG-MUTZAR>3</SUG-MUTZAR><TAARICH-NECHONUT-YITROT>{statement}</TAARICH-NECHONUT-YITROT>{metadata}<BlockItrot><Yitrot>{layers}{summaries}</Yitrot></BlockItrot></Account></Root>'.encode()
 
 
 def layer(role, period, amount="12.34"):
@@ -273,7 +283,7 @@ def test_full_precision_storage_without_float(engine):
 
 
 def test_nested_layer_total_not_product_summary():
-    account = _parse_source(source(layers="<PerutYitrot><KOD-SUG-HAFRASHA>2</KOD-SUG-HAFRASHA><TOTAL-CHISACHON-MTZBR>100</TOTAL-CHISACHON-MTZBR></PerutYitrot>"))[0]
+    account = _parse_source(source(layers="<UnrecognizedContainer><PerutYitrot><KOD-SUG-HAFRASHA>2</KOD-SUG-HAFRASHA><TOTAL-CHISACHON-MTZBR>100</TOTAL-CHISACHON-MTZBR></PerutYitrot></UnrecognizedContainer>"))[0]
     assert account["metadata"]["reported_product_total"] is None
     assert sum(account["components"].values()) == 0
 

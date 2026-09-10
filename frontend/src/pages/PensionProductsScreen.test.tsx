@@ -13,6 +13,41 @@ function open(path = "/clients/1/pension-products") {
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.listPensionProducts).mockResolvedValue([product()]); });
 
 describe("מוצרים פנסיוניים קנוניים", () => {
+  it("shows unresolved material source balances outside collapsed technical details", async () => {
+    vi.mocked(api.listPensionProducts).mockResolvedValue([{ ...product(), source_history: [{
+      checksum: "source", filename: "safe.xml", statement_date: "2026-09-01",
+      diagnostics: [{ code: "source_fact", state: "SOURCE_PRESENT_NONZERO_UNMAPPED", component: null, value: "42.00", unresolved: true }],
+    }] }]);
+    open();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("נמצאה יתרה במקור שלא ניתן לסווג לרכיב מקצועי");
+    expect(alert.closest("details")).toBeNull();
+    expect(alert).toBeVisible();
+    expect(screen.queryByRole("button", { name: /אישור מקור|סקירת מקור/ })).toBeNull();
+  });
+
+  it.each(["SOURCE_ABSENT", "SOURCE_EXPLICIT_ZERO", "SOURCE_PRESENT_NONZERO_MAPPED"] as const)("does not label %s an unresolved material balance", async state => {
+    vi.mocked(api.listPensionProducts).mockResolvedValue([{ ...product(), source_history: [{
+      checksum: "source", filename: "safe.xml", statement_date: null,
+      diagnostics: [{ code: "component_source_state", component: codes[0], state }],
+    }] }]);
+    open();
+    await screen.findByRole("region", { name: "עריכת תכנית א" });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows persisted unresolved warning after a successful batch response", async () => {
+    vi.mocked(api.listPensionProducts).mockResolvedValue([]);
+    const imported = { ...product(), source_history: [{ checksum: "source", filename: "safe.xml", statement_date: null, diagnostics: [{ code: "source_fact", state: "SOURCE_PRESENT_NONZERO_UNMAPPED" as const, unresolved: true }] }] };
+    vi.mocked(api.importPensionProducts).mockResolvedValue({ batch_identity: "batch", file_count: 1, product_count: 1, products: [imported], diagnostics: [] });
+    open();
+    await screen.findByText(/אין מוצרים פנסיוניים/);
+    fireEvent.change(screen.getByLabelText("קובצי מקור"), { target: { files: [new File(["safe"], "safe.xml")] } });
+    fireEvent.submit(screen.getByRole("button", { name: "ייבוא מוצרים" }).closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("נמצאה יתרה במקור שלא ניתן לסווג לרכיב מקצועי");
+    expect(screen.getByRole("status")).toHaveTextContent("הייבוא הושלם");
+  });
+
   it("opens directly and displays all eleven components with Hebrew names and Israeli dates", async () => {
     const { container } = open();
     const editor = await screen.findByRole("region", { name: "עריכת תכנית א" });

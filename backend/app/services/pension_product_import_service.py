@@ -1,7 +1,8 @@
 """Recognized XML source mapping, without inferred or generic balances.
 
 Mapping authority: immutable FIRST_RECOVERY_PKG_001 definition, section 11.
-V1 e4bd8618's processor supplies the XML field names, not its heuristics.
+The accepted real-XML correction authorizes only the explicit V1 role fallback,
+not unrelated V1 heuristics.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ from app.services.pension_product_service import PensionProductError, _update_lo
 
 ROLE_CODES = {"2": "עובד", "8": "עובד", "3": "מעביד", "9": "מעביד"}
 PERIOD_CODES = {"1": "עד_2000", "2": "אחרי_2000", "7": "אחרי_2008_לא_משלמת", "9": "אחרי_2008_לא_משלמת", "13": "אחרי_2008_לא_משלמת"}
+EMPLOYEE_SUG_CODES = {"2", "4", "8", "10"}
+EMPLOYER_SUG_CODES = {"3", "7", "9", "11"}
 SEVERANCE_TAGS = {
     "ERECH-PIDION-PITZUIM-MAASIK-NOCHECHI": COMPONENT_CODES[0],
     "YITRAT-PITZUIM-MAASIK-NOCHECHI": COMPONENT_CODES[0],
@@ -78,6 +81,83 @@ def _date(value: str | None) -> date | None:
         except ValueError:
             pass
     raise PensionProductError("INVALID_SOURCE_DATE", "תאריך המקור אינו תקין", 422)
+
+
+def _source_fact(diagnostics, value, component, path, *, applied=True, field=None):
+    amount = None if value is None else exact_money(value.replace(",", ""))
+    state = ("SOURCE_ABSENT" if amount is None else "SOURCE_EXPLICIT_ZERO" if amount == 0
+             else "SOURCE_PRESENT_NONZERO_MAPPED" if component or field else "SOURCE_PRESENT_NONZERO_UNMAPPED")
+    diagnostics.append({"code": "source_fact", "state": state, "component": component,
+                        "value": None if amount is None else format(amount, ".2f"), "path": path,
+                        "field": field, "applied": applied, "unresolved": state == "SOURCE_PRESENT_NONZERO_UNMAPPED"})
+    return amount
+
+
+def _current_yitrot(node):
+    # Exact current-balance paths only: never a descendant-wide totals scan.
+    return node.findall("./PirteiTaktziv/BlockItrot/Yitrot") + node.findall("./BlockItrot/Yitrot")
+
+
+def _direct_money(node, tags, diagnostics, name):
+    values = {exact_money(child.text.strip().replace(",", "")) for child in node
+              if child.tag in tags and child.text and child.text.strip()}
+    if len(values) > 1:
+        diagnostics.append({"code": "ambiguous_field", "field": name, "values": sorted(format(value, ".2f") for value in values)})
+        return None
+    return next(iter(values)) if values else None
+
+
+def _reported_total(yitrot, tags, paths, diagnostics, name):
+    amounts = [amount for current in yitrot for path in paths for row in current.findall(path)
+               if (amount := _direct_money(row, tags, diagnostics, name)) is not None]
+    result = sum(amounts, Decimal("0.00")) if amounts else None
+    _source_fact(diagnostics, None if result is None else str(result), None,
+                 "current_reported_total", field=name)
+    return result
+
+
+def _product_type(node, parents, diagnostics):
+    direct = _one(node, {"SUG-MUTZAR"}, diagnostics, "product_type")
+    current = parents.get(node)
+    while current is not None and current.tag != "Mutzar":
+        current = parents.get(current)
+    if current is None:
+        return direct
+    metadata = ET.Element("product_metadata")
+    for container in current.findall("./NetuneiMutzar"):
+        metadata.extend(container.findall("./SUG-MUTZAR"))
+    scoped = _one(metadata, {"SUG-MUTZAR"}, diagnostics, "product_type")
+    if direct is not None and scoped is not None and direct != scoped:
+        raise PensionProductError("AMBIGUOUS_SOURCE_FACT", "סוג המוצר במקור אינו חד־משמעי", 422)
+    return scoped if scoped is not None else direct
+
+
+def _v1_role_fallback(yitrot, balances, diagnostics):
+    # Presence includes an explicit primary zero. Fallback is per role, never
+    # per missing period, and never interprets REKIV=4 or SUG-ITRA-LETKUFA.
+    primary_roles = {role for role in ("עובד", "מעביד") if any(code.startswith(f"תגמולי_{role}_") for code in balances)}
+    for current in yitrot:
+        for row in current.findall("./PerutYitrot"):
+            role_fields = ET.Element("row_role")
+            role_fields.extend(row.findall("./KOD-SUG-HAFRASHA"))
+            sug = _one(role_fields, {"KOD-SUG-HAFRASHA"}, diagnostics, "fallback_role")
+            role = "עובד" if sug in EMPLOYEE_SUG_CODES else "מעביד" if sug in EMPLOYER_SUG_CODES else None
+            component = f"תגמולי_{role}_אחרי_2000" if role else None
+            amount = _direct_money(row, ["TOTAL-CHISACHON-MTZBR"], diagnostics, "fallback_amount")
+            applied = role is not None and role not in primary_roles
+            _source_fact(diagnostics, None if amount is None else str(amount), component,
+                         "BlockItrot/Yitrot/PerutYitrot/TOTAL-CHISACHON-MTZBR", applied=applied)
+            if amount is None:
+                # Redemption is a reported total, never the authorized fallback
+                # input. Retain its unresolved amount instead of implying zero.
+                redemption = _direct_money(row, ["TOTAL-ERKEI-PIDION"], diagnostics, "reported_product_total")
+                if redemption is not None:
+                    _source_fact(diagnostics, str(redemption), None,
+                                 "BlockItrot/Yitrot/PerutYitrot/TOTAL-ERKEI-PIDION", applied=False)
+            if role is None:
+                diagnostics.append({"code": "unmapped_fallback_role", "value": sug})
+            elif applied and amount is not None:
+                balances[component] = balances.get(component, Decimal("0.00")) + amount
 
 
 def _parse_source(raw: bytes) -> list[dict]:
@@ -137,17 +217,21 @@ def _parse_source(raw: bytes) -> list[dict]:
                 diagnostics.append({"code": "unmapped_layer", "role": role, "period": period, "value": amount})
             else:
                 balances[code] = balances.get(code, Decimal("0.00")) + exact_money(amount.replace(",", ""))
+            for fact in _values(layer, {"SACH-ITRA-LESHICHVA-BESHACH"}) or [None]:
+                _source_fact(diagnostics, fact, code, "PerutYitraLeTkufa/SACH-ITRA-LESHICHVA-BESHACH")
+        yitrot = _current_yitrot(node)
+        _v1_role_fallback(yitrot, balances, diagnostics)
         for tag, code in SEVERANCE_TAGS.items():
             for amount in _values(node, {tag}):
                 balances[code] = balances.get(code, Decimal("0.00")) + exact_money(amount.replace(",", ""))
-        def summary(tags, name):
-            # A component/layer total nested inside an account is NOT proven to
-            # be the account's summary. Preserve it in diagnostics, not here.
-            summary_node = ET.Element("account_summary")
-            summary_node.extend(child for child in node if child.tag in tags)
-            value = _one(summary_node, set(tags), diagnostics, name)
-            return None if value is None else exact_money(value.replace(",", ""))
-        product_type = field(["SUG-MUTZAR"], "product_type")
+                _source_fact(diagnostics, amount, code, tag)
+        for component in COMPONENT_CODES:
+            value = balances.get(component)
+            nonzero = any(item.get("component") == component and item.get("applied") and item.get("state") == "SOURCE_PRESENT_NONZERO_MAPPED" for item in diagnostics)
+            state = "SOURCE_ABSENT" if value is None else "SOURCE_PRESENT_NONZERO_MAPPED" if nonzero else "SOURCE_EXPLICIT_ZERO"
+            diagnostics.append({"code": "component_source_state", "component": component, "state": state,
+                                "value": None if value is None else format(value, ".2f")})
+        product_type = _product_type(node, parents, diagnostics)
         if product_type and product_type not in PRODUCT_TYPE_LABELS:
             diagnostics.append({"code": "unmapped_product_type", "value": product_type})
         metadata = dict(
@@ -157,9 +241,9 @@ def _parse_source(raw: bytes) -> list[dict]:
             start_date=_date(field(["TAARICH-TCHILAT-HAFRASHA", "TAARICH-TCHILA", "TAARICH-HITZTARFUT-RISHON", "TAARICH-HITZTARFUT"], "start_date")),
             statement_date=_date(field(["TAARICH-NECHONUT-YITROT", "TAARICH-YITROT", "TAARICH-NECHONUT"], "statement_date")),
             historical_employers=sorted(set(_values(node, {"SHEM-MAASIK", "SHEM-MESHALEM", "SHEM-BAAL-POLISA-SHEEINO-MEVUTAH", "SHEM-BAAL-POLISA", "SHEM-MAFKID", "SHEM-BEALIM", "SHEM-HAMESHALLEM"}))),
-            reported_product_total=summary(["TOTAL-CHISACHON-MTZBR", "TOTAL-ERKEI-PIDION"], "reported_product_total"),
-            reported_rewards_total=summary(["YITRAT-KASPEY-TAGMULIM"], "reported_rewards_total"),
-            reported_severance_total=summary(["YITRAT-PITZUIM"], "reported_severance_total"),
+            reported_product_total=_reported_total(yitrot, ["TOTAL-CHISACHON-MTZBR", "TOTAL-ERKEI-PIDION"], ["./PerutYitrot"], diagnostics, "reported_product_total"),
+            reported_rewards_total=_reported_total(yitrot, ["YITRAT-KASPEY-TAGMULIM"], ["./NesilutTag"], diagnostics, "reported_rewards_total"),
+            reported_severance_total=_reported_total(yitrot, ["YITRAT-PITZUIM"], [".", "./NesilutTag"], diagnostics, "reported_severance_total"),
         )
         if any(item.get("code") == "ambiguous_field" and item.get("field") in metadata for item in diagnostics):
             raise PensionProductError("AMBIGUOUS_SOURCE_FACT", "פרטי המקור אינם חד־משמעיים", 422)

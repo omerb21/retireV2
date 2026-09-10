@@ -14,6 +14,15 @@ export interface PensionProductMetadata {
   reported_severance_total: string | null;
 }
 
+export type SourceState = "SOURCE_ABSENT" | "SOURCE_EXPLICIT_ZERO" | "SOURCE_PRESENT_NONZERO_MAPPED" | "SOURCE_PRESENT_NONZERO_UNMAPPED";
+export interface SourceDiagnostic {
+  code: string;
+  state?: SourceState;
+  component?: string | null;
+  unresolved?: boolean;
+  [key: string]: unknown;
+}
+
 export interface PensionProduct extends PensionProductMetadata {
   product_id: string;
   client_id: number;
@@ -22,7 +31,7 @@ export interface PensionProduct extends PensionProductMetadata {
   components: Record<string, string>;
   reconciliation: Record<string, string | null>;
   updated_at: string;
-  source_history?: Array<{ checksum: string; filename: string | null; statement_date: string | null; diagnostics: unknown[] }>;
+  source_history?: Array<{ checksum: string; filename: string | null; statement_date: string | null; diagnostics: SourceDiagnostic[] }>;
 }
 
 export type ProductSave = PensionProductMetadata & {

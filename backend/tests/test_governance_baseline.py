@@ -199,6 +199,7 @@ APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
 # FIRST_RECOVERY_PKG_001 immutable definition + explicit PensionHolding disposition.
 # Exact inventory only; no directory wildcard or automatic acceptance of Git changes.
 APPROVED_FIRST_RECOVERY_PATHS = {
+    "backend/tests/test_recovery_real_xml_mapping.py",
     "backend/alembic/versions/e4f0b7c3d521_pension_source_batch_identity.py",
     "backend/tests/test_recovery_batch_import.py",
     "backend/tests/test_recovery_batch_migration.py",

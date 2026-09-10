@@ -45,6 +45,8 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
     <h3>{product.product_name}</h3>
     <p>סוג מוצר: {productTypeLabel(product.product_type)}</p>
     <p>עדכון אחרון: <bdi>{formatIsoTimestamp(product.updated_at)}</bdi></p>
+    {product.source_history?.some(source => source.diagnostics.some(item => item.state === "SOURCE_PRESENT_NONZERO_UNMAPPED" && item.unresolved === true)) &&
+      <p role="alert">נמצאה יתרה במקור שלא ניתן לסווג לרכיב מקצועי. יש לבדוק את נתוני המקור; אפס ברכיב אינו בהכרח אפס שדווח במקור.</p>}
     <form onSubmit={save}><fieldset disabled={busy}><legend>פרטי מוצר ורכיבים</legend>
       <MetadataFields value={metadata} onChange={setMetadata} />
       {Object.entries(components).map(([code, balance]) => <p key={code}><label>{code.replace(/_/g, " ")}<input dir="ltr" inputMode="decimal" required pattern="-?[0-9]+([.][0-9]{1,2})?" value={balance} onChange={event => setComponents({ ...components, [code]: event.target.value })} /></label></p>)}

@@ -1,7 +1,9 @@
 """Privacy-safe XML assembled here, never copied from owner source files.
 
-Only the explicitly authorized account/product identifiers and golden amounts
-and statement date are retained. Provider and wrappers are synthetic data.
+The integrated fixture retains the material paths/values supplied in the WORK
+source evidence. Account identifiers and employer names are synthetic;
+unneeded personal identifiers/contact fields are omitted.
+The smaller xml() helper below is only for isolated mapping edge cases.
 """
 import ast
 from decimal import Decimal
@@ -17,9 +19,56 @@ from test_recovery_pension_products import engine, layer
 from test_recovery_batch_import import ingest, snapshot
 
 GOLDENS = [
-    ("444-914-295865-0", "מיטב גמל בניהול אישי", "8267592.26"),
-    ("032-252-566418-0", "מיטב גמל", "1077664.59"),
+    ("fixture-account-A", "מיטב גמל בניהול אישי", "8267592.26"),
+    ("fixture-account-B", "מיטב גמל", "1077664.59"),
 ]
+
+SOURCE_DATES = [("20191224", "20200102"), ("20191222", "20200101")]
+SOURCE_EMPLOYER = "מעסיק סינתטי לבדיקה"
+
+
+def faithful_xml(index):
+    account, name, amount = GOLDENS[index]
+    joined, first_joined = SOURCE_DATES[index]
+    # YeshutMaasik is deliberately NOT moved inside HeshbonOPolisa.
+    # Nil facts are empty, not invented explicit zero balances.
+    return f"""<Root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <KOD-MEZAHE-YATZRAN>512065202</KOD-MEZAHE-YATZRAN>
+      <Mutzar><NetuneiMutzar><SUG-MUTZAR>3</SUG-MUTZAR>
+        <YeshutMaasik><SUG-MEZAHE-MAASIK>3</SUG-MEZAHE-MAASIK>
+          <SHEM-MAASIK>{SOURCE_EMPLOYER}</SHEM-MAASIK></YeshutMaasik>
+      </NetuneiMutzar>
+      <HeshbonOPolisa><MISPAR-POLISA-O-HESHBON>{account}</MISPAR-POLISA-O-HESHBON>
+        <SHEM-TOCHNIT>{name}</SHEM-TOCHNIT>
+        <TAARICH-NECHONUT>20260228</TAARICH-NECHONUT>
+        <TAARICH-HITZTARFUT-MUTZAR>{joined}</TAARICH-HITZTARFUT-MUTZAR>
+        <TAARICH-HITZTARFUT-RISHON>{first_joined}</TAARICH-HITZTARFUT-RISHON>
+        <PirteiTaktziv><BlockItrot><Yitrot>
+          <TAARICH-ERECH-TZVIROT>20260228</TAARICH-ERECH-TZVIROT>
+          <PerutYitrot><KOD-SUG-ITRA>3</KOD-SUG-ITRA><KOD-SUG-HAFRASHA>4</KOD-SUG-HAFRASHA>
+            <TOTAL-CHISACHON-MTZBR>{amount}</TOTAL-CHISACHON-MTZBR>
+            <TOTAL-ERKEI-PIDION>{amount}</TOTAL-ERKEI-PIDION></PerutYitrot>
+          <PerutYitraLeTkufa><KOD-TECHULAT-SHICHVA>7</KOD-TECHULAT-SHICHVA>
+            <REKIV-ITRA-LETKUFA>4</REKIV-ITRA-LETKUFA><SUG-ITRA-LETKUFA>3</SUG-ITRA-LETKUFA>
+            <SACH-ITRA-LESHICHVA-BESHACH>{amount}</SACH-ITRA-LESHICHVA-BESHACH></PerutYitraLeTkufa>
+          <NesilutTag><MOED-NEZILUT-TAGMULIM>{joined}</MOED-NEZILUT-TAGMULIM>
+            <YITRAT-KASPEY-TAGMULIM>{amount}</YITRAT-KASPEY-TAGMULIM></NesilutTag>
+          <YitrotShonot>
+            <TZVIRAT-PITZUIM-PTURIM-MAAVIDIM-KODMIM xsi:nil="true" />
+            <ERECH-PIDION-PITZUIM-LEKITZBA-MAAVIDIM-KODMIM xsi:nil="true" />
+            <TZVIRAT-PITZUIM-MAAVIDIM-KODMIM-BERETZEF-KITZBA>0.00</TZVIRAT-PITZUIM-MAAVIDIM-KODMIM-BERETZEF-KITZBA>
+            <TZVIRAT-PITZUIM-MAAVIDIM-KODMIM-BERETZEF-ZECHUYOT>0.00</TZVIRAT-PITZUIM-MAAVIDIM-KODMIM-BERETZEF-ZECHUYOT>
+            <TZVIRAT-PITZUIM-31-12-1999-LEKITZBA xsi:nil="true" />
+            <ERECH-PIDION-PITZUIM-MAASIK-NOCHECHI>0.00</ERECH-PIDION-PITZUIM-MAASIK-NOCHECHI>
+            <ERECH-PIDION-MARKIV-PITZUIM-LEMAS-NOCHECHI>0.00</ERECH-PIDION-MARKIV-PITZUIM-LEMAS-NOCHECHI>
+            <ERECH-PIDION-PITZUIM-MAAVIDIM-KODMIM-RETZEF-ZEHUYUT>0.00</ERECH-PIDION-PITZUIM-MAAVIDIM-KODMIM-RETZEF-ZEHUYUT>
+            <ERECH-PIDION-PITZUIM-LEHON-MAAVIDIM-KODMIM>0.00</ERECH-PIDION-PITZUIM-LEHON-MAAVIDIM-KODMIM>
+            <YITRAT-PITZUIM-LELO-HITCHASHBENOT>0.00</YITRAT-PITZUIM-LELO-HITCHASHBENOT>
+            <KAYAM-RETZEF-PITZUIM-KITZBA>2</KAYAM-RETZEF-PITZUIM-KITZBA>
+            <KAYAM-RETZEF-ZECHUYOT-PITZUIM>2</KAYAM-RETZEF-ZECHUYOT-PITZUIM>
+          </YitrotShonot>
+        </Yitrot></BlockItrot></PirteiTaktziv>
+      </HeshbonOPolisa></Mutzar></Root>""".encode()
 
 
 def row(code="4", amount="10", extra=""):
@@ -44,8 +93,7 @@ def states(account):
 
 
 def test_clean_two_real_structure_products_exact_golden_and_source_states(engine):
-    files = [(f"privacy-safe-{i}.xml", xml(account, name, amount, primary=layer("4", "7", amount)))
-             for i, (account, name, amount) in enumerate(GOLDENS)]
+    files = [(f"privacy-safe-{i}.xml", faithful_xml(i)) for i in range(2)]
     batch = ingest(engine, files)
     assert batch["product_count"] == 2 and batch["file_count"] == 2
     products = {p["account_reference"]: p for p in batch["products"]}
@@ -54,6 +102,8 @@ def test_clean_two_real_structure_products_exact_golden_and_source_states(engine
         p = products[account]
         assert p["product_name"] == name and p["product_type"] == "קופת גמל"
         assert p["statement_date"] == "2026-02-28"
+        assert p["provider_identifier"] == "512065202"
+        assert p["start_date"] == ("2020-01-02" if account == GOLDENS[0][0] else "2020-01-01")
         assert p["reported_product_total"] == p["reported_rewards_total"] == amount
         assert p["reported_severance_total"] is None
         assert p["components"][COMPONENT_CODES[6]] == amount
@@ -68,6 +118,11 @@ def test_clean_two_real_structure_products_exact_golden_and_source_states(engine
         expected.update({COMPONENT_CODES[i]: "SOURCE_EXPLICIT_ZERO" for i in (0, 2, 3, 4)})
         expected[COMPONENT_CODES[6]] = "SOURCE_PRESENT_NONZERO_MAPPED"
         assert states(parsed) == expected
+        assert any(d.get("state") == "SOURCE_PRESENT_NONZERO_UNMAPPED" and d.get("value") == amount
+                   for d in p["source_history"][0]["diagnostics"])
+    assert {p["account_reference"]: p["historical_employers"] for p in batch["products"]} == {
+        account: [SOURCE_EMPLOYER] for account, _, _ in GOLDENS
+    }
 
 
 @pytest.mark.parametrize("sug,component", [(c, COMPONENT_CODES[6]) for c in ("2", "4", "8", "10")] + [(c, COMPONENT_CODES[9]) for c in ("3", "7", "9", "11")])
@@ -75,6 +130,33 @@ def test_only_accepted_fallback_code_groups(sug, component):
     parsed = importer._parse_source(xml(rows=row(sug, "12.34"), amount="12.34"))[0]
     assert parsed["components"][component] == Decimal("12.34")
     assert sum(parsed["components"].values()) == Decimal("12.34")
+
+
+def test_nearest_product_employer_does_not_leak_from_siblings_or_outer_product():
+    first = faithful_xml(0).decode().split("<Mutzar>", 1)[1].rsplit("</Mutzar>", 1)[0]
+    second = faithful_xml(1).decode().split("<Mutzar>", 1)[1].rsplit("</Mutzar>", 1)[0].replace(SOURCE_EMPLOYER, "מעסיק שני")
+    raw = f'''<Root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <KOD-MEZAHE-YATZRAN>512065202</KOD-MEZAHE-YATZRAN>
+      <Mutzar><NetuneiMutzar><YeshutMaasik><SHEM-MAASIK>מעסיק חיצוני</SHEM-MAASIK></YeshutMaasik></NetuneiMutzar>
+        <Mutzar>{first}</Mutzar></Mutzar><Mutzar>{second}</Mutzar></Root>'''.encode()
+    parsed = importer._parse_source(raw)
+    assert {p["metadata"]["account_reference"]: p["metadata"]["historical_employers"] for p in parsed} == {
+        GOLDENS[0][0]: [SOURCE_EMPLOYER], GOLDENS[1][0]: ["מעסיק שני"]
+    }
+
+
+def test_product_employer_preserves_account_aliases_and_deduplicates_names():
+    raw = faithful_xml(0).decode().replace("</HeshbonOPolisa>",
+        f"<SHEM-MAASIK> {SOURCE_EMPLOYER} </SHEM-MAASIK><SHEM-MESHALEM>משלם בדיקה</SHEM-MESHALEM></HeshbonOPolisa>")
+    assert importer._parse_source(raw.encode())[0]["metadata"]["historical_employers"] == sorted([SOURCE_EMPLOYER, "משלם בדיקה"])
+
+
+def test_missing_nearest_employer_does_not_borrow_outer_or_unrecognized_metadata():
+    raw = faithful_xml(0).decode().replace(f"<SHEM-MAASIK>{SOURCE_EMPLOYER}</SHEM-MAASIK>",
+        "<Unknown><SHEM-MAASIK>לא שייך</SHEM-MAASIK></Unknown>")
+    raw = raw.replace("<Mutzar>", "<Mutzar><NetuneiMutzar><YeshutMaasik><SHEM-MAASIK>חיצוני</SHEM-MAASIK></YeshutMaasik></NetuneiMutzar><Mutzar>", 1)
+    raw = raw.replace("</Root>", "</Mutzar></Root>")
+    assert importer._parse_source(raw.encode())[0]["metadata"]["historical_employers"] == []
 
 
 def test_multiple_fallback_rows_sum_and_summary_aliases_not_double_counted():

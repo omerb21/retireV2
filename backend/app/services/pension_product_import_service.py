@@ -132,6 +132,20 @@ def _product_type(node, parents, diagnostics):
     return scoped if scoped is not None else direct
 
 
+def _historical_employers(node, parents):
+    # Preserve account-local evidence; add only the nearest product's explicit
+    # employer metadata, never a sibling product or a wider ancestor scan.
+    names = set(_values(node, {"SHEM-MAASIK", "SHEM-MESHALEM", "SHEM-BAAL-POLISA-SHEEINO-MEVUTAH", "SHEM-BAAL-POLISA", "SHEM-MAFKID", "SHEM-BEALIM", "SHEM-HAMESHALLEM"}))
+    current = parents.get(node)
+    while current is not None and current.tag != "Mutzar":
+        current = parents.get(current)
+    if current is not None:
+        for name in current.findall("./NetuneiMutzar/YeshutMaasik/SHEM-MAASIK"):
+            if name.text and name.text.strip():
+                names.add(name.text.strip())
+    return sorted(names)
+
+
 def _v1_role_fallback(yitrot, balances, diagnostics):
     # Presence includes an explicit primary zero. Fallback is per role, never
     # per missing period, and never interprets REKIV=4 or SUG-ITRA-LETKUFA.
@@ -240,7 +254,7 @@ def _parse_source(raw: bytes) -> list[dict]:
             provider_name=provider_name, provider_identifier=provider_id, account_reference=account,
             start_date=_date(field(["TAARICH-TCHILAT-HAFRASHA", "TAARICH-TCHILA", "TAARICH-HITZTARFUT-RISHON", "TAARICH-HITZTARFUT"], "start_date")),
             statement_date=_date(field(["TAARICH-NECHONUT-YITROT", "TAARICH-YITROT", "TAARICH-NECHONUT"], "statement_date")),
-            historical_employers=sorted(set(_values(node, {"SHEM-MAASIK", "SHEM-MESHALEM", "SHEM-BAAL-POLISA-SHEEINO-MEVUTAH", "SHEM-BAAL-POLISA", "SHEM-MAFKID", "SHEM-BEALIM", "SHEM-HAMESHALLEM"}))),
+            historical_employers=_historical_employers(node, parents),
             reported_product_total=_reported_total(yitrot, ["TOTAL-CHISACHON-MTZBR", "TOTAL-ERKEI-PIDION"], ["./PerutYitrot"], diagnostics, "reported_product_total"),
             reported_rewards_total=_reported_total(yitrot, ["YITRAT-KASPEY-TAGMULIM"], ["./NesilutTag"], diagnostics, "reported_rewards_total"),
             reported_severance_total=_reported_total(yitrot, ["YITRAT-PITZUIM"], [".", "./NesilutTag"], diagnostics, "reported_severance_total"),

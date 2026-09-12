@@ -60,7 +60,7 @@ def test_sqlite_additive_migration_preserves_historical_rows_and_guards(tmp_path
         before = db.execute("SELECT * FROM pension_product_source_links ORDER BY source_link_id").fetchall()
         triggers = db.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
     alembic(path, "upgrade", HEAD)
-    assert alembic(path, "heads").stdout.strip() == f"{HEAD} (head)"
+    assert alembic(path, "heads").stdout.strip() == "f5a1c8d4e632 (head)"
     with sqlite3.connect(path) as db:
         after = db.execute("SELECT * FROM pension_product_source_links ORDER BY source_link_id").fetchall()
         assert [row[:-1] for row in after] == before and all(row[-1] is None for row in after)
@@ -92,7 +92,7 @@ def test_live_postgresql_batch_migration_and_archive_guards(postgres_url):
         cursor.execute("SELECT source_link_id,client_id,product_id,source_identity,checksum,filename,raw_content,statement_date,diagnostics,created_at FROM pension_product_source_links")
         before = cursor.fetchall()
     migrate("upgrade", HEAD)
-    assert migrate("heads") == f"{HEAD} (head)" and migrate("current").startswith(HEAD)
+    assert migrate("heads") == "f5a1c8d4e632 (head)" and migrate("current").startswith(HEAD)
     with psycopg2.connect(postgres_url) as db, db.cursor() as cursor:
         cursor.execute("SELECT source_link_id,client_id,product_id,source_identity,checksum,filename,raw_content,statement_date,diagnostics,created_at FROM pension_product_source_links")
         assert cursor.fetchall() == before

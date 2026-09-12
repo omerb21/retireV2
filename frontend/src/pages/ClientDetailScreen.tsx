@@ -1354,9 +1354,9 @@ export function ClientDetailScreen() {
       <p>
         <Link
           className="button-link"
-          to={`/clients/${validRouteClientId}/pension-conversion`}
+          to={`/clients/${validRouteClientId}/legacy-conversion-history`}
         >
-          M06 — תיעוד המרות היסטורי
+          היסטוריית המרות ישנה — לקריאה בלבד
         </Link>
         <Link
           className="button-link"

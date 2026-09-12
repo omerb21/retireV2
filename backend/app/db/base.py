@@ -9,6 +9,7 @@ class Base(DeclarativeBase):
 
 def load_all_models() -> None:
     # Import models so they are registered on Base.metadata for Alembic.
+    import app.models.canonical_conversion  # noqa: F401
     import app.models.actual_capitalization  # noqa: F401
     import app.models.clearinghouse_snapshot  # noqa: F401
     import app.models.client  # noqa: F401

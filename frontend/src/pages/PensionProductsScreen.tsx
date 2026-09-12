@@ -3,6 +3,10 @@ import { Link, useParams } from "react-router-dom";
 import { createPensionProduct, deletePensionProduct, importPensionProducts, listPensionProducts, PensionProduct, PensionProductMetadata, savePensionProduct } from "../api/pensionProductsApi";
 import { HebrewDateInput } from "../components/HebrewDateInput";
 import { formatIsoDate, formatIsoTimestamp } from "../utils/dateFormat";
+import { getPensionProduct } from "../api/pensionProductsApi";
+import { ConversionComponent } from "../api/canonicalConversionsApi";
+import { CanonicalComponentConversionDialog } from "../components/CanonicalComponentConversionDialog";
+import { CanonicalConversionHistory } from "../components/CanonicalConversionHistory";
 
 const emptyMetadata = (): PensionProductMetadata => ({ product_name: "", product_type: "קופת גמל", provider_name: null, provider_identifier: null, account_reference: null, start_date: null, statement_date: null, historical_employers: [], reported_product_total: "0.00", reported_rewards_total: null, reported_severance_total: null });
 const metadataKeys = Object.keys(emptyMetadata()) as Array<keyof PensionProductMetadata>;
@@ -28,6 +32,8 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [conversion, setConversion] = useState<ConversionComponent | "whole" | null>(null);
+  async function refresh() { onSaved(await getPensionProduct(clientId, product.product_id)); }
   async function save(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(null);
     try { onSaved(await savePensionProduct(clientId, product.product_id, { ...metadata, historical_employers: metadata.historical_employers.filter(name => name.trim()), expected_version: product.version, components })); }
@@ -54,6 +60,15 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
       <button type="button" onClick={() => { setMetadata(metadataOf(product)); setComponents(product.components); setError(null); }}>ביטול עריכה</button>
     </fieldset></form>
     <h4>התאמות לפי הנתונים השמורים</h4>
+    <section aria-label="המרות מהיתרות השמורות"><h4>המרת רכיבים</h4>
+      <p>המרה מתבצעת מהיתרות השמורות בלבד. יש לשמור עריכות לפני המרה.</p>
+      {(product.conversion_components ?? []).filter(item => Number(item.balance) > 0).map(item => <p key={item.component_id}>
+        {item.component_code.replace(/_/g, " ")}: <bdi>{item.balance}</bdi> {Object.keys(item.allowed_destinations).length ? <button disabled={busy || conversion !== null} onClick={() => setConversion(item)}>המרת {item.component_code.replace(/_/g, " ")}</button> : "אין יעד המרה מותר"}
+      </p>)}
+      <button disabled={busy || conversion !== null || !product.conversion_components} onClick={() => setConversion("whole")}>המרת רכיבים זכאים במוצר</button>
+      {conversion && <CanonicalComponentConversionDialog clientId={clientId} productId={product.product_id} version={product.version} component={conversion === "whole" ? undefined : conversion} onDone={refresh} onClose={() => setConversion(null)} />}
+    </section>
+    <CanonicalConversionHistory clientId={clientId} productId={product.product_id} version={product.version} onChanged={refresh} />
     <p>פערים הם מידע לבקרה בלבד ואינם משנים את היתרות. עריכות ייכללו בחישוב לאחר שמירה.</p>
     <dl>{Object.entries(totalsLabels).map(([key, label]) => <div key={key}><dt>{label}</dt><dd><bdi>{product.reconciliation[key] ?? "לא נמסר סך מדווח"}</bdi></dd></div>)}</dl>
     {!!product.source_history?.length && <details><summary>תיעוד מקור ואבחון טכני</summary>{product.source_history.map(source => <section key={source.checksum}><p>קובץ: <bdi>{source.filename ?? "לא נמסר"}</bdi></p><p>תאריך המקור: <bdi>{formatIsoDate(source.statement_date) || "לא נמסר"}</bdi></p><p>חתימת קובץ: <code dir="ltr">{source.checksum}</code></p><pre dir="ltr">{JSON.stringify(source.diagnostics, null, 2)}</pre></section>)}</details>}

@@ -1,8 +1,8 @@
-"""M06 historical evidence reads and canonical-source availability.
+"""M06 historical evidence reads only.
 
 The original calculation primitives remain unchanged for historical integrity.
 The old M02/M03/M04/M05 source binding and mutation paths are removed. No new
-conversion is permitted until a canonical conversion contract is authorized.
+conversion uses these archival records as current authority.
 """
 from __future__ import annotations
 from datetime import date
@@ -21,8 +21,6 @@ from app.schemas.m06_conversion import (
     DECIMAL_PATTERN, M06CoefficientResponse, M06EligibilityResponse,
     M06ManifestResponse, M06RevisionResponse, M06SubjectResponse,
 )
-from app.services.canonical_pension_source_reader import conversion_source_availability
-from app.services.pension_product_service import PensionProductError
 
 FORMULAS = {
     "balance_to_monthly_pension": ("m06.balance_to_monthly_pension.v1", "ILS/month"),
@@ -534,30 +532,4 @@ def list_subjects(db: Session, client_id: int) -> list[M06SubjectResponse]:
     return [subject_response(db, client_id, row.subject_id) for row in rows]
 
 def _revalidation_reasons(db, subject, leaf):
-    availability = conversion_source_availability(db, subject.client_id)
-    return [availability["reason_code"]], []
-
-def _source_closed(db, client_id):
-    try:
-        availability = conversion_source_availability(db, client_id)
-    except PensionProductError as error:
-        raise _error(error.code, error.message, error.status_code) from error
-    raise _error(availability["reason_code"], "המרה אינה זמינה עד להגדרת חוזה המרה למקור הקנוני")
-
-def list_candidates(db, client_id):
-    return _source_closed(db, client_id)
-
-def start_conversion(db, client_id, *args, **kwargs):
-    return _source_closed(db, client_id)
-
-def resolve_conversion(db, client_id, *args, **kwargs):
-    return _source_closed(db, client_id)
-
-def review_warnings(db, client_id, *args, **kwargs):
-    return _source_closed(db, client_id)
-
-def correct_coefficient(db, client_id, *args, **kwargs):
-    return _source_closed(db, client_id)
-
-def supersede_conversion(db, client_id, *args, **kwargs):
-    return _source_closed(db, client_id)
+    return ["LEGACY_CONVERSION_ARCHIVE_ONLY"], []

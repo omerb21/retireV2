@@ -1,4 +1,5 @@
 import { buildApiUrl } from "./apiBase";
+import type { ConversionComponent } from "./canonicalConversionsApi";
 
 export interface PensionProductMetadata {
   product_name: string;
@@ -29,6 +30,8 @@ export interface PensionProduct extends PensionProductMetadata {
   version: number;
   source_kind: "manual" | "imported";
   components: Record<string, string>;
+  conversion_components?: ConversionComponent[];
+  conversion_matrix_version?: string;
   reconciliation: Record<string, string | null>;
   updated_at: string;
   source_history?: Array<{ checksum: string; filename: string | null; statement_date: string | null; diagnostics: SourceDiagnostic[] }>;
@@ -56,6 +59,7 @@ async function request<T>(clientId: number, path = "", init?: RequestInit): Prom
 
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const listPensionProducts = (clientId: number) => request<PensionProduct[]>(clientId);
+export const getPensionProduct = (clientId: number, id: string) => request<PensionProduct>(clientId, `/${encodeURIComponent(id)}`);
 export const createPensionProduct = (clientId: number, body: PensionProductMetadata) => request<PensionProduct>(clientId, "", json("POST", body));
 export const savePensionProduct = (clientId: number, id: string, body: ProductSave) => request<PensionProduct>(clientId, `/${encodeURIComponent(id)}`, json("PUT", body));
 export const saveSelectedPensionProducts = (clientId: number, products: Array<ProductSave & { product_id: string }>) => request<PensionProduct[]>(clientId, "/save-selected", json("POST", { products }));

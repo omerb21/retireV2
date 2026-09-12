@@ -1,4 +1,5 @@
 import { listPensionProducts, type PensionProduct } from "../api/pensionProductsApi";
+import { CanonicalConversionHistory } from "../components/CanonicalConversionHistory";
 import { useEffect, useState } from "react";
 
 import {
@@ -165,6 +166,7 @@ export function RetirementPlanningConsolidatedReviewSection({
 
   return (
     <section aria-labelledby="retirement-planning-consolidated-review-heading">
+      <CanonicalConversionHistory key={clientId} clientId={clientId} currentOnly />
       <h3 id="retirement-planning-consolidated-review-heading">סקירה מאוחדת לתכנון פרישה</h3>
       <ReadOnlyGroup
         heading="מוצרים פנסיוניים"

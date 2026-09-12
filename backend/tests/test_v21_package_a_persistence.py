@@ -95,6 +95,12 @@ def _client(client_id: int = 1) -> Client:
     )
 
 
+def _upgrade_current_facts(db_path: Path) -> None:
+    subprocess.run(["alembic", "upgrade", "head"], cwd=_backend_root(),
+        env=dict(os.environ, DATABASE_URL=f"sqlite:///{db_path.as_posix()}"),
+        capture_output=True, text=True, check=True)
+
+
 def _commit_client(session: Session, client_id: int = 1) -> None:
     session.add(_client(client_id))
     session.commit()
@@ -134,13 +140,14 @@ def test_package_a_tables_models_and_relationships_exist(tmp_path: Path) -> None
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     with Session(engine) as session:
         _commit_client(session)
+        # Seed the historical holding before archive cutover, then exercise
+        # current ORM models against the current migrated schema.
+        session.add(PensionHolding(client_id=1, provider_name="Provider", product_type="pension fund"))
+        session.commit()
+    _upgrade_current_facts(db_path)
+    with Session(engine) as session:
         session.add_all(
             [
-                PensionHolding(
-                    client_id=1,
-                    provider_name="Provider",
-                    product_type="pension fund",
-                ),
                 CapitalAsset(
                     client_id=1,
                     asset_category="bank deposit",
@@ -240,6 +247,8 @@ def test_package_a_tables_models_and_relationships_exist(tmp_path: Path) -> None
 def test_package_a_fact_records_require_client_id(tmp_path: Path, model, kwargs: dict) -> None:
     db_path = tmp_path / f"{model.__tablename__}_client_required.db"
     _upgrade_sqlite_database(db_path)
+    if model is CapitalAsset:
+        _upgrade_current_facts(db_path)
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     with Session(engine) as session:
         session.add(model(**kwargs))
@@ -337,6 +346,7 @@ def test_package_a_field_validation_rules(tmp_path: Path) -> None:
             session.commit()
         session.rollback()
 
+        _upgrade_current_facts(db_path)
         session.add(
             CapitalAsset(
                 client_id=1,

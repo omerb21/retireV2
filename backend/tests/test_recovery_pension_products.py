@@ -13,7 +13,7 @@ from app.db.base import Base, load_all_models
 from app.models.client import Client
 from app.models.pension_product import COMPONENT_CODES, PensionProduct, PensionProductAuditEvent, PensionProductComponent, PensionProductSourceLink
 from app.schemas.pension_product import ProductCreate, ProductUpdate, SaveSelected, exact_money
-from app.services.canonical_pension_source_reader import current_products, conversion_source_availability
+from app.services.canonical_pension_source_reader import current_products
 from app.services.pension_product_import_service import SEVERANCE_TAGS, import_source_batch, _parse_source, rewards_component
 from app.services.pension_product_reconciliation import reconcile
 from app.services.pension_product_service import PensionProductError, create_product, delete_product, product_response, save_selected, update_product
@@ -200,40 +200,16 @@ def test_reader_queries_canonical_only_and_conversion_closed(engine):
     try:
         with Session(engine) as db:
             assert len(current_products(db, 1)) == 1
-            assert conversion_source_availability(db, 1)["available"] is False
+            assert len(current_products(db, 1)[0]["conversion_components"]) == 11
         assert all("m02_" not in sql and "m03_" not in sql and "m04_" not in sql and "m05_" not in sql for sql in statements)
     finally:
         event.remove(engine, "before_cursor_execute", capture)
 
 
 @pytest.mark.parametrize("action", ["list_candidates", "start_conversion", "resolve_conversion", "review_warnings", "correct_coefficient", "supersede_conversion"])
-def test_m06_actions_use_only_canonical_source_and_fail_closed(engine, action):
+def test_m06_actions_are_removed(engine, action):
     from app.services import m06_conversion_service as m06
-
-    with Session(engine) as db, db.begin():
-        create(db)
-    statements = []
-    def capture(conn, cursor, statement, params, context, executemany):
-        statements.append(statement.lower())
-    event.listen(engine, "before_cursor_execute", capture)
-    try:
-        with Session(engine) as db, pytest.raises(m06.M06ConversionError) as failure:
-            getattr(m06, action)(db, 1)
-        assert failure.value.status_code == 409
-        assert failure.value.code == "CANONICAL_CONVERSION_CONTRACT_NOT_IMPLEMENTED"
-        assert any("pension_products" in sql for sql in statements)
-        assert not any(prefix in sql for sql in statements for prefix in ("m02_", "m03_", "m04_", "m05_"))
-        assert not any(sql.lstrip().startswith(("insert", "delete")) for sql in statements)
-    finally:
-        event.remove(engine, "before_cursor_execute", capture)
-
-
-def test_m06_missing_client_has_deterministic_error(engine):
-    from app.services.m06_conversion_service import M06ConversionError, list_candidates
-    with Session(engine) as db, pytest.raises(M06ConversionError) as failure:
-        list_candidates(db, 999999)
-    assert failure.value.status_code == 404
-    assert failure.value.code == "CLIENT_NOT_FOUND"
+    assert not hasattr(m06, action)
 
 
 def test_concurrent_stale_updates_one_winner(engine):

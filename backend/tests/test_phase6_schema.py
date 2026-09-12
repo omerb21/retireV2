@@ -43,6 +43,11 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "canonical_conversion_batches",
+    "canonical_conversions",
+    "canonical_conversion_allocations",
+    "canonical_pension_destinations",
+    "canonical_conversion_reversals",
     "pension_products",
     "pension_product_components",
     "pension_product_source_links",

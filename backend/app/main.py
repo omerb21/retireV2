@@ -5,6 +5,7 @@ from app.api.clients_routes import router as clients_router
 from app.api.fixation_m07_routes import router as fixation_m07_router
 from app.api.fixation_routes import router as fixation_router
 from app.api.pension_product_routes import router as pension_product_router
+from app.api.canonical_conversion_routes import router as canonical_conversion_router
 from app.api.m06_conversion_routes import router as m06_conversion_router
 from app.api.m09_cashflow_routes import router as m09_cashflow_router
 from app.api.m10_comparison_routes import router as m10_comparison_router
@@ -29,6 +30,7 @@ app.include_router(fixation_router)
 app.include_router(fixation_m07_router)
 app.include_router(official_parameter_router)
 app.include_router(pension_product_router)
+app.include_router(canonical_conversion_router)
 app.include_router(m06_conversion_router)
 app.include_router(m09_cashflow_router)
 app.include_router(m10_comparison_router)

@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.pension_product import ExactMoney
 from app.models.retirement_fact_contracts import (
     AMOUNT_BASES,
     ASSUMPTION_CATEGORIES,
@@ -158,7 +159,10 @@ class CapitalAsset(Base):
         default="collected - not yet reviewed",
         server_default=text("'collected - not yet reviewed'"),
     )
-    known_value_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    known_value_amount: Mapped[Decimal | None] = mapped_column(ExactMoney(), nullable=True)
+    origin_kind: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", server_default=text("'manual'"))
+    conversion_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("canonical_conversions.conversion_id", ondelete="RESTRICT"), nullable=True, unique=True)
+    tax_treatment: Mapped[str | None] = mapped_column(String(32), nullable=True)
     value_as_of_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     liquidity_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     restriction_note: Mapped[str | None] = mapped_column(Text, nullable=True)

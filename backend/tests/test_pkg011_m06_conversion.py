@@ -7,7 +7,6 @@ import copy
 import pytest
 from app.db.base import load_all_models
 from app.models.m06_conversion import M06ConversionRevision
-from app.schemas.m06_conversion import M06CoefficientIntent
 from app.services import m06_conversion_service as service
 load_all_models()
 
@@ -51,14 +50,10 @@ def test_manifest_fingerprint_is_canonical_for_mapping_order() -> None:
         {"a": [3, 1], "b": 2}
     )
 
-def test_documentary_intent_requires_complete_provenance() -> None:
-    with pytest.raises(ValueError):
-        M06CoefficientIntent(
-            authority_class="documentary",
-            coefficient="200",
-            reason="source",
-            applicability_declared=False,
-        )
+def test_archive_has_no_request_authority():
+    from app.schemas import m06_conversion
+    assert not hasattr(m06_conversion, "M06CoefficientIntent")
+
 
 @pytest.mark.parametrize(
     ("coefficient", "code"),

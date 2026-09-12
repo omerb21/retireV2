@@ -95,7 +95,7 @@ def test_live_postgresql_cutover_and_archive_guards(postgres_url):
         cursor.execute("""INSERT INTO m02_intake_records(intake_id,client_id,record_kind,manual_technical_reference,declared_provider_name,declared_account_reference,product_name,declared_product_type,declared_total_balance_amount,declared_component_values,source_type,lifecycle_status,preservation_status,diagnostics,created_by_actor,updated_by_actor,lifecycle_decided_by_actor) VALUES('A',1,'manual','manual-A','Provider','Account','Product','provident_fund',100,'[]','manual','accepted_for_review','not_applicable','[]','test','test','test')""")
         cursor.execute("INSERT INTO m05_ledger_subjects(subject_id,client_id,provider_name,account_reference,provider_identity_digest,account_identity_digest) VALUES('S',1,'Provider','Account',%s,%s)", ("a" * 64, "b" * 64))
     assert '"products": 1' in alembic("upgrade", "d3e9a6b2c410")
-    assert alembic("heads").strip() == "e4f0b7c3d521 (head)"
+    assert alembic("heads").strip() == "f5a1c8d4e632 (head)"
     assert alembic("current").strip().startswith("d3e9a6b2c410")
     with psycopg2.connect(postgres_url) as db, db.cursor() as cursor:
         cursor.execute("SELECT count(*) FROM pension_products WHERE reported_product_total=100")

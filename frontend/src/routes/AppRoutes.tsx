@@ -11,7 +11,7 @@ import { GrantsScreen } from "../pages/GrantsScreen";
 import { RunDetailScreen } from "../pages/RunDetailScreen";
 import { RunHistoryScreen } from "../pages/RunHistoryScreen";
 import { PensionProductsScreen } from "../pages/PensionProductsScreen";
-import { M06ConversionScreen } from "../pages/M06ConversionScreen";
+import { LegacyConversionHistoryScreen } from "../pages/LegacyConversionHistoryScreen";
 import { M09CashflowScreen } from "../pages/M09CashflowScreen";
 import { M10ComparisonScreen } from "../pages/M10ComparisonScreen";
 
@@ -24,7 +24,7 @@ export function AppRoutes() {
       <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
       <Route path="/clients/:clientId/pension-products" element={<PensionProductsScreen />} />
-      <Route path="/clients/:clientId/pension-conversion" element={<M06ConversionScreen />} />
+      <Route path="/clients/:clientId/legacy-conversion-history" element={<LegacyConversionHistoryScreen />} />
       <Route path="/clients/:clientId/monthly-cashflow" element={<M09CashflowScreen />} />
       <Route path="/clients/:clientId/scenario-comparison" element={<M10ComparisonScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />

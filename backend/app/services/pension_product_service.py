@@ -59,9 +59,16 @@ def component_balances(db: Session, product_id: str) -> dict:
 
 
 def product_response(db: Session, product: PensionProduct) -> dict:
+    from app.services.canonical_conversion_matrix import destinations, MATRIX_VERSION
     balances = component_balances(db, product.product_id)
     response = {column.name: getattr(product, column.name) for column in PensionProduct.__table__.columns}
     response["components"] = balances
+    response["conversion_matrix_version"] = MATRIX_VERSION
+    response["conversion_components"] = [
+        {"component_id": row.component_id, "component_code": row.component_code,
+         "balance": row.balance, "allowed_destinations": destinations(row.component_code, product.product_type)}
+        for row in db.scalars(select(PensionProductComponent).where(PensionProductComponent.product_id == product.product_id).order_by(PensionProductComponent.component_code))
+    ]
     response["reconciliation"] = reconcile(balances, product.reported_product_total, product.reported_rewards_total, product.reported_severance_total)
     response["source_history"] = [
         {"checksum": row.checksum, "filename": row.filename, "statement_date": row.statement_date, "diagnostics": row.diagnostics}
@@ -85,8 +92,11 @@ def _json_snapshot(value):
     return value
 
 
-def audit(db: Session, product: PensionProduct, action: str, actor: str) -> None:
-    db.add(PensionProductAuditEvent(event_id=uuid4().hex, client_id=product.client_id, product_id=product.product_id, action=action, version=product.version, snapshot=product_response(db, product), actor=actor))
+def audit(db: Session, product: PensionProduct, action: str, actor: str, *, operation: dict | None = None) -> None:
+    snapshot = product_response(db, product)
+    if operation is not None:
+        snapshot["operation"] = _json_snapshot(operation)
+    db.add(PensionProductAuditEvent(event_id=uuid4().hex, client_id=product.client_id, product_id=product.product_id, action=action, version=product.version, snapshot=snapshot, actor=actor))
 
 
 def create_product(db: Session, client_id: int, request: ProductCreate, actor: str) -> PensionProduct:

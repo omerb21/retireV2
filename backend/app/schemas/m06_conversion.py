@@ -4,111 +4,12 @@ from datetime import date, datetime
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel
 
 
 DECIMAL_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
 Mode = Literal["balance_to_monthly_pension", "monthly_pension_to_capital_equivalent"]
 Authority = Literal["documentary", "planner_declared"]
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class M06CoefficientMetadata(StrictModel):
-    source_date: date | None = None
-    source_version: str | None = Field(default=None, min_length=1, max_length=255)
-    issuer_provider: str | None = Field(default=None, min_length=1, max_length=255)
-    age: int | None = Field(default=None, ge=0, le=130)
-    gender: str | None = Field(default=None, min_length=1, max_length=64)
-    pension_option: str | None = Field(default=None, min_length=1, max_length=255)
-    guarantee_period: str | None = Field(default=None, min_length=1, max_length=255)
-    survivor_option: str | None = Field(default=None, min_length=1, max_length=255)
-
-
-class M06CoefficientIntent(StrictModel):
-    authority_class: Authority
-    coefficient: Any = None
-    source_intake_id: str | None = Field(default=None, min_length=1, max_length=64)
-    source_locator: str | None = Field(default=None, min_length=1, max_length=4096)
-    source_note: str | None = Field(default=None, min_length=1, max_length=4096)
-    reason: str = Field(min_length=1, max_length=4096)
-    effective_from: date | None = None
-    effective_to: date | None = None
-    applicability_declared: bool = False
-    metadata: M06CoefficientMetadata = Field(default_factory=M06CoefficientMetadata)
-
-    @field_validator("reason", "source_locator", "source_note")
-    @classmethod
-    def nonblank(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("value must contain non-whitespace characters")
-        return value.strip() if value is not None else None
-
-    @model_validator(mode="after")
-    def authority_shape(self):
-        if self.authority_class == "documentary":
-            if not self.source_intake_id or not (
-                self.source_locator or self.source_note
-            ):
-                raise ValueError(
-                    "documentary evidence requires source_intake_id and a precise locator or source note"
-                )
-        elif not self.source_note or not self.applicability_declared:
-            raise ValueError(
-                "planner declaration requires source_note and applicability_declared"
-            )
-        return self
-
-
-class M06StartRequest(StrictModel):
-    m05_subject_id: str = Field(min_length=1, max_length=64)
-    mode: Mode
-    input_identity: str = Field(min_length=1, max_length=255)
-    coefficient: M06CoefficientIntent
-
-
-class M06ExpectedRevision(StrictModel):
-    expected_current_revision_id: str = Field(min_length=1, max_length=64)
-
-
-class M06ResolveRequest(M06ExpectedRevision):
-    pass
-
-
-class M06WarningReviewRequest(M06ExpectedRevision):
-    warning_ids: list[str]
-    reason_code: str = Field(min_length=1, max_length=128)
-    explanation: str = Field(min_length=1, max_length=4096)
-    confirmed: Literal[True]
-
-
-class M06CoefficientCorrectionRequest(M06ExpectedRevision):
-    coefficient: M06CoefficientIntent
-    correction_reason: str = Field(min_length=1, max_length=4096)
-
-
-class M06SupersedeRequest(M06ExpectedRevision):
-    reason: str = Field(min_length=1, max_length=4096)
-
-
-class M06CandidateResponse(BaseModel):
-    candidate_id: str
-    m05_subject_id: str
-    m05_revision_id: str
-    m02_intake_id: str
-    provider_name: str
-    account_reference: str
-    product_family: str
-    mode: Mode
-    input_identity: str
-    input_amount: str | None
-    input_date: date | None
-    formula_id: str
-    eligible: bool
-    exclusion_reasons: list[str]
-    informational_warnings: list[str]
 
 
 class M06CoefficientResponse(BaseModel):

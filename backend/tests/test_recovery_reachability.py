@@ -22,12 +22,11 @@ ALLOWED_PRODUCTION_MATCHES = {
     "backend/app/models/m04_classification.py": "frozen classification archive and FK targets",
     "backend/app/models/m05_ledger.py": "frozen ledger archive and immutable SQL lexical guards",
     "backend/app/models/m06_conversion.py": "historical source FKs and shared immutable SQL guard",
-    "backend/app/schemas/m06_conversion.py": "historical response fields; old request shapes only reach fail-closed actions",
+    "backend/app/schemas/m06_conversion.py": "historical response fields only; request schemas removed by PKG-002",
     "backend/app/services/m06_conversion_service.py": "historical fingerprints/snapshots and documentation of removed source",
     "backend/app/services/m09_cashflow_service.py": "preserved M06 predecessor snapshot field; eligibility closes current use",
     "backend/app/services/m02_storage.py": "backend-only raw-source integrity/storage primitives",
     "backend/app/services/pension_source_download.py": "backend-only archived raw-source streaming",
-    "frontend/src/api/m06ConversionApi.ts": "read-only historical M06 response/FK types",
 }
 
 

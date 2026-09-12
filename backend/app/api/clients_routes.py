@@ -427,6 +427,11 @@ class CapitalAssetCreateRequest(BaseModel):
     asset_category: str
     asset_description: str
     known_value_amount: Decimal | None = None
+    @field_validator("known_value_amount")
+    @classmethod
+    def validate_exact_amount(cls, value):
+        from app.schemas.pension_product import exact_money
+        return None if value is None else exact_money(value)
     value_as_of_date: date | None = None
     liquidity_note: str | None = None
     restriction_note: str | None = None
@@ -464,6 +469,11 @@ class CapitalAssetUpdateRequest(BaseModel):
     asset_category: str | None = None
     asset_description: str | None = None
     known_value_amount: Decimal | None = None
+    @field_validator("known_value_amount")
+    @classmethod
+    def validate_exact_amount(cls, value):
+        from app.schemas.pension_product import exact_money
+        return None if value is None else exact_money(value)
     value_as_of_date: date | None = None
     liquidity_note: str | None = None
     restriction_note: str | None = None
@@ -491,6 +501,9 @@ class CapitalAssetUpdateRequest(BaseModel):
 
 class CapitalAssetResponse(BaseModel):
     id: int
+    origin_kind: str
+    conversion_id: str | None
+    tax_treatment: str | None
     client_id: int
     asset_category: str
     asset_description: str
@@ -1104,6 +1117,9 @@ def _pension_analysis_record_to_response(row: PensionAnalysisRecord) -> PensionA
 def _capital_asset_to_response(row: CapitalAsset) -> CapitalAssetResponse:
     return CapitalAssetResponse(
         id=row.id,
+        origin_kind=row.origin_kind,
+        conversion_id=row.conversion_id,
+        tax_treatment=row.tax_treatment,
         client_id=row.client_id,
         asset_category=row.asset_category,
         asset_description=row.asset_description,
@@ -1809,6 +1825,8 @@ def update_capital_asset(
 ) -> CapitalAssetResponse:
     _require_client(db, client_id)
     row = _require_capital_asset(db, client_id, capital_asset_id)
+    if row.origin_kind == "canonical_component_conversion":
+        raise HTTPException(409, detail={"code": "CONVERSION_DESTINATION_READ_ONLY", "message": "יעד שנוצר מהמרה ניתן לביטול דרך היסטוריית ההמרות בלבד"})
     _apply_fact_update(row, payload)
     _validate_capital_asset_value_date(row)
     db.commit()

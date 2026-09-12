@@ -3,16 +3,38 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api/pensionProductsApi";
 import { PensionProductsScreen } from "./PensionProductsScreen";
+import { listConversions, previewConversion, executeConversion } from "../api/canonicalConversionsApi";
+vi.mock("../api/canonicalConversionsApi", async importOriginal => ({ ...await importOriginal<typeof import("../api/canonicalConversionsApi")>(), listConversions: vi.fn(), previewConversion: vi.fn(), executeConversion: vi.fn() }));
 
-vi.mock("../api/pensionProductsApi", () => ({ listPensionProducts: vi.fn(), createPensionProduct: vi.fn(), savePensionProduct: vi.fn(), importPensionProducts: vi.fn(), deletePensionProduct: vi.fn() }));
+vi.mock("../api/pensionProductsApi", () => ({ listPensionProducts: vi.fn(), getPensionProduct: vi.fn(), createPensionProduct: vi.fn(), savePensionProduct: vi.fn(), importPensionProducts: vi.fn(), deletePensionProduct: vi.fn() }));
 const codes = ["פיצויים_מעסיק_נוכחי", "פיצויים_לאחר_התחשבנות", "פיצויים_שלא_עברו_התחשבנות", "פיצויים_ממעסיקים_קודמים_רצף_זכויות", "פיצויים_ממעסיקים_קודמים_רצף_קצבה", "תגמולי_עובד_עד_2000", "תגמולי_עובד_אחרי_2000", "תגמולי_עובד_אחרי_2008_לא_משלמת", "תגמולי_מעביד_עד_2000", "תגמולי_מעביד_אחרי_2000", "תגמולי_מעביד_אחרי_2008_לא_משלמת"];
 const product = (): api.PensionProduct => ({ product_id: "p1", client_id: 1, version: 1, source_kind: "manual", product_name: "תכנית א", product_type: "קופת גמל", provider_name: "גוף מנהל", provider_identifier: null, account_reference: "123", start_date: "2000-02-01", statement_date: "2026-09-01", historical_employers: [], reported_product_total: "123.45", reported_rewards_total: null, reported_severance_total: null, components: Object.fromEntries(codes.map(code => [code, "0.00"])), reconciliation: { rewards_component_sum: "0.00", severance_component_sum: "0.00", product_component_sum: "0.00", rewards_discrepancy: null, severance_discrepancy: null, product_discrepancy: "123.45" }, updated_at: "2026-09-01T10:00:00Z" });
 function open(path = "/clients/1/pension-products") {
   return render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/clients/:clientId/pension-products" element={<PensionProductsScreen />} /></Routes></MemoryRouter>);
 }
-beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.listPensionProducts).mockResolvedValue([product()]); });
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.listPensionProducts).mockResolvedValue([product()]); vi.mocked(listConversions).mockResolvedValue([]); });
 
 describe("מוצרים פנסיוניים קנוניים", () => {
+  it("starts a full component conversion directly and refreshes source and persisted history", async () => {
+    const current = { ...product(), components: { ...product().components, [codes[5]]: "40.00" }, conversion_components: [{ component_id: "component", component_code: codes[5], balance: "40.00", allowed_destinations: { capital: "exempt" } }] };
+    const updated = { ...current, version: 2, components: { ...current.components, [codes[5]]: "0.00" }, conversion_components: [{ ...current.conversion_components[0], balance: "0.00" }] };
+    vi.mocked(api.listPensionProducts).mockResolvedValue([current]);
+    vi.mocked(api.getPensionProduct).mockResolvedValue(updated);
+    vi.mocked(previewConversion).mockResolvedValue({ groups: [{ amount: "40.00", tax_treatment: "exempt", coefficient: null, allocations: [{ component_id: "component", component_code: codes[5], amount: "40.00", before: "40.00", after: "0.00" }] }], skipped: [] });
+    vi.mocked(executeConversion).mockResolvedValue({ product_version: 2 });
+    vi.mocked(listConversions).mockResolvedValueOnce([]).mockResolvedValue([{ conversion_id: "conversion", source_product_id: "p1", destination_type: "capital", tax_treatment: "exempt", converted_amount: "40.00", status: "active", version: 1, effective_date: "2026-09-12", actor: "test", pension: null, allocations: [] }]);
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: "המרת תגמולי עובד עד 2000" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("כל היתרה")).toBeChecked();
+    fireEvent.change(within(dialog).getByLabelText("תאריך המרה"), { target: { value: "12/09/2026" } });
+    fireEvent.click(within(dialog).getByText("תצוגה מקדימה"));
+    fireEvent.click(await within(dialog).findByText("אישור המרה"));
+    await waitFor(() => expect(api.getPensionProduct).toHaveBeenCalledWith(1, "p1"));
+    expect(await screen.findByRole("button", { name: "ביטול המרה" })).toBeVisible();
+    expect(screen.getByLabelText("תגמולי עובד עד 2000")).toHaveValue("0.00");
+    expect(vi.mocked(executeConversion).mock.calls[0][1].selections[0].amount).toBeNull();
+  });
   it("shows unresolved material source balances outside collapsed technical details", async () => {
     vi.mocked(api.listPensionProducts).mockResolvedValue([{ ...product(), source_history: [{
       checksum: "source", filename: "safe.xml", statement_date: "2026-09-01",

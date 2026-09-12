@@ -24,6 +24,7 @@ function requestUrl(call: unknown[]): string {
 }
 
 const approvedUrls = [
+  "/api/clients/7/canonical-conversions",
   "/api/clients/7/pension-products",
   "/api/clients/7/capital-assets?lifecycle_status=current",
   "/api/clients/7/recurring-incomes?lifecycle_status=current",
@@ -195,6 +196,14 @@ afterEach(() => {
 });
 
 describe("RetirementPlanningConsolidatedReviewSection", () => {
+  it("shows active canonical destinations after reload and excludes reversed destinations", async () => {
+    const active = { conversion_id: "active", source_product_id: "p", destination_type: "pension", tax_treatment: "taxable", converted_amount: "333.77", status: "active", version: 1, effective_date: "2026-09-12", actor: "test", allocations: [], pension: { name: "קצבה", monthly_display_amount: "1.67", annuity_factor_text: "200.00", coefficient_fallback_used: true, pension_start_date: "2030-01-01" } };
+    vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(jsonResponse(url.endsWith("/canonical-conversions") ? [active, { ...active, conversion_id: "old", status: "reversed", converted_amount: "888.11" }] : rowsForUrl(url)))));
+    render(<RetirementPlanningConsolidatedReviewSection clientId={7} />);
+    expect(await screen.findByText("333.77")).toBeVisible();
+    expect(screen.queryByText("888.11")).toBeNull();
+    expect(screen.getByRole("region", { name: "יעדים פעילים מהמרות" }).querySelector("button")).toBeNull();
+  });
   it("renders seven groups from only approved list APIs with current lifecycle requests", async () => {
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);
@@ -213,13 +222,13 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
     expect(screen.getByText(/לא תועדה סיבה ניטרלית/)).toBeInTheDocument();
     expect(screen.getByText("תאריך הדוח: 01/01/2026")).toBeInTheDocument();
 
-    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
     expect(fetchMock.mock.calls.map(requestUrl)).toEqual(approvedUrls);
     expect(fetchMock.mock.calls.every((call) => requestMethod(call) === "GET")).toBe(true);
-    expect(requestUrl(fetchMock.mock.calls[6])).toBe("/api/clients/7/missing-items");
-    expect(requestUrl(fetchMock.mock.calls[6])).not.toContain("lifecycle_status");
-    expect(requestUrl(fetchMock.mock.calls[6])).not.toContain("advisory_status");
-    expect(requestUrl(fetchMock.mock.calls[6])).not.toContain("status=");
+    expect(requestUrl(fetchMock.mock.calls[7])).toBe("/api/clients/7/missing-items");
+    expect(requestUrl(fetchMock.mock.calls[7])).not.toContain("lifecycle_status");
+    expect(requestUrl(fetchMock.mock.calls[7])).not.toContain("advisory_status");
+    expect(requestUrl(fetchMock.mock.calls[7])).not.toContain("status=");
 
     expect(screen.queryByText("related_record_type")).not.toBeInTheDocument();
     expect(screen.queryByText("related_record_id")).not.toBeInTheDocument();

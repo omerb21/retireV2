@@ -199,6 +199,34 @@ APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
 # FIRST_RECOVERY_PKG_001 immutable definition + explicit PensionHolding disposition.
 # Exact inventory only; no directory wildcard or automatic acceptance of Git changes.
 APPROVED_FIRST_RECOVERY_PATHS = {
+    # Accepted FIRST_RECOVERY_PKG_002; no downstream authorization.
+    "frontend/src/routes/AppRoutes.test.tsx",
+    "backend/alembic/versions/f5a1c8d4e632_canonical_component_conversion.py",
+    "backend/app/api/canonical_conversion_routes.py",
+    "backend/app/api/m06_conversion_routes.py",
+    "backend/app/data/annuity_coefficients/build_snapshot.py",
+    "backend/app/data/annuity_coefficients/snapshot.json",
+    "backend/app/models/canonical_conversion.py",
+    "backend/app/schemas/canonical_conversion.py",
+    "backend/app/schemas/m06_conversion.py",
+    "backend/app/services/annuity_coefficient_service.py",
+    "backend/app/services/canonical_component_conversion_service.py",
+    "backend/app/services/canonical_conversion_archive_service.py",
+    "backend/app/services/canonical_conversion_matrix.py",
+    "backend/tests/test_canonical_component_conversion.py",
+    "backend/tests/test_canonical_conversion_concurrency.py",
+    "backend/tests/test_canonical_conversion_matrix.py",
+    "backend/tests/test_canonical_conversion_migration.py",
+    "backend/tests/test_canonical_conversion_reachability.py",
+    "frontend/src/api/canonicalConversionsApi.ts",
+    "frontend/src/api/canonicalConversionsApi.test.ts",
+    "frontend/src/api/legacyConversionHistoryApi.ts",
+    "frontend/src/components/CanonicalComponentConversionDialog.tsx",
+    "frontend/src/components/CanonicalComponentConversionDialog.test.tsx",
+    "frontend/src/components/CanonicalConversionHistory.tsx",
+    "frontend/src/components/CanonicalConversionHistory.test.tsx",
+    "frontend/src/pages/LegacyConversionHistoryScreen.tsx",
+    "frontend/src/pages/LegacyConversionHistoryScreen.test.tsx",
     "backend/tests/test_recovery_real_xml_mapping.py",
     "backend/alembic/versions/e4f0b7c3d521_pension_source_batch_identity.py",
     "backend/tests/test_recovery_batch_import.py",
@@ -304,6 +332,9 @@ APPROVED_FIRST_RECOVERY_PATHS = {
     "specs/runtime/FIRST_RECOVERY_PKG_001_implementation_progress.md",
 }
 APPROVED_FIRST_RECOVERY_REMOVALS = {
+    "frontend/src/api/m06ConversionApi.ts",
+    "frontend/src/pages/M06ConversionScreen.tsx",
+    "frontend/src/pages/M06ConversionScreen.test.tsx",
     "backend/app/api/m02_intake_routes.py",
     "backend/app/api/m03_review_routes.py",
     "backend/app/api/m04_classification_routes.py",
@@ -380,6 +411,12 @@ def _allowed_untracked_paths() -> set[str]:
 
 def _unapproved_untracked(status_lines: list[str]) -> list[str]:
     allowed_untracked = _allowed_untracked_paths()
+    # Git collapses newly added directories. Expand this exact snapshot folder
+    # before allowing it; unrelated files under app/data are not authorized.
+    if "?? backend/app/data/" in status_lines:
+        actual = {p.relative_to(REPO_ROOT).as_posix() for p in (REPO_ROOT / "backend/app/data").rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+        if actual <= allowed_untracked:
+            allowed_untracked.add("backend/app/data/")
     return [
         line
         for line in status_lines

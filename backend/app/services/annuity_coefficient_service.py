@@ -54,9 +54,15 @@ def coefficient(product, profile, pension_start_date: date, *, retirement_age=No
                 row = max(rows, key=lambda r: int(r["id"]))
                 base, adjustment = Decimal(row["base_coefficient"]), Decimal(row["adjust_percent"])
                 return result(base if adjustment == 0 else base * adjustment, "pension_fund_coefficient", row.get("notes") or "")
-        elif product.start_date:
+        else:
+            # V1 usePensionConversion sends product start date || paymentDateISO.
+            # Canonical requests require that same explicit pension start date;
+            # the separate V1 retirement-year-only route does not apply here.
+            generation_date = product.start_date or pension_start_date
+            keys["generation_date"] = generation_date.isoformat() if generation_date else None
+            keys["generation_date_source"] = "product_start_date" if product.start_date else "pension_start_date"
             generation = next((r["generation_code"] for r in tables["product_to_generation_map"]
-                if r["product_type"] == "ביטוח מנהלים" and r["rule_from_date"] <= product.start_date.isoformat() <= r["rule_to_date"]), None)
+                if generation_date and r["product_type"] == "ביטוח מנהלים" and r["rule_from_date"] <= generation_date.isoformat() <= r["rule_to_date"]), None)
             if generation:
                 keys["generation_code"] = generation
                 if company_name and option_name:

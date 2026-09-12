@@ -272,9 +272,7 @@ def reverse(db, client_id, conversion_id, request, actor):
         .values(status="reversed", version=request.expected_conversion_version + 1, reversed_at=now))
     if changed.rowcount != 1:
         fail("STALE_CONVERSION_VERSION")
-    if capital:
-        capital.lifecycle_status = "superseded"
-    else:
+    if capital is None:
         db.execute(pensions.update().where(pensions.c.conversion_id == conversion_id).values(status="reversed", version=destination["version"] + 1, reversed_at=now))
     _bump(db, product, actor)
     audit(db, product, "reversal", actor, operation={"conversion_id": conversion_id,
@@ -284,4 +282,9 @@ def reverse(db, client_id, conversion_id, request, actor):
     db.execute(reversals.insert().values(reversal_id=result["reversal_id"], client_id=client_id,
         conversion_id=conversion_id, idempotency_key=request.idempotency_key, request_fingerprint=fingerprint(request),
         expected_conversion_version=request.expected_conversion_version, reason=request.reason, actor=actor, result=result))
+    if capital is not None:
+        # The DB requires persisted reversal evidence before retiring the asset.
+        # All writes remain in the same caller-owned atomic transaction.
+        capital.lifecycle_status = "superseded"
+        db.flush()
     return result

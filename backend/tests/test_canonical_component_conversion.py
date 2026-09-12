@@ -17,7 +17,7 @@ from test_recovery_pension_products import engine
 from app.models.canonical_conversion import conversions, allocations, pensions, reversals
 from app.models.pension_product import PensionProductAuditEvent
 from sqlalchemy import func, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DBAPIError
 
 
 def seeded(engine, component=5, balance="100.00", product_type="קופת גמל"):
@@ -38,6 +38,72 @@ def request(source, component=5, amount="40.00", destination="capital", key=None
         effective_date=date(2026, 9, 11), idempotency_key=key or uuid4().hex,
         selections=[{"component_id": row, "component_code": COMPONENT_CODES[component], "amount": amount}],
         pension={"pension_start_date": date(2030, 1, 1)} if destination == "pension" else None)
+
+
+def assert_capital_reversal_is_terminal(engine):
+    from app.services.canonical_component_conversion_service import history
+    source = seeded(engine)
+    with Session(engine) as db, db.begin():
+        result = execute(db, 1, request(source), "lifecycle-test")
+    cid = result["conversions"][0]["conversion_id"]
+    aid = result["conversions"][0]["destination_id"]
+    # Even retirement itself needs canonical reversal evidence, not just SQL.
+    with engine.connect() as db:
+        with pytest.raises(DBAPIError, match="CANONICAL_CONVERSION_HISTORY_IMMUTABLE"):
+            db.execute(text("UPDATE capital_asset SET lifecycle_status='superseded' WHERE id=:id"), {"id": aid})
+        db.rollback()
+    undo = ReversalRequest(expected_conversion_version=1, expected_product_version=result["product_version"], idempotency_key="terminal-undo", reason="test")
+    with Session(engine) as db, db.begin():
+        reverse(db, 1, cid, undo, "lifecycle-test")
+    with Session(engine) as db:
+        before = history(db, 1)
+        audit_before = [e.snapshot for e in db.scalars(select(PensionProductAuditEvent).order_by(PensionProductAuditEvent.created_at))]
+    for orm in (True, False):
+        with Session(engine) as db:
+            with pytest.raises(DBAPIError, match="CANONICAL_CONVERSION_HISTORY_IMMUTABLE"):
+                if orm:
+                    db.get(CapitalAsset, aid).lifecycle_status = "current"
+                    db.flush()
+                else:
+                    db.execute(text("UPDATE capital_asset SET lifecycle_status='current' WHERE id=:id"), {"id": aid})
+            db.rollback()
+            assert db.get(CapitalAsset, aid).lifecycle_status == "superseded"
+            assert db.get(PensionProductComponent, source[1]).balance == Decimal("100.00")
+            assert history(db, 1) == before
+            assert db.scalar(select(conversions.c.status).where(conversions.c.conversion_id == cid)) == "reversed"
+            assert db.scalar(select(func.count()).select_from(CapitalAsset)) == 1
+            assert db.scalar(select(func.count()).select_from(CapitalAsset).where(CapitalAsset.lifecycle_status == "current")) == 0
+            assert [e.snapshot for e in db.scalars(select(PensionProductAuditEvent).order_by(PensionProductAuditEvent.created_at))] == audit_before
+    with Session(engine) as db, db.begin():
+        manual = CapitalAsset(client_id=1, asset_category="other", asset_description="manual", known_value_amount=Decimal("12.34"), value_as_of_date=date(2026, 1, 1))
+        db.add(manual)
+        db.flush()
+        mid = manual.id
+        manual.lifecycle_status = "superseded"
+        db.flush()
+        manual.lifecycle_status = "current"
+        manual.known_value_amount = Decimal("56.78")
+    with Session(engine) as db:
+        assert db.get(CapitalAsset, mid).lifecycle_status == "current"
+        assert db.get(CapitalAsset, mid).known_value_amount == Decimal("56.78")
+
+
+def test_runtime_capital_reversal_is_terminal(engine):
+    assert_capital_reversal_is_terminal(engine)
+
+
+def test_missing_insurance_start_persists_resolved_coefficient_exactly(engine):
+    source = seeded(engine, product_type="ביטוח מנהלים")
+    with Session(engine) as db, db.begin():
+        result = execute(db, 1, request(source, destination="pension"), "test")
+    with Session(engine) as db:
+        row = db.execute(select(pensions)).mappings().one()
+        assert row["monthly_numerator"] == "40.00"
+        assert row["monthly_denominator"] == row["annuity_factor_text"] == "209.35"
+        assert row["coefficient_source"] == "policy_generation_coefficient"
+        assert row["coefficient_source_keys"]["generation_code"] == "Y2013_PLUS"
+        assert not row["coefficient_fallback_used"]
+        assert result["conversions"][0]["coefficient"]["warnings"] == []
 
 
 @pytest.mark.parametrize("index,pension,capital", [(0,None,None),(1,"exempt","capital_gains"),(2,None,None),(3,None,None),

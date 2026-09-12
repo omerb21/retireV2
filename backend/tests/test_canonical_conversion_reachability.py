@@ -1,6 +1,9 @@
 from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+import pytest
 from app.main import app
 from app.db.session import get_db
 from test_recovery_pension_products import engine
@@ -62,6 +65,13 @@ def test_public_api_roundtrip_isolation_manual_assets_and_readonly_destination(e
             assert client.post(root + f"/{cid}/reverse", json={**undo, "amount": "1"}).status_code == 422
             assert client.post(root + f"/{cid}/reverse", json=undo).status_code == 200
             assert client.get(root).json()[0]["status"] == "reversed"
+            # Lifecycle is not a generic update input; the API rejects it before
+            # dispatch. Valid generic edits to canonical assets return 409 above.
+            assert client.put(f"/api/clients/1/capital-assets/{aid}", json={"lifecycle_status": "current"}).status_code == 422
+            with Session(engine) as db:
+                with pytest.raises(DBAPIError, match="CANONICAL_CONVERSION_HISTORY_IMMUTABLE"):
+                    db.execute(text("UPDATE capital_asset SET lifecycle_status='current' WHERE id=:id"), {"id": aid})
+                db.rollback()
             current = client.get("/api/clients/1/capital-assets").json()
             assert aid not in {row["id"] for row in current}
     finally:

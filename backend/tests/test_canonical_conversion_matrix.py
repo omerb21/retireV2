@@ -54,7 +54,7 @@ def test_pension_latest_row_lookup_and_actual_age(kind):
 
 def test_default_200_missing_and_lookup_error(monkeypatch):
     product = SimpleNamespace(product_type="insurance", start_date=None)
-    result = coefficients.coefficient(product, None, date(2030, 1, 1))
+    result = coefficients.coefficient(product, None, date(2030, 1, 1), retirement_age=130)
     assert result["annuity_factor"] == "200.00"
     assert result["warnings"] == ["ANNUITY_COEFFICIENT_DEFAULT_200"]
     assert result["fallback_used"]
@@ -79,3 +79,23 @@ def test_decimal_coefficient_rounding_matches_v1_reference_arithmetic_over_compl
             decimal = Decimal(row["base_coefficient"]) * (1 + Decimal(row["annual_increment_rate"]) * delta)
             v1 = float(row["base_coefficient"]) * (1 + float(row["annual_increment_rate"]) * delta)
             assert decimal.quantize(Decimal(".01")) == Decimal(str(round(v1, 2)))
+
+
+@pytest.mark.parametrize("start,expected,generation", [(None, "209.35", "Y2013_PLUS"), (date(1989, 1, 1), "134.20", "PRE_1990")])
+def test_insurance_generation_date_precedence(start, expected, generation):
+    # V1 e4bd8618, usePensionConversion: parsed product date || paymentDateISO.
+    product = SimpleNamespace(product_type="ביטוח מנהלים", start_date=start)
+    result = coefficients.coefficient(product, None, date(2030, 7, 15), retirement_age=67)
+    assert result["annuity_factor"] == expected
+    assert result["source"] == "policy_generation_coefficient"
+    assert result["lookup_keys"]["generation_code"] == generation
+    assert result["lookup_keys"]["generation_date"] == (start or date(2030, 7, 15)).isoformat()
+    assert result["lookup_keys"]["generation_date_source"] == ("product_start_date" if start else "pension_start_date")
+    assert result["warnings"] == [] and not result["fallback_used"]
+
+
+def test_insurance_substitution_exhausted_no_generation_match():
+    product = SimpleNamespace(product_type="ביטוח מנהלים", start_date=None)
+    result = coefficients.coefficient(product, None, date(2300, 1, 1))
+    assert result["annuity_factor"] == "200.00"
+    assert result["warnings"] == ["ANNUITY_COEFFICIENT_DEFAULT_200"]

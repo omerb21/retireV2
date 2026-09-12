@@ -10,12 +10,27 @@ from sqlalchemy.orm import Session
 
 from test_recovery_migration_postgresql import postgres_url
 from test_canonical_component_conversion import seeded, request
+from test_canonical_component_conversion import assert_capital_reversal_is_terminal
 from app.models.retirement_facts import CapitalAsset
 from app.db.base import load_all_models
 from app.services.canonical_component_conversion_service import execute
 
 BACKEND = Path(__file__).resolve().parents[1]
 REVISION = "f5a1c8d4e632"
+
+
+def test_postgresql_migrated_capital_reversal_cannot_be_reactivated(postgres_url):
+    load_all_models()
+    migrate(postgres_url, "upgrade", "e4f0b7c3d521")
+    migrate(postgres_url, "upgrade", REVISION)
+    engine = create_engine(postgres_url)
+    try:
+        with engine.begin() as db:
+            assert db.scalar(text("SHOW server_version")).startswith("16.")
+            db.execute(text("INSERT INTO clients(client_id,display_name,id_number) VALUES(1,'test','123')"))
+        assert_capital_reversal_is_terminal(engine)
+    finally:
+        engine.dispose()
 
 
 def migrate(url, action, target, success=True):

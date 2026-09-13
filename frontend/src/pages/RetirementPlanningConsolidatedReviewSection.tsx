@@ -1,11 +1,8 @@
-import { listPensionProducts, type PensionProduct } from "../api/pensionProductsApi";
-import { CanonicalConversionHistory } from "../components/CanonicalConversionHistory";
+import { ProfessionalSourceSnapshot } from "../components/ProfessionalSourceSnapshot";
 import { useEffect, useState } from "react";
 
 import {
   ApiTransportError,
-  type CapitalAssetItem,
-  getCapitalAssets,
   getMissingDataItems,
   getPlannerAssumptions,
   getRecurringExpenses,
@@ -111,12 +108,6 @@ function ReadOnlyGroup<T>({
 export function RetirementPlanningConsolidatedReviewSection({
   clientId
 }: RetirementPlanningConsolidatedReviewSectionProps) {
-  const [pensionProducts, setPensionProducts] = useState<GroupState<PensionProduct>>(
-    emptyGroupState<PensionProduct>()
-  );
-  const [capitalAssets, setCapitalAssets] = useState<GroupState<CapitalAssetItem>>(
-    emptyGroupState<CapitalAssetItem>()
-  );
   const [recurringIncomes, setRecurringIncomes] = useState<GroupState<RecurringIncomeItem>>(
     emptyGroupState<RecurringIncomeItem>()
   );
@@ -151,8 +142,6 @@ export function RetirementPlanningConsolidatedReviewSection({
       }
     }
 
-    void loadGroup(() => listPensionProducts(clientId), setPensionProducts);
-    void loadGroup(() => getCapitalAssets(clientId, "current"), setCapitalAssets);
     void loadGroup(() => getRecurringIncomes(clientId, "current"), setRecurringIncomes);
     void loadGroup(() => getRecurringExpenses(clientId, "current"), setRecurringExpenses);
     void loadGroup(() => getRetirementTimingWorkIntentions(clientId, "current"), setRetirementTiming);
@@ -166,43 +155,9 @@ export function RetirementPlanningConsolidatedReviewSection({
 
   return (
     <section aria-labelledby="retirement-planning-consolidated-review-heading">
-      <CanonicalConversionHistory key={clientId} clientId={clientId} currentOnly />
       <h3 id="retirement-planning-consolidated-review-heading">סקירה מאוחדת לתכנון פרישה</h3>
-      <ReadOnlyGroup
-        heading="מוצרים פנסיוניים"
-        state={pensionProducts}
-        emptyMessage="לא תועדו מוצרים פנסיוניים."
-        renderItem={(item) => (
-          <li key={item.product_id}>
-            <article>
-              <h5>{displayValue(item.product_name)}</h5>
-              <p>שם הגוף המנהל: {displayValue(item.provider_name)}</p>
-              <p>סוג מוצר: {heLabel(item.product_type)}</p>
-              <p>אסמכתת חשבון: {displayValue(item.account_reference)}</p>
-              <p>סך מוצר מדווח: {displayValue(item.reported_product_total)}</p>
-              <p>סכום רכיבים: {displayValue(item.reconciliation.product_component_sum)}</p>
-              <p>תאריך הדוח: {formatIsoDate(item.statement_date) || "לא תועד"}</p>
-            </article>
-          </li>
-        )}
-      />
-      <ReadOnlyGroup
-        heading="נכסי הון"
-        state={capitalAssets}
-        emptyMessage="לא תועדו נכסי הון."
-        renderItem={(item) => (
-          <li key={item.id}>
-            <article>
-              <h5>{displayValue(item.asset_description)}</h5>
-              <p>קטגוריית נכס: {heLabel(item.asset_category)}</p>
-              <p>שווי ידוע: {displayValue(item.known_value_amount)}</p>
-              <p>תאריך נכונות השווי: {formatIsoDate(item.value_as_of_date) || "לא תועד"}</p>
-              <p>הערת נזילות: {displayValue(item.liquidity_note)}</p>
-              <p>הערת מגבלה: {displayValue(item.restriction_note)}</p>
-            </article>
-          </li>
-        )}
-      />
+      <ProfessionalSourceSnapshot clientId={clientId} readOnly />
+      <p>הכנסות שוטפות הן עובדות כלליות בלבד; הכנסה מסוג קצבה אינה סמכות קצבה בתמונת המקורות.</p>
       <ReadOnlyGroup
         heading="הכנסות שוטפות"
         state={recurringIncomes}

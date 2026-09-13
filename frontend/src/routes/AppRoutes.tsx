@@ -12,8 +12,7 @@ import { RunDetailScreen } from "../pages/RunDetailScreen";
 import { RunHistoryScreen } from "../pages/RunHistoryScreen";
 import { PensionProductsScreen } from "../pages/PensionProductsScreen";
 import { LegacyConversionHistoryScreen } from "../pages/LegacyConversionHistoryScreen";
-import { M09CashflowScreen } from "../pages/M09CashflowScreen";
-import { M10ComparisonScreen } from "../pages/M10ComparisonScreen";
+import { ProfessionalSourceSnapshotScreen } from "../pages/ProfessionalSourceSnapshotScreen";
 
 export function AppRoutes() {
   return (
@@ -25,8 +24,7 @@ export function AppRoutes() {
       <Route path="/clients/:clientId/employment-history" element={<EmploymentHistoryScreen />} />
       <Route path="/clients/:clientId/pension-products" element={<PensionProductsScreen />} />
       <Route path="/clients/:clientId/legacy-conversion-history" element={<LegacyConversionHistoryScreen />} />
-      <Route path="/clients/:clientId/monthly-cashflow" element={<M09CashflowScreen />} />
-      <Route path="/clients/:clientId/scenario-comparison" element={<M10ComparisonScreen />} />
+      <Route path="/clients/:clientId/professional-sources" element={<ProfessionalSourceSnapshotScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
       <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
       <Route path="/clients/:clientId/fixation/workspace" element={<FixationWorkspaceScreen />} />

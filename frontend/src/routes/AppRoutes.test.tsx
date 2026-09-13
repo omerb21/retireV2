@@ -10,3 +10,8 @@ it("registers the explicit read-only archive route, not a professional conversio
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.getByRole("link")).toHaveAttribute("href", "/clients/1/pension-products");
 });
+
+it.each(["monthly-cashflow", "scenario-comparison"])("does not register old %s professional execution", path => {
+  const {container} = render(<MemoryRouter initialEntries={[`/clients/1/${path}`]}><AppRoutes /></MemoryRouter>);
+  expect(container.querySelector("button, form, h1, h2, h3")).toBeNull();
+});

@@ -33,6 +33,7 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "canonical_manual_pension_sources",
     "canonical_conversion_batches",
     "canonical_conversions",
     "canonical_conversion_allocations",

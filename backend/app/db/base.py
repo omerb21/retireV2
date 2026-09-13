@@ -8,6 +8,7 @@ class Base(DeclarativeBase):
 
 
 def load_all_models() -> None:
+    import app.models.canonical_manual_pension_source  # noqa: F401
     # Import models so they are registered on Base.metadata for Alembic.
     import app.models.canonical_conversion  # noqa: F401
     import app.models.actual_capitalization  # noqa: F401

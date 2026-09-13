@@ -1360,17 +1360,10 @@ export function ClientDetailScreen() {
         </Link>
         <Link
           className="button-link"
-          to={`/clients/${validRouteClientId}/monthly-cashflow`}
+          to={`/clients/${validRouteClientId}/professional-sources`}
           state={{ clientName: client.full_name }}
         >
-          M09 — תזרים מזומנים חודשי
-        </Link>
-        <Link
-          className="button-link"
-          to={`/clients/${validRouteClientId}/scenario-comparison`}
-          state={{ clientName: client.full_name }}
-        >
-          M10 — השוואת תרחישים
+          תמונת מקורות פנסיוניים ופיננסיים
         </Link>
       </p>
       <p>

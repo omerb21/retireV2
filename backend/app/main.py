@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from app.api.professional_source_routes import router as professional_source_router
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.clients_routes import router as clients_router
@@ -26,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(clients_router)
+app.include_router(professional_source_router)
 app.include_router(fixation_router)
 app.include_router(fixation_m07_router)
 app.include_router(official_parameter_router)

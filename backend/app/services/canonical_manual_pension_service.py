@@ -1,0 +1,38 @@
+from datetime import datetime, timezone
+from uuid import uuid4
+from sqlalchemy import select
+from app.models.canonical_manual_pension_source import CanonicalManualPensionSource as Manual
+from app.services.pension_product_service import lock_client, PensionProductError, _json_snapshot
+
+
+def response(row):
+    return _json_snapshot({c.name: getattr(row, c.name) for c in Manual.__table__.columns})
+
+
+def create(db, client_id, payload):
+    lock_client(db, client_id)
+    row = Manual(manual_pension_source_id=uuid4().hex, client_id=client_id, **payload.model_dump())
+    db.add(row)
+    db.flush()
+    return response(row)
+
+
+def change(db, client_id, source_id, payload, *, supersede=False):
+    lock_client(db, client_id)
+    row = db.scalar(select(Manual).where(Manual.client_id == client_id, Manual.manual_pension_source_id == source_id)
+                    .with_for_update().execution_options(populate_existing=True))
+    if row is None:
+        raise PensionProductError("MANUAL_PENSION_NOT_FOUND", "מקור הקצבה לא נמצא", 404)
+    if row.lifecycle_status != "current":
+        raise PensionProductError("MANUAL_PENSION_SUPERSEDED", "מקור הקצבה אינו נוכחי")
+    if row.version != payload.expected_version:
+        raise PensionProductError("STALE_MANUAL_PENSION_VERSION", "המקור השתנה; יש לרענן")
+    if supersede:
+        row.lifecycle_status = "superseded"
+    else:
+        for key, value in payload.model_dump(exclude={"expected_version"}).items():
+            setattr(row, key, value)
+    row.version += 1
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return response(row)

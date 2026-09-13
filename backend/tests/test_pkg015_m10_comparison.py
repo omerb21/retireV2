@@ -13,7 +13,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base, load_all_models
 from app.db.session import get_db
-from app.main import app
+# Historical schema/engine regression only; public sealing is tested separately.
+from legacy_m09_m10_test_app import app
 from app.models.client import Client
 from app.models.m09_scenario_subject import M09SubjectRun
 from app.models.retirement_facts import RecurringExpense, RecurringIncome

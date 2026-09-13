@@ -185,9 +185,9 @@ describe("ClientDetailScreen", () => {
       "href",
       "/clients/7/employment-history"
     );
-    expect(screen.getByRole("link", { name: "M10 — השוואת תרחישים" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "תמונת מקורות פנסיוניים ופיננסיים" })).toHaveAttribute(
       "href",
-      "/clients/7/scenario-comparison"
+      "/clients/7/professional-sources"
     );
     expect(screen.getByRole("link", { name: "חזרה לרשימת הלקוחות" })).toHaveAttribute("href", "/clients");
   });

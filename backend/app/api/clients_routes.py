@@ -1785,6 +1785,8 @@ def create_capital_asset(
     db: Session = Depends(get_db),
 ) -> CapitalAssetResponse:
     _require_client(db, client_id)
+    from app.services.pension_product_service import lock_client
+    lock_client(db, client_id)
     row = CapitalAsset(client_id=client_id, **payload.model_dump(exclude_none=True))
     db.add(row)
     db.commit()
@@ -1824,6 +1826,8 @@ def update_capital_asset(
     db: Session = Depends(get_db),
 ) -> CapitalAssetResponse:
     _require_client(db, client_id)
+    from app.services.pension_product_service import lock_client
+    lock_client(db, client_id)
     row = _require_capital_asset(db, client_id, capital_asset_id)
     if row.origin_kind == "canonical_component_conversion":
         raise HTTPException(409, detail={"code": "CONVERSION_DESTINATION_READ_ONLY", "message": "יעד שנוצר מהמרה ניתן לביטול דרך היסטוריית ההמרות בלבד"})

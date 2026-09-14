@@ -698,10 +698,13 @@ def test_package_adds_no_resolution_persistence_or_authority_vocabulary() -> Non
         "missing_inputs",
         "ambiguous_inputs",
     }
-    assert not any(
-        "resolution" in table_name
+    # The later planning-input package persists explicit pension identity
+    # decisions, not this derived fixation calculation resolution.
+    assert {
+        table_name
         for table_name in Base.metadata.tables
-    )
+        if "resolution" in table_name
+    } == {"pension_income_resolutions"}
     schema_fields = set(CalculationInputResolutionRequest.model_fields)
     assert {
         "qualified",

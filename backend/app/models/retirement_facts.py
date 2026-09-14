@@ -137,10 +137,6 @@ class CapitalAsset(Base):
             f"asset_category IN ({_quoted(CAPITAL_ASSET_CATEGORIES)})",
             name="ck_capital_asset_asset_category",
         ),
-        CheckConstraint(
-            "known_value_amount IS NULL OR value_as_of_date IS NOT NULL",
-            name="ck_capital_asset_value_date_required",
-        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

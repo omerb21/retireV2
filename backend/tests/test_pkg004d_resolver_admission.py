@@ -557,11 +557,13 @@ def test_legacy_manifest_remains_readable_and_cross_version_is_unknown(
 
 
 def test_no_new_resolution_persistence_table_exists() -> None:
-    assert not {
+    # Only the separately authorized planning-input identity decision table
+    # exists; fixation resolver admission still has no persisted resolution.
+    assert {
         table_name
         for table_name in Base.metadata.tables
         if "resolution" in table_name
-    }
+    } == {"pension_income_resolutions"}
 
 
 @pytest.mark.parametrize("operation", ["validate", "calculate", "save"])

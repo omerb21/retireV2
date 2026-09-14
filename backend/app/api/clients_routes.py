@@ -456,11 +456,6 @@ class CapitalAssetCreateRequest(BaseModel):
     def validate_verification_state(cls, value: str | None) -> str | None:
         return _validate_verification_state(value)
 
-    @model_validator(mode="after")
-    def validate_value_date(self) -> "CapitalAssetCreateRequest":
-        if self.known_value_amount is not None and self.value_as_of_date is None:
-            raise ValueError("value_as_of_date is required when known_value_amount is supplied")
-        return self
 
 
 class CapitalAssetUpdateRequest(BaseModel):
@@ -1223,9 +1218,6 @@ def _validation_error(message: str) -> HTTPException:
 
 
 
-def _validate_capital_asset_value_date(row: CapitalAsset) -> None:
-    if row.known_value_amount is not None and row.value_as_of_date is None:
-        raise _validation_error("value_as_of_date is required when known_value_amount is supplied")
 
 
 def _validate_retirement_timing_work_intention_other_date(
@@ -1832,7 +1824,6 @@ def update_capital_asset(
     if row.origin_kind == "canonical_component_conversion":
         raise HTTPException(409, detail={"code": "CONVERSION_DESTINATION_READ_ONLY", "message": "יעד שנוצר מהמרה ניתן לביטול דרך היסטוריית ההמרות בלבד"})
     _apply_fact_update(row, payload)
-    _validate_capital_asset_value_date(row)
     db.commit()
     db.refresh(row)
     return _capital_asset_to_response(row)

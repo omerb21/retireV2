@@ -199,6 +199,19 @@ APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
 # FIRST_RECOVERY_PKG_001 immutable definition + explicit PensionHolding disposition.
 # Exact inventory only; no directory wildcard or automatic acceptance of Git changes.
 APPROVED_FIRST_RECOVERY_PATHS = {
+    # Authorized planning-input package and narrow capital date constraint relaxation.
+    "backend/alembic/versions/b7c3e0f6a854_planning_input_decisions.py",
+    "backend/app/models/planning_input_decision.py",
+    "backend/app/schemas/planning_input.py",
+    "backend/app/services/planning_input_service.py",
+    "backend/app/api/planning_input_routes.py",
+    "backend/tests/test_planning_input.py",
+    "backend/tests/test_planning_input_postgresql.py",
+    "backend/tests/test_pkg004b2_calculation_input_resolution.py",
+    "backend/tests/test_pkg004d_resolver_admission.py",
+    "frontend/src/api/planningInputApi.ts",
+    "frontend/src/pages/PlanningInputScreen.tsx",
+    "frontend/src/pages/PlanningInputScreen.test.tsx",
     "frontend/src/routes/AppRoutes.test.tsx",
     "backend/tests/legacy_m09_m10_test_app.py",
     "backend/tests/test_pkg013_m09_cashflow.py",

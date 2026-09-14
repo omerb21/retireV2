@@ -353,7 +353,22 @@ def test_package_a_conditional_validation_is_enforced(tmp_path: Path) -> None:
                 "known_value_amount": "500.00",
             },
         )
-        assert asset_value_resp.status_code == 422
+        # Accepted planning-input correction: persist incomplete valuation facts
+        # without guessing a date; readiness is blocked in the derived reader.
+        assert asset_value_resp.status_code == 200
+        asset = asset_value_resp.json()
+        assert asset["known_value_amount"] == "500.00"
+        assert asset["value_as_of_date"] is None
+        assert asset["source_date"] is None
+        reloaded = client.get(f"/api/clients/{client_id}/capital-assets/{asset['id']}")
+        assert reloaded.status_code == 200
+        assert reloaded.json()["value_as_of_date"] is None
+        planning = client.get(f"/api/clients/{client_id}/retirement-planning-input")
+        assert planning.status_code == 200
+        assert not planning.json()["planning_input_ready"]
+        capital = planning.json()["capital_inputs"][0]
+        assert capital["inclusion_state"] == "unresolved"
+        assert "capital_valuation_date_missing" in capital["blocking_facts"]
 
         retirement_date_resp = client.post(
             f"/api/clients/{client_id}/retirement-timing-work-intentions",

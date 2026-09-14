@@ -347,17 +347,20 @@ def test_package_a_field_validation_rules(tmp_path: Path) -> None:
         session.rollback()
 
         _upgrade_current_facts(db_path)
-        session.add(
-            CapitalAsset(
-                client_id=1,
-                asset_category="securities",
-                asset_description="Portfolio",
-                known_value_amount=Decimal("1000.00"),
-            )
+        # The planning-input binding rule permits incomplete capital valuation
+        # facts. Historical holding and unrelated timing constraints stay intact.
+        asset = CapitalAsset(
+            client_id=1,
+            asset_category="securities",
+            asset_description="Portfolio",
+            known_value_amount=Decimal("1000.00"),
         )
-        with pytest.raises(IntegrityError):
-            session.commit()
-        session.rollback()
+        session.add(asset)
+        session.commit()
+        session.refresh(asset)
+        assert asset.known_value_amount == Decimal("1000.00")
+        assert asset.value_as_of_date is None
+        assert asset.source_date is None
 
         session.add(
             RetirementTimingWorkIntention(

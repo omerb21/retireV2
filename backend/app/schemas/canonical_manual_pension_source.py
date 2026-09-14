@@ -36,6 +36,8 @@ class ManualPensionInput(BaseModel):
             number = Decimal(value)
             if not number.is_finite() or (info.field_name == "annuity_factor" and number <= 0):
                 raise ValueError("נתון עשרוני לא תקין")
+            if info.field_name == "fixed_indexation_rate" and number < 0:
+                raise ValueError("שיעור הצמדה שלילי אינו מותר")
             # Fixed decimal text is the authority, not a binary float or a
             # rounded NUMERIC factor. Bound representation before formatting.
             if abs(number.adjusted()) > 120 or number.as_tuple().exponent < -120:

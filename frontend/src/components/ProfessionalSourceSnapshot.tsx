@@ -5,6 +5,8 @@ import { formatIsoDate } from "../utils/dateFormat";
 import { taxLabel } from "../api/canonicalConversionsApi";
 
 const factLabels: Record<string, string> = {
+  monthly_amount_not_positive: "נדרש סכום קצבה חודשי חיובי", balance_not_positive: "נדרשת יתרה חיובית",
+  fixed_indexation_rate_not_positive: "נדרש שיעור הצמדה קבוע חיובי",
   monthly_amount_missing: "חסר סכום קצבה חודשי", balance_missing: "חסרה יתרה", annuity_factor_missing: "חסר מקדם קצבה",
   payer_name_missing: "חסר שם משלם", pension_start_date_missing: "חסר תאריך תחילת קצבה",
   tax_treatment_missing_or_unsupported: "זהות המס חסרה או אינה נתמכת לחישוב מס פנסיוני",

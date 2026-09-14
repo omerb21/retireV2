@@ -24,6 +24,23 @@ from test_canonical_component_conversion import seeded, request
 REVISION = "a6b2d9e5f743"
 
 
+def test_postgresql_corrected_readiness(pg_engine):
+    from test_professional_source_snapshot import assert_positive_basis_readiness, assert_fixed_rate_readiness
+    for mode in ("entered", "calculated"):
+        for amount in ("0.00", "0.01"):
+            assert_positive_basis_readiness(pg_engine, mode, amount)
+    for method, rate, code in (
+        ("fixed", None, "fixed_indexation_rate_missing"),
+        ("fixed", "-1", "fixed_indexation_rate_not_positive"),
+        ("fixed", "0", "fixed_indexation_rate_not_positive"),
+        ("fixed", "0.000000000000000000000000001", None),
+        ("none", None, None), ("cpi", None, None),
+    ):
+        assert_fixed_rate_readiness(pg_engine, method, rate, code)
+        with pg_engine.begin() as db:
+            db.execute(text("DELETE FROM canonical_manual_pension_sources WHERE manual_pension_source_id='rate-case'"))
+
+
 @pytest.fixture
 def pg_engine(postgres_url):
     load_all_models()

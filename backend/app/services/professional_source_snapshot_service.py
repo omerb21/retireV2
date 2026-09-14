@@ -129,12 +129,14 @@ def _snapshot(db, client_id, *, as_of):
             if m.monthly_amount is None:
                 missing.append("monthly_amount_missing")
             else:
-                number(m.monthly_amount)
+                if number(m.monthly_amount) == 0:
+                    missing.append("monthly_amount_not_positive")
         else:
             if m.balance is None:
                 missing.append("balance_missing")
             else:
-                number(m.balance)
+                if number(m.balance) == 0:
+                    missing.append("balance_not_positive")
             if m.annuity_factor is None:
                 missing.append("annuity_factor_missing")
             else:
@@ -143,8 +145,16 @@ def _snapshot(db, client_id, *, as_of):
             missing.append("payer_name_missing")
         if m.indexation_method not in ("none", "cpi", "fixed"):
             missing.append("indexation_method_missing_or_unsupported")
-        if m.indexation_method == "fixed" and m.fixed_indexation_rate is None:
-            missing.append("fixed_indexation_rate_missing")
+        if m.indexation_method == "fixed":
+            if m.fixed_indexation_rate is None:
+                missing.append("fixed_indexation_rate_missing")
+            else:
+                # V1 PensionFunds/handlers.ts at e4bd8618 rejects both zero
+                # (!rate) and negative rates. Preserve incomplete facts, not
+                # their readiness; never substitute or calculate indexation.
+                rate = Decimal(m.fixed_indexation_rate)
+                if not rate.is_finite() or rate <= 0:
+                    missing.append("fixed_indexation_rate_not_positive")
         sources.append({**item, "kind": "manual", "source_id": "manual:" + m.manual_pension_source_id,
             "amount_authority": authority, "provenance": {"manual_pension_source_id": m.manual_pension_source_id, "source_reference": m.source_reference, "source_note": m.source_note},
             "missing_or_blocking_facts": missing})

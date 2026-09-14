@@ -19,6 +19,20 @@ const response = (body: unknown, ok = true) => ({ok, json: async () => body});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("canonical professional sources", () => {
+  it.each([
+    ["monthly_amount_not_positive", "נדרש סכום קצבה חודשי חיובי"],
+    ["balance_not_positive", "נדרשת יתרה חיובית"],
+    ["fixed_indexation_rate_not_positive", "נדרש שיעור הצמדה קבוע חיובי"],
+  ])("explains %s in Hebrew without hiding the source", async (code, label) => {
+    const row = {...source(), calculation_ready:false, missing_or_blocking_facts:[code]};
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(view(1, [row]))));
+    render(<ProfessionalSourceSnapshot clientId={1} />);
+    expect(await screen.findByText(label)).toBeVisible();
+    expect(screen.getByText("מקור לא שלם או חסום לחישוב")).toBeVisible();
+    expect(screen.getByText("1.00 / 3")).toBeVisible();
+    expect(screen.queryByText("עובדות המקור מוכנות לחישוב")).toBeNull();
+    expect(screen.queryByText(code)).toBeNull();
+  });
   it("shows exact ratios, future date, provenance and no conversion edit path", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(view(1, [source("conversion")]))));
     const {container} = render(<ProfessionalSourceSnapshot clientId={1} />);

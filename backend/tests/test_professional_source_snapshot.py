@@ -30,6 +30,91 @@ def facts(**kwargs):
         pension_start_date=date(2040, 1, 1), tax_treatment="taxable", indexation_method="none", **kwargs)
 
 
+@pytest.mark.parametrize("mode,amount", [("entered", "0.00"), ("entered", "0.01"),
+                                        ("calculated", "0.00"), ("calculated", "0.01")])
+def test_manual_positive_basis_readiness(engine, mode, amount):
+    assert_positive_basis_readiness(engine, mode, amount)
+
+
+def assert_positive_basis_readiness(engine, mode, amount):
+    payload = {**facts().model_dump(mode="json"), "input_mode": mode}
+    payload.update({"monthly_amount": amount} if mode == "entered" else
+                   {"monthly_amount": None, "balance": amount, "annuity_factor": "3"})
+    def session():
+        with Session(engine) as db:
+            yield db
+    app.dependency_overrides[get_db] = session
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/clients/1/canonical-pension-sources/manual", json=payload)
+            assert response.status_code == 200, response.text
+            sid = response.json()["manual_pension_source_id"]
+            view = client.get("/api/clients/1/professional-source-snapshot").json()
+        source = next(s for s in view["pension_sources"] if s["manual_pension_source_id"] == sid)
+        assert source["visible"]
+        assert source["calculation_ready"] == (Decimal(amount) > 0)
+        field = "monthly_amount" if mode == "entered" else "balance"
+        assert source[field] == amount
+        assert source["missing_or_blocking_facts"] == ([] if Decimal(amount) > 0 else [field + "_not_positive"])
+        assert source["amount_authority"] == (
+            {"authority_kind": "entered_monthly_amount", "amount": amount} if mode == "entered" else
+            {"authority_kind": "manual_balance_ratio", "numerator": amount, "denominator": "3"})
+        # The positive 0.01/3 ratio stays exact, not a rounded zero authority.
+        with Session(engine) as db:
+            assert getattr(db.get(Manual, sid), field) == Decimal(amount)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("method,rate,code", [
+    ("fixed", None, "fixed_indexation_rate_missing"),
+    ("fixed", "-1", "fixed_indexation_rate_not_positive"),
+    ("fixed", "0", "fixed_indexation_rate_not_positive"),
+    ("fixed", "0.000000000000000000000000001", None),
+    ("none", None, None), ("cpi", None, None),
+])
+def test_fixed_rate_readiness_v1(engine, method, rate, code):
+    assert_fixed_rate_readiness(engine, method, rate, code)
+
+
+def assert_fixed_rate_readiness(engine, method, rate, code):
+    # Direct persistence also covers pre-correction negative source facts.
+    with Session(engine) as db, db.begin():
+        row = Manual(**facts().model_dump(), manual_pension_source_id="rate-case", client_id=1)
+        row.indexation_method, row.fixed_indexation_rate = method, rate
+        db.add(row)
+    source = next(s for s in read(engine)["pension_sources"] if s["manual_pension_source_id"] == "rate-case")
+    assert source["visible"] and source["calculation_ready"] == (code is None)
+    assert source["missing_or_blocking_facts"] == ([] if code is None else [code])
+    assert source["fixed_indexation_rate"] == rate
+    assert source["amount_authority"] == {"authority_kind": "entered_monthly_amount", "amount": "100.00"}
+    with Session(engine) as db:
+        assert db.get(Manual, "rate-case").fixed_indexation_rate == rate
+
+
+@pytest.mark.parametrize("changes", [
+    {"monthly_amount": "-0.01"},
+    {"input_mode": "calculated", "monthly_amount": None, "balance": "-0.01"},
+    {"input_mode": "calculated", "monthly_amount": None, "balance": "1", "annuity_factor": "0"},
+    {"input_mode": "calculated", "monthly_amount": None, "balance": "1", "annuity_factor": "-1"},
+    {"indexation_method": "fixed", "fixed_indexation_rate": "-1"},
+])
+def test_invalid_manual_basis_api_rejected(engine, changes):
+    payload = {**facts().model_dump(mode="json"), **changes}
+    with pytest.raises(ValidationError):
+        ManualPensionInput(**payload)
+    def session():
+        with Session(engine) as db:
+            yield db
+    app.dependency_overrides[get_db] = session
+    try:
+        with TestClient(app) as client:
+            assert client.post("/api/clients/1/canonical-pension-sources/manual", json=payload).status_code == 422
+        assert read(engine)["pension_sources"] == []
+    finally:
+        app.dependency_overrides.clear()
+
+
 @pytest.mark.parametrize("amount", ["40.00", "100.00"])
 @pytest.mark.parametrize("destination", ["pension", "capital"])
 def test_conversion_remaining_and_reversal(engine, amount, destination):
@@ -94,10 +179,10 @@ def test_incomplete_visible_without_defaults(engine, changes, code):
         assert source[key] == value
 
 
-def test_duplicate_reference_not_payer_name_and_fixed_zero_explicit(engine):
+def test_duplicate_reference_not_payer_name_and_fixed_positive_explicit(engine):
     with Session(engine) as db, db.begin():
         for _ in range(2):
-            manual.create(db, 1, ManualPensionInput(**{**facts().model_dump(), "indexation_method": "fixed", "fixed_indexation_rate": "0"}))
+            manual.create(db, 1, ManualPensionInput(**{**facts().model_dump(), "indexation_method": "fixed", "fixed_indexation_rate": "0.01"}))
     assert all(s["calculation_ready"] for s in read(engine)["pension_sources"])
     with Session(engine) as db, db.begin():
         for row in db.scalars(select(Manual)):

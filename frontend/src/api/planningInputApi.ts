@@ -14,6 +14,21 @@ export interface PlanningItem {
   amount_authority?: {amount?: string; numerator?: string; denominator?: string};
 }
 export interface PlanningInput {
+  retirement_target?: {
+    contract_version: string; retirement_target_date: string | null;
+    decision_provenance: string; decision_actor: string | null; decided_at: string | null;
+    relation_to_planning_base: string; retirement_target_ready: boolean;
+    blockers: string[]; warnings: string[]; reference_fingerprint_at_decision: string | null;
+    current_reference_fingerprint: string; decision_fingerprint: string;
+  };
+  target_reference_facts?: Array<{
+    reference_id: string; source_id: string; source_kind: string; source_field: string;
+    value_kind: "date" | "age"; date_value: string | null; age_value: number | null;
+    source_semantic_fingerprint: string | null; source_version: number | null;
+    lifecycle_state: string; unresolved_state: string[];
+  }>;
+  ready_for_next_planning_calculation?: boolean;
+  planning_calculation_input_fingerprint?: string;
   contract_version: string; client_id: number; decision_version: number; planning_base_date: string | null;
   date_candidates: Array<{source_id: string; field: string; date: string}>;
   source_state_fingerprint: string; planning_input_fingerprint: string; planning_input_ready: boolean;

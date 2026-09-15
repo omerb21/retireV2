@@ -45,6 +45,11 @@ def read(db, client_id):
         return derive(db, client_id)
 
 
+def planning_decision_semantics(decision):
+    """Closed pre-target semantic boundary, independent of row existence."""
+    return {"planning_base_date": decision.planning_base_date if decision else None}
+
+
 def derive(db, client_id):
     # Same transaction as all subsequent reads. The fixed as_of value has no
     # financial meaning and its calendar-only output is discarded below.
@@ -157,7 +162,9 @@ def derive(db, client_id):
     result["planning_input_ready"] = not result["blocking_facts"]
     result["planning_input_fingerprint"] = fingerprint({"contract": CONTRACT, "source": snapshot["source_state_fingerprint"],
         "incomes": [record(r) for r in incomes], "expenses": [record(r) for r in expenses], "timings": [record(r) for r in timings],
-        "client": record(client), "decision": record(decision) if decision else None, "resolutions": [record(r) for r in resolutions]})
+        "client": record(client), "decision": planning_decision_semantics(decision), "resolutions": [record(r) for r in resolutions]})
+    from app.services.retirement_target_service import extend_read
+    extend_read(result, decision, client, timings, snapshot)
     return serialize(result)
 
 

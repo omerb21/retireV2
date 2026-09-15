@@ -27,3 +27,10 @@ class IncomeResolutionDecision(BaseModel):
         elif not self.canonical_source_id or not self.expected_canonical_fingerprint or self.income_category:
             raise ValueError("נדרש מקור קצבה קנוני קיים וטביעת המקור שלו")
         return self
+
+
+class TargetDateDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+    expected_target_reference_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    retirement_target_date: date | None

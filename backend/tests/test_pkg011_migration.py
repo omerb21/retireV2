@@ -231,7 +231,7 @@ def _insert_m06_revision(
 
 
 def test_pkg011_is_single_additive_head() -> None:
-    assert run("sqlite:///:memory:", "heads").stdout.strip() == "b7c3e0f6a854 (head)"
+    assert run("sqlite:///:memory:", "heads").stdout.strip() == "c8d4f1a7b965 (head)"
 
 
 def test_pkg011_upgrade_downgrade_reupgrade_is_bounded(tmp_path: Path) -> None:

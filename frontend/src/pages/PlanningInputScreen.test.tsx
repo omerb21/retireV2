@@ -12,6 +12,59 @@ function renderPage() {return render(<MemoryRouter initialEntries={["/clients/1/
   <Route path="/clients/:clientId/planning-input" element={<PlanningInputScreen />} /></Routes></MemoryRouter>);}
 afterEach(() => vi.unstubAllGlobals());
 
+const targetView = (saved: string | null = null) => ({...view(), retirement_target: {
+  contract_version: "canonical-retirement-target-date-authority-v1", retirement_target_date: saved,
+  current_reference_fingerprint: "a".repeat(64), relation_to_planning_base: "base_missing",
+  retirement_target_ready: false, blockers: [], warnings: ["target_reference_dates_conflict"],
+}, target_reference_facts: [
+  {reference_id: "client:1:planned_retirement_age", source_id: "client:1", source_field: "planned_retirement_age",
+   value_kind: "age", age_value: 67, date_value: null, lifecycle_state: "current", unresolved_state: []},
+  {reference_id: "client:1:planned_retirement_date", source_id: "client:1", source_field: "planned_retirement_date",
+   value_kind: "date", date_value: "2040-01-02", age_value: null, lifecycle_state: "current", unresolved_state: []},
+]});
+
+it("target references never preselect, age is not converted, date helper is unsaved", async () => {
+  const fetcher = vi.fn().mockResolvedValue(response(targetView())); vi.stubGlobal("fetch", fetcher);
+  const {container} = renderPage();
+  const input = await screen.findByLabelText("תאריך יעד לפרישה");
+  expect(input).toHaveValue("");
+  expect(screen.getByText(/גיל 67/)).toBeVisible();
+  expect(screen.getByText("קיימים תאריכי ייחוס שונים — ללא עדיפות אוטומטית")).toBeVisible();
+  expect(screen.getAllByRole("button", {name: "העתקת תאריך הייחוס לשדה היעד"})).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", {name: "העתקת תאריך הייחוס לשדה היעד"}));
+  expect(input).toHaveValue("02/01/2040");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(container.querySelector('main')).toHaveAttribute('dir', 'rtl');
+  expect(container.querySelector('input[type="date"]')).toBeNull();
+  fireEvent.click(screen.getByRole("button", {name: "שמירת תאריך היעד"}));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  expect(fetcher.mock.calls[1][0]).toContain('/target-date');
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({expected_version: 0,
+    expected_target_reference_fingerprint: "a".repeat(64), retirement_target_date: "2040-01-02"});
+});
+
+it("target explicit clear submits null and refreshes canonical input", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response(targetView("2040-01-02")))
+    .mockResolvedValueOnce(response({decision_version: 1})).mockResolvedValue(response({...targetView(), decision_version: 1}));
+  vi.stubGlobal("fetch", fetcher); renderPage();
+  expect(await screen.findByLabelText("תאריך יעד לפרישה")).toHaveValue("02/01/2040");
+  fireEvent.click(screen.getByRole("button", {name: "ניקוי מפורש של תאריך היעד"}));
+  await waitFor(() => expect(screen.getByLabelText("תאריך יעד לפרישה")).toHaveValue(""));
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({expected_version: 0,
+    expected_target_reference_fingerprint: "a".repeat(64), retirement_target_date: null});
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
+
+it("does not automatically retry a stale target decision", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response(targetView("2040-01-02")))
+    .mockResolvedValue({ok: false, json: async () => ({detail: {code: "TARGET_REFERENCE_STATE_STALE", message: "עובדות הייחוס השתנו"}})});
+  vi.stubGlobal("fetch", fetcher); renderPage();
+  await screen.findByLabelText("תאריך יעד לפרישה");
+  fireEvent.click(screen.getByRole("button", {name: "שמירת תאריך היעד"}));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
 it("requires explicit date confirmation and sends exact version", async () => {
   const fetcher = vi.fn().mockResolvedValue(response(view())); vi.stubGlobal("fetch", fetcher);
   const {container} = renderPage();

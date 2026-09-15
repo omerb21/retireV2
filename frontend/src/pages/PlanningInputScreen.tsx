@@ -6,6 +6,13 @@ import { formatIsoDate } from "../utils/dateFormat";
 import { taxLabel } from "../api/canonicalConversionsApi";
 
 const labels: Record<string, string> = {
+  retirement_target_date_missing: "לא נבחר תאריך יעד לפרישה", retirement_target_before_planning_base_date: "תאריך היעד קודם למועד הבסיס",
+  base_and_target_missing: "חסרים מועד בסיס ותאריך יעד", base_missing: "חסר מועד בסיס", target_missing: "חסר תאריך יעד",
+  before_base: "היעד קודם למועד הבסיס", equal_to_base: "היעד שווה למועד הבסיס — אופק באורך אפס", after_base: "היעד אחרי מועד הבסיס",
+  target_reference_dates_conflict: "קיימים תאריכי ייחוס שונים — ללא עדיפות אוטומטית",
+  retirement_target_differs_from_reference_dates: "תאריך היעד שונה מתאריכי ייחוס",
+  target_reference_state_changed_since_decision: "עובדות הייחוס השתנו מאז ההחלטה — היעד לא שונה",
+  planned_retirement_age: "גיל פרישה שנמסר — ללא המרה לתאריך",
   planning_base_date_missing: "לא נבחר מועד בסיס לתכנון", frequency_unsupported: "תדירות אינה נתמכת לנרמול",
   amount_invalid: "סכום אינו תקין", start_date_missing: "חסר תאריך התחלה", end_date_missing: "חסר תאריך סיום ידוע",
   continuation_unknown: "מצב ההמשכיות אינו ידוע", date_range_contradictory: "תאריכי התחולה סותרים",
@@ -110,6 +117,7 @@ function Workspace({id}: {id: number}) {
         <label>מועד בסיס מפורש<HebrewDateInput value={date} onChange={setDate} /></label>
         <button type="submit">אישור מועד הבסיס</button>
       </form>
+      <TargetAuthority key={`${id}:${data.decision_version}:${data.retirement_target?.current_reference_fingerprint}`} data={data} save={save} />
       <h2>מועדים לעיון — אין בחירה אוטומטית</h2>
       {data.client_reference_facts && <p>תאריך לידה שנמסר: {formatIsoDate(data.client_reference_facts.birth_date) || "לא תועד"} · גיל פרישה שנמסר: {data.client_reference_facts.planned_retirement_age ?? "לא תועד"} — אינו בחירת מועד בסיס</p>}
       {data.date_candidates.map((c, i) => <p key={`${c.source_id}:${c.field}:${i}`}>{label(c.field)}: {formatIsoDate(c.date)} <button onClick={() => setDate(c.date)}>בחירת מועד זה לאישור</button></p>)}
@@ -122,6 +130,39 @@ function Workspace({id}: {id: number}) {
       <Items title="מקורות שאינם נכללים" items={data.excluded_sources} /><Items title="יתרות ומידע לעיון בלבד" items={data.reference_only} />
     </fieldset>}
   </main>;
+}
+
+function TargetAuthority({data, save}: {data: PlanningInput; save: (path: string, body: unknown) => Promise<void>}) {
+  const authority = data.retirement_target;
+  const [target, setTarget] = useState(authority?.retirement_target_date ?? "");
+  if (!authority) return <p role="alert">סמכות תאריך היעד אינה זמינה; יש לרענן את הקלט.</p>;
+  const write = (value: string | null) => save("/target-date", {
+    expected_version: data.decision_version,
+    expected_target_reference_fingerprint: authority.current_reference_fingerprint,
+    retirement_target_date: value,
+  });
+  return <section><h2>תאריך יעד מפורש לפרישה</h2>
+    <p>מועד בסיס התכנון: {formatIsoDate(data.planning_base_date) || "לא נבחר"}</p>
+    <p>תאריך יעד שמור: {formatIsoDate(authority.retirement_target_date) || "לא נבחר"}</p>
+    <p>{label(authority.relation_to_planning_base)}</p>
+    <p>{authority.retirement_target_ready ? "תאריך היעד תקף" : "תאריך היעד אינו מוכן"}</p>
+    <p>{data.ready_for_next_planning_calculation ? "הקלט והיעד מוכנים לשכבת חישוב עתידית" : "הקלט והיעד טרם מוכנים יחד"}</p>
+    {authority.blockers.map(code => <p key={code}>{label(code)}</p>)}
+    {authority.warnings.map(code => <p key={code}>{label(code)}</p>)}
+    <h3>עובדות ייחוס — אינן המלצה או החלטה</h3>
+    {(data.target_reference_facts ?? []).map(fact => <article key={fact.reference_id}>
+      <p>{label(fact.source_field)}: {fact.value_kind === "age" ? `גיל ${fact.age_value}` : formatIsoDate(fact.date_value)}</p>
+      <small>מזהה מקור: {fact.source_id}</small>
+      <p>{fact.lifecycle_state === "current" ? "מקור נוכחי" : "יש לבדוק את מצב המקור"}</p>
+      {fact.unresolved_state.map(code => <p key={code}>{label(code)}</p>)}
+      {fact.value_kind === "date" && fact.date_value && <button type="button" onClick={() => setTarget(fact.date_value!)}>העתקת תאריך הייחוס לשדה היעד</button>}
+    </article>)}
+    <form onSubmit={event => {event.preventDefault(); if (target) void write(target);}}>
+      <label>תאריך יעד לפרישה<HebrewDateInput value={target} onChange={setTarget} /></label>
+      <button type="submit" disabled={!target}>שמירת תאריך היעד</button>
+      <button type="button" onClick={() => {void write(null);}}>ניקוי מפורש של תאריך היעד</button>
+    </form>
+  </section>;
 }
 export function PlanningInputScreen() {
   const id = Number(useParams().clientId);

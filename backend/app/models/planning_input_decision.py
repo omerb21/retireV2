@@ -11,6 +11,10 @@ class PlanningInputDecision(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.client_id", ondelete="RESTRICT"), primary_key=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     planning_base_date: Mapped[date | None] = mapped_column(Date)
+    retirement_target_date: Mapped[date | None] = mapped_column(Date)
+    retirement_target_decision_actor: Mapped[str | None] = mapped_column(String(128))
+    retirement_target_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retirement_target_reference_fingerprint: Mapped[str | None] = mapped_column(String(64))
     actor: Mapped[str] = mapped_column(String(128), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -1,11 +1,20 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { planningCall, type PlanningInput, type PlanningItem } from "../api/planningInputApi";
+import { planningCall, type PlanningInput, type PlanningItem, type ProjectionBasis, type ProjectionSource } from "../api/planningInputApi";
 import { HebrewDateInput } from "../components/HebrewDateInput";
 import { formatIsoDate } from "../utils/dateFormat";
 import { taxLabel } from "../api/canonicalConversionsApi";
 
 const labels: Record<string, string> = {
+  PLANNING_OR_TARGET_NOT_READY: "קלט התכנון או תאריך היעד אינם מוכנים",
+  SOURCE_VALUE_UNRESOLVED: "שווי המקור חסר או אינו תקין", VALUATION_DATE_MISSING: "חסר תאריך שווי",
+  VALUATION_DATE_AFTER_PLANNING_BASE: "תאריך השווי מאוחר ממועד הבסיס",
+  VALUATION_DATE_AFTER_RETIREMENT_TARGET: "תאריך השווי מאוחר מתאריך היעד",
+  RATE_MISSING: "לא נבחר שיעור שנתי", RATE_INVALID: "השיעור השנתי אינו תקין",
+  RETURN_BASIS_MISSING_OR_INVALID: "נדרשת בחירה מפורשת של נטו או ברוטו",
+  PRICE_BASIS_MISSING_OR_INVALID: "נדרשת בחירה מפורשת של נומינלי או ריאלי",
+  SOURCE_STATE_CHANGED_SINCE_DECISION: "נתוני המקור השתנו — נדרש אישור מחדש",
+  TIMING_CONTEXT_CHANGED_SINCE_DECISION: "מועדי התכנון השתנו — נדרש אישור מחדש",
   retirement_target_date_missing: "לא נבחר תאריך יעד לפרישה", retirement_target_before_planning_base_date: "תאריך היעד קודם למועד הבסיס",
   base_and_target_missing: "חסרים מועד בסיס ותאריך יעד", base_missing: "חסר מועד בסיס", target_missing: "חסר תאריך יעד",
   before_base: "היעד קודם למועד הבסיס", equal_to_base: "היעד שווה למועד הבסיס — אופק באורך אפס", after_base: "היעד אחרי מועד הבסיס",
@@ -118,6 +127,17 @@ function Workspace({id}: {id: number}) {
         <button type="submit">אישור מועד הבסיס</button>
       </form>
       <TargetAuthority key={`${id}:${data.decision_version}:${data.retirement_target?.current_reference_fingerprint}`} data={data} save={save} />
+      {data.projection_basis && <section><h2>בסיס הנחות למקורות הון</h2>
+        <p>הנחות בלבד — ללא חישוב תשואה או שווי עתידי.</p>
+        <p>{data.projection_basis.projection_basis_ready ? "בסיס ההנחות מוכן" : "בסיס ההנחות אינו מוכן"}</p>
+        {data.projection_basis.aggregate_blockers.map(code => <p key={code}>{label(code)}</p>)}
+        {data.projection_basis.covered_capital_sources.length === 0 && <p>אין מקורות הון נוכחיים בתחום זה.</p>}
+        {data.projection_basis.covered_capital_sources.map(source => <ProjectionEditor
+          key={`${source.source_id}:${data.projection_basis!.decision_version}:${source.source_semantic_fingerprint}:${source.projection_timing_context_fingerprint}`}
+          source={source} authority={data.projection_basis!} save={save} />)}
+        {data.projection_basis.noncurrent_or_historical_bound_decisions.map(item => <p key={item.source_id}>
+          החלטה היסטורית בלבד — אינה סמכות נוכחית: <bdi>{item.source_id}</bdi></p>)}
+      </section>}
       <h2>מועדים לעיון — אין בחירה אוטומטית</h2>
       {data.client_reference_facts && <p>תאריך לידה שנמסר: {formatIsoDate(data.client_reference_facts.birth_date) || "לא תועד"} · גיל פרישה שנמסר: {data.client_reference_facts.planned_retirement_age ?? "לא תועד"} — אינו בחירת מועד בסיס</p>}
       {data.date_candidates.map((c, i) => <p key={`${c.source_id}:${c.field}:${i}`}>{label(c.field)}: {formatIsoDate(c.date)} <button onClick={() => setDate(c.date)}>בחירת מועד זה לאישור</button></p>)}
@@ -130,6 +150,40 @@ function Workspace({id}: {id: number}) {
       <Items title="מקורות שאינם נכללים" items={data.excluded_sources} /><Items title="יתרות ומידע לעיון בלבד" items={data.reference_only} />
     </fieldset>}
   </main>;
+}
+
+function ProjectionEditor({source, authority, save}: {source: ProjectionSource; authority: ProjectionBasis; save: (path: string, body: unknown) => Promise<void>}) {
+  const [rate, setRate] = useState(source.annual_rate ?? "");
+  const [returns, setReturns] = useState(source.return_basis ?? "");
+  const [prices, setPrices] = useState(source.price_basis ?? "");
+  const expectations = {expected_version: authority.decision_version,
+    expected_planning_calculation_input_fingerprint: authority.planning_calculation_input_fingerprint,
+    expected_source_semantic_fingerprint: source.source_semantic_fingerprint,
+    expected_timing_context_fingerprint: source.projection_timing_context_fingerprint};
+  // Lexical validation only: never parse the rate through a binary JS number.
+  const validRate = /^(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/.test(rate) || /^-0\.[0-9]*[1-9]$/.test(rate);
+  return <form onSubmit={event => {event.preventDefault(); if (validRate && returns && prices) void save(
+    `/projection-basis/${source.capital_asset_id}`, {...expectations, annual_rate: rate, return_basis: returns, price_basis: prices});}}>
+    <fieldset><legend>בסיס הנחות למקור הון {source.capital_asset_id}</legend>
+      <small>מזהה מקור: <bdi>{source.source_id}</bdi></small>
+      <p>שווי נוכחי: <bdi>{source.known_value_amount ?? "לא תועד"}</bdi></p>
+      <p>תאריך השווי ותחילת התקופה הכלכלית: {formatIsoDate(source.economic_projection_start_date) || "לא תועד"}</p>
+      <p>תאריך היעד: {formatIsoDate(source.retirement_target_date) || "לא נבחר"}</p>
+      <p>{source.projection_basis_source_readiness ? "הנחות המקור מוכנות" : "הנחות המקור אינן מוכנות"}</p>
+      {source.blockers.map(code => <p key={code}>{label(code)}</p>)}
+      <p>שיעור שנתי אפקטיבי, כשבר עשרוני ולא כאחוז. מוסכמת ימים: מספר הימים בפועל חלקי 365.25. ללא חישוב.</p>
+      <label>שיעור שנתי למקור {source.capital_asset_id}<input dir="ltr" value={rate} onChange={e => setRate(e.target.value)} aria-invalid={rate !== "" && !validRate} /></label>
+      {rate !== "" && !validRate && <p>יש להזין שבר עשרוני קנוני גדול ממינוס אחד, ללא מעריך או אפסים מיותרים.</p>}
+      <label>בסיס תשואה למקור {source.capital_asset_id}<select value={returns} onChange={e => setReturns(e.target.value)}>
+        <option value="">יש לבחור במפורש</option><option value="NET">נטו</option><option value="GROSS">ברוטו</option>
+      </select></label>
+      <label>בסיס מחירים למקור {source.capital_asset_id}<select value={prices} onChange={e => setPrices(e.target.value)}>
+        <option value="">יש לבחור במפורש</option><option value="NOMINAL">נומינלי</option><option value="REAL">ריאלי</option>
+      </select></label>
+      <button type="submit" disabled={!validRate || !returns || !prices}>שמירת הנחות למקור {source.capital_asset_id}</button>
+      <button type="button" onClick={() => {void save(`/projection-basis/${source.capital_asset_id}/clear`, expectations);}}>ניקוי הנחות למקור {source.capital_asset_id}</button>
+    </fieldset>
+  </form>;
 }
 
 function TargetAuthority({data, save}: {data: PlanningInput; save: (path: string, body: unknown) => Promise<void>}) {

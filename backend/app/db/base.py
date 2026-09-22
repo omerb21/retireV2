@@ -8,6 +8,7 @@ class Base(DeclarativeBase):
 
 
 def load_all_models() -> None:
+    import app.models.capital_projection_basis  # noqa: F401
     import app.models.planning_input_decision  # noqa: F401
     import app.models.canonical_manual_pension_source  # noqa: F401
     # Import models so they are registered on Base.metadata for Alembic.

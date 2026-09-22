@@ -65,6 +65,62 @@ it("does not automatically retry a stale target decision", async () => {
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
+const projectionView = (rate: string | null = null, version = 2) => ({...targetView(), decision_version: version,
+  projection_basis: {client_id: 1, decision_version: version, planning_calculation_input_fingerprint: 'p'.repeat(64),
+    projection_basis_ready: false, aggregate_blockers: ['RATE_MISSING'], noncurrent_or_historical_bound_decisions: [],
+    covered_capital_sources: [1,2].map(id => ({source_id: `capital:${id}`, capital_asset_id: id,
+      source_semantic_fingerprint: String(id).repeat(64), projection_timing_context_fingerprint: 't'.repeat(64),
+      known_value_amount: id === 1 ? '100.00' : null, value_as_of_date: id === 1 ? '2026-09-01' : null,
+      economic_projection_start_date: id === 1 ? '2026-09-01' : null, retirement_target_date: '2030-01-01',
+      annual_rate: id === 1 ? rate : null, return_basis: id === 1 && rate !== null ? 'NET' : null,
+      price_basis: id === 1 && rate !== null ? 'REAL' : null, projection_basis_source_readiness: false,
+      blockers: id === 1 ? ['RATE_MISSING'] : ['SOURCE_VALUE_UNRESOLVED','VALUATION_DATE_MISSING'], warnings: []}))}});
+
+it('covers incomplete capital sources without rate or basis defaults and preserves exact strings', async () => {
+  const fetcher=vi.fn().mockResolvedValue(response(projectionView())); vi.stubGlobal('fetch',fetcher); renderPage();
+  const rate=await screen.findByLabelText('שיעור שנתי למקור 1');
+  expect(rate).toHaveValue(''); expect(screen.getByLabelText('שיעור שנתי למקור 2')).toHaveValue('');
+  expect(screen.getByLabelText('בסיס תשואה למקור 1')).toHaveValue('');
+  expect(screen.getByLabelText('בסיס מחירים למקור 1')).toHaveValue('');
+  expect(screen.getByText('שווי המקור חסר או אינו תקין')).toBeVisible();
+  expect(screen.getByText('חסר תאריך שווי')).toBeVisible();
+  const exact='123456789012345678901234567890.1234567890123456789';
+  fireEvent.change(rate,{target:{value:exact}});
+  fireEvent.change(screen.getByLabelText('בסיס תשואה למקור 1'),{target:{value:'NET'}});
+  fireEvent.change(screen.getByLabelText('בסיס מחירים למקור 1'),{target:{value:'REAL'}});
+  fireEvent.click(screen.getByRole('button',{name:'שמירת הנחות למקור 1'}));
+  await waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(3));
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({expected_version:2,
+    expected_planning_calculation_input_fingerprint:'p'.repeat(64),expected_source_semantic_fingerprint:'1'.repeat(64),
+    expected_timing_context_fingerprint:'t'.repeat(64),annual_rate:exact,return_basis:'NET',price_basis:'REAL'});
+  expect(fetcher.mock.calls[1][0]).toContain('/projection-basis/1');
+});
+
+it('projection clear is explicit, source-specific and refreshes to missing rather than default rate',async()=>{
+  const fetcher=vi.fn().mockResolvedValueOnce(response(projectionView('0')))
+    .mockResolvedValueOnce(response({decision_version:3})).mockResolvedValue(response(projectionView(null,3)));
+  vi.stubGlobal('fetch',fetcher); renderPage();
+  expect(await screen.findByLabelText('שיעור שנתי למקור 1')).toHaveValue('0');
+  fireEvent.click(screen.getByRole('button',{name:'ניקוי הנחות למקור 1'}));
+  await waitFor(()=>expect(screen.getByLabelText('שיעור שנתי למקור 1')).toHaveValue(''));
+  expect(fetcher.mock.calls[1][0]).toContain('/projection-basis/1/clear');
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).not.toHaveProperty('annual_rate');
+});
+
+it('projection input rejects noncanonical rates and allows explicit zero without automatic requests',async()=>{
+  const fetcher=vi.fn().mockResolvedValue(response(projectionView())); vi.stubGlobal('fetch',fetcher); renderPage();
+  const rate=await screen.findByLabelText('שיעור שנתי למקור 1');
+  fireEvent.change(screen.getByLabelText('בסיס תשואה למקור 1'),{target:{value:'GROSS'}});
+  fireEvent.change(screen.getByLabelText('בסיס מחירים למקור 1'),{target:{value:'NOMINAL'}});
+  for(const bad of ['-1','1e2','NaN','0.00',' 0','+0.2','-0']) {
+    fireEvent.change(rate,{target:{value:bad}});
+    expect(screen.getByRole('button',{name:'שמירת הנחות למקור 1'})).toBeDisabled();
+  }
+  fireEvent.change(rate,{target:{value:'0'}});
+  expect(screen.getByRole('button',{name:'שמירת הנחות למקור 1'})).toBeEnabled();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
 it("requires explicit date confirmation and sends exact version", async () => {
   const fetcher = vi.fn().mockResolvedValue(response(view())); vi.stubGlobal("fetch", fetcher);
   const {container} = renderPage();

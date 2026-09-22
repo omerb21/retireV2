@@ -14,6 +14,7 @@ export interface PlanningItem {
   amount_authority?: {amount?: string; numerator?: string; denominator?: string};
 }
 export interface PlanningInput {
+  projection_basis?: ProjectionBasis;
   retirement_target?: {
     contract_version: string; retirement_target_date: string | null;
     decision_provenance: string; decision_actor: string | null; decided_at: string | null;
@@ -38,6 +39,19 @@ export interface PlanningInput {
   warnings: Array<{code: string; source_id?: string; source_ids?: string[]}>;
   blocking_facts: Array<{source_id: string | null; code: string}>;
   client_reference_facts?: {birth_date: string | null; planned_retirement_age: number | null};
+}
+export interface ProjectionSource {
+  source_id: string; capital_asset_id: number; source_semantic_fingerprint: string;
+  known_value_amount: string | null; value_as_of_date: string | null;
+  economic_projection_start_date: string | null; retirement_target_date: string | null;
+  annual_rate: string | null; return_basis: string | null; price_basis: string | null;
+  projection_basis_source_readiness: boolean; blockers: string[]; warnings: string[];
+  projection_timing_context_fingerprint: string;
+}
+export interface ProjectionBasis {
+  client_id: number; decision_version: number; planning_calculation_input_fingerprint: string;
+  covered_capital_sources: ProjectionSource[]; projection_basis_ready: boolean; aggregate_blockers: string[];
+  noncurrent_or_historical_bound_decisions: Array<{source_id: string}>;
 }
 export async function planningCall<T>(id: number, path = "", body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(buildApiUrl(`/clients/${id}/retirement-planning-input${path}`), {

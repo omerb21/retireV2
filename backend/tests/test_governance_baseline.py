@@ -199,6 +199,12 @@ APPROVED_SIMPLIFIED_EVIDENCE_WORKFLOW_PATHS = {
 # FIRST_RECOVERY_PKG_001 immutable definition + explicit PensionHolding disposition.
 # Exact inventory only; no directory wildcard or automatic acceptance of Git changes.
 APPROVED_FIRST_RECOVERY_PATHS = {
+    "backend/app/models/capital_projection_basis.py",
+    "backend/app/schemas/capital_projection_basis.py",
+    "backend/app/services/capital_projection_basis_service.py",
+    "backend/alembic/versions/d9e5a2b8c076_capital_projection_basis.py",
+    "backend/tests/test_projection_basis.py",
+    "backend/tests/test_projection_basis_postgresql.py",
     # Authorized planning-input package and narrow capital date constraint relaxation.
     "backend/alembic/versions/b7c3e0f6a854_planning_input_decisions.py",
     "backend/app/models/planning_input_decision.py",

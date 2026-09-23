@@ -8,8 +8,21 @@ from app.services import planning_input_service as service
 from app.services.pension_product_service import PensionProductError
 from app.services import capital_projection_basis_service as projection
 from app.schemas.capital_projection_basis import ProjectionDecisionWrite, ProjectionExpectations
+from app.services import capital_projection_execution_service as execution
+from fastapi.responses import JSONResponse
 
 router = APIRouter(prefix="/api/clients/{client_id}/retirement-planning-input", tags=["planning-input"])
+
+
+@router.get('/capital-projection')
+def read_capital_projection(client_id: int, db: Session = Depends(get_db)):
+    try:
+        result = execution.read(db, client_id)
+        return JSONResponse(status_code=200 if result['execution_ready'] else 409, content=result)
+    except PensionProductError as error:
+        raise HTTPException(error.status_code, detail={'code': error.code, 'message': error.message}) from error
+    finally:
+        db.rollback()
 
 
 @router.get("")

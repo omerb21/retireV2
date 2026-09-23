@@ -31,6 +31,15 @@ APPROVED_LOCAL_UNTRACKED_PATHS = {
     "_evidence/",
     "specs/bootstraps/",
 }
+APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS = {
+    "backend/app/api/planning_input_routes.py",
+    "backend/app/services/capital_projection_execution_numeric.py",
+    "backend/app/services/capital_projection_execution_service.py",
+    "backend/tests/test_projection_execution.py",
+    "backend/tests/test_projection_execution_postgresql.py",
+    "backend/tests/test_governance_baseline.py",
+    "specs/runtime/CPX_evidence.md",
+}
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
     "backend/app/schemas/fixation_contracts.py",
@@ -454,6 +463,7 @@ def _status_path(line: str) -> str:
 
 def _allowed_untracked_paths() -> set[str]:
     return {
+        *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
@@ -488,6 +498,7 @@ def _unapproved_untracked(status_lines: list[str]) -> list[str]:
 
 def _approved_tracked_change_paths() -> set[str]:
     return {
+        *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,

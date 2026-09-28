@@ -34,6 +34,8 @@ def migration_contract(url):
         migrate(url,'downgrade','c8d4f1a7b965')
         assert set(inspect(engine).get_table_names())==old_tables
         migrate(url,'upgrade','d9e5a2b8c076')
+        # Historical schema assertions above remain pinned; current reads need the current schema.
+        migrate(url,'upgrade','e0f6b3c9d187')
         context(engine)
         rate='12345678901234567890123456789012345678901234567890.123456789012345678901234567890123456789'
         save(engine,1,payload(engine,1,annual_rate=rate))
@@ -45,6 +47,11 @@ def migration_contract(url):
                 assert spec==(None,None)
         before=read(engine)
         assert 'PROJECTION_DOWNGRADE_WOULD_LOSE_DECISIONS' in migrate(url,'downgrade','c8d4f1a7b965',success=False)
+        # SQLite may commit earlier additive-schema downgrades before the historical guard.
+        # Check the protected decision before returning to the current application's schema.
+        with engine.connect() as db:
+            assert str(db.scalar(text('SELECT annual_rate FROM capital_projection_basis_decisions'))) == rate
+        migrate(url,'upgrade','e0f6b3c9d187')
         assert read(engine)==before
     finally: engine.dispose()
 

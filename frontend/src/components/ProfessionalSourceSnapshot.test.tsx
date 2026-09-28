@@ -20,6 +20,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("canonical professional sources", () => {
   it.each([
+    ["BASE_AMOUNT_EFFECTIVE_DATE_MISSING", "חסר תאריך נכונות לסכום הבסיס החודשי"],
     ["monthly_amount_not_positive", "נדרש סכום קצבה חודשי חיובי"],
     ["balance_not_positive", "נדרשת יתרה חיובית"],
     ["fixed_indexation_rate_not_positive", "נדרש שיעור הצמדה קבוע חיובי"],
@@ -57,6 +58,7 @@ describe("canonical professional sources", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toMatchObject({monthly_amount:"123.45", balance:null, annuity_factor:null,
       pension_start_date:null, tax_treatment:null, fixed_indexation_rate:null});
+    expect(JSON.parse(init.body).base_amount_effective_date).toBeNull();
   });
   it("sends calculated facts and Israeli date, not a rounded monthly authority", async () => {
     const fetcher = vi.fn().mockResolvedValue(response(view()));
@@ -74,6 +76,37 @@ describe("canonical professional sources", () => {
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({
       input_mode:"calculated", balance:"1.00", annuity_factor:"3", monthly_amount:null,
       pension_start_date:"2040-01-02", fixed_indexation_rate:null});
+    expect(JSON.parse(fetcher.mock.calls[1][1].body).base_amount_effective_date).toBeNull();
+  });
+  it.each(["entered", "calculated"] as const)("edits and explicitly clears the independent base date in %s mode", async mode => {
+    const row = {...source(), input_mode:mode, base_amount_effective_date:"2026-09-01"};
+    const fetcher = vi.fn().mockResolvedValue(response(view(1, [row])));
+    vi.stubGlobal("fetch", fetcher);
+    render(<ProfessionalSourceSnapshot clientId={1} />);
+    await screen.findByText(/01\/09\/2026/);
+    fireEvent.click(screen.getByRole("button", {name:"עריכת קצבה ידנית"}));
+    expect(screen.getByLabelText("תאריך נכונות סכום הבסיס החודשי")).toHaveValue("01/09/2026");
+    fireEvent.change(screen.getByLabelText("תאריך תחילת קצבה"), {target:{value:"03/01/2040"}});
+    expect(screen.getByLabelText("תאריך נכונות סכום הבסיס החודשי")).toHaveValue("01/09/2026");
+    fireEvent.change(screen.getByLabelText("תאריך נכונות סכום הבסיס החודשי"), {target:{value:""}});
+    fireEvent.click(screen.getByRole("button", {name:"שמירת קצבה ידנית"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({
+      base_amount_effective_date:null, pension_start_date:"2040-01-03", expected_version:3});
+  });
+  it("sends an explicit base date without inheriting pension start", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response(view()));
+    vi.stubGlobal("fetch", fetcher);
+    render(<ProfessionalSourceSnapshot clientId={1} />);
+    await screen.findByText("לא תועדו מקורות קצבה נוכחיים.");
+    fireEvent.click(screen.getByRole("button", {name:"הוספת קצבה ידנית"}));
+    expect(screen.getByLabelText("תאריך נכונות סכום הבסיס החודשי")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("תאריך נכונות סכום הבסיס החודשי"), {target:{value:"15/09/2026"}});
+    expect(screen.getByLabelText("תאריך תחילת קצבה")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", {name:"שמירת קצבה ידנית"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({
+      base_amount_effective_date:"2026-09-15", pension_start_date:null});
   });
   it.each(["edit", "supersede"])("versions manual %s and refreshes after mutation", async operation => {
     const fetcher = vi.fn().mockResolvedValue(response(view(1, [source()])));

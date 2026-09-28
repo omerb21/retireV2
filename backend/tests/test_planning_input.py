@@ -179,7 +179,7 @@ def test_sqlite_migration_preserves_and_guards_downgrade(tmp_path):
     with engine.connect() as db:
         assert db.execute(text("SELECT * FROM capital_asset")).all() == before
         assert db.execute(text("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")).all() == triggers
-    migrate(url, "upgrade", "d9e5a2b8c076")
+    migrate(url, "upgrade", "e0f6b3c9d187")
     test_capital_ordinary_api_missing_date(engine)
     failure = migrate(url, "downgrade", "a6b2d9e5f743", success=False)
     assert "PLANNING_DOWNGRADE_INCOMPLETE_CAPITAL" in failure

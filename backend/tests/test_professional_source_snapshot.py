@@ -26,8 +26,9 @@ def read(engine, client=1, **kwargs):
 
 
 def facts(**kwargs):
-    return ManualPensionInput(input_mode="entered", payer_name="משלם", monthly_amount="100.00",
-        pension_start_date=date(2040, 1, 1), tax_treatment="taxable", indexation_method="none", **kwargs)
+    return ManualPensionInput(**(dict(input_mode="entered", payer_name="משלם", monthly_amount="100.00",
+        pension_start_date=date(2040, 1, 1), base_amount_effective_date=date(2026, 9, 1),
+        tax_treatment="taxable", indexation_method="none") | kwargs))
 
 
 @pytest.mark.parametrize("mode,amount", [("entered", "0.00"), ("entered", "0.01"),
@@ -55,7 +56,8 @@ def assert_positive_basis_readiness(engine, mode, amount):
         assert source["calculation_ready"] == (Decimal(amount) > 0)
         field = "monthly_amount" if mode == "entered" else "balance"
         assert source[field] == amount
-        assert source["missing_or_blocking_facts"] == ([] if Decimal(amount) > 0 else [field + "_not_positive"])
+        basis_code = "ENTERED_MONTHLY_AMOUNT_NOT_POSITIVE" if mode == "entered" else "MANUAL_BALANCE_NOT_POSITIVE"
+        assert source["missing_or_blocking_facts"] == ([] if Decimal(amount) > 0 else [basis_code, field + "_not_positive"])
         assert source["amount_authority"] == (
             {"authority_kind": "entered_monthly_amount", "amount": amount} if mode == "entered" else
             {"authority_kind": "manual_balance_ratio", "numerator": amount, "denominator": "3"})
@@ -139,7 +141,7 @@ def test_conversion_remaining_and_reversal(engine, amount, destination):
 def test_manual_modes_version_supersede_and_cross_client(engine):
     with Session(engine) as db, db.begin():
         a = manual.create(db, 1, facts())
-        b = manual.create(db, 1, ManualPensionInput(input_mode="calculated", payer_name="משלם", balance="1.00", annuity_factor="3", tax_treatment="exempt", pension_start_date=date(2040, 1, 1), indexation_method="none"))
+        b = manual.create(db, 1, ManualPensionInput(input_mode="calculated", payer_name="משלם", balance="1.00", annuity_factor="3", tax_treatment="exempt", pension_start_date=date(2040, 1, 1), base_amount_effective_date=date(2026, 9, 1), indexation_method="none"))
     view = read(engine, as_of=date(2030, 1, 1))
     assert all(s["calculation_ready"] and not s["has_started"] for s in view["pension_sources"])
     ratio = next(s for s in view["pension_sources"] if s["input_mode"] == "calculated")["amount_authority"]

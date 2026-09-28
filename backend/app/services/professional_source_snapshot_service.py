@@ -12,6 +12,7 @@ from app.models.canonical_conversion import conversions, pensions, allocations, 
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource as Manual
 from app.models.retirement_facts import CapitalAsset, RetirementTimingWorkIntention
 from app.services.pension_product_service import PensionProductError
+from app.services import pension_monthly_basis_service as pension_basis
 
 CONTRACT = "canonical-professional-source-snapshot-v1"
 
@@ -113,7 +114,9 @@ def _snapshot(db, client_id, *, as_of):
         if not trace or sum((a["amount"] for a in trace), Decimal(0)) != numerator or numerator != p["converted_balance"] or numerator != c["converted_amount"] or denominator != number(p["annuity_factor_text"], positive=True) or p["tax_treatment"] != c["tax_treatment"]:
             invalid()
         source_product = product_map[batch_map[c["batch_id"]]["source_product_id"]]
+        basis = pension_basis.conversion(db, client_id, batch_map[c['batch_id']], c, p, trace)
         sources.append({"source_id": "conversion:" + p["pension_destination_id"], "kind": "conversion", "payer_name": p["name"],
+            "monthly_amount_basis": basis,
             "version": p["version"], "lifecycle_status": "current", "pension_start_date": p["pension_start_date"], "tax_treatment": p["tax_treatment"],
             "amount_authority": {"authority_kind": "persisted_conversion_ratio", "numerator": p["monthly_numerator"], "denominator": p["monthly_denominator"]},
             "provenance": {"conversion_id": c["conversion_id"], "pension_destination_id": p["pension_destination_id"], "allocations": trace,
@@ -122,6 +125,7 @@ def _snapshot(db, client_id, *, as_of):
     manual_rows = db.scalars(select(Manual).where(Manual.client_id == client_id, Manual.lifecycle_status == "current").order_by(Manual.manual_pension_source_id)).all()
     for m in manual_rows:
         item = record(m)
+        basis = pension_basis.manual(m, client_id)
         authority = {"authority_kind": "entered_monthly_amount", "amount": m.monthly_amount} if m.input_mode == "entered" else {
             "authority_kind": "manual_balance_ratio", "numerator": m.balance, "denominator": m.annuity_factor}
         missing = []
@@ -139,8 +143,8 @@ def _snapshot(db, client_id, *, as_of):
                     missing.append("balance_not_positive")
             if m.annuity_factor is None:
                 missing.append("annuity_factor_missing")
-            else:
-                number(m.annuity_factor, positive=True)
+            # Basis Authority reports invalid/non-positive stored factor facts
+            # as visible blockers instead of deriving a monthly amount.
         if not m.payer_name:
             missing.append("payer_name_missing")
         if m.indexation_method not in ("none", "cpi", "fixed"):
@@ -156,11 +160,14 @@ def _snapshot(db, client_id, *, as_of):
                 if not rate.is_finite() or rate <= 0:
                     missing.append("fixed_indexation_rate_not_positive")
         sources.append({**item, "kind": "manual", "source_id": "manual:" + m.manual_pension_source_id,
+            "monthly_amount_basis": basis,
             "amount_authority": authority, "provenance": {"manual_pension_source_id": m.manual_pension_source_id, "source_reference": m.source_reference, "source_note": m.source_note},
             "missing_or_blocking_facts": missing})
     warnings = []
     for s in sources:
         missing = s["missing_or_blocking_facts"]
+        missing.extend(s['monthly_amount_basis']['basis_blockers'])
+        missing[:] = sorted(set(missing))
         if s["pension_start_date"] is None:
             missing.append("pension_start_date_missing")
         if s["tax_treatment"] not in ("taxable", "exempt"):
@@ -207,6 +214,7 @@ def _snapshot(db, client_id, *, as_of):
     if not any(t.planned_work_end_date or t.intended_pension_start_date or t.other_known_retirement_date or t.anticipated_work_end_date for t in timing):
         client_warnings.append("retirement_date_facts_missing")
     result = serialize({"contract_version": CONTRACT, "client_id": client_id, "pension_products": product_output,
+        "pension_monthly_amount_basis_fingerprint": pension_basis.registry(client_id, [s['monthly_amount_basis'] for s in sources]),
         "pension_sources": sorted(sources, key=lambda s: s["source_id"]), "capital_sources": capital,
         "client_fact_warnings": client_warnings, "source_warnings": sorted(warnings, key=lambda w: w["source_id"])})
     # Calendar presentation is not source state. Crossing midnight must not

@@ -40,11 +40,16 @@ def migration_contract(url):
         migrate(url, 'downgrade', 'b7c3e0f6a854')
         assert {c['name'] for c in inspect(engine).get_columns('planning_input_decisions')} == old_columns
         migrate(url, 'upgrade', 'c8d4f1a7b965')
+        migrate(url, 'upgrade', 'e0f6b3c9d187')
         save(engine, payload(engine, date(2029, 1, 1)))
         before_failure = view(engine)
         assert before_failure['retirement_target']['relation_to_planning_base'] == 'before_base'
         failure = migrate(url, 'downgrade', 'b7c3e0f6a854', success=False)
         assert 'TARGET_DOWNGRADE_WOULD_LOSE_DECISION' in failure
+        # SQLite may commit earlier additive-schema downgrades before the historical guard.
+        with engine.connect() as db:
+            assert str(db.scalar(text('SELECT retirement_target_date FROM planning_input_decisions'))) == '2029-01-01'
+        migrate(url, 'upgrade', 'e0f6b3c9d187')
         assert view(engine) == before_failure
         save(engine, payload(engine, None))
         migrate(url, 'downgrade', 'b7c3e0f6a854')

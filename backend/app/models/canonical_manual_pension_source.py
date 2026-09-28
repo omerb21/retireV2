@@ -28,6 +28,7 @@ class CanonicalManualPensionSource(Base):
     balance: Mapped[Decimal | None] = mapped_column(ExactMoney())
     annuity_factor: Mapped[str | None] = mapped_column(String(128))
     pension_start_date: Mapped[date | None] = mapped_column(Date)
+    base_amount_effective_date: Mapped[date | None] = mapped_column(Date)
     tax_treatment: Mapped[str | None] = mapped_column(String(64))
     indexation_method: Mapped[str | None] = mapped_column(String(64))
     fixed_indexation_rate: Mapped[str | None] = mapped_column(String(128))

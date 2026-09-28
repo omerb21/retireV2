@@ -15,6 +15,7 @@ class ManualPensionInput(BaseModel):
     balance: Money | None = None
     annuity_factor: str | None = Field(default=None, max_length=128)
     pension_start_date: date | None = None
+    base_amount_effective_date: date | None = None
     tax_treatment: str | None = Field(default=None, max_length=64)
     indexation_method: str | None = Field(default=None, max_length=64)
     fixed_indexation_rate: str | None = Field(default=None, max_length=128)

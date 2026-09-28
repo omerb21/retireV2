@@ -68,6 +68,7 @@ def derive(db, client_id):
     resolution_map = {r.income_id: r for r in resolutions}
     result = dict(contract_version=CONTRACT, client_id=client_id, decision_version=decision.version if decision else 0,
         planning_base_date=base, date_candidates=[], source_state_fingerprint=snapshot["source_state_fingerprint"],
+        pension_monthly_amount_basis_fingerprint=snapshot['pension_monthly_amount_basis_fingerprint'],
         pension_inputs=[], general_income_inputs=[], expense_inputs=[], capital_inputs=[], reference_only=[],
         excluded_sources=[], unresolved_items=[], warnings=[], blocking_facts=[], planning_input_ready=False)
     if base is None:

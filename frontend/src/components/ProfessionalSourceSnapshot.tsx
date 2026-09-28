@@ -5,6 +5,11 @@ import { formatIsoDate } from "../utils/dateFormat";
 import { taxLabel } from "../api/canonicalConversionsApi";
 
 const factLabels: Record<string, string> = {
+  BASE_AMOUNT_EFFECTIVE_DATE_MISSING: "חסר תאריך נכונות לסכום הבסיס החודשי",
+  ENTERED_MONTHLY_AMOUNT_MISSING: "חסר סכום בסיס חודשי", ENTERED_MONTHLY_AMOUNT_NOT_POSITIVE: "נדרש סכום בסיס חודשי חיובי",
+  MANUAL_BALANCE_MISSING: "חסרה יתרת בסיס", MANUAL_BALANCE_NOT_POSITIVE: "נדרשת יתרת בסיס חיובית",
+  MANUAL_ANNUITY_FACTOR_MISSING: "חסר מקדם קצבה", MANUAL_ANNUITY_FACTOR_INVALID: "מקדם הקצבה אינו תקין",
+  MANUAL_ANNUITY_FACTOR_NOT_POSITIVE: "נדרש מקדם קצבה חיובי",
   monthly_amount_not_positive: "נדרש סכום קצבה חודשי חיובי", balance_not_positive: "נדרשת יתרה חיובית",
   fixed_indexation_rate_not_positive: "נדרש שיעור הצמדה קבוע חיובי",
   monthly_amount_missing: "חסר סכום קצבה חודשי", balance_missing: "חסרה יתרה", annuity_factor_missing: "חסר מקדם קצבה",
@@ -17,6 +22,7 @@ const factLabels: Record<string, string> = {
 };
 const empty: ManualInput = { input_mode: "entered", payer_name: null, description: null, source_reference: null,
   monthly_amount: null, balance: null, annuity_factor: null, pension_start_date: null, tax_treatment: null,
+  base_amount_effective_date: null,
   indexation_method: null, fixed_indexation_rate: null, source_note: null };
 const shown = (value: string | null | undefined) => value ?? "לא תועד";
 function Facts({ codes }: { codes: string[] }) {
@@ -82,6 +88,7 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
         {field("payer_name", "שם משלם")}{field("description", "תיאור המקור")}{field("source_reference", "אסמכתת מקור")}
         {draft.input_mode === "entered" ? field("monthly_amount", "סכום חודשי מדויק") : <>{field("balance", "יתרת מקור")}{field("annuity_factor", "מקדם חיובי")}</>}
         <label>תאריך תחילת קצבה<HebrewDateInput ariaLabel="תאריך תחילת קצבה" value={draft.pension_start_date ?? ""} onChange={v => setDraft(p => ({ ...p, pension_start_date: v || null }))} /></label>
+        <label>תאריך נכונות סכום הבסיס החודשי<HebrewDateInput ariaLabel="תאריך נכונות סכום הבסיס החודשי" value={draft.base_amount_effective_date ?? ""} onChange={v => setDraft(p => ({ ...p, base_amount_effective_date: v || null }))} /></label>
         <label>זהות מס<select aria-label="זהות מס" value={draft.tax_treatment ?? ""} onChange={e => setDraft(v => ({ ...v, tax_treatment: e.target.value || null }))}>
           <option value="">לא תועד</option><option value="taxable">חייב במס</option><option value="exempt">פטור ממס</option><option value="capital_gains">מס רווחי הון — לא מאושר לחישוב מס פנסיוני</option>
           {draft.tax_treatment && !["taxable", "exempt", "capital_gains"].includes(draft.tax_treatment) && <option value={draft.tax_treatment}>סיווג לא נתמך שנשמר במקור</option>}
@@ -109,6 +116,8 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
       {data.pension_sources.map(s => <article key={s.source_id}><h5>{shown(s.payer_name)} — {s.kind === "manual" ? "קצבה ידנית" : "קצבה מהמרה"}</h5>
         <p>{s.calculation_ready ? "עובדות המקור מוכנות לחישוב" : "מקור לא שלם או חסום לחישוב"}</p><Facts codes={s.missing_or_blocking_facts} />
         <p>תחילת קצבה: {formatIsoDate(s.pension_start_date) || "לא תועד"} {s.has_started === false ? "— טרם הגיע מועד התחילה" : ""}</p>
+        <p>נכונות סכום הבסיס החודשי: {formatIsoDate(s.monthly_amount_basis?.base_amount_effective_date ?? s.base_amount_effective_date) || "לא תועד — סמכות סכום הבסיס אינה מוכנה"}</p>
+        {s.kind === "conversion" && <p>תאריך דוח המקור בעת ההמרה: {formatIsoDate(s.monthly_amount_basis?.source_statement_date) || "לא תועד"}</p>}
         <p>זהות מס: {s.tax_treatment ? taxLabel(s.tax_treatment) : "לא תועד"}</p>
         {s.kind === "manual" && <p>הצמדה כעובדת מקור בלבד: {s.indexation_method === "none" ? "ללא הצמדה" : s.indexation_method === "cpi" ? "מדד" : s.indexation_method === "fixed" ? "שיעור קבוע" : "לא תועד או אינו נתמך"}
           {s.indexation_method === "fixed" && <> · שיעור: <bdi>{shown(s.fixed_indexation_rate)}</bdi></>}</p>}

@@ -44,7 +44,7 @@ def test_postgresql_corrected_readiness(pg_engine):
 @pytest.fixture
 def pg_engine(postgres_url):
     load_all_models()
-    migrate(postgres_url, "upgrade", REVISION)
+    migrate(postgres_url, "upgrade", "e0f6b3c9d187")
     engine = create_engine(postgres_url)
     with engine.begin() as db:
         db.execute(text("INSERT INTO clients(client_id,display_name,id_number) VALUES(1,'test','123'),(2,'other','456')"))
@@ -69,13 +69,14 @@ def test_postgresql_migration_preserves_existing_and_downgrade_guard(postgres_ur
             assert db.execute(text("SELECT numeric_precision,numeric_scale FROM information_schema.columns WHERE table_name='canonical_manual_pension_sources' AND column_name='monthly_amount'")).one() == (20, 2)
         migrate(postgres_url, "downgrade", "f5a1c8d4e632")
         migrate(postgres_url, "upgrade", REVISION)
+        migrate(postgres_url, "upgrade", "e0f6b3c9d187")
         with Session(engine) as db, db.begin():
-            manual.create(db, 1, facts())
+            manual.create(db, 1, facts(base_amount_effective_date=None))
         failure = migrate(postgres_url, "downgrade", "f5a1c8d4e632", success=False)
         assert "MANUAL_PENSION_SOURCE_DOWNGRADE_WOULD_LOSE_HISTORY" in failure
         assert len(read(engine)["pension_sources"]) == 1
         with engine.connect() as db:
-            assert db.scalar(text("SELECT version_num FROM alembic_version")) == REVISION
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "e0f6b3c9d187"
     finally:
         engine.dispose()
 

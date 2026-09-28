@@ -31,6 +31,8 @@ def change(db, client_id, source_id, payload, *, supersede=False):
         row.lifecycle_status = "superseded"
     else:
         for key, value in payload.model_dump(exclude={"expected_version"}).items():
+            if key == "base_amount_effective_date" and key not in payload.model_fields_set:
+                continue
             setattr(row, key, value)
     row.version += 1
     row.updated_at = datetime.now(timezone.utc)

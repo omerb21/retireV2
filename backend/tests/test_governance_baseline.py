@@ -31,6 +31,35 @@ APPROVED_LOCAL_UNTRACKED_PATHS = {
     "_evidence/",
     "specs/bootstraps/",
 }
+APPROVED_PENSION_MONTHLY_BASIS_PATHS = {
+    "backend/tests/test_professional_source_postgresql.py",
+    "backend/tests/test_retirement_target_postgresql.py",
+    "backend/alembic/versions/e0f6b3c9d187_pension_monthly_basis_date.py",
+    "backend/app/models/canonical_manual_pension_source.py",
+    "backend/app/schemas/canonical_manual_pension_source.py",
+    "backend/app/services/canonical_manual_pension_service.py",
+    "backend/app/services/pension_monthly_basis_service.py",
+    "backend/app/services/planning_input_service.py",
+    "backend/app/services/professional_source_snapshot_service.py",
+    "backend/tests/pension_basis_golden.py",
+    "backend/tests/test_pension_monthly_basis.py",
+    "backend/tests/test_pension_monthly_basis_postgresql.py",
+    "backend/tests/test_professional_source_snapshot.py",
+    "backend/tests/test_planning_input.py",
+    "backend/tests/test_planning_input_postgresql.py",
+    "backend/tests/test_projection_basis_postgresql.py",
+    "backend/tests/test_projection_execution.py",
+    "backend/tests/test_pkg011_migration.py",
+    "backend/tests/test_pkg013_migration.py",
+    "backend/tests/test_pkg014_migration.py",
+    "backend/tests/test_recovery_batch_migration.py",
+    "backend/tests/test_recovery_migration.py",
+    "backend/tests/test_recovery_migration_postgresql.py",
+    "backend/tests/test_governance_baseline.py",
+    "frontend/src/api/professionalSourceApi.ts",
+    "frontend/src/components/ProfessionalSourceSnapshot.tsx",
+    "frontend/src/components/ProfessionalSourceSnapshot.test.tsx",
+}
 APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS = {
     "backend/app/api/planning_input_routes.py",
     "backend/app/services/capital_projection_execution_numeric.py",
@@ -463,6 +492,7 @@ def _status_path(line: str) -> str:
 
 def _allowed_untracked_paths() -> set[str]:
     return {
+        *APPROVED_PENSION_MONTHLY_BASIS_PATHS,
         *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
@@ -498,6 +528,7 @@ def _unapproved_untracked(status_lines: list[str]) -> list[str]:
 
 def _approved_tracked_change_paths() -> set[str]:
     return {
+        *APPROVED_PENSION_MONTHLY_BASIS_PATHS,
         *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,

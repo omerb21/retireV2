@@ -6,15 +6,20 @@ export interface ManualInput {
   monthly_amount: string | null; balance: string | null; annuity_factor: string | null;
   pension_start_date: string | null; tax_treatment: string | null;
   base_amount_effective_date?: string | null;
-  indexation_method: string | null; fixed_indexation_rate: string | null; source_note: string | null;
+  temporal_authority?: { authority_kind: "none" | "fixed_manual"; annual_rate: string | null } | null;
+  source_note: string | null;
 }
-export interface PensionSource extends Partial<ManualInput> {
+export interface PensionSource extends Omit<Partial<ManualInput>, "temporal_authority"> {
   source_id: string; kind: "conversion" | "manual"; version: number;
   manual_pension_source_id?: string; lifecycle_status: string;
   visible: boolean; calculation_ready: boolean; missing_or_blocking_facts: string[];
   has_started: boolean | null;
   monthly_amount_basis?: { base_amount_effective_date: string | null; source_statement_date: string | null;
     basis_authority_ready: boolean; basis_blockers: string[] };
+  indexation_method?: string | null; fixed_indexation_rate?: string | null;
+  temporal_authority?: { temporal_authority_kind: "none" | "fixed_manual" | null; temporal_origin_date: string | null;
+    annual_rate: string | null; rate_basis: string | null; temporal_authority_ready: boolean; temporal_blockers: string[];
+    provenance?: { pension_destination_id?: string; decision_version?: number; source_version_at_decision?: number | null } };
   amount_authority: { authority_kind: string; amount?: string | null; numerator?: string | null; denominator?: string | null };
   provenance: { source_reference?: string | null; conversion_id?: string; pension_destination_id?: string;
     manual_pension_source_id?: string; coefficient_source?: string;
@@ -23,6 +28,7 @@ export interface PensionSource extends Partial<ManualInput> {
 export interface SourceSnapshot {
   contract_version: string; client_id: number; source_state_fingerprint: string;
   pension_monthly_amount_basis_fingerprint?: string;
+  pension_temporal_authority_registry_fingerprint?: string;
   pension_products: Array<{ product_id: string; product_name: string; product_type: string; provider_name: string | null;
     account_reference: string; statement_date: string | null; components: Array<{ component_id: string; component_code: string; balance: string }>;
     reported_controls: { authority: string; reported_product_total: string | null; reported_rewards_total: string | null; reported_severance_total: string | null } }>;
@@ -51,3 +57,8 @@ export const getSourceSnapshot = (id: number, signal?: AbortSignal) => call<Sour
 export const createManualPension = (id: number, body: ManualInput) => call(id, "canonical-pension-sources/manual", "POST", body);
 export const updateManualPension = (id: number, source: string, body: ManualInput & { expected_version: number }) => call(id, `canonical-pension-sources/manual/${encodeURIComponent(source)}`, "PUT", body);
 export const supersedeManualPension = (id: number, source: string, expected_version: number) => call(id, `canonical-pension-sources/manual/${encodeURIComponent(source)}`, "DELETE", { expected_version });
+export const writeConversionTemporalAuthority = (id: number, destination: string, body: {
+  expected_source_version: number; expected_decision_version: number;
+  temporal_authority: { authority_kind: "none" | "fixed_manual"; annual_rate: string | null };
+  actor: string;
+}) => call(id, `canonical-pension-sources/conversion/${encodeURIComponent(destination)}/temporal-authority`, "PUT", body);

@@ -12,6 +12,9 @@ const source = (kind: "manual" | "conversion" = "manual"): PensionSource => ({
   input_mode: "calculated", version: 3, lifecycle_status: "current", payer_name: "משלם בדיקה",
   balance: "1.00", annuity_factor: "3", pension_start_date: "2040-01-02", tax_treatment: "exempt",
   indexation_method: "none", visible: true, calculation_ready: true, has_started: false,
+  temporal_authority: {temporal_authority_kind:"none", temporal_origin_date:"2026-09-01", annual_rate:null,
+    rate_basis:null, temporal_authority_ready:true, temporal_blockers:[], provenance: kind === "conversion"
+      ? {pension_destination_id:"destination-1", decision_version:0, source_version_at_decision:null} : undefined},
   missing_or_blocking_facts: [], provenance: {source_reference: "אסמכתה"},
   amount_authority: {authority_kind: kind === "manual" ? "manual_balance_ratio" : "persisted_conversion_ratio", numerator: "1.00", denominator: "3"},
 });
@@ -34,7 +37,7 @@ describe("canonical professional sources", () => {
     expect(screen.queryByText("עובדות המקור מוכנות לחישוב")).toBeNull();
     expect(screen.queryByText(code)).toBeNull();
   });
-  it("shows exact ratios, future date, provenance and no conversion edit path", async () => {
+  it("shows exact ratios, future date, provenance and the explicit conversion authority path", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(view(1, [source("conversion")]))));
     const {container} = render(<ProfessionalSourceSnapshot clientId={1} />);
     expect(await screen.findByText("1.00 / 3")).toBeVisible();
@@ -42,6 +45,7 @@ describe("canonical professional sources", () => {
     expect(screen.getByText(/טרם הגיע מועד התחילה/)).toBeVisible();
     expect(screen.queryByText("0.33")).toBeNull();
     expect(screen.queryByRole("button", {name:"עריכת קצבה ידנית"})).toBeNull();
+    expect(screen.getByRole("button", {name:"עריכת סמכות יעד המרה"})).toBeVisible();
     expect(container.querySelector('section[dir="rtl"]')).not.toBeNull();
     expect(container.querySelector('input[type="date"]')).toBeNull();
   });
@@ -57,7 +61,7 @@ describe("canonical professional sources", () => {
     const [,init] = fetcher.mock.calls[1];
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toMatchObject({monthly_amount:"123.45", balance:null, annuity_factor:null,
-      pension_start_date:null, tax_treatment:null, fixed_indexation_rate:null});
+      pension_start_date:null, tax_treatment:null, temporal_authority:null});
     expect(JSON.parse(init.body).base_amount_effective_date).toBeNull();
   });
   it("sends calculated facts and Israeli date, not a rounded monthly authority", async () => {
@@ -70,12 +74,13 @@ describe("canonical professional sources", () => {
     fireEvent.change(screen.getByLabelText("יתרת מקור"), {target:{value:"1.00"}});
     fireEvent.change(screen.getByLabelText("מקדם חיובי"), {target:{value:"3"}});
     fireEvent.change(screen.getByLabelText("תאריך תחילת קצבה"), {target:{value:"02/01/2040"}});
-    fireEvent.change(screen.getByLabelText("שיטת הצמדה"), {target:{value:"fixed"}});
+    fireEvent.change(screen.getByLabelText("סמכות הצמדה מפורשת"), {target:{value:"fixed_manual"}});
+    fireEvent.change(screen.getByLabelText("שיעור שנתי מדויק"), {target:{value:"0.02"}});
     fireEvent.click(screen.getByRole("button", {name:"שמירת קצבה ידנית"}));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({
       input_mode:"calculated", balance:"1.00", annuity_factor:"3", monthly_amount:null,
-      pension_start_date:"2040-01-02", fixed_indexation_rate:null});
+      pension_start_date:"2040-01-02", temporal_authority:{authority_kind:"fixed_manual", annual_rate:"0.02"}});
     expect(JSON.parse(fetcher.mock.calls[1][1].body).base_amount_effective_date).toBeNull();
   });
   it.each(["entered", "calculated"] as const)("edits and explicitly clears the independent base date in %s mode", async mode => {
@@ -83,7 +88,7 @@ describe("canonical professional sources", () => {
     const fetcher = vi.fn().mockResolvedValue(response(view(1, [row])));
     vi.stubGlobal("fetch", fetcher);
     render(<ProfessionalSourceSnapshot clientId={1} />);
-    await screen.findByText(/01\/09\/2026/);
+    expect((await screen.findAllByText(/01\/09\/2026/)).length).toBeGreaterThanOrEqual(1);
     fireEvent.click(screen.getByRole("button", {name:"עריכת קצבה ידנית"}));
     expect(screen.getByLabelText("תאריך נכונות סכום הבסיס החודשי")).toHaveValue("01/09/2026");
     fireEvent.change(screen.getByLabelText("תאריך תחילת קצבה"), {target:{value:"03/01/2040"}});
@@ -122,6 +127,20 @@ describe("canonical professional sources", () => {
     expect(fetcher.mock.calls[1][0]).toBe("/api/clients/1/canonical-pension-sources/manual/1");
     expect(fetcher.mock.calls[1][1].method).toBe(operation === "edit" ? "PUT" : "DELETE");
     expect(JSON.parse(fetcher.mock.calls[1][1].body).expected_version).toBe(3);
+  });
+  it("writes conversion temporal authority with both expected versions", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response(view(1, [source("conversion")])));
+    vi.stubGlobal("fetch", fetcher);
+    render(<ProfessionalSourceSnapshot clientId={1} />);
+    await screen.findByText("1.00 / 3");
+    fireEvent.click(screen.getByRole("button", {name:"עריכת סמכות יעד המרה"}));
+    fireEvent.change(screen.getByLabelText("סמכות הצמדה ליעד המרה"), {target:{value:"fixed_manual"}});
+    fireEvent.change(screen.getByLabelText("שיעור שנתי מדויק ליעד המרה"), {target:{value:"2e-2"}});
+    fireEvent.click(screen.getByRole("button", {name:"שמירת החלטת יעד המרה"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(fetcher.mock.calls[1][0]).toBe("/api/clients/1/canonical-pension-sources/conversion/destination-1/temporal-authority");
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({expected_source_version:3,
+      expected_decision_version:0, temporal_authority:{authority_kind:"fixed_manual",annual_rate:"2e-2"}, actor:"planner:ui"});
   });
   it("shows incomplete/duplicate blockers without hiding sources or guessing tax", async () => {
     const row = {...source(), calculation_ready:false, tax_treatment:"capital_gains",

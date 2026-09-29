@@ -35,7 +35,7 @@ def migration_contract(url):
         assert set(inspect(engine).get_table_names())==old_tables
         migrate(url,'upgrade','d9e5a2b8c076')
         # Historical schema assertions above remain pinned; current reads need the current schema.
-        migrate(url,'upgrade','e0f6b3c9d187')
+        migrate(url,'upgrade','f1a7c4d0e298')
         context(engine)
         rate='12345678901234567890123456789012345678901234567890.123456789012345678901234567890123456789'
         save(engine,1,payload(engine,1,annual_rate=rate))
@@ -51,7 +51,7 @@ def migration_contract(url):
         # Check the protected decision before returning to the current application's schema.
         with engine.connect() as db:
             assert str(db.scalar(text('SELECT annual_rate FROM capital_projection_basis_decisions'))) == rate
-        migrate(url,'upgrade','e0f6b3c9d187')
+        migrate(url,'upgrade','f1a7c4d0e298')
         assert read(engine)==before
     finally: engine.dispose()
 

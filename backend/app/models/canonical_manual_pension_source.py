@@ -1,7 +1,7 @@
 """Manual pension facts are a distinct authority, never RecurringIncome."""
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.models.pension_product import ExactMoney
@@ -32,6 +32,7 @@ class CanonicalManualPensionSource(Base):
     tax_treatment: Mapped[str | None] = mapped_column(String(64))
     indexation_method: Mapped[str | None] = mapped_column(String(64))
     fixed_indexation_rate: Mapped[str | None] = mapped_column(String(128))
+    temporal_authority_explicit: Mapped[bool] = mapped_column(Boolean, nullable=False)
     source_note: Mapped[str | None] = mapped_column(Text)
     lifecycle_status: Mapped[str] = mapped_column(String(16), default="current", server_default="current")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")

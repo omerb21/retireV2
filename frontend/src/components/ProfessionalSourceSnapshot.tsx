@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { createManualPension, getSourceSnapshot, supersedeManualPension, updateManualPension, type ManualInput, type PensionSource, type SourceSnapshot } from "../api/professionalSourceApi";
+import { createManualPension, getSourceSnapshot, supersedeManualPension, updateManualPension, writeConversionTemporalAuthority, type ManualInput, type PensionSource, type SourceSnapshot } from "../api/professionalSourceApi";
 import { HebrewDateInput } from "./HebrewDateInput";
 import { formatIsoDate } from "../utils/dateFormat";
 import { taxLabel } from "../api/canonicalConversionsApi";
@@ -12,6 +12,15 @@ const factLabels: Record<string, string> = {
   MANUAL_ANNUITY_FACTOR_NOT_POSITIVE: "נדרש מקדם קצבה חיובי",
   monthly_amount_not_positive: "נדרש סכום קצבה חודשי חיובי", balance_not_positive: "נדרשת יתרה חיובית",
   fixed_indexation_rate_not_positive: "נדרש שיעור הצמדה קבוע חיובי",
+  TEMPORAL_AUTHORITY_MISSING: "חסרה החלטה מקצועית מפורשת לגבי הצמדה",
+  TEMPORAL_CPI_NOT_AUTHORIZED: "הצמדת מדד נשמרה כראיה בלבד ואינה מורשית",
+  TEMPORAL_AUTHORITY_UNSUPPORTED: "סמכות ההצמדה אינה נתמכת",
+  TEMPORAL_ORIGIN_DATE_MISSING: "חסר תאריך מקור לסמכות ההצמדה",
+  TEMPORAL_FIXED_ANNUAL_RATE_MISSING: "חסר שיעור שנתי קבוע",
+  TEMPORAL_FIXED_ANNUAL_RATE_INVALID: "השיעור השנתי הקבוע אינו תקין",
+  TEMPORAL_FIXED_ANNUAL_RATE_NOT_POSITIVE: "נדרש שיעור שנתי קבוע חיובי",
+  TEMPORAL_CONVERSION_DECISION_MISSING: "חסרה החלטת הצמדה מפורשת ליעד ההמרה",
+  TEMPORAL_CONVERSION_DECISION_STALE: "החלטת ההצמדה אינה קשורה לגרסת המקור הנוכחית",
   monthly_amount_missing: "חסר סכום קצבה חודשי", balance_missing: "חסרה יתרה", annuity_factor_missing: "חסר מקדם קצבה",
   payer_name_missing: "חסר שם משלם", pension_start_date_missing: "חסר תאריך תחילת קצבה",
   tax_treatment_missing_or_unsupported: "זהות המס חסרה או אינה נתמכת לחישוב מס פנסיוני",
@@ -23,7 +32,7 @@ const factLabels: Record<string, string> = {
 const empty: ManualInput = { input_mode: "entered", payer_name: null, description: null, source_reference: null,
   monthly_amount: null, balance: null, annuity_factor: null, pension_start_date: null, tax_treatment: null,
   base_amount_effective_date: null,
-  indexation_method: null, fixed_indexation_rate: null, source_note: null };
+  temporal_authority: null, source_note: null };
 const shown = (value: string | null | undefined) => value ?? "לא תועד";
 function Facts({ codes }: { codes: string[] }) {
   return <ul>{codes.map(code => <li key={code}>{factLabels[code] ?? "נתון מקור דורש בדיקה"}</li>)}</ul>;
@@ -39,6 +48,8 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [editing, setEditing] = useState<PensionSource | "new" | null>(null);
+  const [conversionEditing, setConversionEditing] = useState<PensionSource | null>(null);
+  const [conversionAuthority, setConversionAuthority] = useState<{authority_kind:"none"|"fixed_manual"; annual_rate:string|null}>({authority_kind:"none", annual_rate:null});
   const [draft, setDraft] = useState<ManualInput>(empty);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
@@ -57,11 +68,18 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
   }, [clientId, refresh]);
   const begin = (source: PensionSource | "new") => {
     setEditing(source);
-    setDraft(source === "new" ? { ...empty } : Object.fromEntries(Object.keys(empty).map(key => [key, source[key as keyof ManualInput] ?? null])) as unknown as ManualInput);
+    if (source === "new") setDraft({ ...empty });
+    else {
+      const draft = Object.fromEntries(Object.keys(empty).map(key => [key, source[key as keyof ManualInput] ?? null])) as unknown as ManualInput;
+      draft.temporal_authority = source.temporal_authority?.temporal_authority_kind
+        ? { authority_kind: source.temporal_authority.temporal_authority_kind, annual_rate: source.temporal_authority.annual_rate }
+        : null;
+      setDraft(draft);
+    }
   };
   const mutate = async (operation: () => Promise<unknown>) => {
     setBusy(true); setError("");
-    try { await operation(); if (alive.current) { setEditing(null); setRefresh(n => n + 1); } }
+    try { await operation(); if (alive.current) { setEditing(null); setConversionEditing(null); setRefresh(n => n + 1); } }
     catch (failure) { if (alive.current) setError(failure instanceof Error ? failure.message : "הפעולה נכשלה"); }
     finally { if (alive.current) setBusy(false); }
   };
@@ -72,7 +90,19 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
     void mutate(() => editing === "new" ? createManualPension(clientId, payload)
       : updateManualPension(clientId, editing.manual_pension_source_id!, { ...payload, expected_version: editing.version }));
   };
-  const field = (key: keyof ManualInput, label: string) => <label>{label}<input aria-label={label} value={draft[key] ?? ""}
+  const submitConversion = (event: FormEvent) => {
+    event.preventDefault();
+    if (!conversionEditing) return;
+    const destination = conversionEditing.temporal_authority?.provenance?.pension_destination_id;
+    if (!destination) { setError("זהות יעד ההמרה אינה זמינה"); return; }
+    void mutate(() => writeConversionTemporalAuthority(clientId, destination, {
+      expected_source_version: conversionEditing.version,
+      expected_decision_version: conversionEditing.temporal_authority?.provenance?.decision_version ?? 0,
+      temporal_authority: conversionAuthority,
+      actor: "planner:ui",
+    }));
+  };
+  const field = (key: Exclude<keyof ManualInput, "temporal_authority">, label: string) => <label>{label}<input aria-label={label} value={draft[key] ?? ""}
     onChange={event => setDraft(previous => ({ ...previous, [key]: event.target.value || null }))} /></label>;
   return <section dir="rtl" aria-label="תמונת מקורות פנסיוניים ופיננסיים">
     <h3>תמונת מקורות פנסיוניים ופיננסיים</h3>
@@ -93,13 +123,28 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
           <option value="">לא תועד</option><option value="taxable">חייב במס</option><option value="exempt">פטור ממס</option><option value="capital_gains">מס רווחי הון — לא מאושר לחישוב מס פנסיוני</option>
           {draft.tax_treatment && !["taxable", "exempt", "capital_gains"].includes(draft.tax_treatment) && <option value={draft.tax_treatment}>סיווג לא נתמך שנשמר במקור</option>}
         </select></label>
-        <label>שיטת הצמדה<select aria-label="שיטת הצמדה" value={draft.indexation_method ?? ""} onChange={e => setDraft(v => ({ ...v, indexation_method: e.target.value || null }))}>
-          <option value="">לא תועד</option><option value="none">ללא הצמדה</option><option value="cpi">מדד</option><option value="fixed">שיעור קבוע</option>
-          {draft.indexation_method && !["none", "cpi", "fixed"].includes(draft.indexation_method) && <option value={draft.indexation_method}>שיטת הצמדה לא נתמכת שנשמרה במקור</option>}
+        <label>סמכות הצמדה מפורשת<select aria-label="סמכות הצמדה מפורשת" value={draft.temporal_authority?.authority_kind ?? ""} onChange={e => setDraft(v => ({ ...v,
+          temporal_authority: e.target.value ? { authority_kind: e.target.value as "none" | "fixed_manual", annual_rate: null } : null }))}>
+          <option value="">לא הוחלט</option><option value="none">ללא שינוי</option><option value="fixed_manual">שיעור שנתי קבוע</option>
         </select></label>
-        {draft.indexation_method === "fixed" && field("fixed_indexation_rate", "שיעור הצמדה קבוע")}
+        {draft.temporal_authority?.authority_kind === "fixed_manual" && <label>שיעור שנתי מדויק<input aria-label="שיעור שנתי מדויק"
+          value={draft.temporal_authority.annual_rate ?? ""} onChange={e => setDraft(v => ({ ...v,
+            temporal_authority: { authority_kind: "fixed_manual", annual_rate: e.target.value || null } }))} /></label>}
         {field("source_note", "הערת מקור")}<p>אפשר לשמור מידע חסר; הוא לא יסומן כמוכן לחישוב.</p>
         <button type="submit">שמירת קצבה ידנית</button><button type="button" onClick={() => setEditing(null)}>ביטול עריכה</button>
+      </fieldset>
+    </form>}
+    {conversionEditing && !readOnly && <form onSubmit={submitConversion}>
+      <fieldset disabled={busy}><legend>החלטת עיתוי והצמדה ליעד המרה</legend>
+        <label>סמכות הצמדה מפורשת<select aria-label="סמכות הצמדה ליעד המרה" value={conversionAuthority.authority_kind}
+          onChange={event => setConversionAuthority({authority_kind:event.target.value as "none"|"fixed_manual", annual_rate:null})}>
+          <option value="none">ללא שינוי</option><option value="fixed_manual">שיעור שנתי קבוע</option>
+        </select></label>
+        {conversionAuthority.authority_kind === "fixed_manual" && <label>שיעור שנתי מדויק ליעד המרה<input
+          aria-label="שיעור שנתי מדויק ליעד המרה" value={conversionAuthority.annual_rate ?? ""}
+          onChange={event => setConversionAuthority(previous => ({...previous, annual_rate:event.target.value || null}))} /></label>}
+        <button type="submit">שמירת החלטת יעד המרה</button>
+        <button type="button" onClick={() => setConversionEditing(null)}>ביטול החלטת יעד המרה</button>
       </fieldset>
     </form>}
     {data && <>
@@ -119,8 +164,10 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
         <p>נכונות סכום הבסיס החודשי: {formatIsoDate(s.monthly_amount_basis?.base_amount_effective_date ?? s.base_amount_effective_date) || "לא תועד — סמכות סכום הבסיס אינה מוכנה"}</p>
         {s.kind === "conversion" && <p>תאריך דוח המקור בעת ההמרה: {formatIsoDate(s.monthly_amount_basis?.source_statement_date) || "לא תועד"}</p>}
         <p>זהות מס: {s.tax_treatment ? taxLabel(s.tax_treatment) : "לא תועד"}</p>
-        {s.kind === "manual" && <p>הצמדה כעובדת מקור בלבד: {s.indexation_method === "none" ? "ללא הצמדה" : s.indexation_method === "cpi" ? "מדד" : s.indexation_method === "fixed" ? "שיעור קבוע" : "לא תועד או אינו נתמך"}
-          {s.indexation_method === "fixed" && <> · שיעור: <bdi>{shown(s.fixed_indexation_rate)}</bdi></>}</p>}
+        <p>סמכות עיתוי והצמדה: {s.temporal_authority?.temporal_authority_ready
+          ? s.temporal_authority.temporal_authority_kind === "none" ? "ללא שינוי" : `שיעור שנתי קבוע ${shown(s.temporal_authority.annual_rate)}`
+          : "אינה מוכנה"} · תאריך מקור: {formatIsoDate(s.temporal_authority?.temporal_origin_date) || "לא תועד"}</p>
+        {s.kind === "manual" && s.indexation_method === "cpi" && <p>ראיית מקור בלבד: הצמדה למדד אינה סמכות ביצוע בחבילה זו.</p>}
         <p>סמכות סכום מדויקת: <bdi>{s.amount_authority.authority_kind === "entered_monthly_amount" ? shown(s.amount_authority.amount)
           : `${shown(s.amount_authority.numerator)} / ${shown(s.amount_authority.denominator)}`}</bdi></p>
         <details><summary>מקוריות ואסמכתאות</summary><p>מזהה מקור: <bdi>{s.source_id}</bdi></p>
@@ -132,6 +179,12 @@ function SourceWorkspace({ clientId, readOnly }: { clientId: number; readOnly: b
         </details>
         {!readOnly && s.kind === "manual" && <><button disabled={busy} onClick={() => begin(s)}>עריכת קצבה ידנית</button>
           <button disabled={busy} onClick={() => void mutate(() => supersedeManualPension(clientId, s.manual_pension_source_id!, s.version))}>הוצאה מהמקורות הנוכחיים</button></>}
+        {!readOnly && s.kind === "conversion" && <button disabled={busy} onClick={() => {
+          setConversionEditing(s);
+          setConversionAuthority(s.temporal_authority?.temporal_authority_kind === "fixed_manual"
+            ? {authority_kind:"fixed_manual", annual_rate:s.temporal_authority.annual_rate}
+            : {authority_kind:"none", annual_rate:null});
+        }}>עריכת סמכות יעד המרה</button>}
       </article>)}
       <h4>מקורות הון נוכחיים</h4>{data.capital_sources.length === 0 && <p>לא תועדו נכסי הון נוכחיים.</p>}
       {data.capital_sources.map(a => <article key={a.source_id}><h5>{a.asset_description}</h5>

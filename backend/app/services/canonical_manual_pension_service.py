@@ -3,6 +3,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource as Manual
 from app.services.pension_product_service import lock_client, PensionProductError, _json_snapshot
+from app.services import pension_temporal_basis_service as temporal
 
 
 def response(row):
@@ -11,7 +12,9 @@ def response(row):
 
 def create(db, client_id, payload):
     lock_client(db, client_id)
-    row = Manual(manual_pension_source_id=uuid4().hex, client_id=client_id, **payload.model_dump())
+    values = payload.model_dump(exclude={"temporal_authority", "indexation_method", "fixed_indexation_rate"})
+    row = Manual(manual_pension_source_id=uuid4().hex, client_id=client_id, **values)
+    temporal.apply_manual(payload, row, creating=True)
     db.add(row)
     db.flush()
     return response(row)
@@ -30,7 +33,8 @@ def change(db, client_id, source_id, payload, *, supersede=False):
     if supersede:
         row.lifecycle_status = "superseded"
     else:
-        for key, value in payload.model_dump(exclude={"expected_version"}).items():
+        temporal.apply_manual(payload, row, creating=False)
+        for key, value in payload.model_dump(exclude={"expected_version", "temporal_authority", "indexation_method", "fixed_indexation_rate"}).items():
             if key == "base_amount_effective_date" and key not in payload.model_fields_set:
                 continue
             setattr(row, key, value)

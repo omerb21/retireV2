@@ -13,6 +13,7 @@ from app.models.canonical_manual_pension_source import CanonicalManualPensionSou
 from app.models.retirement_facts import CapitalAsset, RetirementTimingWorkIntention
 from app.services.pension_product_service import PensionProductError
 from app.services import pension_monthly_basis_service as pension_basis
+from app.services import pension_temporal_basis_service as temporal_basis
 
 CONTRACT = "canonical-professional-source-snapshot-v1"
 
@@ -115,8 +116,10 @@ def _snapshot(db, client_id, *, as_of):
             invalid()
         source_product = product_map[batch_map[c["batch_id"]]["source_product_id"]]
         basis = pension_basis.conversion(db, client_id, batch_map[c['batch_id']], c, p, trace)
+        temporal = temporal_basis.conversion(db, client_id, p, c, batch_map[c['batch_id']])
         sources.append({"source_id": "conversion:" + p["pension_destination_id"], "kind": "conversion", "payer_name": p["name"],
             "monthly_amount_basis": basis,
+            "temporal_authority": temporal,
             "version": p["version"], "lifecycle_status": "current", "pension_start_date": p["pension_start_date"], "tax_treatment": p["tax_treatment"],
             "amount_authority": {"authority_kind": "persisted_conversion_ratio", "numerator": p["monthly_numerator"], "denominator": p["monthly_denominator"]},
             "provenance": {"conversion_id": c["conversion_id"], "pension_destination_id": p["pension_destination_id"], "allocations": trace,
@@ -126,6 +129,7 @@ def _snapshot(db, client_id, *, as_of):
     for m in manual_rows:
         item = record(m)
         basis = pension_basis.manual(m, client_id)
+        temporal = temporal_basis.manual(m, client_id)
         authority = {"authority_kind": "entered_monthly_amount", "amount": m.monthly_amount} if m.input_mode == "entered" else {
             "authority_kind": "manual_balance_ratio", "numerator": m.balance, "denominator": m.annuity_factor}
         missing = []
@@ -147,20 +151,9 @@ def _snapshot(db, client_id, *, as_of):
             # as visible blockers instead of deriving a monthly amount.
         if not m.payer_name:
             missing.append("payer_name_missing")
-        if m.indexation_method not in ("none", "cpi", "fixed"):
-            missing.append("indexation_method_missing_or_unsupported")
-        if m.indexation_method == "fixed":
-            if m.fixed_indexation_rate is None:
-                missing.append("fixed_indexation_rate_missing")
-            else:
-                # V1 PensionFunds/handlers.ts at e4bd8618 rejects both zero
-                # (!rate) and negative rates. Preserve incomplete facts, not
-                # their readiness; never substitute or calculate indexation.
-                rate = Decimal(m.fixed_indexation_rate)
-                if not rate.is_finite() or rate <= 0:
-                    missing.append("fixed_indexation_rate_not_positive")
         sources.append({**item, "kind": "manual", "source_id": "manual:" + m.manual_pension_source_id,
             "monthly_amount_basis": basis,
+            "temporal_authority": temporal,
             "amount_authority": authority, "provenance": {"manual_pension_source_id": m.manual_pension_source_id, "source_reference": m.source_reference, "source_note": m.source_note},
             "missing_or_blocking_facts": missing})
     warnings = []
@@ -179,6 +172,14 @@ def _snapshot(db, client_id, *, as_of):
         if duplicates:
             missing.append("potential_duplicate_source")
             warnings.append({"code": "potential_duplicate_source", "source_id": s["source_id"], "related_sources": sorted(duplicates)})
+        # Retain the pre-package readiness projection solely for the existing
+        # source_state_fingerprint contract.  Temporal authority has its own
+        # separately versioned registry fingerprint and must not silently
+        # expand that older fingerprint's semantic scope.
+        s["_legacy_missing_or_blocking_facts"] = list(missing)
+        s["_legacy_calculation_ready"] = not missing
+        missing.extend(s['temporal_authority']['temporal_blockers'])
+        missing[:] = sorted(set(missing))
         s["visible"] = True
         s["calculation_ready"] = not missing
         s["started_as_of"] = as_of.isoformat()
@@ -213,12 +214,23 @@ def _snapshot(db, client_id, *, as_of):
         RetirementTimingWorkIntention.client_id == client_id, RetirementTimingWorkIntention.lifecycle_status == "current")).all()
     if not any(t.planned_work_end_date or t.intended_pension_start_date or t.other_known_retirement_date or t.anticipated_work_end_date for t in timing):
         client_warnings.append("retirement_date_facts_missing")
+    response_sources = [{k: v for k, v in s.items() if not k.startswith("_legacy_")} for s in sources]
+    legacy_sources = []
+    for source in sources:
+        legacy = {k: v for k, v in source.items() if k not in (
+            "has_started", "started_as_of", "temporal_authority", "temporal_authority_explicit",
+            "_legacy_missing_or_blocking_facts", "_legacy_calculation_ready")}
+        legacy["missing_or_blocking_facts"] = source["_legacy_missing_or_blocking_facts"]
+        legacy["calculation_ready"] = source["_legacy_calculation_ready"]
+        legacy_sources.append(legacy)
     result = serialize({"contract_version": CONTRACT, "client_id": client_id, "pension_products": product_output,
         "pension_monthly_amount_basis_fingerprint": pension_basis.registry(client_id, [s['monthly_amount_basis'] for s in sources]),
-        "pension_sources": sorted(sources, key=lambda s: s["source_id"]), "capital_sources": capital,
+        "pension_temporal_authority_registry_fingerprint": temporal_basis.registry(client_id, [s['temporal_authority'] for s in sources]),
+        "pension_sources": sorted(response_sources, key=lambda s: s["source_id"]), "capital_sources": capital,
         "client_fact_warnings": client_warnings, "source_warnings": sorted(warnings, key=lambda w: w["source_id"])})
     # Calendar presentation is not source state. Crossing midnight must not
     # pretend that authoritative balances/versions changed.
-    state = {**result, "pension_sources": [{k: v for k, v in s.items() if k not in ("has_started", "started_as_of")} for s in result["pension_sources"]]}
+    state = {k: v for k, v in result.items() if k != "pension_temporal_authority_registry_fingerprint"}
+    state["pension_sources"] = serialize(sorted(legacy_sources, key=lambda s: s["source_id"]))
     result["source_state_fingerprint"] = hashlib.sha256(json.dumps(state, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
     return result

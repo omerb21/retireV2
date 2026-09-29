@@ -97,7 +97,8 @@ def test_conversion_actor_and_technical_timestamps_stay_out_of_amount_semantics(
 
 @pytest.mark.parametrize('mode',['entered','calculated'])
 def test_tristate_persistence(engine,mode):
-    data=dict(input_mode=mode,payer_name='משלם',pension_start_date='2040-01-01',tax_treatment='taxable',indexation_method='none')
+    data=dict(input_mode=mode,payer_name='משלם',pension_start_date='2040-01-01',tax_treatment='taxable',
+              temporal_authority={'authority_kind':'none'})
     data.update(dict(monthly_amount='1234.50') if mode=='entered' else dict(balance='200000.00',annuity_factor='200.00'))
     with Session(engine) as db,db.begin(): row=manual.create(db,1,ManualPensionInput(**data))
     sid=row['manual_pension_source_id']
@@ -206,7 +207,7 @@ def test_api_date_presence_survives_request_validation_and_reload(engine, mode, 
             yield db
 
     data = dict(input_mode=mode, payer_name='משלם', pension_start_date='2040-01-01',
-                tax_treatment='taxable', indexation_method='none')
+                tax_treatment='taxable', temporal_authority={'authority_kind':'none'})
     data.update(dict(monthly_amount='1234.50') if mode == 'entered' else
                 dict(balance='1.00', annuity_factor='3'))
     root = '/api/clients/1/canonical-pension-sources/manual'
@@ -316,15 +317,17 @@ def migration_contract(url):
         with db_engine.connect() as db:
             assert dict(db.execute(text('SELECT * FROM canonical_manual_pension_sources')).mappings().one()) == before
         migrate(url, 'upgrade', 'e0f6b3c9d187')
-        with Session(db_engine) as db, db.begin():
-            db.get(Manual, 'legacy').base_amount_effective_date = date(2026, 9, 1)
+        with db_engine.begin() as db:
+            db.execute(text("UPDATE canonical_manual_pension_sources SET base_amount_effective_date='2026-09-01' "
+                            "WHERE manual_pension_source_id='legacy'"))
         failure = migrate(url, 'downgrade', 'd9e5a2b8c076', success=False)
         assert 'PENSION_BASIS_DOWNGRADE_WOULD_LOSE_DATES' in failure
-        with Session(db_engine) as db:
-            row = db.get(Manual, 'legacy')
-            assert row.base_amount_effective_date == date(2026, 9, 1)
-            assert row.monthly_amount == Decimal('1234.50')
-            assert row.pension_start_date == date(2040, 1, 1)
+        with db_engine.connect() as db:
+            row = db.execute(text("SELECT base_amount_effective_date,monthly_amount,pension_start_date "
+                                  "FROM canonical_manual_pension_sources WHERE manual_pension_source_id='legacy'")).one()
+            assert str(row.base_amount_effective_date) == '2026-09-01'
+            assert Decimal(row.monthly_amount) == Decimal('1234.50')
+            assert str(row.pension_start_date) == '2040-01-01'
         with db_engine.connect() as db:
             assert db.scalar(text('SELECT version_num FROM alembic_version')) == 'e0f6b3c9d187'
     finally:

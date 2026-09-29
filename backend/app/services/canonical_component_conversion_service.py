@@ -196,7 +196,8 @@ def history(db, client_id, product_id=None):
 
 def _downstream_used(db, target_table, target_row):
     # No downstream policy is inferred. Any external FK consumer blocks reversal.
-    owned = {batches.name, conversions.name, allocations.name, pensions.name, reversals.name, "capital_asset"}
+    owned = {batches.name, conversions.name, allocations.name, pensions.name, reversals.name,
+        "canonical_pension_temporal_decisions", "capital_asset"}
     inspector = inspect(db.connection())
     for name in inspector.get_table_names():
         if name in owned:

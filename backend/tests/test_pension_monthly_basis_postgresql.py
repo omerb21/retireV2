@@ -16,7 +16,7 @@ from test_pension_monthly_basis import (
 
 @pytest.fixture
 def basis_pg_engine(postgres_url):
-    migrate(postgres_url, 'upgrade', 'e0f6b3c9d187')
+    migrate(postgres_url, 'upgrade', 'f1a7c4d0e298')
     engine = create_engine(postgres_url)
     with engine.begin() as db:
         db.execute(text("INSERT INTO clients(client_id,display_name,id_number) VALUES(1,'test','123'),(2,'other','456')"))

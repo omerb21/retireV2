@@ -16,7 +16,7 @@ from test_planning_input import view, choose, income
 
 @pytest.fixture
 def pg_engine(postgres_url):
-    migrate(postgres_url, "upgrade", "e0f6b3c9d187")
+    migrate(postgres_url, "upgrade", "f1a7c4d0e298")
     engine = create_engine(postgres_url)
     with engine.begin() as db:
         db.execute(text("INSERT INTO clients(client_id,display_name,id_number) VALUES(1,'test','123'),(2,'other','456')"))
@@ -44,7 +44,7 @@ def test_pg_migration_capital_persistence_and_constraints(postgres_url):
         migrate(postgres_url, "downgrade", "a6b2d9e5f743")
         assert "ck_capital_asset_value_date_required" in {c["name"] for c in inspect(engine).get_check_constraints("capital_asset")}
         migrate(postgres_url, "upgrade", "b7c3e0f6a854")
-        migrate(postgres_url, "upgrade", "e0f6b3c9d187")
+        migrate(postgres_url, "upgrade", "f1a7c4d0e298")
         test_capital_ordinary_api_missing_date(engine)
         failure = migrate(postgres_url, "downgrade", "a6b2d9e5f743", success=False)
         assert "PLANNING_DOWNGRADE_INCOMPLETE_CAPITAL" in failure

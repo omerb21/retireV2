@@ -34,6 +34,7 @@ APPROVED_TABLES = {
 
 ACCEPTED_ADDITIVE_TABLES = {
     "canonical_manual_pension_sources",
+    "canonical_pension_temporal_decisions",
     "planning_input_decisions",
     "capital_projection_basis_decisions",
     "pension_income_resolutions",

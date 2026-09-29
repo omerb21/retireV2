@@ -28,7 +28,7 @@ def read(engine, client=1, **kwargs):
 def facts(**kwargs):
     return ManualPensionInput(**(dict(input_mode="entered", payer_name="משלם", monthly_amount="100.00",
         pension_start_date=date(2040, 1, 1), base_amount_effective_date=date(2026, 9, 1),
-        tax_treatment="taxable", indexation_method="none") | kwargs))
+        tax_treatment="taxable", temporal_authority={"authority_kind": "none"}) | kwargs))
 
 
 @pytest.mark.parametrize("mode,amount", [("entered", "0.00"), ("entered", "0.01"),
@@ -82,12 +82,14 @@ def test_fixed_rate_readiness_v1(engine, method, rate, code):
 def assert_fixed_rate_readiness(engine, method, rate, code):
     # Direct persistence also covers pre-correction negative source facts.
     with Session(engine) as db, db.begin():
-        row = Manual(**facts().model_dump(), manual_pension_source_id="rate-case", client_id=1)
+        values = facts().model_dump(exclude={"temporal_authority", "indexation_method", "fixed_indexation_rate"})
+        row = Manual(**values, manual_pension_source_id="rate-case", client_id=1, temporal_authority_explicit=False)
         row.indexation_method, row.fixed_indexation_rate = method, rate
         db.add(row)
     source = next(s for s in read(engine)["pension_sources"] if s["manual_pension_source_id"] == "rate-case")
-    assert source["visible"] and source["calculation_ready"] == (code is None)
-    assert source["missing_or_blocking_facts"] == ([] if code is None else [code])
+    assert source["visible"] and not source["calculation_ready"]
+    expected = ["TEMPORAL_CPI_NOT_AUTHORIZED" if method == "cpi" else "TEMPORAL_AUTHORITY_MISSING"]
+    assert source["temporal_authority"]["temporal_blockers"] == expected
     assert source["fixed_indexation_rate"] == rate
     assert source["amount_authority"] == {"authority_kind": "entered_monthly_amount", "amount": "100.00"}
     with Session(engine) as db:
@@ -99,7 +101,6 @@ def assert_fixed_rate_readiness(engine, method, rate, code):
     {"input_mode": "calculated", "monthly_amount": None, "balance": "-0.01"},
     {"input_mode": "calculated", "monthly_amount": None, "balance": "1", "annuity_factor": "0"},
     {"input_mode": "calculated", "monthly_amount": None, "balance": "1", "annuity_factor": "-1"},
-    {"indexation_method": "fixed", "fixed_indexation_rate": "-1"},
 ])
 def test_invalid_manual_basis_api_rejected(engine, changes):
     payload = {**facts().model_dump(mode="json"), **changes}
@@ -141,7 +142,7 @@ def test_conversion_remaining_and_reversal(engine, amount, destination):
 def test_manual_modes_version_supersede_and_cross_client(engine):
     with Session(engine) as db, db.begin():
         a = manual.create(db, 1, facts())
-        b = manual.create(db, 1, ManualPensionInput(input_mode="calculated", payer_name="משלם", balance="1.00", annuity_factor="3", tax_treatment="exempt", pension_start_date=date(2040, 1, 1), base_amount_effective_date=date(2026, 9, 1), indexation_method="none"))
+        b = manual.create(db, 1, ManualPensionInput(input_mode="calculated", payer_name="משלם", balance="1.00", annuity_factor="3", tax_treatment="exempt", pension_start_date=date(2040, 1, 1), base_amount_effective_date=date(2026, 9, 1), temporal_authority={"authority_kind": "none"}))
     view = read(engine, as_of=date(2030, 1, 1))
     assert all(s["calculation_ready"] and not s["has_started"] for s in view["pension_sources"])
     ratio = next(s for s in view["pension_sources"] if s["input_mode"] == "calculated")["amount_authority"]
@@ -167,7 +168,6 @@ def test_manual_modes_version_supersede_and_cross_client(engine):
     ({"tax_treatment": None}, "tax_treatment_missing_or_unsupported"),
     ({"tax_treatment": "unknown"}, "tax_treatment_missing_or_unsupported"),
     ({"tax_treatment": "capital_gains"}, "tax_treatment_missing_or_unsupported"),
-    ({"indexation_method": "fixed"}, "fixed_indexation_rate_missing"),
     ({"monthly_amount": None}, "monthly_amount_missing"),
 ])
 def test_incomplete_visible_without_defaults(engine, changes, code):
@@ -178,13 +178,14 @@ def test_incomplete_visible_without_defaults(engine, changes, code):
     assert source["visible"] and not source["calculation_ready"]
     assert code in source["missing_or_blocking_facts"]
     for key, value in changes.items():
-        assert source[key] == value
+        if key != "temporal_authority":
+            assert source[key] == value
 
 
 def test_duplicate_reference_not_payer_name_and_fixed_positive_explicit(engine):
     with Session(engine) as db, db.begin():
         for _ in range(2):
-            manual.create(db, 1, ManualPensionInput(**{**facts().model_dump(), "indexation_method": "fixed", "fixed_indexation_rate": "0.01"}))
+            manual.create(db, 1, ManualPensionInput(**{**facts().model_dump(), "temporal_authority": {"authority_kind": "fixed_manual", "annual_rate": "0.01"}}))
     assert all(s["calculation_ready"] for s in read(engine)["pension_sources"])
     with Session(engine) as db, db.begin():
         for row in db.scalars(select(Manual)):

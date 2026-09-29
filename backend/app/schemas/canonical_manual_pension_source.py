@@ -5,6 +5,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.schemas.pension_product import Money
 
 
+class TemporalAuthorityInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    authority_kind: Literal["none", "fixed_manual"]
+    annual_rate: str | None = Field(default=None, strict=True, max_length=128)
+
+
 class ManualPensionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     input_mode: Literal["entered", "calculated"]
@@ -17,8 +23,11 @@ class ManualPensionInput(BaseModel):
     pension_start_date: date | None = None
     base_amount_effective_date: date | None = None
     tax_treatment: str | None = Field(default=None, max_length=64)
-    indexation_method: str | None = Field(default=None, max_length=64)
-    fixed_indexation_rate: str | None = Field(default=None, max_length=128)
+    # Accepted only so the service can return the package-specific domain
+    # error for direct legacy writes; never emitted by canonical model_dump.
+    indexation_method: str | None = Field(default=None, max_length=64, exclude=True)
+    fixed_indexation_rate: str | None = Field(default=None, max_length=128, exclude=True)
+    temporal_authority: TemporalAuthorityInput | None = None
     source_note: str | None = Field(default=None, max_length=4096)
 
     @field_validator("monthly_amount", "balance")
@@ -66,3 +75,11 @@ class ManualPensionUpdate(ManualPensionInput):
 class ManualPensionSupersede(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(ge=1)
+
+
+class ConversionTemporalDecisionWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_source_version: int = Field(ge=1)
+    expected_decision_version: int = Field(ge=0)
+    temporal_authority: TemporalAuthorityInput
+    actor: str = Field(min_length=1, max_length=128)

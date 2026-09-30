@@ -250,6 +250,112 @@ def test_none_still_computes_elapsed_fraction_and_has_null_rate():
     assert result["temporal_factor"] == "1"
 
 
+@pytest.mark.parametrize(("numerator", "expected"), [
+    ("1000049", "100.00"),
+    ("100005", "100.01"),
+])
+def test_ratio_authority_rounds_immediately_below_and_at_half_cent(numerator, expected):
+    denominator = "10000" if numerator == "1000049" else "1000"
+    result = configured(
+        temporal_kind="none",
+        authority="manual_balance_ratio",
+        numerator=numerator,
+        denominator=denominator,
+    )
+    assert result["derived_base_monthly_amount"] in {"100.0049", "100.005"}
+    assert result["final_monthly_amount"] == expected
+
+
+@pytest.mark.parametrize(("amount", "expected_unquantized", "expected"), [
+    ("90.91363", "100.004993", "100.00"),
+    ("90.91364", "100.005004", "100.01"),
+])
+def test_fixed_temporal_compounding_rounds_on_both_sides_of_half_cent(
+    amount, expected_unquantized, expected
+):
+    result = configured(amount=amount, rate="0.1", origin="2025-01-01", target="2026-01-01")
+    assert result["temporal_factor"] == "1.1"
+    assert result["unquantized_target_monthly_amount"] == expected_unquantized
+    assert result["final_monthly_amount"] == expected
+
+
+def test_unavailable_current_temporal_fingerprint_is_not_misclassified_as_stale():
+    temporal = {**inputs()["temporal_authority"], "temporal_semantic_fingerprint": None}
+    result = execute(temporal_authority=temporal)
+    assert result["result_state"] == "block_no_result"
+    assert result["execution_identity_state"] == "incomplete"
+    assert result["source_execution_fingerprint"] is None
+    assert result["blockers"] == ["TEMPORAL_AUTHORITY_NOT_READY"]
+    assert "TEMPORAL_AUTHORITY_IDENTITY_STALE" not in result["blockers"]
+    assert not subject.NUMERICAL_FIELDS.intersection(result)
+
+
+def test_unequal_available_planning_fingerprints_are_stale_and_incomplete():
+    result = execute(supplied_planning_calculation_input_fingerprint="a" * 64)
+    assert result["blockers"] == ["PLANNING_INPUT_IDENTITY_STALE"]
+    assert result["result_state"] == "block_no_result"
+    assert result["execution_identity_state"] == "incomplete"
+    assert result["source_execution_fingerprint"] is None
+
+
+def test_null_currency_is_legitimate_for_complete_ready_identity():
+    result = execute(currency=None)
+    assert result["currency"] is None
+    assert result["execution_identity_evidence"]["currency"] is None
+    assert result["execution_identity_state"] == "complete"
+    assert result["source_execution_fingerprint"] is not None
+    assert result["result_state"] == "result_ready"
+    assert result["blockers"] == []
+
+
+def test_stale_supplied_identities_never_replace_current_top_level_provenance():
+    current_monthly = {**inputs()["monthly_basis"], "authority_kind": "manual_balance_ratio",
+                       "base_amount_representation": {"representation_kind": "exact_ratio",
+                                                       "numerator": "120000", "denominator": "120"}}
+    current_temporal = {**inputs()["temporal_authority"], "temporal_authority_kind": "none",
+                        "annual_rate": None, "temporal_origin_date": "2025-02-03"}
+    current_target = {"retirement_target_date": "2028-04-05", "retirement_target_ready": True}
+    result = execute(
+        monthly_basis=current_monthly,
+        temporal_authority=current_temporal,
+        retirement_target=current_target,
+        pension_start_date="2029-06-07",
+        currency="ILS",
+        supplied_monthly_basis_semantic_fingerprint="a" * 64,
+        supplied_temporal_source_fingerprint="b" * 64,
+        supplied_planning_calculation_input_fingerprint="c" * 64,
+    )
+    assert result["result_state"] == "block_no_result"
+    assert result["authority_kind"] == "manual_balance_ratio"
+    assert result["temporal_authority_kind"] == "none"
+    assert result["temporal_origin_date"] == "2025-02-03"
+    assert result["retirement_target_date"] == "2028-04-05"
+    assert result["currency"] == "ILS"
+    assert result["execution_identity_evidence"]["current_monthly_basis_semantic_fingerprint"] == HASHES["1"]
+    assert result["execution_identity_evidence"]["current_temporal_source_fingerprint"] == HASHES["5"]
+    assert result["execution_identity_evidence"]["current_planning_calculation_input_fingerprint"] == HASHES["3"]
+
+
+def test_incomplete_blocked_result_has_exact_returned_field_set():
+    result = execute(current_planning_calculation_input_fingerprint=None)
+    expected = {
+        "schema_version", "source_id", "result_state", "execution_identity_state",
+        "source_execution_fingerprint", "source_result_fingerprint", "authority_kind",
+        "temporal_authority_kind", "temporal_origin_date", "retirement_target_date",
+        "currency", "applicability_state", "blockers", "monthly_basis_blockers",
+        "temporal_blockers", "execution_identity_evidence",
+    }
+    assert set(result) == expected
+    assert result["result_state"] == "block_no_result"
+    assert result["blockers"]
+    assert result["monthly_basis_blockers"] == []
+    assert result["temporal_blockers"] == []
+    assert result["source_execution_fingerprint"] is None
+    assert result["source_result_fingerprint"]
+    assert result["execution_identity_evidence"]
+    assert not subject.NUMERICAL_FIELDS.intersection(result)
+
+
 def test_planning_adapter_uses_unique_current_recomputed_source_and_current_authorities():
     source = {
         "source_id": "manual:7", "pension_start_date": None,

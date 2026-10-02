@@ -454,9 +454,12 @@ def _assemble_ready(client_id, planning_fingerprint, supplied_fingerprint, targe
     return result
 
 
-def read(db, client_id: int, expected_planning_calculation_input_fingerprint: str) -> dict:
-    """Read one planning snapshot and execute its complete pension source universe."""
-    planning = planning_input_service.read(db, client_id)
+def execute_from_planning_result(
+    planning: dict,
+    client_id: int,
+    expected_planning_calculation_input_fingerprint: str,
+) -> dict:
+    """Execute the complete pension universe from one already-admitted snapshot."""
     current = planning.get("planning_calculation_input_fingerprint")
     target_record = planning.get("retirement_target") or {}
     target = target_record.get("retirement_target_date")
@@ -552,4 +555,12 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
     return _assemble_ready(
         client_id, current, expected_planning_calculation_input_fingerprint,
         target, expected_ids, raw_results,
+    )
+
+
+def read(db, client_id: int, expected_planning_calculation_input_fingerprint: str) -> dict:
+    """Read one planning snapshot and execute its complete pension source universe."""
+    planning = planning_input_service.read(db, client_id)
+    return execute_from_planning_result(
+        planning, client_id, expected_planning_calculation_input_fingerprint,
     )

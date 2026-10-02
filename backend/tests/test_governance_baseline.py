@@ -104,6 +104,11 @@ APPROVED_PENSION_TARGET_DATE_EXECUTION_PATHS = {
     "backend/tests/test_pension_target_date_execution.py",
     "backend/tests/test_governance_baseline.py",
 }
+APPROVED_PENSION_TARGET_DATE_PORTFOLIO_PATHS = {
+    "backend/app/services/pension_target_date_portfolio_service.py",
+    "backend/tests/test_pension_target_date_portfolio.py",
+    "backend/tests/test_governance_baseline.py",
+}
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
     "backend/app/schemas/fixation_contracts.py",
@@ -531,6 +536,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_PENSION_TEMPORAL_AUTHORITY_PATHS,
         *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
         *APPROVED_PENSION_TARGET_DATE_EXECUTION_PATHS,
+        *APPROVED_PENSION_TARGET_DATE_PORTFOLIO_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
@@ -569,6 +575,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PENSION_TEMPORAL_AUTHORITY_PATHS,
         *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
         *APPROVED_PENSION_TARGET_DATE_EXECUTION_PATHS,
+        *APPROVED_PENSION_TARGET_DATE_PORTFOLIO_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,

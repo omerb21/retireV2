@@ -163,6 +163,48 @@ def pension_ready():
     return result
 
 
+def pension_blocked():
+    result = {
+        "schema_version": pension_portfolio.SCHEMA_VERSION,
+        "client_id": 7,
+        "result_state": "block_no_result",
+        "portfolio_identity_state": "incomplete",
+        "portfolio_execution_fingerprint": None,
+        "portfolio_result_fingerprint": None,
+        "planning_calculation_input_fingerprint": H_A,
+        "retirement_target_date": TARGET,
+        "system_currency": "ILS",
+        "aggregation_contract": pension_portfolio.AGGREGATION_CONTRACT,
+        "coverage_evidence": {
+            "coverage_check_state": "complete", "duplicate_source_ids": [],
+            "expected_source_ids": ["p1"], "missing_source_ids": [],
+            "returned_source_ids": ["p1"], "unexpected_source_ids": [],
+        },
+        "failure_evidence": {
+            "current_planning_calculation_input_fingerprint": H_A,
+            "failed_expected_source_id": "p1",
+            "failure_detail_code": "PTE_SCHEMA_VERSION_INVALID",
+            "failure_stage": "source_result_validation",
+            "observed_source_id": "p1",
+            "supplied_planning_calculation_input_fingerprint": H_A,
+        },
+        "expected_source_count": 1,
+        "returned_source_count": 1,
+        "source_results": [],
+        "source_entry_fingerprints": [],
+        "payable_current_source_ids": [],
+        "future_start_source_ids": [],
+        "unresolved_source_ids": [],
+        "blocked_source_ids": [],
+        "total_completeness_state": "unavailable",
+        "partial_reason_codes": [],
+        "portfolio_blockers": ["PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID"],
+    }
+    recertify_pension(result)
+    assert result["portfolio_result_fingerprint"] == "e57dfa81f405a7bb34712e432fceb1f9b0c8c061452b493ad675fdedef78f16a"
+    return result
+
+
 def recertify_pension(result):
     if result["result_state"] == "result_ready":
         execution_payload = {
@@ -320,6 +362,21 @@ def test_capital_ready_empty_and_blocked_contracts(monkeypatch, source_ids, bloc
     result = subject.read(object(), 7, H_A)
     assert result["result_state"] == "result_ready"
     assert result["capital_domain"]["domain_state"] == state
+
+
+def test_blocked_domain_identity_contracts(monkeypatch):
+    authority, capital = capital_result(("capital:1",), blocked=True)
+    pension = pension_blocked()
+    configure(monkeypatch, capital=capital, authority=authority, pension=pension)
+
+    result = subject.read(object(), 7, H_A)
+
+    assert result["result_state"] == "result_ready"
+    assert result["resource_completeness_state"] == "partial"
+    assert result["capital_domain"]["identity_kind"] == "blocked_result_fingerprint"
+    assert result["capital_domain"]["identity_fingerprint"] == result["capital_domain"]["domain_result_fingerprint"]
+    assert result["pension_domain"]["identity_kind"] == "blocked_result_fingerprint"
+    assert result["pension_domain"]["identity_fingerprint"] == pension["portfolio_result_fingerprint"]
 
 
 def assembled_capital(sources):

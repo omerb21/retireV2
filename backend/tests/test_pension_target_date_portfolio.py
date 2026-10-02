@@ -141,6 +141,68 @@ def test_single_snapshot_sorted_sequential_execution_and_no_global_ready_gate(mo
     assert calls == ["read", "p1", "p2"]
 
 
+def test_explicit_empty_source_universe_remains_valid_golden_a(monkeypatch):
+    calls = []
+    plan = planning([])
+    monkeypatch.setattr(subject.planning_input_service, "read", lambda db, client_id: plan)
+    monkeypatch.setattr(
+        subject.pte,
+        "execute_from_planning_result",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = subject.read(object(), 7, H_A)
+
+    assert calls == []
+    assert result["result_state"] == "result_ready"
+    assert result["total_completeness_state"] == "complete"
+    assert result["aggregate_unquantized_amount"] == "0"
+    assert result["payable_current_monthly_total"] == "0.00"
+    assert result["portfolio_execution_fingerprint"] == GOLDENS["A"][1]
+    assert result["portfolio_result_fingerprint"] == GOLDENS["A"][2]
+
+
+@pytest.mark.parametrize(("key_present", "malformed"), [
+    pytest.param(False, None, id="missing"),
+    pytest.param(True, None, id="null"),
+    pytest.param(True, {}, id="mapping"),
+    pytest.param(True, "not-a-list", id="string"),
+])
+def test_malformed_source_universe_fails_closed_before_execution(monkeypatch, key_present, malformed):
+    plan = planning([])
+    if key_present:
+        plan["pension_inputs"] = malformed
+    else:
+        del plan["pension_inputs"]
+    calls = []
+    monkeypatch.setattr(subject.planning_input_service, "read", lambda db, client_id: plan)
+    monkeypatch.setattr(
+        subject.pte,
+        "execute_from_planning_result",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = subject.read(object(), 7, H_A)
+
+    assert calls == []
+    assert result["result_state"] == "block_no_result"
+    assert result["portfolio_identity_state"] == "incomplete"
+    assert result["portfolio_execution_fingerprint"] is None
+    assert result["total_completeness_state"] == "unavailable"
+    assert result["portfolio_blockers"] == ["PORTFOLIO_SOURCE_UNIVERSE_INVALID"]
+    assert result["coverage_evidence"]["coverage_check_state"] == "invalid"
+    assert result["failure_evidence"]["failure_stage"] == "source_universe"
+    assert result["failure_evidence"]["failure_detail_code"] == "SOURCE_UNIVERSE_CONTAINER_INVALID"
+    assert result["source_results"] == []
+    assert result["source_entry_fingerprints"] == []
+    assert result["payable_current_source_ids"] == []
+    assert result["future_start_source_ids"] == []
+    assert result["unresolved_source_ids"] == []
+    assert result["blocked_source_ids"] == []
+    assert "aggregate_unquantized_amount" not in result
+    assert "payable_current_monthly_total" not in result
+
+
 def test_executor_exception_stops_and_discards_prefix(monkeypatch):
     plan = planning(["p1", "p2"])
     monkeypatch.setattr(subject.planning_input_service, "read", lambda db, client_id: plan)
@@ -241,6 +303,30 @@ def test_invalid_pte_schema_and_fingerprint_fatal_hashes():
     invalid_fingerprint = {**ready_result(), "source_result_fingerprint": "0" * 64}
     result = subject._assemble_ready(7, H_A, H_A, "2030-01-01", ["p1"], [invalid_fingerprint])
     assert result["portfolio_result_fingerprint"] == "b834495e932c14d002030b3c69954f0cdef198961f6429f50fe9a8d0ffc89c18"
+
+
+def test_unknown_applicability_is_schema_invalid_with_correct_result_fingerprint():
+    changed = {**ready_result(), "applicability_state": "unknown"}
+    changed["source_result_fingerprint"] = pte.fingerprint(pte._result_payload(changed))
+
+    result = subject._assemble_ready(7, H_A, H_A, "2030-01-01", ["p1"], [changed])
+
+    assert result["result_state"] == "block_no_result"
+    assert result["portfolio_blockers"] == ["PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID"]
+    assert "PORTFOLIO_AGGREGATION_NUMERIC_ERROR" not in result["portfolio_blockers"]
+    assert result["failure_evidence"]["failure_stage"] == "source_result_validation"
+    assert result["failure_evidence"]["failure_detail_code"] == "PTE_APPLICABILITY_STATE_INVALID"
+    assert result["failure_evidence"]["failed_expected_source_id"] == "p1"
+    assert result["failure_evidence"]["observed_source_id"] == "p1"
+    assert result["coverage_evidence"]["coverage_check_state"] == "complete"
+    assert result["source_results"] == []
+    assert result["source_entry_fingerprints"] == []
+    assert result["payable_current_source_ids"] == []
+    assert result["future_start_source_ids"] == []
+    assert result["unresolved_source_ids"] == []
+    assert result["blocked_source_ids"] == []
+    assert "aggregate_unquantized_amount" not in result
+    assert "payable_current_monthly_total" not in result
 
 
 def test_aggregation_numeric_error_fatal_hash():

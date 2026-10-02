@@ -214,6 +214,8 @@ def _validate_pte_result(result, expected_id):
     if recomputed != result_fp:
         return "PORTFOLIO_SOURCE_RESULT_FINGERPRINT_INVALID", "PTE_RESULT_FINGERPRINT_MISMATCH"
     if state == "result_ready":
+        if result.get("applicability_state") not in ("payable_current", "future_start", "unresolved"):
+            return "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_APPLICABILITY_STATE_INVALID"
         execution_fp = result.get("source_execution_fingerprint")
         if not isinstance(execution_fp, str) or not SHA256.fullmatch(execution_fp):
             return "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_READY_EXECUTION_FINGERPRINT_INVALID"
@@ -487,9 +489,17 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
                              "target_admission", "RETIREMENT_TARGET_MISSING_OR_NOT_READY"),
             blockers=["PORTFOLIO_RETIREMENT_TARGET_NOT_READY"],
         )
-    sources = planning.get("pension_inputs")
-    if not isinstance(sources, list):
-        sources = []
+    if "pension_inputs" not in planning or not isinstance(planning["pension_inputs"], list):
+        coverage = _coverage([], [], "invalid")
+        return _fatal_result(
+            client_id=client_id, planning_fingerprint=current,
+            supplied_fingerprint=expected_planning_calculation_input_fingerprint,
+            retirement_target_date=target, coverage=coverage,
+            failure=_failure(current, expected_planning_calculation_input_fingerprint,
+                             "source_universe", "SOURCE_UNIVERSE_CONTAINER_INVALID"),
+            blockers=["PORTFOLIO_SOURCE_UNIVERSE_INVALID"], expected_count=0, returned_count=0,
+        )
+    sources = planning["pension_inputs"]
     ids = [source.get("source_id") if isinstance(source, dict) else None for source in sources]
     valid_ids = [source_id for source_id in ids if isinstance(source_id, str) and source_id]
     duplicate_ids = sorted(source_id for source_id, count in Counter(valid_ids).items() if count > 1)

@@ -352,19 +352,27 @@ def _validate_capital(result, authority):
     return None, None, None
 
 
-def _capital_domain_payload(domain):
+def _capital_domain_payload(result, authority):
     return {
         "contract": CAPITAL_DOMAIN_CONTRACT,
-        "domain_kind": domain["domain_name"],
-        "domain_state": domain["domain_state"],
-        "client_id": domain["client_id"],
-        "planning_calculation_input_fingerprint": domain["planning_calculation_input_fingerprint"],
-        "retirement_target_date": domain["retirement_target_date"],
-        "upstream_result_state": domain["upstream_result_state"],
-        "upstream_execution_fingerprint": domain["upstream_execution_fingerprint"],
-        "projection_basis_admission_fingerprint": domain["projection_basis_admission_fingerprint"],
-        "covered_source_count": domain["covered_source_count"],
-        "reason_codes": domain["reason_codes"],
+        "client_id": result["client_id"],
+        "planning_calculation_input_fingerprint": result["planning_calculation_input_fingerprint"],
+        "retirement_target_date": authority["retirement_target_date"],
+        "capital_execution_contract_version": result["contract_version"],
+        "numeric_contract_version": result["numeric_contract_version"],
+        "projection_basis_admission_fingerprint": result["projection_basis_admission_fingerprint"],
+        "execution_status": result["execution_status"],
+        "execution_ready": result["execution_ready"],
+        "capital_execution_fingerprint": result["execution_fingerprint"],
+        "covered_source_count": result["covered_source_count"],
+        "aggregate_blockers": result["aggregate_blockers"],
+        "projected_source_results": [
+            {
+                "source_id": source["source_id"],
+                "projection_result_fingerprint": source["projection_result_fingerprint"],
+            }
+            for source in result["projected_sources"]
+        ],
     }
 
 
@@ -386,7 +394,7 @@ def _capital_domain(result, authority):
         "domain_result_fingerprint": None,
     }
     try:
-        domain["domain_result_fingerprint"] = _fingerprint(_capital_domain_payload(domain))
+        domain["domain_result_fingerprint"] = _fingerprint(_capital_domain_payload(result, authority))
         domain["identity_fingerprint"] = (
             result["execution_fingerprint"] if ready else domain["domain_result_fingerprint"]
         )
@@ -620,47 +628,74 @@ def _pension_domain(result):
         ),
         "domain_result_fingerprint": None,
     }
-    try:
-        domain["domain_result_fingerprint"] = _fingerprint(_pension_domain_payload(domain))
-    except Exception as exc:
-        raise PensionDomainResultFingerprintConstructionError() from exc
+    domain["domain_result_fingerprint"] = result["portfolio_result_fingerprint"]
     return domain
 
 
-def _execution_payload(client_id, planning_fingerprint, target, capital_domain, pension_domain):
+def _execution_payload(
+    client_id,
+    planning_fingerprint,
+    target,
+    resource_completeness_state,
+    capital_domain,
+    pension_domain,
+):
     return {
         "contract": EXECUTION_CONTRACT,
         "client_id": client_id,
         "planning_calculation_input_fingerprint": planning_fingerprint,
         "retirement_target_date": target,
-        "domain_identities": [
+        "resource_completeness_state": resource_completeness_state,
+        "domains": [
             {
-                "domain_name": capital_domain["domain_name"],
+                "domain_kind": capital_domain["domain_name"],
                 "domain_state": capital_domain["domain_state"],
                 "identity_kind": capital_domain["identity_kind"],
                 "identity_fingerprint": capital_domain["identity_fingerprint"],
+                "domain_result_fingerprint": capital_domain["domain_result_fingerprint"],
             },
             {
-                "domain_name": pension_domain["domain_name"],
+                "domain_kind": pension_domain["domain_name"],
                 "domain_state": pension_domain["domain_state"],
                 "identity_kind": pension_domain["identity_kind"],
                 "identity_fingerprint": pension_domain["identity_fingerprint"],
+                "domain_result_fingerprint": pension_domain["domain_result_fingerprint"],
             },
         ],
     }
 
 
 def _ready(client_id, current, target, capital_domain, pension_domain):
+    domain_states = {capital_domain["domain_state"], pension_domain["domain_state"]}
+    if "blocked" in domain_states:
+        completeness = "blocked"
+    elif "partial" in domain_states:
+        completeness = "partial"
+    else:
+        completeness = "complete"
     try:
-        execution_fp = _fingerprint(_execution_payload(client_id, current, target, capital_domain, pension_domain))
+        execution_fp = _fingerprint(
+            _execution_payload(
+                client_id,
+                current,
+                target,
+                completeness,
+                capital_domain,
+                pension_domain,
+            )
+        )
     except Exception:
         return _fatal(
             client_id, current, current, target, "RESOURCE_STATE_IDENTITY_ERROR",
             "resource_identity", "RESOURCE_EXECUTION_IDENTITY_ASSEMBLY_FAILED",
             capital_domain=capital_domain, pension_domain=pension_domain,
         )
-    reasons = sorted(set(capital_domain["reason_codes"] + pension_domain["reason_codes"]))
-    completeness = "complete" if capital_domain["domain_state"] == pension_domain["domain_state"] == "complete" else "partial"
+    reasons = []
+    for domain in (capital_domain, pension_domain):
+        if domain["domain_state"] != "complete":
+            reasons.append(
+                f"{domain['domain_name'].upper()}_DOMAIN_{domain['domain_state'].upper()}"
+            )
     result = {
         "schema_version": SCHEMA_VERSION,
         "client_id": client_id,
@@ -750,14 +785,29 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
     capital_domain = _capital_domain(capital_result, authority)
 
     capital_checks = (
-        ("CAPITAL_CLIENT_ID_MISMATCH", str(client_id), str(capital_result["client_id"])),
-        ("CAPITAL_PLANNING_FINGERPRINT_MISMATCH", current, capital_result["planning_calculation_input_fingerprint"]),
-        ("CAPITAL_RETIREMENT_TARGET_DATE_MISMATCH", target, capital_domain["retirement_target_date"]),
+        (
+            "RESOURCE_STATE_CROSS_DOMAIN_CLIENT_ID_MISMATCH",
+            "CROSS_DOMAIN_CLIENT_ID_MISMATCH",
+            str(client_id),
+            str(capital_result["client_id"]),
+        ),
+        (
+            "RESOURCE_STATE_CAPITAL_RESULT_INVALID",
+            "CAPITAL_PLANNING_FINGERPRINT_MISMATCH",
+            current,
+            capital_result["planning_calculation_input_fingerprint"],
+        ),
+        (
+            "RESOURCE_STATE_CAPITAL_RESULT_INVALID",
+            "CAPITAL_RETIREMENT_TARGET_DATE_MISMATCH",
+            target,
+            capital_domain["retirement_target_date"],
+        ),
     )
-    for mismatch_detail, expected, observed in capital_checks:
+    for mismatch_blocker, mismatch_detail, expected, observed in capital_checks:
         if observed != expected:
             return _fatal(
-                client_id, current, supplied, target, "RESOURCE_STATE_CAPITAL_RESULT_INVALID",
+                client_id, current, supplied, target, mismatch_blocker,
                 "cross_domain_validation", mismatch_detail,
                 domain="capital", expected=expected, observed=observed, capital_domain=capital_domain,
             )
@@ -781,14 +831,29 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
     pension_domain = _pension_domain(pension_result)
 
     pension_checks = (
-        ("PENSION_CLIENT_ID_MISMATCH", str(client_id), str(pension_result["client_id"])),
-        ("PENSION_PLANNING_FINGERPRINT_MISMATCH", current, pension_result["planning_calculation_input_fingerprint"]),
-        ("PENSION_RETIREMENT_TARGET_DATE_MISMATCH", target, pension_result["retirement_target_date"]),
+        (
+            "RESOURCE_STATE_CROSS_DOMAIN_CLIENT_ID_MISMATCH",
+            "CROSS_DOMAIN_CLIENT_ID_MISMATCH",
+            str(client_id),
+            str(pension_result["client_id"]),
+        ),
+        (
+            "RESOURCE_STATE_CROSS_DOMAIN_PLANNING_IDENTITY_MISMATCH",
+            "CROSS_DOMAIN_PLANNING_FINGERPRINT_MISMATCH",
+            current,
+            pension_result["planning_calculation_input_fingerprint"],
+        ),
+        (
+            "RESOURCE_STATE_CROSS_DOMAIN_TARGET_DATE_MISMATCH",
+            "CROSS_DOMAIN_RETIREMENT_TARGET_DATE_MISMATCH",
+            target,
+            pension_result["retirement_target_date"],
+        ),
     )
-    for mismatch_detail, expected, observed in pension_checks:
+    for mismatch_blocker, mismatch_detail, expected, observed in pension_checks:
         if observed != expected:
             return _fatal(
-                client_id, current, supplied, target, "RESOURCE_STATE_PENSION_RESULT_INVALID",
+                client_id, current, supplied, target, mismatch_blocker,
                 "cross_domain_validation", mismatch_detail,
                 domain="pension", expected=expected, observed=observed,
                 capital_domain=capital_domain, pension_domain=pension_domain,

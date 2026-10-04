@@ -31,6 +31,26 @@ APPROVED_LOCAL_UNTRACKED_PATHS = {
     "_evidence/",
     "specs/bootstraps/",
 }
+APPROVED_RETIREMENT_MONTHLY_INCOME_TARGET_PATHS = {
+    "backend/alembic/versions/a2b8c5e1f309_retirement_monthly_income_target.py",
+    "backend/app/db/base.py",
+    "backend/app/models/retirement_monthly_income_target.py",
+    "backend/app/schemas/retirement_monthly_income_target.py",
+    "backend/app/services/retirement_monthly_income_target_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_retirement_monthly_income_target.py",
+    "backend/tests/test_retirement_monthly_income_target_postgresql.py",
+    "backend/tests/test_pkg011_migration.py",
+    "backend/tests/test_pkg013_migration.py",
+    "backend/tests/test_pkg014_migration.py",
+    "backend/tests/test_projection_execution.py",
+    "backend/tests/test_recovery_batch_migration.py",
+    "backend/tests/test_recovery_migration.py",
+    "backend/tests/test_recovery_migration_postgresql.py",
+    "backend/tests/test_phase6_schema.py",
+    "backend/tests/test_phase7_persistence.py",
+    "backend/tests/test_phase9_api.py",
+}
 APPROVED_PENSION_MONTHLY_BASIS_PATHS = {
     "backend/tests/test_professional_source_postgresql.py",
     "backend/tests/test_retirement_target_postgresql.py",
@@ -538,6 +558,7 @@ def _status_path(line: str) -> str:
 
 def _allowed_untracked_paths() -> set[str]:
     return {
+        *APPROVED_RETIREMENT_MONTHLY_INCOME_TARGET_PATHS,
         *APPROVED_PENSION_MONTHLY_BASIS_PATHS,
         *APPROVED_PENSION_TEMPORAL_AUTHORITY_PATHS,
         *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,
@@ -578,6 +599,7 @@ def _unapproved_untracked(status_lines: list[str]) -> list[str]:
 
 def _approved_tracked_change_paths() -> set[str]:
     return {
+        *APPROVED_RETIREMENT_MONTHLY_INCOME_TARGET_PATHS,
         *APPROVED_PENSION_MONTHLY_BASIS_PATHS,
         *APPROVED_PENSION_TEMPORAL_AUTHORITY_PATHS,
         *APPROVED_CAPITAL_PROJECTION_EXECUTION_PATHS,

@@ -386,4 +386,4 @@ def test_reachability_no_schema_frontend_or_downstream_changes():
         '846dddb0b59b59b311d90d31242c90620be487e4'],cwd=root,text=True).splitlines()
     assert not any(p.startswith(('frontend/','backend/alembic/','backend/app/models/')) for p in changed)
     heads=subprocess.check_output([sys.executable,'-m','alembic','heads'],cwd=root/'backend',text=True).strip()
-    assert heads=='f1a7c4d0e298 (head)'
+    assert heads=='a2b8c5e1f309 (head)'

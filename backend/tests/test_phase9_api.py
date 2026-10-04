@@ -33,6 +33,7 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "retirement_monthly_income_target_elections",
     "canonical_manual_pension_sources",
     "canonical_pension_temporal_decisions",
     "planning_input_decisions",

@@ -8,6 +8,7 @@ class Base(DeclarativeBase):
 
 
 def load_all_models() -> None:
+    import app.models.retirement_monthly_income_target  # noqa: F401
     import app.models.canonical_pension_temporal_decision  # noqa: F401
     import app.models.capital_projection_basis  # noqa: F401
     import app.models.planning_input_decision  # noqa: F401

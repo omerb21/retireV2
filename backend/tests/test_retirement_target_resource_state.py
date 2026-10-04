@@ -602,6 +602,31 @@ def test_blocked_domain_identity_contracts(monkeypatch):
     assert result["pension_domain"]["domain_result_fingerprint"] == pension["portfolio_result_fingerprint"]
 
 
+def test_domain_wrappers_have_exact_schema_and_preserve_canonical_results():
+    authority, capital = capital_result(("capital:1",))
+    pension = accepted_pension(("p1",))
+
+    capital_domain = subject._capital_domain(capital, authority)
+    pension_domain = subject._pension_domain(pension)
+
+    expected_fields = {
+        "domain_kind",
+        "domain_state",
+        "planning_calculation_input_fingerprint",
+        "retirement_target_date",
+        "identity_kind",
+        "identity_fingerprint",
+        "domain_result_fingerprint",
+        "canonical_result",
+    }
+    assert set(capital_domain) == expected_fields
+    assert set(pension_domain) == expected_fields
+    assert capital_domain["domain_kind"] == "capital"
+    assert pension_domain["domain_kind"] == "pension"
+    assert capital_domain["canonical_result"] is capital
+    assert pension_domain["canonical_result"] is pension
+
+
 def test_exact_resource_execution_preimages_and_goldens_d_f():
     _, capital_domain = accepted_capital_cb()
     p1 = accepted_pension(("p1",))
@@ -840,6 +865,22 @@ def test_capital_execution_fingerprint_mismatch(monkeypatch):
     assert result["capital_domain"] is result["pension_domain"] is None
 
 
+def test_blocked_capital_count_must_match_admitted_authority_universe(monkeypatch):
+    authority, capital = capital_result(("capital:1",), blocked=True)
+    assert authority["covered_source_count"] == 1
+    capital["covered_source_count"] = 999
+    calls = configure(monkeypatch, capital=capital, authority=authority)
+
+    result = subject.read(object(), 7, H_A)
+
+    assert calls == ["planning", "basis", "capital"]
+    assert result["resource_state_blockers"] == ["RESOURCE_STATE_CAPITAL_RESULT_INVALID"]
+    assert result["failure_evidence"]["failure_stage"] == "capital_validation"
+    assert result["failure_evidence"]["failure_detail_code"] == "CAPITAL_RESULT_SCHEMA_INVALID"
+    assert result["failure_evidence"]["failed_domain"] == "capital"
+    assert result["capital_domain"] is result["pension_domain"] is None
+
+
 def test_capital_client_mismatch_v2_cross_domain_golden(monkeypatch):
     authority, capital, chain = capital_client_mismatch_v2()
     calls = configure(monkeypatch, capital=capital, authority=authority)
@@ -926,22 +967,33 @@ def test_missing_capital_client_remains_intrinsic_schema_failure(monkeypatch):
     assert result["capital_domain"] is result["pension_domain"] is None
 
 
-@pytest.mark.parametrize(("kind", "detail"), [
-    ("planning", "CAPITAL_PLANNING_FINGERPRINT_MISMATCH"),
-    ("target", "CAPITAL_RETIREMENT_TARGET_DATE_MISMATCH"),
+@pytest.mark.parametrize(("kind", "blocker", "detail"), [
+    (
+        "planning",
+        "RESOURCE_STATE_CROSS_DOMAIN_PLANNING_IDENTITY_MISMATCH",
+        "CROSS_DOMAIN_PLANNING_FINGERPRINT_MISMATCH",
+    ),
+    (
+        "target",
+        "RESOURCE_STATE_CROSS_DOMAIN_TARGET_DATE_MISMATCH",
+        "CROSS_DOMAIN_RETIREMENT_TARGET_DATE_MISMATCH",
+    ),
 ])
-def test_capital_cross_domain_priority_and_retention(monkeypatch, kind, detail):
+def test_capital_cross_domain_priority_and_retention(monkeypatch, kind, blocker, detail):
     authority, capital = capital_result()
-    if kind == "client":
-        capital["client_id"] = 8
-    elif kind == "planning":
+    if kind == "planning":
         capital["planning_calculation_input_fingerprint"] = H_B
         capital["execution_fingerprint"] = digest(subject._capital_execution_payload(capital))
     else:
         authority["retirement_target_date"] = "2031-01-01"
     calls = configure(monkeypatch, capital=capital, authority=authority)
     result = subject.read(object(), 7, H_A)
+    assert result["resource_state_blockers"] == [blocker]
     assert result["failure_evidence"]["failure_detail_code"] == detail
+    assert result["failure_evidence"]["failure_stage"] == "cross_domain_validation"
+    assert result["failure_evidence"]["failed_domain"] == "capital"
+    assert result["failure_evidence"]["expected_identity"] == (H_A if kind == "planning" else TARGET)
+    assert result["failure_evidence"]["observed_identity"] == (H_B if kind == "planning" else "2031-01-01")
     assert result["capital_domain"] is not None and result["pension_domain"] is None
     assert "pension" not in calls
 
@@ -967,6 +1019,78 @@ def test_pension_schema_and_result_fingerprint_failures_retain_capital(monkeypat
     configure(monkeypatch, pension=pension)
     fingerprint = subject.read(object(), 7, H_A)
     assert fingerprint["failure_evidence"]["failure_detail_code"] == "PENSION_RESULT_FINGERPRINT_MISMATCH"
+
+
+def test_pension_source_entry_bound_field_mutation_is_intrinsic_invalid(monkeypatch):
+    pension = accepted_pension(("p1",))
+    source = pension["source_results"][0]
+    accepted_entry_payload = {
+        "contract": "PENSION_TARGET_DATE_PORTFOLIO_SOURCE_ENTRY_FINGERPRINT_JSON_V1",
+        "source_id": "p1",
+        "source_result_state": "result_ready",
+        "source_execution_fingerprint": source["source_execution_fingerprint"],
+        "source_result_fingerprint": source["source_result_fingerprint"],
+        "source_unquantized_target_monthly_amount": "100.004",
+        "portfolio_group": "payable_current",
+        "aggregation_currency": "ILS",
+        "aggregation_blockers": [],
+        "contributes_to_payable_current_total": True,
+        "contribution_unquantized_amount": "100.004",
+    }
+    original_entry_fingerprint = pension["source_entry_fingerprints"][0]["source_entry_fingerprint"]
+    assert digest(accepted_entry_payload) == original_entry_fingerprint == (
+        "d60181d88c39e798d9b8bfdb6c43ce79955c44c49026649152826cbe23fb20cd"
+    )
+    pension["source_results"][0]["unquantized_target_monthly_amount"] = "999999"
+    assert pension["source_entry_fingerprints"][0]["source_entry_fingerprint"] == original_entry_fingerprint
+    configure(monkeypatch, pension=pension)
+
+    result = subject.read(object(), 7, H_A)
+
+    assert result["resource_state_blockers"] == ["RESOURCE_STATE_PENSION_RESULT_INVALID"]
+    assert result["failure_evidence"]["failure_stage"] == "pension_validation"
+    assert result["failure_evidence"]["failure_detail_code"] == "PENSION_RESULT_SCHEMA_INVALID"
+    assert result["failure_evidence"]["failed_domain"] == "pension"
+    assert result["capital_domain"] is not None and result["pension_domain"] is None
+
+
+def test_pension_malformed_coverage_is_intrinsic_invalid_even_with_valid_outer_fingerprint(monkeypatch):
+    pension = accepted_pension(("p1",))
+    pension["coverage_evidence"]["expected_source_ids"] = []
+    pension["expected_source_count"] = 0
+    recertify_pension(pension)
+    configure(monkeypatch, pension=pension)
+
+    result = subject.read(object(), 7, H_A)
+
+    assert result["resource_state_blockers"] == ["RESOURCE_STATE_PENSION_RESULT_INVALID"]
+    assert result["failure_evidence"]["failure_detail_code"] == "PENSION_RESULT_SCHEMA_INVALID"
+    assert result["capital_domain"] is not None and result["pension_domain"] is None
+
+
+@pytest.mark.parametrize("defect", ["wrong_id", "wrong_fingerprint", "missing", "extra"])
+def test_pension_source_entry_fingerprint_relationship_is_intrinsic_invalid(monkeypatch, defect):
+    pension = accepted_pension(("p1",))
+    if defect == "wrong_id":
+        pension["source_entry_fingerprints"][0]["source_id"] = "x"
+    elif defect == "wrong_fingerprint":
+        pension["source_entry_fingerprints"][0]["source_entry_fingerprint"] = "0" * 64
+    elif defect == "missing":
+        pension["source_entry_fingerprints"] = []
+    else:
+        pension["source_entry_fingerprints"].append({
+            "source_id": "x",
+            "source_entry_fingerprint": "0" * 64,
+        })
+    recertify_pension(pension)
+    configure(monkeypatch, pension=pension)
+
+    result = subject.read(object(), 7, H_A)
+
+    assert result["resource_state_blockers"] == ["RESOURCE_STATE_PENSION_RESULT_INVALID"]
+    assert result["failure_evidence"]["failure_stage"] == "pension_validation"
+    assert result["failure_evidence"]["failure_detail_code"] == "PENSION_RESULT_SCHEMA_INVALID"
+    assert result["capital_domain"] is not None and result["pension_domain"] is None
 
 
 def test_pension_execution_fingerprint_mismatch_uses_result_detail(monkeypatch):

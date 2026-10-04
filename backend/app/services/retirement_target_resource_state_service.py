@@ -15,7 +15,6 @@ from app.services.pension_monthly_basis_service import canonical_bytes
 
 SCHEMA_VERSION = "CANONICAL_RETIREMENT_TARGET_DATE_RESOURCE_STATE_RESULT_V1"
 CAPITAL_DOMAIN_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_RESOURCE_STATE_CAPITAL_DOMAIN_RESULT_FINGERPRINT_JSON_V1"
-PENSION_DOMAIN_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_RESOURCE_STATE_PENSION_DOMAIN_RESULT_FINGERPRINT_JSON_V1"
 EXECUTION_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_RESOURCE_STATE_EXECUTION_FINGERPRINT_JSON_V1"
 RESULT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_RESOURCE_STATE_RESULT_FINGERPRINT_JSON_V1"
 
@@ -74,10 +73,6 @@ class CapitalDomainResultFingerprintConstructionError(RuntimeError):
     """Capital domain canonical bytes or SHA-256 construction failed."""
 
 
-class PensionDomainResultFingerprintConstructionError(RuntimeError):
-    """Pension domain canonical bytes or SHA-256 construction failed."""
-
-
 class ResourceStateResultFingerprintConstructionError(RuntimeError):
     """Resource result canonical bytes or SHA-256 construction failed."""
 
@@ -134,7 +129,7 @@ def _domain_result_binding(domain, domain_kind):
             "domain_result_fingerprint": None,
         }
     return {
-        "domain_kind": domain["domain_name"],
+        "domain_kind": domain["domain_kind"],
         "domain_state": domain["domain_state"],
         "domain_result_fingerprint": domain["domain_result_fingerprint"],
     }
@@ -247,6 +242,7 @@ def _validate_capital_authority(authority, result):
             or not _is_int(authority["covered_source_count"])
             or authority["covered_source_count"] < 0
             or authority["covered_source_count"] != len(sources)
+            or result["covered_source_count"] != authority["covered_source_count"]
             or ids != sorted(ids)
             or len(ids) != len(set(ids))
             or not all(isinstance(item, str) and item for item in ids)
@@ -379,19 +375,14 @@ def _capital_domain_payload(result, authority):
 def _capital_domain(result, authority):
     ready = result["execution_ready"]
     domain = {
-        "domain_name": "capital",
+        "domain_kind": "capital",
         "domain_state": "complete" if ready else "blocked",
-        "client_id": result["client_id"],
         "planning_calculation_input_fingerprint": result["planning_calculation_input_fingerprint"],
         "retirement_target_date": authority["retirement_target_date"],
-        "upstream_result_state": result["execution_status"],
-        "upstream_execution_fingerprint": result["execution_fingerprint"],
-        "projection_basis_admission_fingerprint": result["projection_basis_admission_fingerprint"],
-        "covered_source_count": result["covered_source_count"],
         "identity_kind": "execution_fingerprint" if ready else "blocked_result_fingerprint",
         "identity_fingerprint": None,
-        "reason_codes": result["aggregate_blockers"],
         "domain_result_fingerprint": None,
+        "canonical_result": result,
     }
     try:
         domain["domain_result_fingerprint"] = _fingerprint(_capital_domain_payload(result, authority))
@@ -493,6 +484,43 @@ def _validate_pension_source(source):
     return True
 
 
+def _pension_source_entry_payload(source):
+    state = source["result_state"]
+    currency = source.get("currency")
+    applicability = source.get("applicability_state")
+    amount = source.get("unquantized_target_monthly_amount") if state == "result_ready" else None
+    aggregation_currency = (
+        pension_portfolio.SYSTEM_CURRENCY
+        if state == "result_ready" and currency in (None, pension_portfolio.SYSTEM_CURRENCY)
+        else None
+    )
+    aggregation_blockers = (
+        ["PENSION_SOURCE_CURRENCY_NOT_ILS"]
+        if state == "result_ready" and currency not in (None, pension_portfolio.SYSTEM_CURRENCY)
+        else []
+    )
+    if state == "block_no_result" or aggregation_blockers:
+        group = "blocked"
+    elif applicability in {"payable_current", "future_start", "unresolved"}:
+        group = applicability
+    else:
+        raise ValueError("invalid pension portfolio group")
+    contributes = state == "result_ready" and group == "payable_current" and not aggregation_blockers
+    return {
+        "contract": pension_portfolio.SOURCE_ENTRY_CONTRACT,
+        "source_id": source["source_id"],
+        "source_result_state": state,
+        "source_execution_fingerprint": source.get("source_execution_fingerprint"),
+        "source_result_fingerprint": source["source_result_fingerprint"],
+        "source_unquantized_target_monthly_amount": amount,
+        "portfolio_group": group,
+        "aggregation_currency": aggregation_currency,
+        "aggregation_blockers": aggregation_blockers,
+        "contributes_to_payable_current_total": contributes,
+        "contribution_unquantized_amount": amount if contributes else None,
+    }
+
+
 def _validate_pension(result):
     if not isinstance(result, dict):
         return "PENSION_RESULT_SCHEMA_INVALID", None, None
@@ -549,20 +577,62 @@ def _validate_pension(result):
         return "PENSION_RESULT_SCHEMA_INVALID", None, None
 
     if state == "result_ready":
+        coverage = result["coverage_evidence"]
+        try:
+            entry_payloads = [_pension_source_entry_payload(source) for source in result["source_results"]]
+            expected_entries = [
+                {
+                    "source_id": payload["source_id"],
+                    "source_entry_fingerprint": _fingerprint(payload),
+                }
+                for payload in entry_payloads
+            ]
+        except (KeyError, TypeError, ValueError):
+            return "PENSION_RESULT_SCHEMA_INVALID", None, None
+
+        expected_groups = {
+            group: sorted(
+                payload["source_id"]
+                for payload in entry_payloads
+                if payload["portfolio_group"] == group
+            )
+            for group in ("payable_current", "future_start", "unresolved", "blocked")
+        }
+        expected_partial_reasons = []
+        if expected_groups["unresolved"]:
+            expected_partial_reasons.append("UNRESOLVED_APPLICABILITY_PRESENT")
+        if expected_groups["blocked"]:
+            expected_partial_reasons.append("BLOCKED_SOURCE_PRESENT")
+        if any(payload["aggregation_blockers"] for payload in entry_payloads):
+            expected_partial_reasons.append("EXPLICIT_NON_ILS_SOURCE_PRESENT")
+        expected_partial_reasons.sort()
+        expected_completeness = "partial" if expected_partial_reasons else "complete"
+
         valid_relationship = (
             result["portfolio_identity_state"] == "complete"
             and _is_sha256(result["portfolio_execution_fingerprint"])
             and result["failure_evidence"] is None
             and result["portfolio_blockers"] == []
-            and result["coverage_evidence"]["coverage_check_state"] == "complete"
-            and result["expected_source_count"] == len(result["source_results"])
-            and result["returned_source_count"] == len(result["source_results"])
-            and len(result["source_entry_fingerprints"]) == len(result["source_results"])
-            and result["total_completeness_state"] in {"complete", "partial"}
+            and coverage["coverage_check_state"] == "complete"
+            and coverage["missing_source_ids"] == []
+            and coverage["unexpected_source_ids"] == []
+            and coverage["duplicate_source_ids"] == []
+            and coverage["expected_source_ids"] == source_ids
+            and coverage["returned_source_ids"] == source_ids
+            and result["expected_source_count"] == len(coverage["expected_source_ids"])
+            and result["returned_source_count"] == len(coverage["returned_source_ids"])
+            and result["source_entry_fingerprints"] == expected_entries
+            and result["payable_current_source_ids"] == expected_groups["payable_current"]
+            and result["future_start_source_ids"] == expected_groups["future_start"]
+            and result["unresolved_source_ids"] == expected_groups["unresolved"]
+            and result["blocked_source_ids"] == expected_groups["blocked"]
+            and result["partial_reason_codes"] == expected_partial_reasons
+            and result["total_completeness_state"] == expected_completeness
             and isinstance(result["aggregate_unquantized_amount"], str)
             and isinstance(result["payable_current_monthly_total"], str)
         )
     else:
+        coverage = result["coverage_evidence"]
         valid_relationship = (
             result["portfolio_identity_state"] == "incomplete"
             and result["portfolio_execution_fingerprint"] is None
@@ -572,6 +642,8 @@ def _validate_pension(result):
             and result["source_results"] == []
             and result["source_entry_fingerprints"] == []
             and all(group == [] for group in groups)
+            and result["expected_source_count"] == len(coverage["expected_source_ids"])
+            and result["returned_source_count"] == len(coverage["returned_source_ids"])
             and result["total_completeness_state"] == "unavailable"
         )
     if not valid_relationship:
@@ -587,21 +659,6 @@ def _validate_pension(result):
     return None, None, None
 
 
-def _pension_domain_payload(domain):
-    return {
-        "contract": PENSION_DOMAIN_CONTRACT,
-        "domain_kind": domain["domain_name"],
-        "domain_state": domain["domain_state"],
-        "client_id": domain["client_id"],
-        "planning_calculation_input_fingerprint": domain["planning_calculation_input_fingerprint"],
-        "retirement_target_date": domain["retirement_target_date"],
-        "upstream_result_state": domain["upstream_result_state"],
-        "upstream_execution_fingerprint": domain["upstream_execution_fingerprint"],
-        "upstream_result_fingerprint": domain["upstream_result_fingerprint"],
-        "reason_codes": domain["reason_codes"],
-    }
-
-
 def _pension_domain(result):
     ready = result["result_state"] == "result_ready"
     if not ready:
@@ -611,22 +668,16 @@ def _pension_domain(result):
     else:
         state = "complete"
     domain = {
-        "domain_name": "pension",
+        "domain_kind": "pension",
         "domain_state": state,
-        "client_id": result["client_id"],
         "planning_calculation_input_fingerprint": result["planning_calculation_input_fingerprint"],
         "retirement_target_date": result["retirement_target_date"],
-        "upstream_result_state": result["result_state"],
-        "upstream_execution_fingerprint": result["portfolio_execution_fingerprint"],
-        "upstream_result_fingerprint": result["portfolio_result_fingerprint"],
         "identity_kind": "execution_fingerprint" if ready else "blocked_result_fingerprint",
         "identity_fingerprint": (
             result["portfolio_execution_fingerprint"] if ready else result["portfolio_result_fingerprint"]
         ),
-        "reason_codes": (
-            result["partial_reason_codes"] if ready else result["portfolio_blockers"]
-        ),
         "domain_result_fingerprint": None,
+        "canonical_result": result,
     }
     domain["domain_result_fingerprint"] = result["portfolio_result_fingerprint"]
     return domain
@@ -648,14 +699,14 @@ def _execution_payload(
         "resource_completeness_state": resource_completeness_state,
         "domains": [
             {
-                "domain_kind": capital_domain["domain_name"],
+                "domain_kind": capital_domain["domain_kind"],
                 "domain_state": capital_domain["domain_state"],
                 "identity_kind": capital_domain["identity_kind"],
                 "identity_fingerprint": capital_domain["identity_fingerprint"],
                 "domain_result_fingerprint": capital_domain["domain_result_fingerprint"],
             },
             {
-                "domain_kind": pension_domain["domain_name"],
+                "domain_kind": pension_domain["domain_kind"],
                 "domain_state": pension_domain["domain_state"],
                 "identity_kind": pension_domain["identity_kind"],
                 "identity_fingerprint": pension_domain["identity_fingerprint"],
@@ -694,7 +745,7 @@ def _ready(client_id, current, target, capital_domain, pension_domain):
     for domain in (capital_domain, pension_domain):
         if domain["domain_state"] != "complete":
             reasons.append(
-                f"{domain['domain_name'].upper()}_DOMAIN_{domain['domain_state'].upper()}"
+                f"{domain['domain_kind'].upper()}_DOMAIN_{domain['domain_state'].upper()}"
             )
     result = {
         "schema_version": SCHEMA_VERSION,
@@ -792,14 +843,14 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
             str(capital_result["client_id"]),
         ),
         (
-            "RESOURCE_STATE_CAPITAL_RESULT_INVALID",
-            "CAPITAL_PLANNING_FINGERPRINT_MISMATCH",
+            "RESOURCE_STATE_CROSS_DOMAIN_PLANNING_IDENTITY_MISMATCH",
+            "CROSS_DOMAIN_PLANNING_FINGERPRINT_MISMATCH",
             current,
             capital_result["planning_calculation_input_fingerprint"],
         ),
         (
-            "RESOURCE_STATE_CAPITAL_RESULT_INVALID",
-            "CAPITAL_RETIREMENT_TARGET_DATE_MISMATCH",
+            "RESOURCE_STATE_CROSS_DOMAIN_TARGET_DATE_MISMATCH",
+            "CROSS_DOMAIN_RETIREMENT_TARGET_DATE_MISMATCH",
             target,
             capital_domain["retirement_target_date"],
         ),

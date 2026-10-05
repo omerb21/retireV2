@@ -1,10 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
-from threading import Barrier, Event, get_ident
+from threading import Event, get_ident
 
 import pytest
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -132,32 +132,151 @@ def test_t33_row_universe_variants(pg_engine,mutation):
     assert assess(pg_engine)['authority_state']=='STALE'
 
 
-def test_t34_create_race_and_replace_cas(pg_engine):
-    prepare(pg_engine); base=command(pg_engine); barrier=Barrier(2)
-    def writer(amount):
-        barrier.wait(20)
-        try: return confirm(pg_engine,base|{'monthly_amount':amount})['target']['monthly_amount']
+def _competing_election(request, amount):
+    target=rit._target_from_values(
+        client_id=1,
+        planning_fingerprint=request['expected_planning_calculation_input_fingerprint'],
+        target_date=date.fromisoformat(request['expected_retirement_target_date']),
+        amount=amount,
+        income_basis=request['income_basis'],
+        price_basis=request['price_basis'],
+        reference_date=request['price_reference_date'],
+    )
+    now=datetime(2026,10,4,13,49,54,tzinfo=timezone.utc)
+    return Election(
+        client_id=1,version=1,lifecycle_state='CONFIRMED',
+        planning_calculation_input_fingerprint=target['planning_calculation_input_fingerprint'],
+        retirement_target_date=date.fromisoformat(target['retirement_target_date']),
+        monthly_amount_text=amount,currency='ILS',income_basis=target['income_basis'],
+        price_basis=target['price_basis'],price_reference_date=None,
+        source_kind='PLANNER_SUPPLIED',confirmation_state='CONFIRMED',
+        confirmation_actor='planner:competitor',confirmed_at=now,
+        target_semantic_fingerprint=rit._semantic_fingerprint(target),created_at=now,updated_at=now,
+    )
+
+
+def test_t34_create_race_is_snapshot_ordered_and_fails_closed(pg_engine,monkeypatch):
+    prepare(pg_engine); request=command(pg_engine); paused,resume=Event(),Event(); worker=[None]; observations=[]
+    # Exercise the target uniqueness layer independently of the already-covered
+    # client lock, so a bypassing writer can create the snapshot-invisible row.
+    monkeypatch.setattr(rit,'_lock_client',lambda db,client_id: None)
+    original=rit._locked_row
+    def controlled(db,client_id):
+        if get_ident()==worker[0] and not paused.is_set():
+            observations.append(db.scalar(select(Election.version).where(Election.client_id==client_id)))
+            paused.set(); assert resume.wait(20)
+        return original(db,client_id)
+    monkeypatch.setattr(rit,'_locked_row',controlled)
+    def operation():
+        worker[0]=get_ident()
+        try: return confirm(pg_engine,request)
         except PensionProductError as exc: return exc.code
-        except OperationalError as exc:
-            assert exc.orig.pgcode in {'40001','40P01'}; return 'retryable'
-    with ThreadPoolExecutor(2) as pool: outcomes=list(pool.map(writer,['24000','24001']))
-    assert len([v for v in outcomes if v in {'24000','24001'}])==1
-    assert set(outcomes)-{'24000','24001'} <= {'RIT_RECORD_VERSION_CONFLICT','retryable'}
-    with Session(pg_engine) as db: assert db.query(Election).count()==1 and db.get(Election,1).version==1
+    with ThreadPoolExecutor(1) as pool:
+        pending=pool.submit(operation); assert paused.wait(20)
+        try:
+            with Session(pg_engine) as competitor,competitor.begin():
+                competitor.add(_competing_election(request,'24001'))
+        finally: resume.set()
+        outcome=pending.result(timeout=20)
+    assert observations==[None]
+    assert outcome=='RIT_RECORD_VERSION_CONFLICT'
+    with Session(pg_engine) as db:
+        row=db.get(Election,1)
+        assert db.query(Election).count()==1 and row.version==1 and row.monthly_amount_text=='24001'
 
 
-def test_t35_whole_operation_retry_rederives_and_rejects_old_context(pg_engine,monkeypatch):
-    prepare(pg_engine); request=command(pg_engine); original=rit._begin; attempts=[]
-    class SerializationFailure(Exception): pgcode='40001'
-    def controlled(db):
-        attempts.append(object())
-        if len(attempts)==1:
-            original(db)
-            raise OperationalError('controlled',{},SerializationFailure())
-        with Session(pg_engine) as other,other.begin():
-            other.get(PlanningInputDecision,1).planning_base_date=date(2029,12,31)
-        return original(db)
-    monkeypatch.setattr(rit,'_begin',controlled)
-    with Session(pg_engine) as db,pytest.raises(PensionProductError) as error: rit.confirm(db,request,'planner:pg')
-    assert error.value.code=='RIT_CONFIRMATION_CONTEXT_STALE' and len(attempts)==2
+def test_t34_replacement_race_is_snapshot_ordered_and_cannot_overwrite(pg_engine,monkeypatch):
+    prepare(pg_engine); confirm(pg_engine,command(pg_engine)); request=command(pg_engine,expected_record_version=1,monthly_amount='26000')
+    # Isolate the target FOR UPDATE/CAS layer from the separately verified
+    # client serialization lock.
+    monkeypatch.setattr(rit,'_lock_client',lambda db,client_id: None)
+    paused,resume=Event(),Event(); worker=[None]; observations=[]; original=rit._locked_row
+    def controlled(db,client_id):
+        if get_ident()==worker[0] and not paused.is_set():
+            observations.append(db.scalar(select(Election.version).where(Election.client_id==client_id)))
+            paused.set(); assert resume.wait(20)
+        return original(db,client_id)
+    monkeypatch.setattr(rit,'_locked_row',controlled)
+    def operation():
+        worker[0]=get_ident()
+        try: return confirm(pg_engine,request)
+        except PensionProductError as exc: return exc.code
+    with ThreadPoolExecutor(1) as pool:
+        pending=pool.submit(operation); assert paused.wait(20)
+        try:
+            with Session(pg_engine) as competitor,competitor.begin():
+                row=competitor.get(Election,1)
+                row.version=2; row.monthly_amount_text='25000'; row.updated_at=datetime.now(timezone.utc)
+                target=rit._target_from_values(client_id=1,planning_fingerprint=row.planning_calculation_input_fingerprint,
+                    target_date=row.retirement_target_date,amount='25000',income_basis=row.income_basis,
+                    price_basis=row.price_basis,reference_date=row.price_reference_date)
+                row.target_semantic_fingerprint=rit._semantic_fingerprint(target)
+        finally: resume.set()
+        outcome=pending.result(timeout=20)
+    assert observations==[1]
+    assert outcome=='RIT_RECORD_VERSION_CONFLICT'
+    with Session(pg_engine) as db:
+        row=db.get(Election,1)
+        assert row.version==2 and row.monthly_amount_text=='25000'
+
+
+class SerializationFailure(Exception):
+    pgcode='40001'
+
+
+def _count_attempt_boundaries(monkeypatch):
+    calls={name:[] for name in ('begin','prepare','lock','derive','target')}
+    bindings=(
+        ('begin',rit,'_begin'),('prepare',rit,'_prepare_authoritative_state'),
+        ('lock',rit,'_lock_client'),('derive',rit.planning,'derive'),('target',rit,'_locked_row'),
+    )
+    originals={name:getattr(owner,attribute) for name,owner,attribute in bindings}
+    for name,owner,attribute in bindings:
+        original=originals[name]
+        def wrapper(*args,_name=name,_original=original,**kwargs):
+            calls[_name].append(args[0] if args else None)
+            return _original(*args,**kwargs)
+        monkeypatch.setattr(owner,attribute,wrapper)
+    return calls,originals
+
+
+def test_t35_confirm_retry_reloads_after_context_and_target_were_loaded(pg_engine,monkeypatch):
+    prepare(pg_engine); request=command(pg_engine); calls,originals=_count_attempt_boundaries(monkeypatch); failures=[]; target_calls=[]
+    def controlled(db,client_id):
+        target_calls.append(client_id)
+        row=originals['target'](db,client_id)
+        if not failures:
+            failures.append(row)
+            with Session(pg_engine) as other,other.begin():
+                other.get(PlanningInputDecision,1).planning_base_date=date(2029,12,31)
+            raise OperationalError('controlled after target load',{},SerializationFailure())
+        return row
+    monkeypatch.setattr(rit,'_locked_row',controlled)
+    with Session(pg_engine) as db,pytest.raises(PensionProductError) as error:
+        rit.confirm(db,request,'planner:pg')
+    assert error.value.code=='RIT_CONFIRMATION_CONTEXT_STALE' and failures==[None]
+    assert all(len(calls[name])>=2 for name in ('begin','prepare','lock','derive'))
+    assert target_calls==[1,1]
     with Session(pg_engine) as db: assert db.get(Election,1) is None
+
+
+def test_t35_assess_retry_reloads_context_and_target_and_fails_closed(pg_engine,monkeypatch):
+    prepare(pg_engine); confirm(pg_engine,command(pg_engine)); calls,originals=_count_attempt_boundaries(monkeypatch); failures=[]; target_calls=[]
+    def controlled(db,client_id):
+        target_calls.append(client_id)
+        row=originals['target'](db,client_id)
+        if not failures:
+            failures.append(row.version)
+            with Session(pg_engine) as other,other.begin():
+                other.get(PlanningInputDecision,1).planning_base_date=date(2029,12,31)
+            raise OperationalError('controlled after target load',{},SerializationFailure())
+        return row
+    monkeypatch.setattr(rit,'_locked_row',controlled)
+    with Session(pg_engine) as db: result=rit.assess(db,1)
+    assert failures==[1] and result['authority_state']=='STALE' and not result['target_ready']
+    assert 'RIT_PLANNING_IDENTITY_STALE' in result['blockers']
+    assert all(len(calls[name])>=2 for name in ('begin','prepare','lock','derive'))
+    assert target_calls==[1,1]
+    with Session(pg_engine) as db:
+        row=db.get(Election,1)
+        assert row.version==2 and row.lifecycle_state=='STALE'

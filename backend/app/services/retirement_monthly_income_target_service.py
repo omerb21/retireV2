@@ -133,12 +133,12 @@ def _validate_command(command) -> dict:
         blockers.append(amount_error)
     if data["income_basis"] is None:
         blockers.append("RIT_INCOME_BASIS_MISSING")
-    elif data["income_basis"] not in INCOME_BASES:
+    elif not isinstance(data["income_basis"], str) or data["income_basis"] not in INCOME_BASES:
         blockers.append("RIT_INCOME_BASIS_INVALID")
     price_basis = data["price_basis"]
     if price_basis is None:
         blockers.append("RIT_PRICE_BASIS_MISSING")
-    elif price_basis not in PRICE_BASES:
+    elif not isinstance(price_basis, str) or price_basis not in PRICE_BASES:
         blockers.append("RIT_PRICE_BASIS_INVALID")
     elif price_basis == "NOMINAL_AT_RETIREMENT_TARGET_DATE":
         if data["price_reference_date"] is not None:
@@ -147,7 +147,7 @@ def _validate_command(command) -> dict:
         blockers.append("RIT_PRICE_REFERENCE_DATE_MISSING")
     elif _strict_date(data["price_reference_date"]) is None:
         blockers.append("RIT_PRICE_REFERENCE_DATE_INVALID")
-    if data["source_kind"] not in SOURCE_KINDS:
+    if not isinstance(data["source_kind"], str) or data["source_kind"] not in SOURCE_KINDS:
         blockers.append("RIT_CONFIRMATION_INVALID")
     if blockers:
         _fail(sorted(set(blockers))[0])
@@ -173,9 +173,9 @@ def _begin(db: Session) -> None:
 def _context(db: Session, client_id: int) -> dict:
     try:
         plan = planning.derive(db, client_id)
-    except Exception as exc:
-        if isinstance(exc, RetirementMonthlyIncomeTargetError):
-            raise
+    except RetirementMonthlyIncomeTargetError:
+        raise
+    except PensionProductError:
         _fail("RIT_PLANNING_CONTEXT_UNAVAILABLE")
     if plan.get("client_id") != client_id:
         _fail("RIT_PLANNING_CONTEXT_INVALID")
@@ -325,7 +325,27 @@ def _locked_row(db: Session, client_id: int) -> Election | None:
 def _retryable(exc: BaseException) -> bool:
     original = getattr(exc, "orig", None)
     code = getattr(original, "pgcode", None) or getattr(original, "sqlstate", None)
-    return code in {"40001", "40P01", "23505"} or isinstance(exc, IntegrityError)
+    if code in {"40001", "40P01"}:
+        return True
+    if code == "23505" and isinstance(exc, IntegrityError):
+        diagnostics = getattr(original, "diag", None)
+        constraint = getattr(diagnostics, "constraint_name", None)
+        table = getattr(diagnostics, "table_name", None)
+        return (
+            constraint == "retirement_monthly_income_target_elections_pkey"
+            and table in {None, "retirement_monthly_income_target_elections"}
+        )
+    sqlite_code = getattr(original, "sqlite_errorcode", None)
+    return (
+        isinstance(exc, OperationalError)
+        and isinstance(sqlite_code, int)
+        and sqlite_code & 0xFF in {5, 6}  # SQLITE_BUSY / SQLITE_LOCKED
+    )
+
+
+def _prepare_authoritative_state(db: Session) -> None:
+    """Exclude identity-map objects retained from an earlier transaction."""
+    db.expire_all()
 
 
 def confirm(db: Session, complete_command, trusted_professional_actor: str) -> dict:
@@ -335,6 +355,7 @@ def confirm(db: Session, complete_command, trusted_professional_actor: str) -> d
     for attempt in range(3):
         try:
             _begin(db)
+            _prepare_authoritative_state(db)
             _lock_client(db, command["client_id"])
             context = _context(db, command["client_id"])
             row = _locked_row(db, command["client_id"])
@@ -402,6 +423,7 @@ def assess(db: Session, client_id: int) -> dict:
     for attempt in range(3):
         try:
             _begin(db)
+            _prepare_authoritative_state(db)
             _lock_client(db, client_id)
             try:
                 context = _context(db, client_id)

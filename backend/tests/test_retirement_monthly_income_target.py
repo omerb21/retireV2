@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.retirement_monthly_income_target import RetirementMonthlyIncomeTargetElection as Election
@@ -152,6 +153,29 @@ def test_command_field_rejections(engine,field,value,code):
     with Session(engine) as db: assert db.get(Election,1) is None
 
 
+@pytest.mark.parametrize("field,code", [
+    ("income_basis", "RIT_INCOME_BASIS_INVALID"),
+    ("price_basis", "RIT_PRICE_BASIS_INVALID"),
+    ("source_kind", "RIT_CONFIRMATION_INVALID"),
+])
+@pytest.mark.parametrize("value", [[], {}, ["NET"], 1, True, 1.0, "unsupported"])
+def test_malformed_enum_and_provenance_values_are_typed(engine, field, code, value):
+    prepare(engine)
+    with pytest.raises(PensionProductError) as error:
+        confirm(engine, command(engine) | {field: value})
+    assert error.value.code == code
+    with Session(engine) as db:
+        assert db.get(Election, 1) is None
+
+
+def test_command_shape_precedes_malformed_field_semantics(engine):
+    prepare(engine)
+    malformed = command(engine) | {"income_basis": [], "unknown": "value"}
+    with pytest.raises(PensionProductError) as error:
+        confirm(engine, malformed)
+    assert error.value.code == "RIT_COMMAND_SCHEMA_INVALID"
+
+
 def test_command_shape_actor_real_date_and_context(engine):
     prepare(engine); request=command(engine)
     for malformed in ({k:v for k,v in request.items() if k!="source_kind"}, request|{"currency":"ILS"}):
@@ -183,6 +207,92 @@ def test_t22_strict_identity_hash_and_date_types(engine,field,value):
     prepare(engine)
     with pytest.raises(PensionProductError): confirm(engine,command(engine)|{field:value})
     with Session(engine) as db: assert db.get(Election,1) is None
+
+
+def test_cached_planning_decision_is_refreshed_for_confirm(engine):
+    prepare(engine)
+    old_command = command(engine)
+    from app.models.planning_input_decision import PlanningInputDecision
+    with Session(engine, expire_on_commit=False) as retained:
+        cached = retained.get(PlanningInputDecision, 1)
+        assert cached.planning_base_date == date(2030, 1, 1)
+        retained.commit()
+        with Session(engine) as writer, writer.begin():
+            writer.get(PlanningInputDecision, 1).planning_base_date = date(2029, 12, 31)
+        with pytest.raises(PensionProductError) as error:
+            rit.confirm(retained, old_command, "planner:cached")
+        assert error.value.code == "RIT_CONFIRMATION_CONTEXT_STALE"
+    with Session(engine) as db:
+        assert db.get(Election, 1) is None
+
+
+def test_cached_planning_decision_is_refreshed_for_assess(engine):
+    prepare(engine)
+    confirm(engine, command(engine))
+    from app.models.planning_input_decision import PlanningInputDecision
+    with Session(engine, expire_on_commit=False) as retained:
+        cached = retained.get(PlanningInputDecision, 1)
+        assert cached.planning_base_date == date(2030, 1, 1)
+        retained.commit()
+        with Session(engine) as writer, writer.begin():
+            writer.get(PlanningInputDecision, 1).planning_base_date = date(2029, 12, 31)
+        result = rit.assess(retained, 1)
+    assert result["authority_state"] == "STALE"
+    assert "RIT_PLANNING_IDENTITY_STALE" in result["blockers"]
+
+
+def test_sqlstate_40001_during_derivation_retries_instead_of_becoming_domain_blocker(engine, monkeypatch):
+    prepare(engine)
+    request = command(engine)
+    original = rit.planning.derive
+    calls = []
+    class SerializationFailure(Exception):
+        pgcode = "40001"
+    def controlled(db, client_id):
+        calls.append(client_id)
+        if len(calls) == 1:
+            raise OperationalError("derive", {}, SerializationFailure())
+        return original(db, client_id)
+    monkeypatch.setattr(rit.planning, "derive", controlled)
+    result = confirm(engine, request)
+    assert result["target_ready"] and calls == [1, 1]
+
+
+class _DatabaseDiagnostic:
+    def __init__(self, constraint_name=None, table_name=None):
+        self.constraint_name = constraint_name
+        self.table_name = table_name
+
+
+class _DatabaseFailure(Exception):
+    def __init__(self, sqlstate=None, *, constraint_name=None, table_name=None):
+        super().__init__(sqlstate)
+        self.pgcode = sqlstate
+        self.diag = _DatabaseDiagnostic(constraint_name, table_name)
+
+
+@pytest.mark.parametrize("sqlstate", ["40001", "40P01"])
+def test_retry_classifier_accepts_only_postgresql_transaction_conflicts(sqlstate):
+    error = OperationalError("statement", {}, _DatabaseFailure(sqlstate))
+    assert rit._retryable(error)
+
+
+def test_retry_classifier_accepts_only_target_primary_key_unique_race():
+    target = IntegrityError("statement", {}, _DatabaseFailure(
+        "23505",
+        constraint_name="retirement_monthly_income_target_elections_pkey",
+        table_name="retirement_monthly_income_target_elections",
+    ))
+    assert rit._retryable(target)
+    cases = [
+        IntegrityError("statement", {}, _DatabaseFailure("23503")),
+        IntegrityError("statement", {}, _DatabaseFailure("23514")),
+        IntegrityError("statement", {}, _DatabaseFailure(
+            "23505", constraint_name="other_table_key", table_name="other_table"
+        )),
+        IntegrityError("statement", {}, _DatabaseFailure(None)),
+    ]
+    assert [rit._retryable(error) for error in cases] == [False, False, False, False]
 
 
 def test_create_replace_conflict_different_actor_and_explicit_reconfirmation(engine,monkeypatch):

@@ -135,6 +135,14 @@ APPROVED_RETIREMENT_TARGET_RESOURCE_STATE_PATHS = {
     "backend/tests/test_retirement_target_resource_state.py",
     "backend/tests/test_governance_baseline.py",
 }
+APPROVED_RETIREMENT_TARGET_INCOME_ADMISSION_PATHS = {
+    "backend/app/services/retirement_target_date_income_source_admission_service.py",
+    "backend/tests/test_retirement_target_date_income_source_admission.py",
+    "backend/tests/test_retirement_target_date_income_source_admission_postgresql.py",
+    "backend/tests/fixtures/rtisa_goldens.json",
+    "backend/tests/fixtures/rtisa_markers.json",
+    "backend/tests/test_governance_baseline.py",
+}
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
     "backend/app/schemas/fixation_contracts.py",
@@ -565,6 +573,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_PENSION_TARGET_DATE_EXECUTION_PATHS,
         *APPROVED_PENSION_TARGET_DATE_PORTFOLIO_PATHS,
         *APPROVED_RETIREMENT_TARGET_RESOURCE_STATE_PATHS,
+        *APPROVED_RETIREMENT_TARGET_INCOME_ADMISSION_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
@@ -590,6 +599,14 @@ def _unapproved_untracked(status_lines: list[str]) -> list[str]:
         actual = {p.relative_to(REPO_ROOT).as_posix() for p in (REPO_ROOT / "backend/app/data").rglob("*") if p.is_file() and "__pycache__" not in p.parts}
         if actual <= allowed_untracked:
             allowed_untracked.add("backend/app/data/")
+    if "?? backend/tests/fixtures/" in status_lines:
+        actual = {
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (REPO_ROOT / "backend/tests/fixtures").rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        }
+        if actual <= allowed_untracked:
+            allowed_untracked.add("backend/tests/fixtures/")
     return [
         line
         for line in status_lines
@@ -606,6 +623,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_PENSION_TARGET_DATE_EXECUTION_PATHS,
         *APPROVED_PENSION_TARGET_DATE_PORTFOLIO_PATHS,
         *APPROVED_RETIREMENT_TARGET_RESOURCE_STATE_PATHS,
+        *APPROVED_RETIREMENT_TARGET_INCOME_ADMISSION_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,

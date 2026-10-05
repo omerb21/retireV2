@@ -40,6 +40,14 @@ TECHNICAL_FATALS = {
     (("PORTFOLIO_SOURCE_EXECUTION_ERROR",), "source_execution", "PTE_EXECUTOR_EXCEPTION"),
     (("PORTFOLIO_IDENTITY_ERROR",), "portfolio_identity", "PORTFOLIO_EXECUTION_IDENTITY_ASSEMBLY_FAILED"),
 }
+FATAL_PORTFOLIO_BLOCKERS = {
+    "PORTFOLIO_AGGREGATION_NUMERIC_ERROR", "PORTFOLIO_IDENTITY_ERROR",
+    "PORTFOLIO_PLANNING_INPUT_IDENTITY_STALE", "PORTFOLIO_RETIREMENT_TARGET_NOT_READY",
+    "PORTFOLIO_SOURCE_COVERAGE_DUPLICATE", "PORTFOLIO_SOURCE_COVERAGE_MISSING",
+    "PORTFOLIO_SOURCE_COVERAGE_UNEXPECTED", "PORTFOLIO_SOURCE_EXECUTION_ERROR",
+    "PORTFOLIO_SOURCE_RESULT_FINGERPRINT_INVALID", "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID",
+    "PORTFOLIO_SOURCE_UNIVERSE_INVALID",
+}
 
 
 class RetirementTargetIncomeSourceAdmissionError(ValueError):
@@ -189,7 +197,9 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
     expected_ids = [source["source_id"] for source in planning["pension_inputs"]]
     if not isinstance(result, dict) or result.get("schema_version") != portfolio_service.SCHEMA_VERSION:
         return False
-    if result.get("client_id") != client_id or result.get("planning_calculation_input_fingerprint") != planning_fp \
+    if isinstance(result.get("client_id"), bool) or not isinstance(result.get("client_id"), int) \
+            or result.get("client_id") != client_id \
+            or result.get("planning_calculation_input_fingerprint") != planning_fp \
             or result.get("retirement_target_date") != target:
         return False
     value = result.get("portfolio_result_fingerprint")
@@ -220,25 +230,58 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
         if not isinstance(coverage, dict) or set(coverage) != coverage_fields \
                 or coverage.get("expected_source_ids") != sorted(expected_ids):
             return False
-        if len(expected_ids) != len(set(expected_ids)) or result.get("expected_source_count") != len(expected_ids):
+        expected_count = result.get("expected_source_count")
+        returned_count = result.get("returned_source_count")
+        if len(expected_ids) != len(set(expected_ids)) \
+                or isinstance(expected_count, bool) or not isinstance(expected_count, int) \
+                or isinstance(returned_count, bool) or not isinstance(returned_count, int) \
+                or expected_count != len(expected_ids):
             return False
-        if any(not isinstance(coverage.get(key), list) for key in (
+        list_keys = (
             "duplicate_source_ids", "expected_source_ids", "missing_source_ids",
             "returned_source_ids", "unexpected_source_ids",
-        )) or any(any(not isinstance(item, str) or not item for item in coverage[key]) for key in (
-            "duplicate_source_ids", "expected_source_ids", "missing_source_ids",
-            "returned_source_ids", "unexpected_source_ids",
-        )):
+        )
+        if any(not isinstance(coverage.get(key), list) for key in list_keys) \
+                or any(any(not isinstance(item, str) or not item for item in coverage[key]) for key in list_keys):
+            return False
+        expected = coverage["expected_source_ids"]
+        returned = coverage["returned_source_ids"]
+        missing = coverage["missing_source_ids"]
+        unexpected = coverage["unexpected_source_ids"]
+        duplicates = coverage["duplicate_source_ids"]
+        if expected != sorted(expected) or returned != sorted(returned) \
+                or missing != sorted(set(missing)) or unexpected != sorted(set(unexpected)) \
+                or duplicates != sorted(set(duplicates)) or len(expected) != len(set(expected)):
+            return False
+        returned_counts = {source_id: returned.count(source_id) for source_id in set(returned)}
+        if missing != sorted(set(expected) - set(returned)) \
+                or unexpected != sorted(set(returned) - set(expected)) \
+                or duplicates != sorted(source_id for source_id, count in returned_counts.items() if count > 1):
+            return False
+        coverage_state = coverage.get("coverage_check_state")
+        if coverage_state not in {"complete", "incomplete", "invalid", "not_evaluated"}:
+            return False
+        discrepancies = bool(missing or unexpected or duplicates)
+        if coverage_state == "complete" and discrepancies:
+            return False
+        if coverage_state == "incomplete" and not missing:
+            return False
+        if coverage_state == "not_evaluated" and any((expected, returned, missing, unexpected, duplicates)):
             return False
         blockers = result.get("portfolio_blockers")
-        if not isinstance(blockers, list) or blockers != sorted(set(blockers)) \
-                or any(not isinstance(item, str) or not item for item in blockers):
+        if not isinstance(blockers, list) or len(blockers) != 1 or blockers != sorted(set(blockers)) \
+                or blockers[0] not in FATAL_PORTFOLIO_BLOCKERS:
             return False
         if not isinstance(failure, dict) or set(failure) != failure_fields \
                 or failure.get("current_planning_calculation_input_fingerprint") != planning_fp \
                 or failure.get("supplied_planning_calculation_input_fingerprint") != planning_fp \
-                or not isinstance(failure.get("failure_stage"), str) \
-                or not isinstance(failure.get("failure_detail_code"), str):
+                or not isinstance(failure.get("failure_stage"), str) or not failure["failure_stage"] \
+                or not isinstance(failure.get("failure_detail_code"), str) or not failure["failure_detail_code"]:
+            return False
+        failed = failure.get("failed_expected_source_id")
+        observed = failure.get("observed_source_id")
+        if (failed is not None and (not isinstance(failed, str) or not failed or failed not in expected)) \
+                or (observed is not None and (not isinstance(observed, str) or not observed or observed not in returned)):
             return False
         if result.get("portfolio_identity_state") != "incomplete" \
                 or result.get("portfolio_execution_fingerprint") is not None \
@@ -255,6 +298,29 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
         return portfolio_service._result_fingerprint(payload) == value
     except (KeyError, TypeError, ValueError):
         return False
+
+
+def _discard_failed_attempt(db) -> None:
+    """Rollback, and invalidate the guarded connection if rollback itself fails."""
+    connection = None
+    try:
+        if db.in_transaction():
+            connection = db.connection()
+    except Exception:
+        connection = None
+    try:
+        db.rollback()
+    except BaseException:
+        try:
+            if connection is not None:
+                connection.invalidate()
+        except BaseException:
+            pass
+        try:
+            db.close()
+        except BaseException:
+            pass
+        raise
 
 
 def _is_technical_fatal(result: dict) -> tuple[str, str, str] | None:
@@ -422,7 +488,6 @@ def _apply_collisions(entries: list[dict], rows: list[RecurringIncome], planning
         if len(participating) > 1:
             for entry in participating:
                 entry["admission_state"] = "UNRESOLVED"
-                entry["applicability"]["at_target"] = "UNRESOLVED"
                 entry["reason_codes"] = sorted(set(entry["reason_codes"] + [
                     "RTISA_SOURCE_IDENTITY_AMBIGUOUS", "RTISA_DUPLICATE_COLLISION_UNRESOLVED",
                 ]))
@@ -523,6 +588,10 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
                     rows = list(db.scalars(select(RecurringIncome).where(
                         RecurringIncome.client_id == client_id, RecurringIncome.lifecycle_status == "current"
                     ).order_by(RecurringIncome.id)))
+                    if any(isinstance(row.id, bool) or not isinstance(row.id, int) or row.id <= 0 for row in rows):
+                        result = _empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID")
+                        db.commit()
+                        return serialize(result)
                     ids = [row.id for row in rows]
                     resolutions = list(db.scalars(select(PensionIncomeResolution).where(or_(
                         PensionIncomeResolution.client_id == client_id,
@@ -537,5 +606,5 @@ def read(db, client_id: int, expected_planning_calculation_input_fingerprint: st
     except RetirementTargetIncomeSourceAdmissionError:
         raise
     except Exception:
-        db.rollback()
+        _discard_failed_attempt(db)
         raise

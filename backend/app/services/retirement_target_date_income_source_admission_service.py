@@ -49,6 +49,22 @@ FATAL_PORTFOLIO_BLOCKERS = {
     "PORTFOLIO_SOURCE_UNIVERSE_INVALID",
 }
 
+FATAL_PORTFOLIO_SIGNATURES = {
+    ("PORTFOLIO_SOURCE_COVERAGE_DUPLICATE", "coverage", "DUPLICATE_SOURCE_RESULT_PRESENT"),
+    ("PORTFOLIO_SOURCE_COVERAGE_MISSING", "coverage", "EXPECTED_SOURCE_RESULT_MISSING"),
+    ("PORTFOLIO_SOURCE_COVERAGE_UNEXPECTED", "coverage", "UNEXPECTED_SOURCE_RESULT_PRESENT"),
+    ("PORTFOLIO_SOURCE_EXECUTION_ERROR", "source_execution", "PTE_EXECUTOR_EXCEPTION"),
+    ("PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "source_result_validation", "PTE_RESULT_NOT_OBJECT"),
+    ("PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "source_result_validation", "PTE_SCHEMA_VERSION_INVALID"),
+    ("PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "source_result_validation", "PTE_RESULT_SHAPE_INVALID"),
+    ("PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "source_result_validation", "PTE_APPLICABILITY_STATE_INVALID"),
+    ("PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "source_result_validation", "PTE_READY_EXECUTION_FINGERPRINT_INVALID"),
+    ("PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "source_result_validation", "PTE_UNQUANTIZED_AMOUNT_INVALID"),
+    ("PORTFOLIO_SOURCE_RESULT_FINGERPRINT_INVALID", "source_result_validation", "PTE_RESULT_FINGERPRINT_MISMATCH"),
+    ("PORTFOLIO_AGGREGATION_NUMERIC_ERROR", "aggregation", "UNQUANTIZED_DECIMAL_OUT_OF_BOUNDS"),
+    ("PORTFOLIO_IDENTITY_ERROR", "portfolio_identity", "PORTFOLIO_EXECUTION_IDENTITY_ASSEMBLY_FAILED"),
+}
+
 
 class RetirementTargetIncomeSourceAdmissionError(ValueError):
     def __init__(self, code: str):
@@ -254,17 +270,34 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
                 or duplicates != sorted(set(duplicates)) or len(expected) != len(set(expected)):
             return False
         returned_counts = {source_id: returned.count(source_id) for source_id in set(returned)}
-        if missing != sorted(set(expected) - set(returned)) \
-                or unexpected != sorted(set(returned) - set(expected)) \
-                or duplicates != sorted(source_id for source_id, count in returned_counts.items() if count > 1):
+        set_missing = sorted(set(expected) - set(returned))
+        set_unexpected = sorted(set(returned) - set(expected))
+        derived_duplicates = sorted(source_id for source_id, count in returned_counts.items() if count > 1)
+        positional_mismatch = (
+            coverage.get("coverage_check_state") == "invalid"
+            and returned_count == len(returned) == len(expected)
+            and returned == expected
+            and not duplicates
+            and len(missing) >= 2
+            and missing == unexpected
+            and set(missing).issubset(set(expected))
+        )
+        ordinary_coverage = (
+            missing == set_missing
+            and unexpected == set_unexpected
+            and duplicates == derived_duplicates
+        )
+        if not ordinary_coverage and not positional_mismatch:
             return False
         coverage_state = coverage.get("coverage_check_state")
         if coverage_state not in {"complete", "incomplete", "invalid", "not_evaluated"}:
             return False
         discrepancies = bool(missing or unexpected or duplicates)
-        if coverage_state == "complete" and discrepancies:
+        if coverage_state == "complete" and (discrepancies or expected != returned):
             return False
         if coverage_state == "incomplete" and not missing:
+            return False
+        if coverage_state == "invalid" and not discrepancies:
             return False
         if coverage_state == "not_evaluated" and any((expected, returned, missing, unexpected, duplicates)):
             return False
@@ -283,6 +316,28 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
         if (failed is not None and (not isinstance(failed, str) or not failed or failed not in expected)) \
                 or (observed is not None and (not isinstance(observed, str) or not observed or observed not in returned)):
             return False
+        signature = (blockers[0], failure["failure_stage"], failure["failure_detail_code"])
+        if signature not in FATAL_PORTFOLIO_SIGNATURES:
+            return False
+        if failure["failure_stage"] == "coverage":
+            if blockers[0] == "PORTFOLIO_SOURCE_COVERAGE_DUPLICATE":
+                if not duplicates or failed != duplicates[0] or observed != duplicates[0]:
+                    return False
+            elif blockers[0] == "PORTFOLIO_SOURCE_COVERAGE_MISSING":
+                expected_observed = unexpected[0] if positional_mismatch else None
+                if not missing or failed != missing[0] or observed != expected_observed:
+                    return False
+            elif not unexpected or missing or duplicates or failed is not None or observed != unexpected[0]:
+                return False
+        elif failure["failure_stage"] == "source_execution":
+            if coverage_state != "incomplete" or not ordinary_coverage or not missing or failed != missing[0] or observed is not None:
+                return False
+        elif failure["failure_stage"] in {"source_result_validation", "aggregation"}:
+            if coverage_state != "complete" or not ordinary_coverage or failed not in expected or observed != failed:
+                return False
+        elif failure["failure_stage"] == "portfolio_identity":
+            if coverage_state != "complete" or not ordinary_coverage or failed is not None or observed is not None:
+                return False
         if result.get("portfolio_identity_state") != "incomplete" \
                 or result.get("portfolio_execution_fingerprint") is not None \
                 or result.get("system_currency") != portfolio_service.SYSTEM_CURRENCY \
@@ -292,7 +347,7 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
                 or result.get("unresolved_source_ids") != [] or result.get("blocked_source_ids") != [] \
                 or result.get("total_completeness_state") != "unavailable" \
                 or result.get("partial_reason_codes") != [] \
-                or result.get("returned_source_count") != len(coverage["returned_source_ids"]):
+                or returned_count < len(coverage["returned_source_ids"]):
             return False
         payload = portfolio_service._fatal_result_payload(result)
         return portfolio_service._result_fingerprint(payload) == value
@@ -387,7 +442,8 @@ def _recurring_entry(row: RecurringIncome, resolution: PensionIncomeResolution |
     source_fp = planning_input_service.fingerprint(row_record)
     resolution_data = _resolution_value(resolution)
     pension_alias = row.income_category == "pension" or resolution is not None and resolution.decision_kind != "MISCLASSIFIED_GENERAL_INCOME"
-    category = "PENSION_REPRESENTATION" if pension_alias else SOURCE_CATEGORIES.get(row.income_category)
+    category = ("PENSION_REPRESENTATION" if pension_alias else
+                SOURCE_CATEGORIES.get(row.income_category) if isinstance(row.income_category, str) else None)
     entry = _base_entry(
         source_id=source_id, category=category, authority="CANONICAL_PLANNING_RECURRING_INCOME",
         origin="recurring_income", source_fp=source_fp, source_status=row.source_status,
@@ -397,7 +453,8 @@ def _recurring_entry(row: RecurringIncome, resolution: PensionIncomeResolution |
     start, end = row.start_date, row.end_date
     entry["applicability"].update({
         "start_date": _date_value(start), "end_date": _date_value(end),
-        "continuation_status": row.continuation_status if row.continuation_status in {"ongoing", "known end date", "unknown"} else None,
+        "continuation_status": (row.continuation_status if isinstance(row.continuation_status, str)
+                                and row.continuation_status in {"ongoing", "known end date", "unknown"} else None),
     })
 
     if pension_alias:
@@ -426,16 +483,17 @@ def _recurring_entry(row: RecurringIncome, resolution: PensionIncomeResolution |
         if not valid_misclassified:
             reasons.append("RTISA_SOURCE_IDENTITY_STALE")
 
-    if category is None:
+    if category is None or not isinstance(row.description, str):
         reasons.append("RTISA_SOURCE_RECORD_INVALID")
-    if row.source_status not in SOURCE_STATUSES or row.verification_state not in VERIFICATION_STATES:
+    if not isinstance(row.source_status, str) or row.source_status not in SOURCE_STATUSES \
+            or not isinstance(row.verification_state, str) or row.verification_state not in VERIFICATION_STATES:
         reasons.append("RTISA_SOURCE_RECORD_INVALID")
     else:
         if row.source_status == "not recorded": reasons.append("RTISA_SOURCE_AUTHORITY_NOT_RECORDED")
         if row.verification_state == "collected - not yet reviewed": reasons.append("RTISA_SOURCE_REVIEW_INCOMPLETE")
 
     amount = _money(row.amount)
-    frequency = FREQUENCIES.get(row.frequency)
+    frequency = FREQUENCIES.get(row.frequency) if isinstance(row.frequency, str) else None
     if amount is None:
         reasons.append("RTISA_SOURCE_AMOUNT_INVALID")
     if frequency is None:
@@ -449,7 +507,8 @@ def _recurring_entry(row: RecurringIncome, resolution: PensionIncomeResolution |
     else: reasons.append("RTISA_SOURCE_RECORD_INVALID")
 
     if not isinstance(start, date): reasons.append("RTISA_SOURCE_START_DATE_MISSING")
-    continuation_valid = row.continuation_status in {"ongoing", "known end date", "unknown"}
+    continuation_valid = isinstance(row.continuation_status, str) \
+        and row.continuation_status in {"ongoing", "known end date", "unknown"}
     if not continuation_valid: reasons.append("RTISA_SOURCE_RECORD_INVALID")
     elif row.continuation_status == "unknown": reasons.append("RTISA_SOURCE_CONTINUATION_UNRESOLVED")
     elif row.continuation_status == "known end date" and not isinstance(end, date): reasons.append("RTISA_SOURCE_END_DATE_MISSING")
@@ -477,7 +536,8 @@ def _apply_collisions(entries: list[dict], rows: list[RecurringIncome], planning
             groups.append(warning["source_ids"])
     economic: dict[tuple, list[str]] = {}
     for row in rows:
-        if row.frequency == "monthly" and row.amount_basis == "gross" and _money(row.amount) is not None:
+        if row.frequency == "monthly" and row.amount_basis == "gross" and _money(row.amount) is not None \
+                and isinstance(row.description, str):
             key = (row.income_category, row.description.strip().casefold(), _money(row.amount), row.start_date, row.end_date)
             economic.setdefault(key, []).append(f"income:{row.id}")
     groups.extend(ids for ids in economic.values() if len(ids) > 1)

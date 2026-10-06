@@ -6,6 +6,7 @@ from threading import Event
 
 import pytest
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.db.base import load_all_models
@@ -164,13 +165,13 @@ def test_postgresql_expire_on_commit_false_does_not_reuse_stale_identity_map(pg_
 def test_postgresql_direct_failure_after_authority_loading_rolls_back(pg_engine, monkeypatch):
     expected = _expected(pg_engine)
     original = planning_input_service.derive
-    class TechnicalDatabaseFailure(RuntimeError):
-        pass
     def fail_after_loading(db, client_id):
         original(db, client_id)
-        raise TechnicalDatabaseFailure("after authority loading")
+        db.connection().exec_driver_sql("SELECT * FROM rtisa_intentionally_missing_relation")
     monkeypatch.setattr(planning_input_service, "derive", fail_after_loading)
     with Session(pg_engine) as db:
-        with pytest.raises(TechnicalDatabaseFailure, match="after authority loading"):
+        with pytest.raises(DBAPIError, match="rtisa_intentionally_missing_relation"):
             subject.read(db, 1, expected)
         assert not db.in_transaction()
+    with pg_engine.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM recurring_income")) == 1

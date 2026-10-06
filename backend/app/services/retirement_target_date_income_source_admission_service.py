@@ -50,6 +50,11 @@ FATAL_PORTFOLIO_BLOCKERS = {
 }
 
 FATAL_PORTFOLIO_SIGNATURES = {
+    ("PORTFOLIO_PLANNING_INPUT_IDENTITY_STALE", "snapshot_admission", "EXPECTED_PLANNING_FINGERPRINT_MISMATCH"),
+    ("PORTFOLIO_RETIREMENT_TARGET_NOT_READY", "target_admission", "RETIREMENT_TARGET_MISSING_OR_NOT_READY"),
+    ("PORTFOLIO_SOURCE_UNIVERSE_INVALID", "source_universe", "SOURCE_UNIVERSE_CONTAINER_INVALID"),
+    ("PORTFOLIO_SOURCE_UNIVERSE_INVALID", "source_universe", "DUPLICATE_EXPECTED_SOURCE_ID"),
+    ("PORTFOLIO_SOURCE_UNIVERSE_INVALID", "source_universe", "EXPECTED_SOURCE_ID_INVALID"),
     ("PORTFOLIO_SOURCE_COVERAGE_DUPLICATE", "coverage", "DUPLICATE_SOURCE_RESULT_PRESENT"),
     ("PORTFOLIO_SOURCE_COVERAGE_MISSING", "coverage", "EXPECTED_SOURCE_RESULT_MISSING"),
     ("PORTFOLIO_SOURCE_COVERAGE_UNEXPECTED", "coverage", "UNEXPECTED_SOURCE_RESULT_PRESENT"),
@@ -210,7 +215,12 @@ FATAL_PORTFOLIO_FIELDS = READY_PORTFOLIO_FIELDS - {"aggregate_unquantized_amount
 
 def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str) -> bool:
     planning_fp = planning["planning_calculation_input_fingerprint"]
-    expected_ids = [source["source_id"] for source in planning["pension_inputs"]]
+    pension_inputs = planning.get("pension_inputs")
+    raw_expected_ids = ([source.get("source_id") if isinstance(source, dict) else None
+                         for source in pension_inputs]
+                        if isinstance(pension_inputs, list) else [])
+    expected_ids = [source_id for source_id in raw_expected_ids
+                    if isinstance(source_id, str) and source_id]
     if not isinstance(result, dict) or result.get("schema_version") != portfolio_service.SCHEMA_VERSION:
         return False
     if isinstance(result.get("client_id"), bool) or not isinstance(result.get("client_id"), int) \
@@ -248,10 +258,9 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
             return False
         expected_count = result.get("expected_source_count")
         returned_count = result.get("returned_source_count")
-        if len(expected_ids) != len(set(expected_ids)) \
-                or isinstance(expected_count, bool) or not isinstance(expected_count, int) \
+        if isinstance(expected_count, bool) or not isinstance(expected_count, int) \
                 or isinstance(returned_count, bool) or not isinstance(returned_count, int) \
-                or expected_count != len(expected_ids):
+                or expected_count < 0 or returned_count < 0:
             return False
         list_keys = (
             "duplicate_source_ids", "expected_source_ids", "missing_source_ids",
@@ -267,13 +276,13 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
         duplicates = coverage["duplicate_source_ids"]
         if expected != sorted(expected) or returned != sorted(returned) \
                 or missing != sorted(set(missing)) or unexpected != sorted(set(unexpected)) \
-                or duplicates != sorted(set(duplicates)) or len(expected) != len(set(expected)):
+                or duplicates != sorted(set(duplicates)):
             return False
         returned_counts = {source_id: returned.count(source_id) for source_id in set(returned)}
         set_missing = sorted(set(expected) - set(returned))
         set_unexpected = sorted(set(returned) - set(expected))
         derived_duplicates = sorted(source_id for source_id, count in returned_counts.items() if count > 1)
-        positional_mismatch = (
+        positional_permutation = (
             coverage.get("coverage_check_state") == "invalid"
             and returned_count == len(returned) == len(expected)
             and returned == expected
@@ -287,7 +296,14 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
             and unexpected == set_unexpected
             and duplicates == derived_duplicates
         )
-        if not ordinary_coverage and not positional_mismatch:
+        source_universe_exception = (
+            isinstance(failure, dict)
+            and failure.get("failure_stage") == "source_universe"
+            and failure.get("failure_detail_code") in {
+                "DUPLICATE_EXPECTED_SOURCE_ID", "EXPECTED_SOURCE_ID_INVALID",
+            }
+        )
+        if not ordinary_coverage and not positional_permutation and not source_universe_exception:
             return False
         coverage_state = coverage.get("coverage_check_state")
         if coverage_state not in {"complete", "incomplete", "invalid", "not_evaluated"}:
@@ -319,24 +335,60 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
         signature = (blockers[0], failure["failure_stage"], failure["failure_detail_code"])
         if signature not in FATAL_PORTFOLIO_SIGNATURES:
             return False
-        if failure["failure_stage"] == "coverage":
+        stage = failure["failure_stage"]
+        detail = failure["failure_detail_code"]
+        blocker = blockers[0]
+        if stage != "source_universe" and len(expected) != len(set(expected)):
+            return False
+        if stage == "snapshot_admission":
+            if expected_count != 0 or returned_count != 0 or coverage_state != "not_evaluated" \
+                    or any((expected, returned, missing, unexpected, duplicates)) \
+                    or failed is not None or observed is not None:
+                return False
+        elif stage == "target_admission":
+            if expected_count != 0 or returned_count != 0 or coverage_state != "not_evaluated" \
+                    or any((expected, returned, missing, unexpected, duplicates)) \
+                    or failed is not None or observed is not None:
+                return False
+        elif stage == "source_universe":
+            if returned_count != 0 or returned or observed is not None or coverage_state != "invalid":
+                return False
+            if detail == "SOURCE_UNIVERSE_CONTAINER_INVALID":
+                if expected_count != 0 or any((expected, missing, unexpected, duplicates)) or failed is not None:
+                    return False
+            elif detail == "DUPLICATE_EXPECTED_SOURCE_ID":
+                if expected_count < 2 or not duplicates or failed != duplicates[0] \
+                        or missing or unexpected or expected != sorted(expected):
+                    return False
+            elif detail == "EXPECTED_SOURCE_ID_INVALID":
+                if expected_count <= len(expected) or failed is not None or duplicates or unexpected:
+                    return False
+        elif stage == "coverage":
+            if expected_count != len(expected_ids) or returned_count < len(returned):
+                return False
             if blockers[0] == "PORTFOLIO_SOURCE_COVERAGE_DUPLICATE":
                 if not duplicates or failed != duplicates[0] or observed != duplicates[0]:
                     return False
             elif blockers[0] == "PORTFOLIO_SOURCE_COVERAGE_MISSING":
-                expected_observed = unexpected[0] if positional_mismatch else None
+                expected_observed = unexpected[0] if unexpected else None
                 if not missing or failed != missing[0] or observed != expected_observed:
                     return False
             elif not unexpected or missing or duplicates or failed is not None or observed != unexpected[0]:
                 return False
-        elif failure["failure_stage"] == "source_execution":
-            if coverage_state != "incomplete" or not ordinary_coverage or not missing or failed != missing[0] or observed is not None:
+        elif stage == "source_execution":
+            if expected_count != len(expected_ids) or returned_count != len(returned) \
+                    or coverage_state != "incomplete" or not ordinary_coverage \
+                    or not missing or failed != missing[0] or observed is not None:
                 return False
-        elif failure["failure_stage"] in {"source_result_validation", "aggregation"}:
-            if coverage_state != "complete" or not ordinary_coverage or failed not in expected or observed != failed:
+        elif stage in {"source_result_validation", "aggregation"}:
+            if expected_count != len(expected_ids) or returned_count != len(returned) \
+                    or coverage_state != "complete" or not ordinary_coverage \
+                    or failed not in expected or observed != failed:
                 return False
-        elif failure["failure_stage"] == "portfolio_identity":
-            if coverage_state != "complete" or not ordinary_coverage or failed is not None or observed is not None:
+        elif stage == "portfolio_identity":
+            if expected_count != len(expected_ids) or returned_count != len(returned) \
+                    or coverage_state != "complete" or not ordinary_coverage \
+                    or failed is not None or observed is not None:
                 return False
         if result.get("portfolio_identity_state") != "incomplete" \
                 or result.get("portfolio_execution_fingerprint") is not None \
@@ -346,8 +398,7 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
                 or result.get("payable_current_source_ids") != [] or result.get("future_start_source_ids") != [] \
                 or result.get("unresolved_source_ids") != [] or result.get("blocked_source_ids") != [] \
                 or result.get("total_completeness_state") != "unavailable" \
-                or result.get("partial_reason_codes") != [] \
-                or returned_count < len(coverage["returned_source_ids"]):
+                or result.get("partial_reason_codes") != []:
             return False
         payload = portfolio_service._fatal_result_payload(result)
         return portfolio_service._result_fingerprint(payload) == value

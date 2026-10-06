@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import copy
 import hashlib
@@ -12,7 +12,10 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from app.models.planning_input_decision import PlanningInputDecision, PensionIncomeResolution
-from app.models.retirement_facts import RecurringIncome
+from app.models.employment_record import EmploymentRecord
+from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
+from app.models.retirement_facts import CapitalAsset, PlannerAssumption, RecurringExpense, RecurringIncome
+from app.models.retirement_monthly_income_target import RetirementMonthlyIncomeTargetElection
 from app.services import planning_input_service
 from app.services import retirement_target_date_income_source_admission_service as subject
 from app.services import canonical_manual_pension_service
@@ -21,11 +24,11 @@ from test_professional_source_snapshot import facts
 
 
 RTISA_TRACEABILITY = {
-    "T01": ("test_strict_client_validation_precedes_reads", "test_strict_fingerprint_validation_precedes_reads"),
+    "T01": ("test_strict_client_validation_precedes_reads", "test_strict_fingerprint_validation_precedes_reads", "test_command_boundary_missing_and_extra_arguments_fail_before_reads"),
     "T02": ("test_runtime_planning_context_wrong_client_and_malformed_identity_fail_closed", "test_stale_expected_fingerprint_exposes_no_sources"),
     "T03": ("test_empty_evidenced_universe_is_ready_and_exact_schema", "test_partition_and_readiness_invariants_cover_mixed_universe"),
     "T04": ("test_actual_closed_pension_portfolio_is_consumed_without_total", "test_real_producer_positional_coverage_fatal_is_trusted_domain_authority"),
-    "T05": ("test_actual_closed_pension_portfolio_is_consumed_without_total",),
+    "T05": ("test_actual_conversion_pension_flows_through_pte_portfolio_and_rtisa",),
     "T06": ("test_read_level_domain_fatal_retains_pension_as_unresolved", "test_real_producer_positional_coverage_fatal_is_trusted_domain_authority"),
     "T07": ("test_real_pension_authority_complete_partial_empty_and_fatal_matrix",),
     "T08": ("test_rehashed_malformed_outer_fatal_is_never_trusted", "test_invalid_outer_fingerprint_is_never_trusted"),
@@ -41,50 +44,50 @@ RTISA_TRACEABILITY = {
     "T18": ("test_date_container_and_range_fail_closed_without_secondary_diagnostics",),
     "T19": ("test_historical_and_future_classification_uses_target_not_base_date",),
     "T20": ("test_inside_calendar_month_target_has_no_proration",),
-    "T21": ("test_lifecycle_membership_is_current_only",),
+    "T21": ("test_lifecycle_membership_is_current_only", "test_superseded_row_mutation_does_not_change_current_universe"),
     "T22": ("test_work_metadata_without_recurring_salary_creates_no_income_source",),
     "T23": ("test_incomplete_employment_evidence_is_unresolved",),
     "T24": ("test_benefit_absent_incomplete_and_explicit_matrix",),
     "T25": ("test_valid_pension_alias_is_excluded_without_independent_amount",),
     "T26": ("test_valid_pension_alias_is_excluded_without_independent_amount",),
     "T27": ("test_valid_misclassified_general_income_uses_generic_recurring_authority",),
-    "T28": ("test_resolution_corruption_matrix_fails_closed", "test_valid_pension_alias_is_excluded_without_independent_amount"),
+    "T28": ("test_resolution_corruption_matrix_fails_closed", "test_read_level_resolution_corruption_fails_closed_without_amount_fallback", "test_valid_pension_alias_is_excluded_without_independent_amount"),
     "T29": ("test_duplicate_collision_is_fail_closed_and_deterministic", "test_cross_basis_frequency_and_excluded_member_collision_controls"),
     "T30": ("test_duplicate_collision_is_fail_closed_and_deterministic", "test_cross_basis_frequency_and_excluded_member_collision_controls"),
-    "T31": ("test_nonpositive_persisted_recurring_identity_invalidates_entire_universe", "test_malformed_mocked_recurring_identity_invalidates_entire_universe"),
-    "T32": ("test_actual_malformed_recurring_source_shape_is_unresolved",),
+    "T31": ("test_nonpositive_persisted_recurring_identity_invalidates_entire_universe", "test_malformed_mocked_recurring_identity_invalidates_entire_universe", "test_duplicate_recurring_candidate_materialization_invalidates_universe"),
+    "T32": ("test_actual_malformed_recurring_source_shape_is_unresolved", "test_recurring_source_entry_exact_nested_contract_and_legal_nulls"),
     "T33": ("test_partition_and_readiness_invariants_cover_mixed_universe", "test_result_order_is_unicode_stable"),
     "T34": ("test_unknown_native_basis_is_preserved_for_recurring_and_pension",),
     "T35": ("test_tax_label_is_exact_and_never_inferred_from_notes_or_category",),
-    "T36": ("test_actual_closed_pension_portfolio_is_consumed_without_total",),
+    "T36": ("test_actual_fixed_manual_pension_preserves_native_price_evidence",),
     "T37": ("test_mixed_gross_and_net_have_no_total",),
     "T38": ("test_real_pension_authority_complete_partial_empty_and_fatal_matrix",),
     "T39": ("test_blocker_union_is_unique_and_sorted",),
     "T40": ("test_all_17_goldens_are_derived_through_read_from_upstream_state",),
     "T41": ("test_true_insertion_order_permutation_is_canonical",),
     "T42": ("test_source_mutation_changes_planning_and_result_identity",),
-    "T43": ("test_source_mutation_changes_planning_and_result_identity", "test_valid_pension_alias_is_excluded_without_independent_amount"),
-    "T44": ("test_same_session_expire_on_commit_false_refreshes_authoritative_rows", "test_postgresql_expire_on_commit_false_does_not_reuse_stale_identity_map"),
+    "T43": ("test_source_mutation_changes_planning_and_result_identity", "test_pension_authority_and_target_mutation_matrix_rebinds_result_identity", "test_valid_pension_alias_is_excluded_without_independent_amount"),
+    "T44": ("test_same_session_expire_on_commit_false_refreshes_authoritative_rows", "test_same_session_refreshes_planning_pension_and_resolution_authorities", "test_postgresql_expire_on_commit_false_does_not_reuse_stale_identity_map"),
     "T45": ("test_preexisting_transaction_and_pending_writes_rejected_without_discard", "test_dirty_and_deleted_pending_state_are_rejected_without_discard"),
     "T46": ("test_postgresql_repeatable_read_read_only_and_current_result",),
     "T47": ("test_postgresql_concurrent_change_is_snapshot_consistent_and_fresh_read_changes_identity", "test_postgresql_synchronized_membership_changes_preserve_reader_snapshot"),
     "T48": ("test_sqlite_is_explicit_single_select_only_snapshot",),
     "T49": ("test_direct_execution_exception_rolls_back_and_propagates", "test_postgresql_direct_failure_after_authority_loading_rolls_back"),
-    "T50": ("test_internal_boundary_has_only_db_and_two_logical_inputs", "test_sqlite_is_explicit_single_select_only_snapshot"),
-    "T51": ("test_forbidden_downstream_authorities_are_unreachable",),
-    "T52": ("test_forbidden_downstream_authorities_are_unreachable",),
-    "T53": ("test_forbidden_downstream_authorities_are_unreachable",),
-    "T54": ("test_forbidden_downstream_authorities_are_unreachable",),
-    "T55": ("test_all_17_binding_goldens_match_with_two_independent_encoders",),
-    "T56": ("test_all_64_binding_fixture_markers_match_independently", "test_golden_derivation_never_bypasses_portfolio_validation"),
+    "T50": ("test_internal_boundary_has_only_db_and_two_logical_inputs", "test_sqlite_is_explicit_single_select_only_snapshot", "test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached"),
+    "T51": ("test_income_target_election_fields_do_not_affect_source_admission",),
+    "T52": ("test_capital_and_resource_inputs_do_not_create_or_change_income_candidates",),
+    "T53": ("test_nonowned_expense_and_scenario_assumption_create_no_income_candidate",),
+    "T54": ("test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached",),
+    "T55": ("test_rtisa_scope_governance_and_single_schema_head",),
+    "T56": ("test_result_hash_construction_failure_is_direct_technical_and_rolls_back",),
     "T57": ("test_all_17_goldens_are_derived_through_read_from_upstream_state",),
-    "T58": ("test_rtisa_traceability_is_complete_and_concrete", "test_all_17_goldens_are_derived_through_read_from_upstream_state"),
+    "T58": ("test_rtisa_affected_regression_evidence_inventory",),
     "T59": ("test_wrapped_technical_fatal_raises_and_rolls_back", "test_wrapped_source_executor_technical_fatal_with_expected_source_raises"),
-    "T60": ("test_wrapped_identity_technical_fatal_with_nonzero_source_raises",),
+    "T60": ("test_wrapped_technical_fatal_raises_and_rolls_back", "test_wrapped_identity_technical_fatal_with_nonzero_source_raises"),
     "T61": ("test_read_level_domain_fatal_retains_pension_as_unresolved",),
     "T62": ("test_rehashed_malformed_outer_fatal_is_never_trusted", "test_real_producer_positional_coverage_fatal_is_trusted_domain_authority"),
     "T63": ("test_cleanup_failure_remains_technical_and_never_returns_readiness",),
-    "T64": ("test_direct_execution_exception_rolls_back_and_propagates", "test_result_hash_construction_failure_is_direct_technical_and_rolls_back", "test_empty_evidenced_universe_is_ready_and_exact_schema"),
+    "T64": ("test_direct_execution_exception_rolls_back_and_propagates", "test_result_hash_construction_failure_is_direct_technical_and_rolls_back", "test_result_serialization_failure_is_direct_technical_and_rolls_back", "test_empty_evidenced_universe_is_ready_and_exact_schema"),
 }
 
 
@@ -111,6 +114,11 @@ def _authority(engine):
             retirement_target_date=date(2030, 1, 1), retirement_target_decision_actor="planner:test",
             retirement_target_reference_fingerprint="a" * 64, actor="planner:test",
         ))
+    with Session(engine) as db:
+        return planning_input_service.read(db, 1)["planning_calculation_input_fingerprint"]
+
+
+def _current_planning_fingerprint(engine):
     with Session(engine) as db:
         return planning_input_service.read(db, 1)["planning_calculation_input_fingerprint"]
 
@@ -157,6 +165,24 @@ def test_internal_boundary_has_only_db_and_two_logical_inputs():
     source = inspect.getsource(subject.read)
     assert "planning_input_service.derive" in source
     assert "planning_input_service.read" not in source
+
+
+def test_command_boundary_missing_and_extra_arguments_fail_before_reads():
+    class DB:
+        def __getattribute__(self, name):
+            if name.startswith("__"):
+                return object.__getattribute__(self, name)
+            raise AssertionError("database touched")
+
+    for invocation in (
+        lambda: subject.read(),
+        lambda: subject.read(DB()),
+        lambda: subject.read(DB(), 1),
+        lambda: subject.read(DB(), 1, "a" * 64, "extra"),
+        lambda: subject.read(DB(), 1, "a" * 64, unknown=True),
+    ):
+        with pytest.raises(TypeError):
+            invocation()
 
 
 def test_empty_evidenced_universe_is_ready_and_exact_schema(engine):
@@ -220,6 +246,37 @@ def test_actual_closed_pension_portfolio_is_consumed_without_total(engine, start
     assert "payable_current_monthly_total" not in result
 
 
+def test_actual_conversion_pension_flows_through_pte_portfolio_and_rtisa(engine):
+    from app.services.canonical_component_conversion_service import execute as execute_conversion
+    from app.services import pension_temporal_basis_service
+    from app.schemas.canonical_manual_pension_source import ConversionTemporalDecisionWrite, TemporalAuthorityInput
+    from test_canonical_component_conversion import seeded, request
+
+    source = seeded(engine, component=5)
+    with Session(engine) as db, db.begin():
+        converted = execute_conversion(db, 1, request(source, component=5, destination="pension"), "rtisa-test")
+    destination_id = converted["conversions"][0]["destination_id"]
+    with Session(engine) as db, db.begin():
+        pension_temporal_basis_service.write_conversion(
+            db,
+            1,
+            destination_id,
+            ConversionTemporalDecisionWrite(
+                expected_source_version=1,
+                expected_decision_version=0,
+                temporal_authority=TemporalAuthorityInput(authority_kind="none"),
+                actor="rtisa-test",
+            ),
+        )
+    result = _read(engine, _authority(engine))
+    entry = next(item for item in result["source_entries"] if item["source_id"] == f"conversion:{destination_id}")
+    assert entry["source_category"] == "PENSION"
+    assert entry["source_authority"] == "CANONICAL_PENSION_TARGET_DATE"
+    assert entry["provenance"]["origin_kind"] == "conversion"
+    assert entry["upstream_identity"]["pension_source_result_fingerprint"]
+    assert entry["native_amount"] is not None
+
+
 @pytest.mark.parametrize("changes,state,reason", [
     ({"start_date": date(2031, 1, 1)}, "EXCLUDED", "RTISA_FUTURE_SOURCE"),
     ({"end_date": date(2029, 12, 31), "continuation_status": "known end date"}, "EXCLUDED", "RTISA_ENDED_SOURCE"),
@@ -266,6 +323,23 @@ def test_superseded_rows_are_not_candidates(engine):
     _income(engine, lifecycle_status="superseded")
     result = _read(engine, _authority(engine))
     assert result["source_entries"] == [] and result["admission_ready"] is True
+
+
+def test_superseded_row_mutation_does_not_change_current_universe(engine):
+    current_id = _income(engine, id=1, description="current")
+    historical_id = _income(engine, id=2, description="history", lifecycle_status="superseded")
+    first = _read(engine, _authority(engine))
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE recurring_income SET amount=9999.00, description='mutated history' WHERE id=:id"
+        ), {"id": historical_id})
+    second = _read(engine, _current_planning_fingerprint(engine))
+    assert current_id == 1
+    assert [entry["source_id"] for entry in second["source_entries"]] == ["income:1"]
+    assert second["source_entries"] == first["source_entries"]
+    assert second["included_source_ids"] == first["included_source_ids"] == ["income:1"]
+    assert second["excluded_source_ids"] == first["excluded_source_ids"] == []
+    assert second["unresolved_source_ids"] == first["unresolved_source_ids"] == []
 
 
 def test_stale_expected_fingerprint_exposes_no_sources(engine):
@@ -330,12 +404,18 @@ def test_lifecycle_membership_is_current_only(engine, status, included):
     assert (result["included_source_ids"] == ["income:1"]) is included
 
 
-def test_work_metadata_without_recurring_salary_creates_no_income_source(engine, monkeypatch):
+def test_work_metadata_without_recurring_salary_creates_no_income_source(engine):
+    with Session(engine) as db, db.begin():
+        db.add(EmploymentRecord(
+            employment_record_id="work-without-salary",
+            client_id=1,
+            employer_name="Explicit employer",
+            work_start_date=date(2020, 1, 1),
+            work_end_date=None,
+            is_current=True,
+            notes="Intends to continue working; no salary evidence was entered",
+        ))
     expected = _authority(engine)
-    with Session(engine) as db:
-        planning = planning_input_service.read(db, 1)
-    planning["warnings"] = [{"code": "employment_fact_present", "free_text": "continue working"}]
-    monkeypatch.setattr(subject.planning_input_service, "derive", lambda *args: planning)
     result = _read(engine, expected)
     assert result["source_entries"] == [] and result["admission_ready"] is True
 
@@ -598,6 +678,66 @@ def test_same_session_expire_on_commit_false_refreshes_authoritative_rows(engine
         assert result["planning_calculation_input_fingerprint"] != expected
 
 
+def test_same_session_refreshes_planning_pension_and_resolution_authorities(engine):
+    with Session(engine) as db, db.begin():
+        created = canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1),
+        ))
+        pension_id = created["manual_pension_source_id"]
+    income_id = _income(engine, income_category="pension")
+    with Session(engine) as db:
+        planning = planning_input_service.read(db, 1)
+    pension = planning["pension_inputs"][0]
+    income = next(item for item in planning["excluded_sources"] if item["source_id"] == f"income:{income_id}")
+    with Session(engine) as db, db.begin():
+        db.add(PensionIncomeResolution(
+            income_id=income_id, client_id=1, version=1,
+            decision_kind="SAME_CANONICAL_PENSION", income_fingerprint=income["source_fingerprint"],
+            canonical_source_id=pension["source_id"], canonical_fingerprint=pension["source_fingerprint"],
+            reference="initial", actor="planner:test",
+        ))
+    _authority(engine)
+
+    with Session(engine, expire_on_commit=False) as db:
+        stale_planning = db.get(PlanningInputDecision, 1)
+        stale_income = db.get(RecurringIncome, income_id)
+        stale_pension = db.get(CanonicalManualPensionSource, pension_id)
+        stale_resolution = db.get(PensionIncomeResolution, income_id)
+        db.commit()
+        assert stale_planning.planning_base_date == date(2026, 1, 1)
+        assert stale_income.amount == Decimal("1200.00")
+        assert stale_pension.monthly_amount == Decimal("5000.00")
+        assert stale_resolution.canonical_fingerprint == pension["source_fingerprint"]
+
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE planning_input_decisions SET planning_base_date='2026-02-01', version=version+1 WHERE client_id=1"
+            ))
+            connection.execute(text(
+                "UPDATE recurring_income SET amount=1201.00 WHERE id=:id"
+            ), {"id": income_id})
+            connection.execute(text(
+                "UPDATE canonical_manual_pension_sources SET monthly_amount=5100.00, version=version+1 "
+                "WHERE manual_pension_source_id=:id"
+            ), {"id": pension_id})
+            connection.execute(text(
+                "UPDATE pension_income_resolutions SET canonical_fingerprint=:fp, version=version+1 WHERE income_id=:id"
+            ), {"fp": "f" * 64, "id": income_id})
+
+        # Negative control: the retained ORM objects are demonstrably stale before read().
+        assert stale_income.amount == Decimal("1200.00")
+        assert stale_pension.monthly_amount == Decimal("5000.00")
+        with Session(engine) as current:
+            current_fp = planning_input_service.read(current, 1)["planning_calculation_input_fingerprint"]
+        result = subject.read(db, 1, current_fp)
+        pension_entry = next(item for item in result["source_entries"] if item["source_id"].startswith("manual:"))
+        alias_entry = next(item for item in result["source_entries"] if item["source_id"] == f"income:{income_id}")
+        assert pension_entry["native_amount"]["amount"] == "5100.00"
+        assert alias_entry["admission_state"] == "UNRESOLVED"
+        assert alias_entry["reason_codes"] == ["RTISA_SOURCE_IDENTITY_STALE"]
+
+
 @pytest.mark.parametrize("decision_kind", ["SAME_CANONICAL_PENSION", "PENSION_NOT_YET_CANONICAL"])
 def test_valid_pension_alias_is_excluded_without_independent_amount(engine, decision_kind):
     with Session(engine) as db, db.begin():
@@ -653,6 +793,15 @@ def test_result_hash_construction_failure_is_direct_technical_and_rolls_back(eng
     monkeypatch.setattr(subject, "_fingerprint", fail)
     with Session(engine) as db:
         with pytest.raises(RuntimeError, match="hash unavailable"):
+            subject.read(db, 1, expected)
+        assert not db.in_transaction()
+
+
+def test_result_serialization_failure_is_direct_technical_and_rolls_back(engine, monkeypatch):
+    expected = _authority(engine)
+    monkeypatch.setattr(subject, "serialize", lambda value: (_ for _ in ()).throw(RuntimeError("serialization failed")))
+    with Session(engine) as db:
+        with pytest.raises(RuntimeError, match="serialization failed"):
             subject.read(db, 1, expected)
         assert not db.in_transaction()
 
@@ -722,6 +871,22 @@ def test_positive_recurring_identity_remains_admitted(engine):
     assert source_id > 0
     assert result["included_source_ids"] == [f"income:{source_id}"]
     assert result["admission_ready"] is True
+
+
+def test_duplicate_recurring_candidate_materialization_invalidates_universe():
+    planning = _portfolio_contract_planning([])
+    portfolio = subject.portfolio_service._assemble_ready(
+        1, "a" * 64, "a" * 64, "2030-01-01", [], []
+    )
+    row = RecurringIncome(
+        id=7, client_id=1, income_category="rental", description="duplicate materialization",
+        amount=Decimal("1200.00"), amount_basis="gross", frequency="monthly",
+        continuation_status="ongoing", lifecycle_status="current",
+        source_status="planner entered", verification_state="reviewed", start_date=date(2025, 1, 1),
+    )
+    result = subject._assemble(1, planning, portfolio, [row, row], [])
+    assert result["blockers"] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
+    assert result["source_entries"] == []
 
 
 def _transient_recurring_entry(**changes):
@@ -812,6 +977,31 @@ def test_actual_malformed_recurring_source_shape_is_unresolved(changes):
     assert entry["reason_codes"]
 
 
+def test_recurring_source_entry_exact_nested_contract_and_legal_nulls():
+    entry = _transient_recurring_entry()
+    assert set(entry) == {
+        "source_id", "source_category", "source_authority", "admission_state",
+        "native_amount", "monthly_equivalent", "native_income_basis",
+        "native_tax_characterization", "native_price_evidence", "applicability",
+        "provenance", "upstream_identity", "reason_codes",
+    }
+    assert set(entry["native_amount"]) == {"amount", "currency", "frequency"}
+    assert set(entry["monthly_equivalent"]) == {"numerator", "denominator"}
+    assert set(entry["native_tax_characterization"]) == {"kind", "value"}
+    assert set(entry["native_price_evidence"]) == {
+        "price_basis", "price_reference_date", "temporal_authority_kind",
+        "temporal_origin_date", "annual_rate", "rate_basis",
+    }
+    assert set(entry["applicability"]) == {"start_date", "end_date", "continuation_status", "at_target"}
+    assert set(entry["provenance"]) == {"origin_kind", "source_status", "verification_state"}
+    assert set(entry["upstream_identity"]) == {
+        "source_fingerprint", "pension_source_result_fingerprint", "resolution",
+    }
+    assert entry["native_tax_characterization"]["value"] is None
+    assert entry["native_price_evidence"]["price_reference_date"] is None
+    assert entry["upstream_identity"]["resolution"] is None
+
+
 def test_unknown_native_basis_is_preserved_for_recurring_and_pension():
     recurring = _transient_recurring_entry(amount_basis="unknown")
     assert recurring["native_income_basis"] == "UNKNOWN"
@@ -820,6 +1010,25 @@ def test_unknown_native_basis_is_preserved_for_recurring_and_pension():
     pte_result = _valid_pte_result("manual:1", "b" * 64)
     pension = subject._pension_entry(planning_source, pte_result, "payable_current")
     assert pension["native_income_basis"] == "UNKNOWN"
+
+
+def test_actual_fixed_manual_pension_preserves_native_price_evidence(engine):
+    with Session(engine) as db, db.begin():
+        canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00",
+            pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1),
+            temporal_authority={"authority_kind": "fixed_manual", "annual_rate": "0.02"},
+        ))
+    entry = _read(engine, _authority(engine))["source_entries"][0]
+    assert entry["native_price_evidence"] == {
+        "price_basis": "UNKNOWN",
+        "price_reference_date": None,
+        "temporal_authority_kind": "fixed_manual",
+        "temporal_origin_date": "2025-01-01",
+        "annual_rate": "0.02",
+        "rate_basis": "ANNUAL_EFFECTIVE",
+    }
 
 
 def test_tax_label_is_exact_and_never_inferred_from_notes_or_category():
@@ -873,6 +1082,52 @@ def test_source_mutation_changes_planning_and_result_identity(engine):
     assert second["admission_result_fingerprint"] != first["admission_result_fingerprint"]
 
 
+def test_pension_authority_and_target_mutation_matrix_rebinds_result_identity(engine):
+    with Session(engine) as db, db.begin():
+        created = canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1),
+            temporal_authority={"authority_kind": "fixed_manual", "annual_rate": "0.02"},
+        ))
+    source_id = created["manual_pension_source_id"]
+
+    first = _read(engine, _authority(engine))
+    identities = [first["admission_result_fingerprint"]]
+    source_results = [first["source_entries"][0]["upstream_identity"]["pension_source_result_fingerprint"]]
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE canonical_manual_pension_sources SET monthly_amount=5100.00, version=version+1 "
+            "WHERE manual_pension_source_id=:id"
+        ), {"id": source_id})
+    monthly_changed = _read(engine, _current_planning_fingerprint(engine))
+    assert monthly_changed["source_entries"][0]["native_amount"]["amount"] != first["source_entries"][0]["native_amount"]["amount"]
+    identities.append(monthly_changed["admission_result_fingerprint"])
+    source_results.append(monthly_changed["source_entries"][0]["upstream_identity"]["pension_source_result_fingerprint"])
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE canonical_manual_pension_sources SET fixed_indexation_rate='0.03', version=version+1 "
+            "WHERE manual_pension_source_id=:id"
+        ), {"id": source_id})
+    temporal_changed = _read(engine, _current_planning_fingerprint(engine))
+    identities.append(temporal_changed["admission_result_fingerprint"])
+    source_results.append(temporal_changed["source_entries"][0]["upstream_identity"]["pension_source_result_fingerprint"])
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE planning_input_decisions SET retirement_target_date='2031-01-01', version=version+1 "
+            "WHERE client_id=1"
+        ))
+    target_changed = _read(engine, _current_planning_fingerprint(engine))
+    assert target_changed["retirement_target_date"] == "2031-01-01"
+    identities.append(target_changed["admission_result_fingerprint"])
+    source_results.append(target_changed["source_entries"][0]["upstream_identity"]["pension_source_result_fingerprint"])
+
+    assert len(set(identities)) == 4
+    assert len(set(source_results)) == 4
+
+
 @pytest.mark.parametrize("changes", [
     {"decision_kind": "CORRUPT"}, {"client_id": 2}, {"income_fingerprint": "bad"},
     {"canonical_source_id": "manual:1", "canonical_fingerprint": None},
@@ -888,6 +1143,48 @@ def test_resolution_corruption_matrix_fails_closed(changes):
         assert resolution is not None  # ownership is rejected by the enclosing authoritative query boundary
     else:
         assert resolution is None
+
+
+@pytest.mark.parametrize("mutation,global_invalid", [
+    ({"client_id": 2}, True),
+    ({"income_fingerprint": "f" * 64}, False),
+    ({"canonical_source_id": "manual:missing"}, False),
+    ({"canonical_fingerprint": "e" * 64}, False),
+])
+def test_read_level_resolution_corruption_fails_closed_without_amount_fallback(engine, mutation, global_invalid):
+    with Session(engine) as db, db.begin():
+        canonical_manual_pension_service.create(db, 1, facts(
+            pension_start_date=date(2025, 1, 1), base_amount_effective_date=date(2025, 1, 1)
+        ))
+    income_id = _income(engine, income_category="pension", amount=Decimal("9999.00"))
+    with Session(engine) as db:
+        planning = planning_input_service.read(db, 1)
+    pension = planning["pension_inputs"][0]
+    income = next(item for item in planning["excluded_sources"] if item["source_id"] == f"income:{income_id}")
+    values = {
+        "income_id": income_id,
+        "client_id": 1,
+        "version": 1,
+        "decision_kind": "SAME_CANONICAL_PENSION",
+        "income_fingerprint": income["source_fingerprint"],
+        "canonical_source_id": pension["source_id"],
+        "canonical_fingerprint": pension["source_fingerprint"],
+        "reference": "corruption control",
+        "actor": "planner:test",
+    }
+    values.update(mutation)
+    with Session(engine) as db, db.begin():
+        db.add(PensionIncomeResolution(**values))
+    result = _read(engine, "a" * 64 if global_invalid else _authority(engine))
+    if global_invalid:
+        assert result["blockers"] == ["RTISA_PLANNING_CONTEXT_UNAVAILABLE"]
+        assert result["source_entries"] == []
+    else:
+        alias = next(item for item in result["source_entries"] if item["source_id"] == f"income:{income_id}")
+        assert alias["admission_state"] == "UNRESOLVED"
+        assert alias["native_amount"] is None
+        assert alias["monthly_equivalent"] is None
+        assert alias["reason_codes"] == ["RTISA_SOURCE_IDENTITY_STALE"]
 
 
 @pytest.mark.parametrize("second,collision", [
@@ -917,8 +1214,15 @@ def test_true_insertion_order_permutation_is_canonical(engine):
     with engine.begin() as connection:
         connection.execute(statement, {"id": 20, "description": "later id inserted first"})
         connection.execute(statement, {"id": 10, "description": "earlier id inserted second"})
-    result = _read(engine, _authority(engine))
-    assert [entry["source_id"] for entry in result["source_entries"]] == ["income:10", "income:20"]
+    first = _read(engine, _authority(engine))
+    assert [entry["source_id"] for entry in first["source_entries"]] == ["income:10", "income:20"]
+    with engine.begin() as connection:
+        connection.execute(text("DELETE FROM recurring_income"))
+        connection.execute(statement, {"id": 10, "description": "earlier id inserted second"})
+        connection.execute(statement, {"id": 20, "description": "later id inserted first"})
+    second = _read(engine, _current_planning_fingerprint(engine))
+    assert second == first
+    assert second["admission_result_fingerprint"] == first["admission_result_fingerprint"]
 
 
 @pytest.mark.parametrize("pending_state", ["dirty", "deleted"])
@@ -991,42 +1295,89 @@ def test_golden_derivation_never_bypasses_portfolio_validation():
     assert "_portfolio_is_valid" not in source
 
 
+def _assert_complete_closed_pte_result(result, expected_state):
+    pte = subject.portfolio_service.pte
+    expected_fields = (subject.portfolio_service.READY_PTE_FIELDS
+                       if expected_state == "result_ready"
+                       else subject.portfolio_service.BLOCKED_PTE_FIELDS)
+    assert set(result) == expected_fields
+    assert result["schema_version"] == pte.SCHEMA_VERSION
+    assert result["result_state"] == expected_state
+    assert result["authority_kind"] == "entered_monthly_amount"
+    assert result["temporal_authority_kind"] == "none"
+    assert isinstance(result["execution_identity_evidence"], dict)
+    assert set(result["execution_identity_evidence"]) == {
+        "annual_rate", "base_amount_representation", "currency",
+        "current_monthly_basis_semantic_fingerprint", "current_monthly_basis_source_fingerprint",
+        "current_planning_calculation_input_fingerprint", "current_temporal_semantic_fingerprint",
+        "current_temporal_source_fingerprint", "monthly_basis_authority_kind", "pension_start_date",
+        "retirement_target_date", "source_current_state", "supplied_monthly_basis_semantic_fingerprint",
+        "supplied_monthly_basis_source_fingerprint", "supplied_planning_calculation_input_fingerprint",
+        "supplied_temporal_semantic_fingerprint", "supplied_temporal_source_fingerprint",
+        "temporal_authority_kind", "temporal_origin_date",
+    }
+    if expected_state == "result_ready":
+        assert result["execution_identity_state"] == "complete"
+        assert result["base_amount_representation"] == {
+            "representation_kind": "exact_money", "amount": "5000"
+        }
+        assert result["elapsed_year_fraction"] == {"numerator": "5", "denominator": "1"}
+        assert result["decimal_execution_contract"] == pte.DECIMAL_CONTRACT
+        assert result["final_monthly_amount"] == "5000.00"
+    else:
+        assert result["execution_identity_state"] == "incomplete"
+        assert result["source_execution_fingerprint"] is None
+        assert result["blockers"] == ["MONTHLY_BASIS_NOT_READY"]
+
+
 def _valid_pte_result(source_id, planning_fp, *, result_state="result_ready", currency="ILS",
                       result_fingerprint=None):
-    result = {
-        "schema_version": subject.portfolio_service.pte.SCHEMA_VERSION,
-        "source_id": source_id,
-        "result_state": result_state,
-        "execution_identity_state": "complete" if result_state == "result_ready" else "incomplete",
-        "source_execution_fingerprint": _digest({"execution": source_id, "planning": planning_fp}),
-        "source_result_fingerprint": result_fingerprint,
-        "authority_kind": "canonical_pension_source",
+    pte = subject.portfolio_service.pte
+    monthly_ready = result_state == "result_ready"
+    monthly = {
+        "authority_kind": "entered_monthly_amount",
+        "base_amount_representation": {"representation_kind": "exact_money", "amount": "5000"},
+        "base_amount_semantic_fingerprint": _digest({"monthly-semantic": source_id}),
+        "base_amount_source_fingerprint": _digest({"monthly-source": source_id}),
+        "basis_authority_ready": monthly_ready,
+        "basis_blockers": [] if monthly_ready else ["MONTHLY_BASIS_NOT_READY"],
+    }
+    temporal = {
         "temporal_authority_kind": "none",
         "temporal_origin_date": "2025-01-01",
-        "retirement_target_date": "2030-01-01",
-        "currency": currency if result_state == "result_ready" else None,
-        "applicability_state": "payable_current" if result_state == "result_ready" else "unresolved",
-        "blockers": [] if result_state == "result_ready" else ["PTE_MONTHLY_BASIS_NOT_READY"],
-        "monthly_basis_blockers": [] if result_state == "result_ready" else ["MONTHLY_BASIS_NOT_READY"],
+        "annual_rate": None,
+        "temporal_semantic_fingerprint": _digest({"temporal-semantic": source_id}),
+        "temporal_source_fingerprint": _digest({"temporal-source": source_id}),
+        "temporal_authority_ready": True,
         "temporal_blockers": [],
-        "execution_identity_evidence": None if result_state == "result_ready" else {"state": "blocked"},
     }
-    if result_state == "result_ready":
-        result.update({
-            "elapsed_year_fraction": "5",
-            "base_amount_representation": "5000.00",
-            "derived_base_monthly_amount": "5000.00",
-            "annual_rate": None,
-            "temporal_factor": "1",
-            "unquantized_target_monthly_amount": "5000",
-            "final_monthly_amount": "5000.00",
-            "decimal_execution_contract": "EXACT_DECIMAL_V1",
-        })
-    if result_fingerprint is None:
-        result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
-            subject.portfolio_service._pte_result_payload(result)
-        )
+    result = pte.execute_source(
+        source_id=source_id,
+        source_current_state="current",
+        monthly_basis=monthly,
+        temporal_authority=temporal,
+        retirement_target={"retirement_target_date": "2030-01-01", "retirement_target_ready": True},
+        current_planning_calculation_input_fingerprint=planning_fp,
+        supplied_planning_calculation_input_fingerprint=planning_fp,
+        supplied_monthly_basis_semantic_fingerprint=monthly["base_amount_semantic_fingerprint"],
+        supplied_monthly_basis_source_fingerprint=monthly["base_amount_source_fingerprint"],
+        supplied_temporal_semantic_fingerprint=temporal["temporal_semantic_fingerprint"],
+        supplied_temporal_source_fingerprint=temporal["temporal_source_fingerprint"],
+        pension_start_date="2025-01-01",
+        currency=currency if result_state == "result_ready" else None,
+    )
+    assert result["result_state"] == result_state
+    _assert_complete_closed_pte_result(result, result_state)
+    if result_fingerprint is not None:
+        result["source_result_fingerprint"] = result_fingerprint
     return result
+
+
+@pytest.mark.parametrize("state", ["result_ready", "block_no_result"])
+def test_golden_pte_factory_satisfies_complete_closed_contract(state):
+    result = _valid_pte_result("manual:fixture", "a" * 64, result_state=state)
+    _assert_complete_closed_pte_result(result, state)
+    assert subject.portfolio_service._validate_pte_result(result, "manual:fixture") == (None, None)
 
 
 GOLDEN_RECURRING_SCENARIOS = {
@@ -1040,7 +1391,7 @@ GOLDEN_RECURRING_SCENARIOS = {
     "G10": [dict(id=1, category="rental", amount="1200.00", start=None)],
     "G11": [dict(id=1, category="rental", amount="1200.00"),
             dict(id=2, category="business", amount="900.00", basis="net")],
-    "G12": [dict(id=1, category="rental", amount="1201.00")],
+    "G12": [dict(id=1, category="rental", amount="1200.00")],
     "G13": [dict(id=1, category="rental", amount="1200.00", description="duplicate"),
             dict(id=2, category="rental", amount="1200.00", description="duplicate")],
     "G14": [dict(id=1, category="rental", amount="0.00")],
@@ -1087,6 +1438,16 @@ def _golden_upstream_state(engine, monkeypatch, golden, markers):
     ))
     fp_by_income_id = {}
     with Session(engine) as db, db.begin():
+        if golden == "G6":
+            db.add(EmploymentRecord(
+                employment_record_id="golden-g6-work",
+                client_id=1,
+                employer_name="Golden employer",
+                work_start_date=date(2020, 1, 1),
+                work_end_date=None,
+                is_current=True,
+                notes="Work intention exists without a salary income source",
+            ))
         for values in GOLDEN_RECURRING_SCENARIOS.get(golden, []):
             source_id = values["id"]
             row = RecurringIncome(
@@ -1101,6 +1462,11 @@ def _golden_upstream_state(engine, monkeypatch, golden, markers):
             )
             db.add(row)
             db.flush()
+            if golden == "G12":
+                # G12 is a real authoritative mutation from the G2 amount, not a
+                # fixture that starts in the already-mutated final state.
+                row.amount = Decimal("1201.00")
+                db.flush()
             fp_by_income_id[source_id] = markers[f"recurring:{golden}:income:{source_id}"]
             if values.get("resolution"):
                 db.add(PensionIncomeResolution(
@@ -1229,6 +1595,130 @@ def test_real_producer_positional_coverage_fatal_is_trusted_domain_authority(eng
     ]
 
 
+def _portfolio_contract_planning(source_ids, fingerprint="a" * 64):
+    return {
+        "client_id": 1,
+        "planning_calculation_input_fingerprint": fingerprint,
+        "retirement_target": {"retirement_target_ready": True, "retirement_target_date": "2030-01-01"},
+        "pension_inputs": [{"source_id": source_id, "source_fingerprint": _digest({"source": source_id})}
+                           if source_id is not None else {}
+                           for source_id in source_ids],
+    }
+
+
+def test_real_producer_coverage_route_matrix_is_accepted():
+    fingerprint = "a" * 64
+    source_a, source_b, source_x = "manual:A", "manual:B", "manual:X"
+    planning = _portfolio_contract_planning([source_a, source_b], fingerprint)
+    ready_a = _valid_pte_result(source_a, fingerprint)
+    ready_b = _valid_pte_result(source_b, fingerprint)
+    ready_x = _valid_pte_result(source_x, fingerprint)
+    cases = {
+        "exact": [ready_a, ready_b],
+        "permutation": [ready_b, ready_a],
+        "missing_only": [ready_a],
+        "mixed_missing_unexpected": [ready_a, ready_x],
+        "duplicate": [ready_a, ready_a],
+    }
+    for name, raw_results in cases.items():
+        produced = subject.portfolio_service._assemble_ready(
+            1, fingerprint, fingerprint, "2030-01-01", [source_a, source_b], raw_results
+        )
+        assert subject._portfolio_is_valid(produced, 1, planning, "2030-01-01") is True, name
+
+    unexpected_planning = _portfolio_contract_planning([source_a], fingerprint)
+    unexpected = subject.portfolio_service._assemble_ready(
+        1, fingerprint, fingerprint, "2030-01-01", [source_a], [ready_a, ready_x]
+    )
+    assert unexpected["portfolio_blockers"] == ["PORTFOLIO_SOURCE_COVERAGE_UNEXPECTED"]
+    assert subject._portfolio_is_valid(unexpected, 1, unexpected_planning, "2030-01-01") is True
+
+    mixed = subject.portfolio_service._assemble_ready(
+        1, fingerprint, fingerprint, "2030-01-01", [source_a, source_b], [ready_a, ready_x]
+    )
+    assert mixed["coverage_evidence"]["missing_source_ids"] == [source_b]
+    assert mixed["coverage_evidence"]["unexpected_source_ids"] == [source_x]
+    assert mixed["failure_evidence"]["failed_expected_source_id"] == source_b
+    assert mixed["failure_evidence"]["observed_source_id"] == source_x
+
+
+@pytest.mark.parametrize("source_ids,detail", [
+    (["manual:A", "manual:A"], "DUPLICATE_EXPECTED_SOURCE_ID"),
+    (["manual:A", None], "EXPECTED_SOURCE_ID_INVALID"),
+])
+def test_real_producer_malformed_expected_universe_routes_are_accepted(source_ids, detail):
+    planning = _portfolio_contract_planning(source_ids)
+    produced = subject.portfolio_service.execute_from_planning_result(planning, 1, "a" * 64)
+    assert produced["failure_evidence"]["failure_detail_code"] == detail
+    assert subject._portfolio_is_valid(produced, 1, planning, "2030-01-01") is True
+
+
+def test_rehashed_impossible_identity_count_is_rejected_at_read_level(engine, monkeypatch):
+    expected = _authority(engine)
+    fatal = subject.portfolio_service._fatal_result(
+        client_id=1,
+        planning_fingerprint=expected,
+        supplied_fingerprint=expected,
+        retirement_target_date="2030-01-01",
+        coverage=subject.portfolio_service._coverage([], []),
+        failure=subject.portfolio_service._failure(
+            expected, expected, "portfolio_identity", "PORTFOLIO_EXECUTION_IDENTITY_ASSEMBLY_FAILED"
+        ),
+        blockers=["PORTFOLIO_IDENTITY_ERROR"],
+        expected_count=0,
+        returned_count=1,
+    )
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", lambda *args: fatal)
+    result = _read(engine, expected)
+    assert result["blockers"] == ["RTISA_PENSION_RESULT_INVALID"]
+    assert result["source_entries"] == []
+
+
+@pytest.mark.parametrize("case,expected_blocker,expected_detail", [
+    ("schema", "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_SCHEMA_VERSION_INVALID"),
+    ("fingerprint", "PORTFOLIO_SOURCE_RESULT_FINGERPRINT_INVALID", "PTE_RESULT_FINGERPRINT_MISMATCH"),
+    ("shape", "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_RESULT_SHAPE_INVALID"),
+    ("applicability", "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_APPLICABILITY_STATE_INVALID"),
+    ("execution_fingerprint", "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_READY_EXECUTION_FINGERPRINT_INVALID"),
+    ("unquantized", "PORTFOLIO_SOURCE_RESULT_SCHEMA_INVALID", "PTE_UNQUANTIZED_AMOUNT_INVALID"),
+    ("aggregation", "PORTFOLIO_AGGREGATION_NUMERIC_ERROR", "UNQUANTIZED_DECIMAL_OUT_OF_BOUNDS"),
+])
+def test_real_producer_source_validation_and_aggregation_fatal_routes_are_accepted(
+    case, expected_blocker, expected_detail
+):
+    fingerprint = "a" * 64
+    source_id = "manual:A"
+    planning = _portfolio_contract_planning([source_id], fingerprint)
+    result = _valid_pte_result(source_id, fingerprint)
+    if case == "schema":
+        result["schema_version"] = "BROKEN"
+    elif case == "fingerprint":
+        result["source_result_fingerprint"] = "f" * 64
+    elif case == "shape":
+        result["blockers"] = {"not", "json"}
+        result["source_result_fingerprint"] = "f" * 64
+    elif case == "applicability":
+        result["applicability_state"] = "broken"
+        result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
+            subject.portfolio_service._pte_result_payload(result)
+        )
+    elif case == "execution_fingerprint":
+        result["source_execution_fingerprint"] = None
+        result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
+            subject.portfolio_service._pte_result_payload(result)
+        )
+    elif case == "unquantized":
+        result["unquantized_target_monthly_amount"] = Decimal("5000")
+    elif case == "aggregation":
+        result["unquantized_target_monthly_amount"] = "1" + "0" * 101
+    produced = subject.portfolio_service._assemble_ready(
+        1, fingerprint, fingerprint, "2030-01-01", [source_id], [result]
+    )
+    assert produced["portfolio_blockers"] == [expected_blocker]
+    assert produced["failure_evidence"]["failure_detail_code"] == expected_detail
+    assert subject._portfolio_is_valid(produced, 1, planning, "2030-01-01") is True
+
+
 def test_forbidden_downstream_authorities_are_unreachable():
     source = inspect.getsource(subject)
     for forbidden in (
@@ -1236,6 +1726,132 @@ def test_forbidden_downstream_authorities_are_unreachable():
         "funding_gap", "monthly_income_target_service", "tax_service", "price_index",
     ):
         assert forbidden not in source
+
+
+def test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached(engine, monkeypatch):
+    from app.services import capital_projection_execution_service
+    from app.services import retirement_monthly_income_target_service
+    from app.services import retirement_target_resource_state_service
+    from app.services import m09_scenario_subject_service
+    from app.services import annuity_coefficient_service
+
+    expected = _authority(engine)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("forbidden downstream/write boundary invoked")
+
+    for module, names in (
+        (capital_projection_execution_service, ("execute", "read")),
+        (retirement_monthly_income_target_service, ("assess", "confirm")),
+        (retirement_target_resource_state_service, ("read",)),
+        (m09_scenario_subject_service, ("resolve_baseline", "execute_subject_run")),
+        (annuity_coefficient_service, ("coefficient",)),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, forbidden)
+    monkeypatch.setattr(subject.planning_input_service, "read", forbidden)
+
+    with Session(engine) as db:
+        monkeypatch.setattr(db, "flush", forbidden)
+        result = subject.read(db, 1, expected)
+    assert result["admission_ready"] is True
+    assert result["source_entries"] == []
+
+
+def test_nonowned_expense_and_scenario_assumption_create_no_income_candidate(engine):
+    _income(engine, id=1)
+    before = _read(engine, _authority(engine))
+    with Session(engine) as db, db.begin():
+        db.add(RecurringExpense(
+            client_id=1,
+            expense_category="housing",
+            description="rent expense",
+            amount=Decimal("2000.00"),
+            frequency="monthly",
+            expense_type="mandatory",
+            continuation_status="ongoing",
+            lifecycle_status="current",
+            source_status="planner entered",
+            verification_state="reviewed",
+            start_date=date(2025, 1, 1),
+        ))
+        db.add(PlannerAssumption(
+            client_id=1,
+            assumption_category="other",
+            title="scenario-only assumption",
+            assumption_value_text="not an income source",
+            rationale="RTISA independence control",
+            owner="planner",
+            lifecycle_status="current",
+        ))
+    after = _read(engine, _current_planning_fingerprint(engine))
+    assert [entry["source_id"] for entry in after["source_entries"]] == ["income:1"]
+    assert after["source_entries"] == before["source_entries"]
+
+
+def test_income_target_election_fields_do_not_affect_source_admission(engine):
+    _income(engine, id=1)
+    expected = _authority(engine)
+    baseline = _read(engine, expected)
+    with Session(engine) as db, db.begin():
+        db.add(RetirementMonthlyIncomeTargetElection(
+            client_id=1,
+            version=1,
+            lifecycle_state="CONFIRMED",
+            planning_calculation_input_fingerprint=expected,
+            retirement_target_date=date(2030, 1, 1),
+            monthly_amount_text="10000.00",
+            currency="ILS",
+            income_basis="GROSS",
+            price_basis="NOMINAL_AT_RETIREMENT_TARGET_DATE",
+            price_reference_date=None,
+            source_kind="PLANNER_SUPPLIED",
+            confirmation_state="CONFIRMED",
+            confirmation_actor="planner:test",
+            confirmed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            target_semantic_fingerprint="f" * 64,
+        ))
+    confirmed = _read(engine, expected)
+    assert confirmed == baseline
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE retirement_monthly_income_target_elections "
+            "SET lifecycle_state='STALE', monthly_amount_text='12000.00', income_basis='NET', "
+            "price_basis='REAL_AT_REFERENCE_DATE', price_reference_date='2026-01-01', version=2 "
+            "WHERE client_id=1"
+        ))
+    stale_changed = _read(engine, expected)
+    assert stale_changed == baseline
+
+
+def test_capital_and_resource_inputs_do_not_create_or_change_income_candidates(engine):
+    _income(engine, id=1)
+    before = _read(engine, _authority(engine))
+    with Session(engine) as db, db.begin():
+        db.add(CapitalAsset(
+            client_id=1,
+            asset_category="securities",
+            asset_description="blocked capital without valuation date",
+            known_value_amount=Decimal("999999.99"),
+            value_as_of_date=None,
+            lifecycle_status="current",
+            source_status="planner entered",
+            verification_state="reviewed",
+        ))
+    after = _read(engine, _current_planning_fingerprint(engine))
+    assert [entry["source_id"] for entry in after["source_entries"]] == ["income:1"]
+    assert after["source_entries"] == before["source_entries"]
+
+
+def test_golden_g12_helper_performs_real_1200_to_1201_mutation(engine, monkeypatch):
+    markers = json.loads((Path(__file__).parent / "fixtures" / "rtisa_markers.json").read_text(encoding="utf-8"))
+    planning = _golden_upstream_state(engine, monkeypatch, "G12", markers)
+    with Session(engine) as db:
+        row = db.get(RecurringIncome, 1)
+        assert row.amount == Decimal("1201.00")
+    result = _read(engine, planning["planning_calculation_input_fingerprint"])
+    income = next(item for item in result["source_entries"] if item["source_id"] == "income:1")
+    assert income["native_amount"]["amount"] == "1201.00"
 
 
 def test_rtisa_traceability_is_complete_and_concrete():
@@ -1248,3 +1864,35 @@ def test_rtisa_traceability_is_complete_and_concrete():
         assert len(tests) == len(set(tests)), trace_id
         for test_name in tests:
             assert f"def {test_name}(" in test_sources, (trace_id, test_name)
+
+
+def test_rtisa_scope_governance_and_single_schema_head():
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    source = inspect.getsource(subject)
+    assert "retirement_target_date_income_source_admission" in subject.__name__
+    for forbidden in ("m09_", "m10_", "scenario_subject", "resource_state_service", "capital_projection"):
+        assert forbidden not in source
+    backend = Path(__file__).resolve().parents[1]
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("script_location", str(backend / "alembic"))
+    assert ScriptDirectory.from_config(config).get_heads() == ["a2b8c5e1f309"]
+
+
+def test_rtisa_affected_regression_evidence_inventory():
+    tests = Path(__file__).resolve().parent
+    required = {
+        "test_retirement_target_date_income_source_admission.py",
+        "test_retirement_target_date_income_source_admission_postgresql.py",
+        "test_planning_input.py",
+        "test_retirement_target.py",
+        "test_pension_target_date_execution.py",
+        "test_pension_target_date_portfolio.py",
+        "test_retirement_target_resource_state.py",
+        "test_retirement_monthly_income_target.py",
+        "test_governance_baseline.py",
+    }
+    assert all((tests / filename).is_file() for filename in required)
+    assert len(json.loads((tests / "fixtures" / "rtisa_goldens.json").read_text(encoding="utf-8"))) == 17
+    assert len(json.loads((tests / "fixtures" / "rtisa_markers.json").read_text(encoding="utf-8"))) == 64

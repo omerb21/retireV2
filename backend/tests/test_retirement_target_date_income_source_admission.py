@@ -8,7 +8,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 
 from app.models.planning_input_decision import PlanningInputDecision, PensionIncomeResolution
@@ -73,10 +73,10 @@ RTISA_TRACEABILITY = {
     "T47": ("test_postgresql_concurrent_change_is_snapshot_consistent_and_fresh_read_changes_identity", "test_postgresql_synchronized_membership_changes_preserve_reader_snapshot"),
     "T48": ("test_sqlite_is_explicit_single_select_only_snapshot",),
     "T49": ("test_direct_execution_exception_rolls_back_and_propagates", "test_postgresql_direct_failure_after_authority_loading_rolls_back"),
-    "T50": ("test_internal_boundary_has_only_db_and_two_logical_inputs", "test_sqlite_is_explicit_single_select_only_snapshot", "test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached"),
+    "T50": ("test_internal_boundary_has_only_db_and_two_logical_inputs", "test_sqlite_is_explicit_single_select_only_snapshot", "test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached", "test_t50_injected_transaction_boundary_violations_are_detected"),
     "T51": ("test_income_target_election_fields_do_not_affect_source_admission",),
     "T52": ("test_capital_and_resource_inputs_do_not_create_or_change_income_candidates",),
-    "T53": ("test_nonowned_expense_and_scenario_assumption_create_no_income_candidate",),
+    "T53": ("test_nonowned_expense_and_scenario_assumption_create_no_income_candidate", "test_actual_scenario_adjustment_does_not_enter_income_universe", "test_expected_inheritance_assumption_does_not_enter_income_universe"),
     "T54": ("test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached",),
     "T55": ("test_rtisa_scope_governance_and_single_schema_head",),
     "T56": ("test_result_hash_construction_failure_is_direct_technical_and_rolls_back",),
@@ -87,7 +87,7 @@ RTISA_TRACEABILITY = {
     "T61": ("test_read_level_domain_fatal_retains_pension_as_unresolved",),
     "T62": ("test_rehashed_malformed_outer_fatal_is_never_trusted", "test_real_producer_positional_coverage_fatal_is_trusted_domain_authority"),
     "T63": ("test_cleanup_failure_remains_technical_and_never_returns_readiness",),
-    "T64": ("test_direct_execution_exception_rolls_back_and_propagates", "test_result_hash_construction_failure_is_direct_technical_and_rolls_back", "test_result_serialization_failure_is_direct_technical_and_rolls_back", "test_empty_evidenced_universe_is_ready_and_exact_schema"),
+    "T64": ("test_direct_execution_exception_rolls_back_and_propagates", "test_portfolio_result_fingerprint_construction_error_is_direct_technical", "test_result_hash_construction_failure_is_direct_technical_and_rolls_back", "test_result_serialization_failure_is_direct_technical_and_rolls_back", "test_empty_evidenced_universe_is_ready_and_exact_schema"),
 }
 
 
@@ -468,6 +468,73 @@ def test_sqlite_is_explicit_single_select_only_snapshot(engine):
     assert all(statement.startswith(("BEGIN", "SELECT", "COMMIT")) for statement in statements)
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ["intermediate_commit", "second_session", "nested_public_reader", "autoflush_write"],
+)
+def test_t50_injected_transaction_boundary_violations_are_detected(engine, monkeypatch, mutation):
+    expected = _authority(engine)
+    original_derive = subject.planning_input_service.derive
+    original_assemble = subject._assemble
+    with Session(engine) as db:
+        boundary = {"authoritative_reads_complete": False}
+        original_commit = db.commit
+
+        def mark_complete(*args, **kwargs):
+            result = original_assemble(*args, **kwargs)
+            boundary["authoritative_reads_complete"] = True
+            return result
+
+        def guarded_commit():
+            if not boundary["authoritative_reads_complete"]:
+                raise AssertionError("intermediate commit crossed RTISA authoritative boundary")
+            return original_commit()
+
+        monkeypatch.setattr(subject, "_assemble", mark_complete)
+        monkeypatch.setattr(db, "commit", guarded_commit)
+
+        if mutation == "intermediate_commit":
+            def mutated_derive(session, client_id):
+                result = original_derive(session, client_id)
+                session.commit()
+                return result
+        elif mutation == "second_session":
+            def forbidden_session(*args, **kwargs):
+                raise AssertionError("second Session crossed RTISA authoritative boundary")
+            monkeypatch.setattr(Session, "__init__", forbidden_session)
+            def mutated_derive(session, client_id):
+                Session(engine)
+                return original_derive(session, client_id)
+        elif mutation == "nested_public_reader":
+            def forbidden_reader(*args, **kwargs):
+                raise AssertionError("nested public reader crossed RTISA authoritative boundary")
+            monkeypatch.setattr(subject.planning_input_service, "read", forbidden_reader)
+            def mutated_derive(session, client_id):
+                subject.planning_input_service.read(session, client_id)
+                return original_derive(session, client_id)
+        else:
+            def forbidden_write(*args, **kwargs):
+                raise AssertionError("write/autoflush crossed RTISA authoritative boundary")
+            monkeypatch.setattr(db, "add", forbidden_write)
+            monkeypatch.setattr(db, "flush", forbidden_write)
+            def mutated_derive(session, client_id):
+                session.add(PlannerAssumption(
+                    client_id=client_id,
+                    assumption_category="income",
+                    title="forbidden mutation",
+                    assumption_value_text="1.00",
+                    rationale="T50 mutation control",
+                    owner="planner",
+                    lifecycle_status="current",
+                ))
+                return original_derive(session, client_id)
+
+        monkeypatch.setattr(subject.planning_input_service, "derive", mutated_derive)
+        with pytest.raises(AssertionError, match="RTISA authoritative boundary"):
+            subject.read(db, 1, expected)
+        assert not db.in_transaction()
+
+
 def test_wrapped_technical_fatal_raises_and_rolls_back(engine, monkeypatch):
     expected = _authority(engine)
     original = subject.portfolio_service.execute_from_planning_result
@@ -511,6 +578,106 @@ def test_wrapped_source_executor_technical_fatal_with_expected_source_raises(eng
             subject.read(db, 1, expected)
         assert error.value.blocker == "PORTFOLIO_SOURCE_EXECUTION_ERROR"
         assert not db.in_transaction()
+
+
+def _two_pension_planning(engine):
+    with Session(engine) as db, db.begin():
+        for payer in ("producer-A", "producer-B"):
+            canonical_manual_pension_service.create(db, 1, facts(
+                payer_name=payer,
+                pension_start_date=date(2025, 1, 1),
+                base_amount_effective_date=date(2025, 1, 1),
+            ))
+    expected = _authority(engine)
+    with Session(engine) as db:
+        planning = planning_input_service.read(db, 1)
+    return expected, planning, sorted(source["source_id"] for source in planning["pension_inputs"])
+
+
+@pytest.mark.parametrize("first_result", ["none", "unexpected"])
+def test_actual_producer_later_source_execution_failure_is_technical(
+    engine, monkeypatch, first_result
+):
+    expected, _planning, source_ids = _two_pension_planning(engine)
+    first_id, failed_id = source_ids
+    original_pte = subject.portfolio_service.pte.execute_from_planning_result
+    original_portfolio = subject.portfolio_service.execute_from_planning_result
+    captured = []
+
+    def execute_pte(planning, source_id, **kwargs):
+        if source_id == first_id:
+            if first_result == "none":
+                return None
+            result = original_pte(planning, source_id, **kwargs)
+            result = copy.deepcopy(result)
+            result["source_id"] = "manual:unexpected"
+            result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
+                subject.portfolio_service._pte_result_payload(result)
+            )
+            return result
+        raise RuntimeError("later source executor failed")
+
+    def capture_portfolio(*args, **kwargs):
+        result = original_portfolio(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(subject.portfolio_service.pte, "execute_from_planning_result", execute_pte)
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", capture_portfolio)
+    with Session(engine) as db:
+        with pytest.raises(subject.RetirementTargetIncomeSourceAdmissionTechnicalError) as error:
+            subject.read(db, 1, expected)
+        assert (error.value.blocker, error.value.stage, error.value.detail) == (
+            "PORTFOLIO_SOURCE_EXECUTION_ERROR", "source_execution", "PTE_EXECUTOR_EXCEPTION"
+        )
+        assert not db.in_transaction()
+    fatal = captured[0]
+    assert fatal["coverage_evidence"]["missing_source_ids"] == source_ids
+    assert fatal["failure_evidence"]["failed_expected_source_id"] == failed_id
+    assert fatal["failure_evidence"]["observed_source_id"] is None
+    if first_result == "none":
+        assert fatal["coverage_evidence"]["returned_source_ids"] == []
+    else:
+        assert fatal["coverage_evidence"]["returned_source_ids"] == ["manual:unexpected"]
+        assert fatal["coverage_evidence"]["unexpected_source_ids"] == ["manual:unexpected"]
+
+
+def test_actual_producer_first_source_execution_failure_remains_technical(engine, monkeypatch):
+    expected, _planning, source_ids = _two_pension_planning(engine)
+    monkeypatch.setattr(
+        subject.portfolio_service.pte,
+        "execute_from_planning_result",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("first source executor failed")),
+    )
+    with Session(engine) as db:
+        with pytest.raises(subject.RetirementTargetIncomeSourceAdmissionTechnicalError) as error:
+            subject.read(db, 1, expected)
+        assert (error.value.blocker, error.value.stage, error.value.detail) == (
+            "PORTFOLIO_SOURCE_EXECUTION_ERROR", "source_execution", "PTE_EXECUTOR_EXCEPTION"
+        )
+        assert not db.in_transaction()
+
+
+def test_impossible_failed_source_identity_from_actual_producer_is_rejected(engine, monkeypatch):
+    expected, planning, source_ids = _two_pension_planning(engine)
+    first_id, failed_id = source_ids
+    original_pte = subject.portfolio_service.pte.execute_from_planning_result
+
+    def none_then_fail(current, source_id, **kwargs):
+        if source_id == first_id:
+            return None
+        raise RuntimeError("later source executor failed")
+
+    monkeypatch.setattr(subject.portfolio_service.pte, "execute_from_planning_result", none_then_fail)
+    fatal = subject.portfolio_service.execute_from_planning_result(planning, 1, expected)
+    assert fatal["failure_evidence"]["failed_expected_source_id"] == failed_id
+    fatal["failure_evidence"]["failed_expected_source_id"] = "manual:not-expected"
+    fatal = _rehashed_fatal(fatal)
+    monkeypatch.setattr(subject.portfolio_service.pte, "execute_from_planning_result", original_pte)
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", lambda *args: fatal)
+    result = _read(engine, expected)
+    assert result["blockers"] == ["RTISA_PENSION_RESULT_INVALID"]
+    assert result["source_entries"] == []
 
 
 def test_wrapped_identity_technical_fatal_with_nonzero_source_raises(engine, monkeypatch):
@@ -793,6 +960,24 @@ def test_result_hash_construction_failure_is_direct_technical_and_rolls_back(eng
     monkeypatch.setattr(subject, "_fingerprint", fail)
     with Session(engine) as db:
         with pytest.raises(RuntimeError, match="hash unavailable"):
+            subject.read(db, 1, expected)
+        assert not db.in_transaction()
+
+
+def test_portfolio_result_fingerprint_construction_error_is_direct_technical(engine, monkeypatch):
+    expected = _authority(engine)
+
+    def fail(_payload):
+        raise subject.portfolio_service.PortfolioResultFingerprintConstructionError(
+            "portfolio result fingerprint failed"
+        )
+
+    monkeypatch.setattr(subject.portfolio_service, "_result_fingerprint", fail)
+    with Session(engine) as db:
+        with pytest.raises(
+            subject.portfolio_service.PortfolioResultFingerprintConstructionError,
+            match="portfolio result fingerprint failed",
+        ):
             subject.read(db, 1, expected)
         assert not db.in_transaction()
 
@@ -1730,6 +1915,11 @@ def test_forbidden_downstream_authorities_are_unreachable():
 
 def test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached(engine, monkeypatch):
     from app.services import capital_projection_execution_service
+    from app.services import canonical_component_conversion_service
+    from app.services import canonical_conversion_matrix
+    from app.services import cbs_indexation_adapter
+    from app.services import fixation_service
+    from app.services import m09_cashflow_service
     from app.services import retirement_monthly_income_target_service
     from app.services import retirement_target_resource_state_service
     from app.services import m09_scenario_subject_service
@@ -1740,15 +1930,31 @@ def test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached
     def forbidden(*args, **kwargs):
         raise AssertionError("forbidden downstream/write boundary invoked")
 
-    for module, names in (
-        (capital_projection_execution_service, ("execute", "read")),
-        (retirement_monthly_income_target_service, ("assess", "confirm")),
-        (retirement_target_resource_state_service, ("read",)),
-        (m09_scenario_subject_service, ("resolve_baseline", "execute_subject_run")),
-        (annuity_coefficient_service, ("coefficient",)),
-    ):
-        for name in names:
-            monkeypatch.setattr(module, name, forbidden)
+    forbidden_calls = (
+        ("tax_calculation", canonical_conversion_matrix, "tax_for"),
+        ("gross_up_net_down", fixation_service, "calculate_fixation_payload"),
+        ("price_normalization_cpi", cbs_indexation_adapter, "calculate_cbs_indexation"),
+        ("withdrawal", retirement_target_resource_state_service, "read"),
+        ("funding_coverage", m09_cashflow_service, "assess_inventory"),
+        ("retirement_income_gap", m09_cashflow_service, "execute_run"),
+        ("optimization_scenario_engine", m09_scenario_subject_service, "execute_subject_run"),
+        ("scenario_resolution", m09_scenario_subject_service, "resolve_baseline"),
+        ("capital_projection", capital_projection_execution_service, "execute"),
+        ("capital_projection_read", capital_projection_execution_service, "read"),
+        ("capital_conversion", canonical_component_conversion_service, "execute"),
+        ("annuitization", annuity_coefficient_service, "coefficient"),
+        ("monthly_income_target_assess", retirement_monthly_income_target_service, "assess"),
+        ("monthly_income_target_confirm", retirement_monthly_income_target_service, "confirm"),
+    )
+    assert {label for label, _, _ in forbidden_calls} == {
+        "tax_calculation", "gross_up_net_down", "price_normalization_cpi", "withdrawal",
+        "funding_coverage", "retirement_income_gap", "optimization_scenario_engine",
+        "scenario_resolution", "capital_projection", "capital_projection_read",
+        "capital_conversion", "annuitization", "monthly_income_target_assess",
+        "monthly_income_target_confirm",
+    }
+    for _label, module, name in forbidden_calls:
+        monkeypatch.setattr(module, name, forbidden)
     monkeypatch.setattr(subject.planning_input_service, "read", forbidden)
 
     with Session(engine) as db:
@@ -1787,6 +1993,67 @@ def test_nonowned_expense_and_scenario_assumption_create_no_income_candidate(eng
     after = _read(engine, _current_planning_fingerprint(engine))
     assert [entry["source_id"] for entry in after["source_entries"]] == ["income:1"]
     assert after["source_entries"] == before["source_entries"]
+
+
+def test_actual_scenario_adjustment_does_not_enter_income_universe(engine):
+    from app.models.m09_scenario_subject import M09ScenarioAdjustment
+
+    _income(engine, id=1)
+    expected = _authority(engine)
+    before = _read(engine, expected)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO m09_scenario_subjects "
+            "(scenario_subject_id,client_id,scenario_family,scenario_contract_version,subject_type,"
+            "display_label,adjustment_manifest,adjustment_manifest_fingerprint,"
+            "calculation_semantic_fingerprint,integrity_fingerprint,provenance,actor,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+            (
+                "rtisa-scenario", 1, "declared_retirement_cashflow_adjustments", "v1", "adjusted",
+                "RTISA isolation control", '{}', "a" * 64, "b" * 64, "c" * 64,
+                "planner_declared_scenario_adjustment", "system:m09-cashflow:M09 cashflow workflow",
+            ),
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO m09_scenario_adjustments "
+            "(adjustment_id,scenario_subject_id,client_id,ordinal,adjustment_type,amount,amount_text,"
+            "start_month,end_month,provenance,semantic_fingerprint,actor,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+            (
+                "rtisa-adjustment", "rtisa-scenario", 1, 1,
+                "declared_additional_monthly_income", 9876.54, "9876.54", "2030-01", "2030-12",
+                "planner_declared_scenario_adjustment", "d" * 64,
+                "system:m09-cashflow:M09 cashflow workflow",
+            ),
+        )
+    with Session(engine) as db:
+        rows = list(db.scalars(select(M09ScenarioAdjustment)))
+    assert len(rows) == 1 and rows[0].amount == Decimal("9876.54")
+    assert _current_planning_fingerprint(engine) == expected
+    after = _read(engine, expected)
+    assert after == before
+    assert [entry["source_id"] for entry in after["source_entries"]] == ["income:1"]
+
+
+def test_expected_inheritance_assumption_does_not_enter_income_universe(engine):
+    _income(engine, id=1)
+    expected = _authority(engine)
+    before = _read(engine, expected)
+    with Session(engine) as db, db.begin():
+        db.add(PlannerAssumption(
+            client_id=1,
+            assumption_category="income",
+            title="Expected inheritance",
+            assumption_value_text="500000.00 ILS",
+            rationale="Expected inheritance is not current recurring income authority",
+            owner="client stated",
+            lifecycle_status="current",
+            effective_start_date=date(2035, 1, 1),
+        ))
+    assert _current_planning_fingerprint(engine) == expected
+    after = _read(engine, expected)
+    assert after == before
+    assert [entry["source_id"] for entry in after["source_entries"]] == ["income:1"]
 
 
 def test_income_target_election_fields_do_not_affect_source_admission(engine):

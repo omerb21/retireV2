@@ -447,9 +447,11 @@ Exact constant value:
     "schema_version": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1",
     "client_id": null,
     "supplied_planning_calculation_input_fingerprint": null,
-    "observed_planning_calculation_input_fingerprint": null,
+    "observed_target_planning_calculation_input_fingerprint": null,
+    "observed_rtisa_planning_calculation_input_fingerprint": null,
     "supplied_retirement_target_date": null,
-    "observed_retirement_target_date": null,
+    "observed_target_retirement_target_date": null,
+    "observed_rtisa_retirement_target_date": null,
     "observed_target_result_fingerprint": null,
     "observed_rtisa_admission_result_fingerprint": null,
     "result_state": "block_no_result",
@@ -462,8 +464,9 @@ Exact constant value:
 The nested failure is the exact Section 13 failure envelope excluding only
 `result_fingerprint`. Every nullable identity key is present. A supplied value
 is included only if it passes its own lexical/type validation; otherwise it is
-null. An observed value is included only after that individual identity has
-been validated as canonical; otherwise it is null.
+null. Each authority-specific observed value follows the extraction and stage
+rules in Section 13.1; no generic observed field or authority-precedence alias
+is permitted.
 
 ### 12.5 Metadata sensitivity boundary
 
@@ -489,9 +492,11 @@ exactly these required keys and types:
 | `schema_version` | exact non-null `SCHEMA_VERSION` value |
 | `client_id` | positive integer when the request client is valid; otherwise null |
 | `supplied_planning_calculation_input_fingerprint` | valid SHA-256 string or null |
-| `observed_planning_calculation_input_fingerprint` | valid SHA-256 string or null |
+| `observed_target_planning_calculation_input_fingerprint` | target authority's valid SHA-256 string or null |
+| `observed_rtisa_planning_calculation_input_fingerprint` | RTISA authority's valid SHA-256 string or null |
 | `supplied_retirement_target_date` | canonical ISO date or null |
-| `observed_retirement_target_date` | canonical ISO date or null |
+| `observed_target_retirement_target_date` | target authority's canonical ISO date or null |
+| `observed_rtisa_retirement_target_date` | RTISA authority's canonical ISO date or null |
 | `observed_target_result_fingerprint` | valid SHA-256 string or null |
 | `observed_rtisa_admission_result_fingerprint` | valid SHA-256 string or null |
 | `result_state` | exact literal `block_no_result` |
@@ -500,6 +505,32 @@ exactly these required keys and types:
 | `result_fingerprint` | valid SHA-256 under Section 12.4 |
 
 No key may be absent and no additional key is permitted.
+
+Observed identity extraction is field-local and deterministic. For an authority
+that has been evaluated, an observed planning fingerprint/date is copied when
+the authority value is present and independently passes that field's primitive
+canonical validation (lowercase SHA-256 or canonical ISO date), even if another
+part of the authority object makes the whole authority structurally invalid.
+A missing, null, or locally invalid value is represented by null. No value is
+copied from the request or from the other authority.
+
+Authority evaluation and null rules by failure stage are exact:
+
+| Failure stage | Target observed fields | RTISA observed fields |
+|---|---|---|
+| `request_validation` | null; no authority is evaluated | null; no authority is evaluated |
+| `snapshot_admission` | null; no authority is evaluated | null; no authority is evaluated |
+| `target_authority` | field-local observations from the evaluated target result, otherwise null | null; RTISA is not evaluated after target-stage failure |
+| `rtisa_authority` | observations from the already validated target result | field-local observations from the evaluated RTISA result, otherwise null |
+| `cross_authority_identity` | observations from the validated target result | observations from the validated RTISA result |
+| `source_universe` | observations from the validated target result | observations from the validated RTISA result |
+| `classification` | observations from the validated target result | observations from the validated RTISA result |
+| `result_identity` | observations from the validated target result | observations from the validated RTISA result |
+
+Thus, when request `A`, target `B`, and RTISA `C` disagree, the supplied field
+is `A`, the target-specific observed field is `B`, and the RTISA-specific
+observed field is `C`. Neither observed authority has precedence over or
+replaces the other, and there is exactly one failure envelope representation.
 
 ### 13.1 Closed condition-to-code mapping and precedence
 
@@ -658,12 +689,12 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-30`: an empty admitted universe is ready only when RTISA is complete and ready.
 - `AC-31`: no admitted source may be silently omitted from future total/gap readiness.
 - `AC-32`: source ordering and every ID partition are deterministic.
-- `AC-33`: input, entry, failure, and result fingerprints use the four exact, distinct, versioned namespaces and preimages defined in Section 12.
+- `AC-33`: input, entry, failure, and result fingerprints use the four exact, distinct, versioned namespaces and preimages defined in Section 12; failure identity uses the same authority-specific observations as its envelope.
 - `AC-34`: source identity remains bound independently of equal basis semantics.
 - `AC-35`: RTICB-local actor/time metadata is fingerprint-invariant, while metadata transitively bound by accepted upstream result fingerprints retains its upstream identity sensitivity.
 - `AC-36`: one supplied session and one snapshot cover all authoritative reads.
 - `AC-37`: no second session, nested public reader, intermediate commit, write, flush, or hidden retry occurs.
-- `AC-38`: every expected invalidity/unavailability condition uses the exact envelope, code mapping, and precedence in Section 13.
+- `AC-38`: every expected invalidity/unavailability condition uses the exact envelope, authority-specific observed-value/null rules, code mapping, and precedence in Section 13.
 - `AC-39`: SQLAlchemy/database/driver, transaction, upstream-execution, rollback, and other non-domain runtime failures rollback where possible and remain technical exceptions.
 - `AC-40`: no persistence, migration, API, frontend, total/gap, or normalization behavior is introduced.
 
@@ -688,7 +719,7 @@ Acceptance range: `AC-01` through `AC-40` (40 criteria).
 - `NAC-15`: accepting a stale or unconfirmed target authority.
 - `NAC-16`: accepting mismatched client/planning/target identities.
 - `NAC-17`: accepting malformed or non-recomputing upstream fingerprints.
-- `NAC-18`: non-deterministic source, reason, blocker, or failure ordering.
+- `NAC-18`: non-deterministic source, reason, blocker, or failure ordering, including a generic/alternate observed-authority representation in a failure envelope or preimage.
 - `NAC-19`: collapsing distinct source identities solely because their bases match.
 - `NAC-20`: independently adding RTICB-local actor/time metadata to fingerprint preimages, or stripping/weakening actor/time sensitivity already bound by an accepted upstream fingerprint.
 - `NAC-21`: opening a second session or cross-snapshot authority read.

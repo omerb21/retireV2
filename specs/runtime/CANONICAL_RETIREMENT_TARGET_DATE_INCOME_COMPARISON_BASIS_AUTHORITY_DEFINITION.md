@@ -180,25 +180,51 @@ For each RTISA entry, in canonical source order:
    `RTICB_PRICE_BASIS_UNKNOWN`; any other unsupported value or an `UNKNOWN`
    object with a non-null reference date is malformed canonical authority data
    and routes to `block_no_result`.
-4. If the source price basis is known and differs from the target price basis,
-   emit `RTICB_PRICE_BASIS_MISMATCH`. Reference dates are then not compared,
-   because the price-basis mismatch already establishes the required
-   normalization dimension.
-5. If both price bases are `REAL_AT_REFERENCE_DATE`, the target reference date
-   must be a valid ISO date under the upstream target contract. A null source
-   date is valid incomplete source evidence and produces
-   `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; a non-null source date must be a
-   valid canonical ISO date or the RTISA authority is malformed and the whole
-   operation routes to `block_no_result`. Unequal valid dates produce
-   `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`.
-6. If both price bases are `NOMINAL_AT_RETIREMENT_TARGET_DATE`, both reference
-   dates must be null under their upstream contracts. A non-null value is an
-   invalid upstream authority, not a normalization case.
-7. Resolve the state from the reason set using Section 8.
+4. Validate source-local REAL reference-date evidence independently of the
+   target price basis. Whenever source price basis is
+   `REAL_AT_REFERENCE_DATE`, a null source date is valid incomplete evidence
+   and produces `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; a non-null source
+   date must be canonical ISO or the RTISA authority is malformed and the whole
+   operation routes to `block_no_result`. This validation is unconditional even
+   when target and source price bases differ.
+5. If the source price basis is known and differs from the target price basis,
+   emit `RTICB_PRICE_BASIS_MISMATCH`. This known mismatch is preserved even
+   when Step 4 also produced unresolved source evidence.
+6. Only when both price bases are `REAL_AT_REFERENCE_DATE` and both dates are
+   valid, compare the dates for equality. The confirmed target authority already
+   guarantees its REAL target date is present and canonical. Unequal dates
+   produce `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`.
+7. A `NOMINAL_AT_RETIREMENT_TARGET_DATE` source must have a null reference date
+   under the upstream contract. A non-null value is invalid upstream authority,
+   not a normalization case. The confirmed target authority independently owns
+   and guarantees the corresponding target-side nullability rule.
+8. Resolve the state from the complete reason set using Section 8. Any unknown
+   or missing reason selects `BASIS_UNRESOLVED`; otherwise any mismatch reason
+   selects `NORMALIZATION_REQUIRED`; otherwise select `DIRECTLY_COMPARABLE`.
 
 Comparison never reads or changes amount fields. An admitted source with zero
 amount is still classified because comparability is a basis property, not an
 amount-materiality shortcut.
+
+### 9.1 Binding price-basis matrix
+
+The following rows assume an `INCLUDED` source, matching resolved income bases,
+and otherwise-valid identities/structures. Reasons are shown in canonical
+Unicode code-point order.
+
+| Target price basis/date | Source price basis/date | Classification | Exact reasons |
+|---|---|---|---|
+| `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `REAL_AT_REFERENCE_DATE` / null | `BASIS_UNRESOLVED` | `[RTICB_PRICE_BASIS_MISMATCH, RTICB_REAL_PRICE_REFERENCE_DATE_MISSING]` |
+| `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `REAL_AT_REFERENCE_DATE` / valid date | `NORMALIZATION_REQUIRED` | `[RTICB_PRICE_BASIS_MISMATCH]` |
+| `REAL_AT_REFERENCE_DATE` / valid date | `REAL_AT_REFERENCE_DATE` / null | `BASIS_UNRESOLVED` | `[RTICB_REAL_PRICE_REFERENCE_DATE_MISSING]` |
+| `REAL_AT_REFERENCE_DATE` / date D | `REAL_AT_REFERENCE_DATE` / same date D | `DIRECTLY_COMPARABLE` | `[]` |
+| `REAL_AT_REFERENCE_DATE` / date D1 | `REAL_AT_REFERENCE_DATE` / different valid date D2 | `NORMALIZATION_REQUIRED` | `[RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH]` |
+| `REAL_AT_REFERENCE_DATE` / valid date | `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `NORMALIZATION_REQUIRED` | `[RTICB_PRICE_BASIS_MISMATCH]` |
+
+A malformed non-null REAL source date is not a seventh classification row: it
+is malformed canonical authority data and routes to
+`RTICB_SOURCE_BASIS_EVIDENCE_INVALID` under Section 13. A malformed target REAL
+date is rejected earlier by the accepted target-authority validation contract.
 
 ## 10. Downstream readiness model
 
@@ -643,8 +669,13 @@ The route boundary is exact:
   accepted enums and null forms: income `UNKNOWN`, price `UNKNOWN` with null
   date, and `REAL_AT_REFERENCE_DATE` with null source date. These produce
   `BASIS_UNRESOLVED`, never a fatal envelope.
-- Known valid unequal bases/dates produce `NORMALIZATION_REQUIRED`, never a
-  fatal envelope.
+- Source-local REAL reference-date validation occurs regardless of target price
+  basis. A null REAL source date contributes
+  `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; any simultaneously known price-basis
+  mismatch is also preserved. The unresolved reason controls the state.
+- Known valid unequal bases/dates contribute mismatch reasons and, only when no
+  unknown/missing reason exists, produce `NORMALIZATION_REQUIRED`; they never
+  produce a fatal envelope.
 - Wrong types, missing required keys, unsupported enum strings, malformed
   non-null dates, illegal enum/date nullability, malformed upstream identity,
   a Category A/B recomputation mismatch, or a structurally invalid Category C
@@ -745,14 +776,14 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-15`: known unequal income bases require normalization.
 - `AC-16`: the accepted source literal `UNKNOWN` is unresolved; unsupported or malformed income-basis authority is fatal.
 - `AC-17`: equal nominal-at-target price bases match directly.
-- `AC-18`: known unequal price bases require normalization.
+- `AC-18`: known unequal price bases always contribute the price-basis mismatch reason and require normalization when no unresolved source evidence takes precedence.
 - `AC-19`: the accepted source literal `UNKNOWN` with null date is unresolved; unsupported or malformed price-basis authority is fatal.
 - `AC-20`: equal real price bases require equal valid reference dates.
-- `AC-21`: a null real source reference date is unresolved; a malformed non-null date is fatal authority data.
+- `AC-21`: every REAL source requires source-local reference-date validation regardless of target basis; null is unresolved, while a malformed non-null date is fatal authority data.
 - `AC-22`: unequal real reference dates require normalization.
 - `AC-23`: nominal authorities require null reference dates and malformed upstream data fails closed.
 - `AC-24`: classification reasons use only the closed vocabulary and canonical ordering.
-- `AC-25`: unresolved evidence takes state precedence over known mismatches without hiding either reason.
+- `AC-25`: unresolved evidence takes state precedence over known mismatches without hiding either reason, including a REAL source with null date whose price basis also mismatches the target.
 - `AC-26`: zero-amount admitted sources are still classified.
 - `AC-27`: classification completion is independent from direct-comparison readiness.
 - `AC-28`: normalization-required sources permit a complete classification result but block direct comparison.

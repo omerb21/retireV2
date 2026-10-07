@@ -135,7 +135,7 @@ The smallest binding state taxonomy is:
 |---|---|
 | `DIRECTLY_COMPARABLE` | The source is admitted and every required basis dimension exactly matches the target. |
 | `NORMALIZATION_REQUIRED` | The source is admitted, its relevant basis evidence is authoritative and known, but one or more dimensions differ from the target. |
-| `BASIS_UNRESOLVED` | The source is admitted but required native basis evidence is unknown, missing, malformed, or unsupported. |
+| `BASIS_UNRESOLVED` | The source is admitted but required native basis evidence is authoritatively represented by RTISA as `UNKNOWN`, or an otherwise-valid real-price evidence object has a null reference date. |
 | `NOT_ADMITTED` | RTISA did not admit the source (`EXCLUDED` or `UNRESOLVED`); RTICB performs no basis comparison for it. |
 
 Reason codes are a sorted unique list. Their closed vocabulary is:
@@ -167,19 +167,27 @@ For each RTISA entry, in canonical source order:
 
 1. If `admission_state != INCLUDED`, emit `NOT_ADMITTED` according to Section 8
    and stop classification for that entry.
-2. Validate source native income basis. Values other than `GROSS` or `NET`
-   produce `RTICB_INCOME_BASIS_UNKNOWN`. Otherwise, inequality with the target
-   produces `RTICB_INCOME_BASIS_MISMATCH`.
-3. Validate source native price basis. Values other than
-   `NOMINAL_AT_RETIREMENT_TARGET_DATE` or `REAL_AT_REFERENCE_DATE` produce
-   `RTICB_PRICE_BASIS_UNKNOWN`.
+2. Validate source native income basis. The valid closed vocabulary is
+   `GROSS`, `NET`, and `UNKNOWN`. The literal `UNKNOWN` produces
+   `RTICB_INCOME_BASIS_UNKNOWN`; a value outside that vocabulary is malformed
+   canonical authority data and routes to `block_no_result`. Otherwise,
+   inequality with the target produces `RTICB_INCOME_BASIS_MISMATCH`.
+3. Validate source native price basis. The valid closed vocabulary is
+   `NOMINAL_AT_RETIREMENT_TARGET_DATE`, `REAL_AT_REFERENCE_DATE`, and `UNKNOWN`.
+   The literal `UNKNOWN` with a null reference date produces
+   `RTICB_PRICE_BASIS_UNKNOWN`; any other unsupported value or an `UNKNOWN`
+   object with a non-null reference date is malformed canonical authority data
+   and routes to `block_no_result`.
 4. If the source price basis is known and differs from the target price basis,
    emit `RTICB_PRICE_BASIS_MISMATCH`. Reference dates are then not compared,
    because the price-basis mismatch already establishes the required
    normalization dimension.
-5. If both price bases are `REAL_AT_REFERENCE_DATE`, require both reference
-   dates to be valid ISO dates. A missing/malformed source date produces
-   `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; otherwise, inequality produces
+5. If both price bases are `REAL_AT_REFERENCE_DATE`, the target reference date
+   must be a valid ISO date under the upstream target contract. A null source
+   date is valid incomplete source evidence and produces
+   `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; a non-null source date must be a
+   valid canonical ISO date or the RTISA authority is malformed and the whole
+   operation routes to `block_no_result`. Unequal valid dates produce
    `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`.
 6. If both price bases are `NOMINAL_AT_RETIREMENT_TARGET_DATE`, both reference
    dates must be null under their upstream contracts. A non-null value is an
@@ -226,7 +234,25 @@ Future total/gap logic must not omit an admitted source with
 `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`. It must stop until a separately
 authorized authority resolves the basis or performs the required normalization.
 
-## 11. Result contract
+## 11. Request and result contracts
+
+### 11.1 Request contract
+
+The public RTICB request is an object with exactly these keys:
+
+- `client_id`: positive integer; booleans are not integers for this contract;
+- `expected_planning_calculation_input_fingerprint`: lowercase 64-character
+  hexadecimal SHA-256 string; and
+- `expected_retirement_target_date`: canonical ISO date string `YYYY-MM-DD`.
+
+Extra or missing keys are invalid. The expected planning fingerprint and date
+are caller-supplied snapshot admission guards. They are not reconstructed from
+the target or RTISA result.
+
+The result schema constant name is `SCHEMA_VERSION` and its exact value is
+`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1`.
+
+### 11.2 Successful result
 
 A successful result contains exactly:
 
@@ -251,6 +277,11 @@ A successful result contains exactly:
 - `blockers`
 - `comparison_result_fingerprint`
 
+Every listed key is required and non-null except the explicitly nullable
+`target_basis.price_reference_date` and source
+`source_price_reference_date`/nested upstream identity values. No additional
+key is permitted.
+
 `target_basis` contains exactly `income_basis`, `price_basis`, and
 `price_reference_date`. Each source comparison contains exactly:
 
@@ -266,71 +297,269 @@ A successful result contains exactly:
 
 No normalized or calculated amount is present.
 
-## 12. Determinism and fingerprints
+## 12. Determinism and exact fingerprint contracts
 
 All fingerprints are lowercase SHA-256 over UTF-8 canonical JSON with sorted
 object keys, compact separators, `ensure_ascii = false`, and non-finite values
 rejected. Arrays remain in their contractually defined canonical order.
 
-Namespaces are versioned and distinct:
+Null is serialized as JSON `null`; no nullable key is omitted. Reason and
+blocker arrays are sorted ascending by Unicode code point, contain unique
+strings, and are serialized even when empty. `source_comparisons` and every
+source-ID partition are sorted ascending by `source_id`. Object-key sorting by
+the canonical serializer does not replace these array-order rules.
 
-- `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1`
-- `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V1`
-- `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V1`
+The four and only four RTICB fingerprint contracts are below.
 
-`comparison_input_fingerprint` binds the client, planning identity, retirement
-target date, target result/semantic fingerprints, and RTISA admission result
-fingerprint.
+### 12.1 Input fingerprint
 
-Each `source_comparison_fingerprint` binds the input fingerprint plus the full
-source comparison entry excluding that fingerprint. This keeps distinct source
-identities distinct even when their basis classifications are identical.
+Constant name:
+`INPUT_FINGERPRINT_CONTRACT`.
 
-`comparison_result_fingerprint` binds the result contract namespace and the
-entire successful result excluding that fingerprint. Any source addition,
-removal, reordering, upstream identity change, basis change, state change,
-reason change, or readiness change therefore changes the result identity.
+Exact constant value:
+`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1`.
 
-Actor metadata and wall-clock time are not RTICB inputs and must not appear in
-its fingerprints.
+`comparison_input_fingerprint` is SHA-256 of exactly this preimage (no wrapper
+or additional key):
+
+```json
+{
+  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1",
+  "client_id": 1,
+  "planning_calculation_input_fingerprint": "<sha256>",
+  "retirement_target_date": "YYYY-MM-DD",
+  "target_result_fingerprint": "<sha256>",
+  "target_semantic_fingerprint": "<sha256>",
+  "rtisa_admission_result_fingerprint": "<sha256>"
+}
+```
+
+All six identity values are required and non-null. The planning/date values are
+the common, validated observed values and must also equal their request guards.
+
+### 12.2 Per-entry fingerprint
+
+Constant name:
+`ENTRY_FINGERPRINT_CONTRACT`.
+
+Exact constant value:
+`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V1`.
+
+`source_comparison_fingerprint` is SHA-256 of exactly:
+
+```json
+{
+  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V1",
+  "comparison_input_fingerprint": "<sha256>",
+  "source_comparison": {
+    "source_id": "<non-empty string>",
+    "rtisa_admission_state": "INCLUDED|EXCLUDED|UNRESOLVED",
+    "source_upstream_identity": {
+      "source_fingerprint": "<sha256>",
+      "pension_source_result_fingerprint": null,
+      "resolution": null
+    },
+    "source_income_basis": "GROSS|NET|UNKNOWN",
+    "source_price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE|REAL_AT_REFERENCE_DATE|UNKNOWN",
+    "source_price_reference_date": null,
+    "comparison_state": "DIRECTLY_COMPARABLE|NORMALIZATION_REQUIRED|BASIS_UNRESOLVED|NOT_ADMITTED",
+    "reason_codes": []
+  }
+}
+```
+
+The nested `source_comparison` contains every successful entry field except
+`source_comparison_fingerprint`, with exactly the key set shown. The displayed
+nulls are nullable positions, not fixed values:
+
+- `pension_source_result_fingerprint` is null or a valid SHA-256;
+- `source_price_reference_date` is null or a canonical ISO date; and
+- `resolution` is null or exactly
+  `{decision_kind, record_version, income_fingerprint, canonical_source_id,
+  canonical_fingerprint}` in canonical JSON key order. `record_version` is a
+  positive integer; `income_fingerprint` is a SHA-256; the two canonical fields
+  are either both null or respectively a non-empty string and SHA-256.
+
+No other RTISA fields, amount, actor, or RTICB execution metadata enter the
+entry preimage. Distinct source identities therefore remain distinct even when
+their basis classifications are equal.
+
+### 12.3 Successful-result fingerprint
+
+Constant name:
+`RESULT_FINGERPRINT_CONTRACT`.
+
+Exact constant value:
+`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V1`.
+
+`comparison_result_fingerprint` is SHA-256 of exactly:
+
+```json
+{
+  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V1",
+  "result": {
+    "schema_version": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1",
+    "client_id": 1,
+    "planning_calculation_input_fingerprint": "<sha256>",
+    "retirement_target_date": "YYYY-MM-DD",
+    "target_result_fingerprint": "<sha256>",
+    "target_semantic_fingerprint": "<sha256>",
+    "rtisa_admission_result_fingerprint": "<sha256>",
+    "comparison_input_fingerprint": "<sha256>",
+    "target_basis": {
+      "income_basis": "GROSS|NET",
+      "price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE|REAL_AT_REFERENCE_DATE",
+      "price_reference_date": null
+    },
+    "source_comparisons": [],
+    "directly_comparable_source_ids": [],
+    "normalization_required_source_ids": [],
+    "basis_unresolved_source_ids": [],
+    "not_admitted_source_ids": [],
+    "classification_state": "COMPLETE",
+    "classification_complete": true,
+    "direct_comparison_state": "READY|NOT_READY",
+    "direct_comparison_ready": true,
+    "blockers": []
+  }
+}
+```
+
+The nested result is the exact Section 11 successful result excluding only
+`comparison_result_fingerprint`. Placeholder null/empty/boolean values take
+their actual validated values. `target_basis.price_reference_date` is null for
+nominal basis and a canonical ISO date for real basis.
+
+### 12.4 Failure fingerprint
+
+Constant name:
+`FAILURE_FINGERPRINT_CONTRACT`.
+
+Exact constant value:
+`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V1`.
+
+`result_fingerprint` on `block_no_result` is SHA-256 of exactly:
+
+```json
+{
+  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V1",
+  "failure": {
+    "schema_version": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1",
+    "client_id": null,
+    "supplied_planning_calculation_input_fingerprint": null,
+    "observed_planning_calculation_input_fingerprint": null,
+    "supplied_retirement_target_date": null,
+    "observed_retirement_target_date": null,
+    "observed_target_result_fingerprint": null,
+    "observed_rtisa_admission_result_fingerprint": null,
+    "result_state": "block_no_result",
+    "failure_stage": "<closed stage>",
+    "failure_detail_code": "<closed code>"
+  }
+}
+```
+
+The nested failure is the exact Section 13 failure envelope excluding only
+`result_fingerprint`. Every nullable identity key is present. A supplied value
+is included only if it passes its own lexical/type validation; otherwise it is
+null. An observed value is included only after that individual identity has
+been validated as canonical; otherwise it is null.
+
+### 12.5 Metadata sensitivity boundary
+
+RTICB must not independently add local actor, audit timestamp, execution time,
+request time, or observer metadata to any preimage. Such RTICB-local metadata is
+fingerprint-invariant.
+
+RTICB nevertheless binds accepted upstream fingerprints verbatim. The target
+result fingerprint transitively includes the upstream target authority's
+`confirmation_actor` and `confirmed_at`. If that upstream contract changes its
+result fingerprint because such metadata changed, the RTICB input, entry, and
+result identities must change accordingly. RTICB must not strip, reconstruct,
+reinterpret, or weaken that upstream sensitivity.
 
 ## 13. Failure and fail-closed contract
 
-Expected authority unavailability is represented by a deterministic
-`block_no_result` envelope rather than a partial successful result. Its fields
-are exactly:
+Expected authority invalidity/unavailability is represented by one deterministic
+`block_no_result` envelope rather than a partial successful result. It has
+exactly these required keys and types:
 
-- `schema_version`
-- `client_id`
-- supplied and observed planning fingerprints
-- supplied and observed retirement target dates
-- observed target result fingerprint, if valid
-- observed RTISA result fingerprint, if valid
-- `result_state = block_no_result`
-- `failure_stage`
-- `failure_detail_code`
-- `result_fingerprint`
+| Key | Type and null rule |
+|---|---|
+| `schema_version` | exact non-null `SCHEMA_VERSION` value |
+| `client_id` | positive integer when the request client is valid; otherwise null |
+| `supplied_planning_calculation_input_fingerprint` | valid SHA-256 string or null |
+| `observed_planning_calculation_input_fingerprint` | valid SHA-256 string or null |
+| `supplied_retirement_target_date` | canonical ISO date or null |
+| `observed_retirement_target_date` | canonical ISO date or null |
+| `observed_target_result_fingerprint` | valid SHA-256 string or null |
+| `observed_rtisa_admission_result_fingerprint` | valid SHA-256 string or null |
+| `result_state` | exact literal `block_no_result` |
+| `failure_stage` | one closed stage below |
+| `failure_detail_code` | one code assigned to that stage below |
+| `result_fingerprint` | valid SHA-256 under Section 12.4 |
 
-Failure stages are ordered:
+No key may be absent and no additional key is permitted.
 
-1. `request_validation`
-2. `snapshot_admission`
-3. `target_authority`
-4. `rtisa_authority`
-5. `cross_authority_identity`
-6. `source_universe`
-7. `classification`
-8. `result_identity`
+### 13.1 Closed condition-to-code mapping and precedence
 
-Within a stage, detail codes are lexicographically ordered. Only the earliest
-applicable failure is authoritative. Schema mismatch, malformed canonical data,
-fingerprint mismatch/construction failure, stale identity, incomplete RTISA,
-coverage mismatch, unsupported database, or unexpected authority exception
-must not produce a ready or partial comparison result.
+Stages are evaluated in the table order. Codes inside a stage are evaluated in
+the displayed order. The first true condition is the sole authoritative
+failure; later conditions are not reported.
 
-Infrastructure/database exceptions are technical failures and remain
-exceptions after rollback; they are not converted into professional
-classifications.
+| Stage | Ordered code | Exact condition |
+|---|---|---|
+| `request_validation` | `RTICB_REQUEST_SCHEMA_INVALID` | request is not an object or its key set is not exact |
+|  | `RTICB_CLIENT_ID_INVALID` | `client_id` is bool, non-integer, or not positive |
+|  | `RTICB_EXPECTED_PLANNING_FINGERPRINT_INVALID` | supplied planning fingerprint is not lowercase SHA-256 |
+|  | `RTICB_EXPECTED_RETIREMENT_TARGET_DATE_INVALID` | supplied target date is not canonical ISO date |
+| `snapshot_admission` | `RTICB_REQUIRES_FRESH_TRANSACTION` | supplied session already has transaction/new/dirty/deleted state |
+|  | `RTICB_UNSUPPORTED_DATABASE` | dialect is neither PostgreSQL nor the accepted SQLite test dialect |
+| `target_authority` | `RTICB_TARGET_AUTHORITY_SCHEMA_INVALID` | returned target object/key/type/enum/nullability structure is not its accepted schema |
+|  | `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID` | a structurally valid target result or semantic fingerprint is not canonical or does not recompute |
+|  | `RTICB_TARGET_AUTHORITY_UNAVAILABLE` | a structurally and cryptographically valid target result reports its defined unavailable/missing state |
+|  | `RTICB_TARGET_AUTHORITY_NOT_READY` | valid target result is not current, confirmed, and ready |
+| `rtisa_authority` | `RTICB_RTISA_AUTHORITY_SCHEMA_INVALID` | returned RTISA object/key/type/enum/nullability structure is not its accepted schema |
+|  | `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID` | a structurally valid admission result fingerprint or bound upstream entry fingerprint is not canonical or does not recompute |
+|  | `RTICB_RTISA_AUTHORITY_UNAVAILABLE` | a structurally and cryptographically valid RTISA result reports its defined unavailable state |
+|  | `RTICB_RTISA_AUTHORITY_NOT_READY` | valid RTISA result is not `COMPLETE_EVIDENCED`, `READY`, and admission-ready |
+| `cross_authority_identity` | `RTICB_CLIENT_ID_MISMATCH` | valid target/RTISA/request client IDs are not all equal |
+|  | `RTICB_PLANNING_IDENTITY_MISMATCH` | valid target/RTISA/supplied planning fingerprints are not all equal |
+|  | `RTICB_RETIREMENT_TARGET_DATE_MISMATCH` | valid target/RTISA/supplied retirement dates are not all equal |
+| `source_universe` | `RTICB_SOURCE_UNIVERSE_INVALID` | source container/ID/order/uniqueness or entry base shape is invalid |
+|  | `RTICB_SOURCE_COVERAGE_MISMATCH` | entry IDs and RTISA included/excluded/unresolved partitions are not exact, disjoint coverage |
+| `classification` | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` | an admitted entry uses an unsupported basis enum, wrong basis-field type, malformed non-null basis date, or illegal basis/date nullability combination |
+|  | `RTICB_CLASSIFICATION_CONSTRUCTION_FAILED` | validated inputs cannot produce exactly one taxonomy-valid entry per RTISA source |
+| `result_identity` | `RTICB_RESULT_IDENTITY_CONSTRUCTION_FAILED` | canonical successful-result assembly or fingerprint construction fails for otherwise validated values |
+
+The table is the complete `failure_stage` and `failure_detail_code` vocabulary.
+Codes cannot move between stages.
+
+### 13.2 Classification versus fatal authority data
+
+The route boundary is exact:
+
+- Valid source-level evidence producing classification is limited to the
+  accepted enums and null forms: income `UNKNOWN`, price `UNKNOWN` with null
+  date, and `REAL_AT_REFERENCE_DATE` with null source date. These produce
+  `BASIS_UNRESOLVED`, never a fatal envelope.
+- Known valid unequal bases/dates produce `NORMALIZATION_REQUIRED`, never a
+  fatal envelope.
+- Wrong types, missing required keys, unsupported enum strings, malformed
+  non-null dates, illegal enum/date nullability, malformed upstream identity,
+  or any accepted upstream fingerprint mismatch are malformed canonical
+  authority data. Base object/identity/fingerprint defects route at
+  `target_authority` or `rtisa_authority`; basis-field defects that remain after
+  base RTISA validation route at `classification`. Each produces the exact
+  mapped `block_no_result` code.
+- Exceptions raised by SQLAlchemy/database/driver operations, transaction
+  setup/completion, upstream execution before a result object exists, rollback,
+  or non-domain runtime failures are technical. RTICB rolls back and re-raises
+  the original exception; it does not convert it to a failure envelope or a
+  professional classification. If rollback itself fails, the connection is
+  invalidated and that technical failure remains raised.
+
+Thus the same validated input cannot legally select more than one route.
 
 ## 14. Transaction and execution boundary
 
@@ -412,12 +641,12 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-13`: excluded/unresolved RTISA entries remain explicit coverage evidence.
 - `AC-14`: `GROSS/GROSS` and `NET/NET` income bases match directly.
 - `AC-15`: known unequal income bases require normalization.
-- `AC-16`: unknown/missing/unsupported income basis is unresolved.
+- `AC-16`: the accepted source literal `UNKNOWN` is unresolved; unsupported or malformed income-basis authority is fatal.
 - `AC-17`: equal nominal-at-target price bases match directly.
 - `AC-18`: known unequal price bases require normalization.
-- `AC-19`: unknown/missing/unsupported price basis is unresolved.
+- `AC-19`: the accepted source literal `UNKNOWN` with null date is unresolved; unsupported or malformed price-basis authority is fatal.
 - `AC-20`: equal real price bases require equal valid reference dates.
-- `AC-21`: missing/malformed real source reference date is unresolved.
+- `AC-21`: a null real source reference date is unresolved; a malformed non-null date is fatal authority data.
 - `AC-22`: unequal real reference dates require normalization.
 - `AC-23`: nominal authorities require null reference dates and malformed upstream data fails closed.
 - `AC-24`: classification reasons use only the closed vocabulary and canonical ordering.
@@ -429,13 +658,13 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-30`: an empty admitted universe is ready only when RTISA is complete and ready.
 - `AC-31`: no admitted source may be silently omitted from future total/gap readiness.
 - `AC-32`: source ordering and every ID partition are deterministic.
-- `AC-33`: input, entry, failure, and result fingerprints use distinct versioned namespaces.
+- `AC-33`: input, entry, failure, and result fingerprints use the four exact, distinct, versioned namespaces and preimages defined in Section 12.
 - `AC-34`: source identity remains bound independently of equal basis semantics.
-- `AC-35`: actor metadata and timestamps do not affect comparison fingerprints.
+- `AC-35`: RTICB-local actor/time metadata is fingerprint-invariant, while metadata transitively bound by accepted upstream result fingerprints retains its upstream identity sensitivity.
 - `AC-36`: one supplied session and one snapshot cover all authoritative reads.
 - `AC-37`: no second session, nested public reader, intermediate commit, write, flush, or hidden retry occurs.
-- `AC-38`: expected unavailability yields the deterministic fail-closed envelope.
-- `AC-39`: unexpected technical/database failures rollback and remain technical.
+- `AC-38`: every expected invalidity/unavailability condition uses the exact envelope, code mapping, and precedence in Section 13.
+- `AC-39`: SQLAlchemy/database/driver, transaction, upstream-execution, rollback, and other non-domain runtime failures rollback where possible and remain technical exceptions.
 - `AC-40`: no persistence, migration, API, frontend, total/gap, or normalization behavior is introduced.
 
 Acceptance range: `AC-01` through `AC-40` (40 criteria).
@@ -461,7 +690,7 @@ Acceptance range: `AC-01` through `AC-40` (40 criteria).
 - `NAC-17`: accepting malformed or non-recomputing upstream fingerprints.
 - `NAC-18`: non-deterministic source, reason, blocker, or failure ordering.
 - `NAC-19`: collapsing distinct source identities solely because their bases match.
-- `NAC-20`: using actor/time metadata in semantic comparison identity.
+- `NAC-20`: independently adding RTICB-local actor/time metadata to fingerprint preimages, or stripping/weakening actor/time sensitivity already bound by an accepted upstream fingerprint.
 - `NAC-21`: opening a second session or cross-snapshot authority read.
 - `NAC-22`: nested public reader, intermediate commit, write/autoflush, or hidden retry.
 - `NAC-23`: introducing persistence, schema, migration, API, or frontend scope.

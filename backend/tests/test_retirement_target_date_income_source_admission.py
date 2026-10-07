@@ -73,7 +73,7 @@ RTISA_TRACEABILITY = {
     "T47": ("test_postgresql_concurrent_change_is_snapshot_consistent_and_fresh_read_changes_identity", "test_postgresql_synchronized_membership_changes_preserve_reader_snapshot"),
     "T48": ("test_sqlite_is_explicit_single_select_only_snapshot",),
     "T49": ("test_direct_execution_exception_rolls_back_and_propagates", "test_postgresql_direct_failure_after_authority_loading_rolls_back"),
-    "T50": ("test_internal_boundary_has_only_db_and_two_logical_inputs", "test_sqlite_is_explicit_single_select_only_snapshot", "test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached", "test_t50_injected_transaction_boundary_violations_are_detected"),
+    "T50": ("test_internal_boundary_has_only_db_and_two_logical_inputs", "test_sqlite_is_explicit_single_select_only_snapshot", "test_runtime_forbidden_downstream_calls_and_write_boundaries_are_not_reached", "test_t50_normal_authoritative_boundary_oracle", "test_t50_production_path_intermediate_commit_is_detected", "test_t50_production_path_second_session_is_detected", "test_t50_production_path_nested_reader_is_detected", "test_t50_production_path_write_autoflush_is_detected"),
     "T51": ("test_income_target_election_fields_do_not_affect_source_admission",),
     "T52": ("test_capital_and_resource_inputs_do_not_create_or_change_income_candidates",),
     "T53": ("test_nonowned_expense_and_scenario_assumption_create_no_income_candidate", "test_actual_scenario_adjustment_does_not_enter_income_universe", "test_expected_inheritance_assumption_does_not_enter_income_universe"),
@@ -468,71 +468,138 @@ def test_sqlite_is_explicit_single_select_only_snapshot(engine):
     assert all(statement.startswith(("BEGIN", "SELECT", "COMMIT")) for statement in statements)
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    ["intermediate_commit", "second_session", "nested_public_reader", "autoflush_write"],
-)
-def test_t50_injected_transaction_boundary_violations_are_detected(engine, monkeypatch, mutation):
+def _observe_t50_authoritative_boundary(engine, monkeypatch, expected=None):
+    expected = expected or _authority(engine)
+    observations = {
+        "session_creations": 0,
+        "transaction_begins": 0,
+        "commits": 0,
+        "flushes": 0,
+        "nested_public_reads": 0,
+        "exception": None,
+        "result": None,
+    }
+    original_session_init = Session.__init__
+    original_public_read = subject.planning_input_service.read
+
+    def observed_session_init(session, *args, **kwargs):
+        observations["session_creations"] += 1
+        return original_session_init(session, *args, **kwargs)
+
+    def observed_public_read(*args, **kwargs):
+        observations["nested_public_reads"] += 1
+        return original_public_read(*args, **kwargs)
+
+    monkeypatch.setattr(Session, "__init__", observed_session_init)
+    monkeypatch.setattr(subject.planning_input_service, "read", observed_public_read)
+    with Session(engine) as db:
+        def after_begin(*_args):
+            observations["transaction_begins"] += 1
+
+        def after_commit(*_args):
+            observations["commits"] += 1
+
+        def before_flush(*_args):
+            observations["flushes"] += 1
+
+        event.listen(db, "after_begin", after_begin)
+        event.listen(db, "after_commit", after_commit)
+        event.listen(db, "before_flush", before_flush)
+        try:
+            observations["result"] = subject.read(db, 1, expected)
+        except BaseException as exc:
+            observations["exception"] = exc
+        finally:
+            event.remove(db, "after_begin", after_begin)
+            event.remove(db, "after_commit", after_commit)
+            event.remove(db, "before_flush", before_flush)
+        observations["transaction_active_after"] = db.in_transaction()
+    return observations
+
+
+def _t50_boundary_is_valid(observations):
+    return (
+        observations["exception"] is None
+        and observations["session_creations"] == 1
+        and observations["transaction_begins"] == 1
+        and observations["commits"] == 1
+        and observations["flushes"] == 0
+        and observations["nested_public_reads"] == 0
+        and observations["transaction_active_after"] is False
+    )
+
+
+def test_t50_normal_authoritative_boundary_oracle(engine, monkeypatch):
+    observations = _observe_t50_authoritative_boundary(engine, monkeypatch)
+    assert _t50_boundary_is_valid(observations)
+    assert observations["result"]["admission_ready"] is True
+
+
+def test_t50_production_path_intermediate_commit_is_detected(engine, monkeypatch):
     expected = _authority(engine)
     original_derive = subject.planning_input_service.derive
-    original_assemble = subject._assemble
-    with Session(engine) as db:
-        boundary = {"authoritative_reads_complete": False}
-        original_commit = db.commit
 
-        def mark_complete(*args, **kwargs):
-            result = original_assemble(*args, **kwargs)
-            boundary["authoritative_reads_complete"] = True
-            return result
+    def derive_with_intermediate_commit(db, client_id):
+        planning = original_derive(db, client_id)
+        db.commit()
+        return planning
 
-        def guarded_commit():
-            if not boundary["authoritative_reads_complete"]:
-                raise AssertionError("intermediate commit crossed RTISA authoritative boundary")
-            return original_commit()
+    monkeypatch.setattr(subject.planning_input_service, "derive", derive_with_intermediate_commit)
+    observations = _observe_t50_authoritative_boundary(engine, monkeypatch, expected)
+    assert observations["commits"] == 2
+    assert observations["transaction_begins"] == 2
+    assert not _t50_boundary_is_valid(observations)
 
-        monkeypatch.setattr(subject, "_assemble", mark_complete)
-        monkeypatch.setattr(db, "commit", guarded_commit)
 
-        if mutation == "intermediate_commit":
-            def mutated_derive(session, client_id):
-                result = original_derive(session, client_id)
-                session.commit()
-                return result
-        elif mutation == "second_session":
-            def forbidden_session(*args, **kwargs):
-                raise AssertionError("second Session crossed RTISA authoritative boundary")
-            monkeypatch.setattr(Session, "__init__", forbidden_session)
-            def mutated_derive(session, client_id):
-                Session(engine)
-                return original_derive(session, client_id)
-        elif mutation == "nested_public_reader":
-            def forbidden_reader(*args, **kwargs):
-                raise AssertionError("nested public reader crossed RTISA authoritative boundary")
-            monkeypatch.setattr(subject.planning_input_service, "read", forbidden_reader)
-            def mutated_derive(session, client_id):
-                subject.planning_input_service.read(session, client_id)
-                return original_derive(session, client_id)
-        else:
-            def forbidden_write(*args, **kwargs):
-                raise AssertionError("write/autoflush crossed RTISA authoritative boundary")
-            monkeypatch.setattr(db, "add", forbidden_write)
-            monkeypatch.setattr(db, "flush", forbidden_write)
-            def mutated_derive(session, client_id):
-                session.add(PlannerAssumption(
-                    client_id=client_id,
-                    assumption_category="income",
-                    title="forbidden mutation",
-                    assumption_value_text="1.00",
-                    rationale="T50 mutation control",
-                    owner="planner",
-                    lifecycle_status="current",
-                ))
-                return original_derive(session, client_id)
+def test_t50_production_path_second_session_is_detected(engine, monkeypatch):
+    expected = _authority(engine)
+    original_derive = subject.planning_input_service.derive
 
-        monkeypatch.setattr(subject.planning_input_service, "derive", mutated_derive)
-        with pytest.raises(AssertionError, match="RTISA authoritative boundary"):
-            subject.read(db, 1, expected)
-        assert not db.in_transaction()
+    def derive_with_second_session(db, client_id):
+        with Session(engine):
+            pass
+        return original_derive(db, client_id)
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", derive_with_second_session)
+    observations = _observe_t50_authoritative_boundary(engine, monkeypatch, expected)
+    assert observations["session_creations"] == 2
+    assert not _t50_boundary_is_valid(observations)
+
+
+def test_t50_production_path_nested_reader_is_detected(engine, monkeypatch):
+    expected = _authority(engine)
+    original_derive = subject.planning_input_service.derive
+
+    def derive_with_nested_reader(db, client_id):
+        subject.planning_input_service.read(db, client_id)
+        return original_derive(db, client_id)
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", derive_with_nested_reader)
+    observations = _observe_t50_authoritative_boundary(engine, monkeypatch, expected)
+    assert observations["nested_public_reads"] == 1
+    assert not _t50_boundary_is_valid(observations)
+
+
+def test_t50_production_path_write_autoflush_is_detected(engine, monkeypatch):
+    expected = _authority(engine)
+    original_derive = subject.planning_input_service.derive
+
+    def derive_with_write(db, client_id):
+        db.add(PlannerAssumption(
+            client_id=client_id,
+            assumption_category="income",
+            title="forbidden mutation",
+            assumption_value_text="1.00",
+            rationale="T50 mutation control",
+            owner="planner",
+            lifecycle_status="current",
+        ))
+        return original_derive(db, client_id)
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", derive_with_write)
+    observations = _observe_t50_authoritative_boundary(engine, monkeypatch, expected)
+    assert observations["flushes"] == 1
+    assert not _t50_boundary_is_valid(observations)
 
 
 def test_wrapped_technical_fatal_raises_and_rolls_back(engine, monkeypatch):
@@ -594,7 +661,7 @@ def _two_pension_planning(engine):
     return expected, planning, sorted(source["source_id"] for source in planning["pension_inputs"])
 
 
-@pytest.mark.parametrize("first_result", ["none", "unexpected"])
+@pytest.mark.parametrize("first_result", ["none", "unexpected", "ready"])
 def test_actual_producer_later_source_execution_failure_is_technical(
     engine, monkeypatch, first_result
 ):
@@ -609,11 +676,12 @@ def test_actual_producer_later_source_execution_failure_is_technical(
             if first_result == "none":
                 return None
             result = original_pte(planning, source_id, **kwargs)
-            result = copy.deepcopy(result)
-            result["source_id"] = "manual:unexpected"
-            result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
-                subject.portfolio_service._pte_result_payload(result)
-            )
+            if first_result == "unexpected":
+                result = copy.deepcopy(result)
+                result["source_id"] = "manual:unexpected"
+                result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
+                    subject.portfolio_service._pte_result_payload(result)
+                )
             return result
         raise RuntimeError("later source executor failed")
 
@@ -632,14 +700,19 @@ def test_actual_producer_later_source_execution_failure_is_technical(
         )
         assert not db.in_transaction()
     fatal = captured[0]
-    assert fatal["coverage_evidence"]["missing_source_ids"] == source_ids
+    assert fatal["coverage_evidence"]["missing_source_ids"] == (
+        [failed_id] if first_result == "ready" else source_ids
+    )
     assert fatal["failure_evidence"]["failed_expected_source_id"] == failed_id
     assert fatal["failure_evidence"]["observed_source_id"] is None
     if first_result == "none":
         assert fatal["coverage_evidence"]["returned_source_ids"] == []
-    else:
+    elif first_result == "unexpected":
         assert fatal["coverage_evidence"]["returned_source_ids"] == ["manual:unexpected"]
         assert fatal["coverage_evidence"]["unexpected_source_ids"] == ["manual:unexpected"]
+    else:
+        assert fatal["coverage_evidence"]["returned_source_ids"] == [first_id]
+        assert fatal["coverage_evidence"]["unexpected_source_ids"] == []
 
 
 def test_actual_producer_first_source_execution_failure_remains_technical(engine, monkeypatch):
@@ -674,6 +747,37 @@ def test_impossible_failed_source_identity_from_actual_producer_is_rejected(engi
     fatal["failure_evidence"]["failed_expected_source_id"] = "manual:not-expected"
     fatal = _rehashed_fatal(fatal)
     monkeypatch.setattr(subject.portfolio_service.pte, "execute_from_planning_result", original_pte)
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", lambda *args: fatal)
+    result = _read(engine, expected)
+    assert result["blockers"] == ["RTISA_PENSION_RESULT_INVALID"]
+    assert result["source_entries"] == []
+
+
+@pytest.mark.parametrize("first_result", ["unexpected", "ready"])
+def test_impossible_first_source_failure_after_prior_return_is_rejected(
+    engine, monkeypatch, first_result
+):
+    expected, planning, source_ids = _two_pension_planning(engine)
+    first_id, _later_id = source_ids
+    original_pte = subject.portfolio_service.pte.execute_from_planning_result
+
+    def return_then_fail(current, source_id, **kwargs):
+        if source_id != first_id:
+            raise RuntimeError("later source executor failed")
+        result = original_pte(current, source_id, **kwargs)
+        if first_result == "unexpected":
+            result = copy.deepcopy(result)
+            result["source_id"] = "manual:unexpected"
+            result["source_result_fingerprint"] = subject.portfolio_service._fingerprint(
+                subject.portfolio_service._pte_result_payload(result)
+            )
+        return result
+
+    monkeypatch.setattr(subject.portfolio_service.pte, "execute_from_planning_result", return_then_fail)
+    fatal = subject.portfolio_service.execute_from_planning_result(planning, 1, expected)
+    assert fatal["returned_source_count"] == 1
+    fatal["failure_evidence"]["failed_expected_source_id"] = first_id
+    fatal = _rehashed_fatal(fatal)
     monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", lambda *args: fatal)
     result = _read(engine, expected)
     assert result["blockers"] == ["RTISA_PENSION_RESULT_INVALID"]

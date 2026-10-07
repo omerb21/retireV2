@@ -378,7 +378,8 @@ def _portfolio_is_valid(result: Any, client_id: int, planning: dict, target: str
         elif stage == "source_execution":
             if expected_count != len(expected_ids) or returned_count != len(returned) \
                     or coverage_state != "incomplete" or not ordinary_coverage \
-                    or not missing or failed not in missing or observed is not None:
+                    or not missing or failed not in missing \
+                    or returned_count > expected.index(failed) or observed is not None:
                 return False
         elif stage in {"source_result_validation", "aggregation"}:
             if expected_count != len(expected_ids) or returned_count != len(returned) \

@@ -380,7 +380,7 @@ Governance Protocol v1.
 | `GOV-AC-016` | No package transition authorizes broad M10, M11-M14, M08E, 02M changes, or the next product package. |
 | `GOV-AC-017` | Production readiness remains unclaimed until a separate explicit gate. |
 
-Governance AC range: `GOV-AC-001` through `GOV-AC-017`; count: `17`.
+Governance v1 baseline AC subtotal: `GOV-AC-001` through `GOV-AC-017`; baseline count: `17`. For active v1.1 totals, see Section 32.
 
 ## 21. Governance Negative Acceptance Criteria
 
@@ -398,7 +398,7 @@ Governance AC range: `GOV-AC-001` through `GOV-AC-017`; count: `17`.
 | `GOV-NAC-010` | Weakening, inferring, or bypassing a professional-decision gate. |
 | `GOV-NAC-011` | Inferring or claiming production readiness from protocol, package, or closure status. |
 
-Governance NAC range: `GOV-NAC-001` through `GOV-NAC-011`; count: `11`.
+Governance v1 baseline NAC subtotal: `GOV-NAC-001` through `GOV-NAC-011`; baseline count: `11`. For active v1.1 totals, see Section 33.
 
 ## 22. Governance Protocol Adoption Stop Conditions
 
@@ -412,7 +412,7 @@ Adoption must stop on any of these exact conditions:
 6. `GOVERNANCE_PROTOCOL_CREATES_NEW_BUSINESS_AUTHORITY`
 7. `GOVERNANCE_PROTOCOL_CONFLICT_UNRESOLVED`
 
-Stop-condition range: item `1` through item `7`; count: `7`.
+Governance v1 baseline stop-condition subtotal: item `1` through item `7`; baseline count: `7`. For active v1.1 totals, see Section 34.
 
 
 ## 23. Risk-Based Compact Governance

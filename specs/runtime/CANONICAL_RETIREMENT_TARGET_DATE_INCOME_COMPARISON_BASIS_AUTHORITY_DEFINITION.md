@@ -89,7 +89,9 @@ A ready comparison result requires all of the following:
 - RTISA reports `COMPLETE_EVIDENCED`, `READY`, and `admission_ready = true`;
 - RTISA source entries and included/excluded/unresolved ID partitions are
   complete, unique, sorted, disjoint, and exactly cover the entries; and
-- every preserved upstream source and pension-result identity is valid.
+- every preserved upstream source and pension-result identity satisfies the
+  exact structural and relationship checks permitted by the fingerprint
+  verification inventory in Section 12.6.
 
 If one of these conditions fails, RTICB fails closed. It must not repair,
 reinterpret, partially consume, or mix the two authorities.
@@ -481,6 +483,73 @@ result fingerprint because such metadata changed, the RTICB input, entry, and
 result identities must change accordingly. RTICB must not strip, reconstruct,
 reinterpret, or weaken that upstream sensitivity.
 
+### 12.6 Fingerprint ownership and verification inventory
+
+Fingerprint verification follows three closed categories. "Complete preimage"
+means the permitted target and RTISA result objects contain every canonical
+field required by the fingerprint owner's accepted contract. A projected
+object plus a fingerprint is not presumed to be a complete preimage.
+
+#### Category A — RTICB-owned fingerprints
+
+RTICB independently constructs and verifies every fingerprint it owns:
+
+| Exact field | Owner | Complete preimage available | RTICB recomputation required | Structural validation required | Transitively bound into RTICB identity |
+|---|---|---:|---:|---:|---:|
+| `comparison_input_fingerprint` | RTICB | YES | YES | YES | YES |
+| `source_comparison_fingerprint` | RTICB | YES | YES | YES | YES |
+| `comparison_result_fingerprint` | RTICB | YES | YES | YES | final identity |
+| failure `result_fingerprint` | RTICB | YES | YES | YES | final failure identity |
+
+Their only canonical preimages are Sections 12.1 through 12.4.
+
+#### Category B — consumed upstream fingerprints with complete preimage present
+
+| Exact field | Owner | Complete preimage available in permitted result | RTICB recomputation required | Structural validation required | Transitively bound into RTICB identity |
+|---|---|---:|---:|---:|---:|
+| target `target_result_fingerprint` | canonical retirement monthly income target authority | YES — the complete target result excluding this field is present | YES | YES | YES, in RTICB input and result |
+| target `target_semantic_fingerprint` | canonical retirement monthly income target authority | YES — the complete authoritative `target` object is present | YES | YES | YES, in RTICB input and result |
+| RTISA `admission_result_fingerprint` | RTISA | YES — the complete RTISA result excluding this field is present | YES | YES | YES, in RTICB input and result |
+
+These are the only consumed upstream fingerprints RTICB independently
+recomputes. Their preimages and contract namespace values come from the
+accepted owning authority, not an RTICB reconstruction.
+
+#### Category C — transitively bound upstream fingerprints without complete preimage
+
+| Exact field/location | Owner | Complete preimage available in permitted results | RTICB recomputation required | Structural validation required | Transitively bound into RTICB identity |
+|---|---|---:|---:|---:|---:|
+| target and RTISA `planning_calculation_input_fingerprint` | canonical planning input authority | NO | NO | YES; also require all supplied/observed relationships in this Definition | YES, directly in RTICB input/result |
+| RTISA `pension_portfolio_result_fingerprint` | canonical pension target-date portfolio authority | NO — portfolio result is not carried by RTISA | NO | YES | YES through the recomputed RTISA result fingerprint |
+| each entry `upstream_identity.source_fingerprint` | canonical planning/source snapshot authority for that source | NO — complete canonical source record is not carried | NO | YES | YES, directly in the RTICB entry and therefore result |
+| each entry `upstream_identity.pension_source_result_fingerprint` when non-null | pension target-date execution authority | NO — complete pension source result is not carried | NO | YES | YES, directly in the RTICB entry and therefore result |
+| each non-null resolution `income_fingerprint` | canonical planning recurring-income authority | NO — complete recurring-income source record is not carried | NO | YES | YES inside the entry resolution |
+| each non-null resolution `canonical_fingerprint` | canonical pension source authority | NO — complete canonical pension source record is not carried | NO | YES | YES inside the entry resolution |
+
+RTISA exposes no `source_entry_fingerprint` field. Consequently there is no
+RTISA per-entry fingerprint to recompute or bind beyond the exact nested fields
+listed above and the top-level RTISA result fingerprint.
+
+For every Category C field, RTICB must:
+
+1. validate required presence/nullability and canonical SHA-256 structure under
+   the consumed RTISA/target schema;
+2. validate relationships available from the supplied results, including
+   repeated planning identity equality and paired resolution nullability;
+3. preserve the fingerprint byte-for-byte;
+4. bind it at the exact RTICB preimage location specified above; and
+5. rely on the accepted upstream producer as owner of its computation.
+
+RTICB must not synthesize a preimage from projected fields, query raw recurring
+income or pension rows, reconstruct canonical source records, discover sources,
+bypass RTISA, open a second session/snapshot, or invoke a transaction-owning
+reader solely to recompute a Category C fingerprint. Absence of the complete
+preimage is not a fingerprint mismatch.
+
+If separately authorized upstream work later includes a complete preimage, a
+Category C fingerprint does not automatically become Category B. Reclassification
+requires an explicit Definition change.
+
 ## 13. Failure and fail-closed contract
 
 Expected authority invalidity/unavailability is represented by one deterministic
@@ -547,11 +616,11 @@ failure; later conditions are not reported.
 | `snapshot_admission` | `RTICB_REQUIRES_FRESH_TRANSACTION` | supplied session already has transaction/new/dirty/deleted state |
 |  | `RTICB_UNSUPPORTED_DATABASE` | dialect is neither PostgreSQL nor the accepted SQLite test dialect |
 | `target_authority` | `RTICB_TARGET_AUTHORITY_SCHEMA_INVALID` | returned target object/key/type/enum/nullability structure is not its accepted schema |
-|  | `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID` | a structurally valid target result or semantic fingerprint is not canonical or does not recompute |
+|  | `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID` | structurally valid Category B target result or semantic fingerprint is not canonical or does not recompute from its complete supplied preimage |
 |  | `RTICB_TARGET_AUTHORITY_UNAVAILABLE` | a structurally and cryptographically valid target result reports its defined unavailable/missing state |
 |  | `RTICB_TARGET_AUTHORITY_NOT_READY` | valid target result is not current, confirmed, and ready |
 | `rtisa_authority` | `RTICB_RTISA_AUTHORITY_SCHEMA_INVALID` | returned RTISA object/key/type/enum/nullability structure is not its accepted schema |
-|  | `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID` | a structurally valid admission result fingerprint or bound upstream entry fingerprint is not canonical or does not recompute |
+|  | `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID` | structurally valid Category B `admission_result_fingerprint` is not canonical or does not recompute from the complete supplied RTISA result preimage |
 |  | `RTICB_RTISA_AUTHORITY_UNAVAILABLE` | a structurally and cryptographically valid RTISA result reports its defined unavailable state |
 |  | `RTICB_RTISA_AUTHORITY_NOT_READY` | valid RTISA result is not `COMPLETE_EVIDENCED`, `READY`, and admission-ready |
 | `cross_authority_identity` | `RTICB_CLIENT_ID_MISMATCH` | valid target/RTISA/request client IDs are not all equal |
@@ -578,11 +647,13 @@ The route boundary is exact:
   fatal envelope.
 - Wrong types, missing required keys, unsupported enum strings, malformed
   non-null dates, illegal enum/date nullability, malformed upstream identity,
-  or any accepted upstream fingerprint mismatch are malformed canonical
-  authority data. Base object/identity/fingerprint defects route at
-  `target_authority` or `rtisa_authority`; basis-field defects that remain after
-  base RTISA validation route at `classification`. Each produces the exact
-  mapped `block_no_result` code.
+  a Category A/B recomputation mismatch, or a structurally invalid Category C
+  fingerprint are malformed canonical authority data. Base
+  object/identity/fingerprint defects route at `target_authority` or
+  `rtisa_authority`; basis-field defects that remain after base RTISA validation
+  route at `classification`. Each produces the exact mapped `block_no_result`
+  code. Failure to independently recompute Category C is not a legal failure
+  condition because its complete preimage is not a permitted RTICB input.
 - Exceptions raised by SQLAlchemy/database/driver operations, transaction
   setup/completion, upstream execution before a result object exists, rollback,
   or non-domain runtime failures are technical. RTICB rolls back and re-raises
@@ -662,8 +733,8 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-03`: target and RTISA client identity must match the request.
 - `AC-04`: target and RTISA planning fingerprints must match exactly.
 - `AC-05`: target and RTISA retirement target dates must match exactly.
-- `AC-06`: target result and semantic fingerprints are independently validated.
-- `AC-07`: RTISA result fingerprint is independently validated.
+- `AC-06`: Category B target result and semantic fingerprints are independently recomputed from their complete supplied preimages.
+- `AC-07`: the Category B RTISA result fingerprint is independently recomputed from its complete supplied result preimage; nested Category C fingerprints follow Section 12.6 without reconstruction.
 - `AC-08`: stale, unavailable, malformed, or non-ready target authority fails closed.
 - `AC-09`: partial, unavailable, malformed, or non-ready RTISA fails closed.
 - `AC-10`: source universe equals RTISA source entries exactly.
@@ -689,8 +760,8 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-30`: an empty admitted universe is ready only when RTISA is complete and ready.
 - `AC-31`: no admitted source may be silently omitted from future total/gap readiness.
 - `AC-32`: source ordering and every ID partition are deterministic.
-- `AC-33`: input, entry, failure, and result fingerprints use the four exact, distinct, versioned namespaces and preimages defined in Section 12; failure identity uses the same authority-specific observations as its envelope.
-- `AC-34`: source identity remains bound independently of equal basis semantics.
+- `AC-33`: Category A input, entry, failure, and result fingerprints use the four exact, distinct, versioned namespaces and preimages defined in Section 12; failure identity uses the same authority-specific observations as its envelope.
+- `AC-34`: source identity remains bound independently of equal basis semantics; Category C identities are structurally validated, relationship-checked, preserved, and transitively bound without false recomputation.
 - `AC-35`: RTICB-local actor/time metadata is fingerprint-invariant, while metadata transitively bound by accepted upstream result fingerprints retains its upstream identity sensitivity.
 - `AC-36`: one supplied session and one snapshot cover all authoritative reads.
 - `AC-37`: no second session, nested public reader, intermediate commit, write, flush, or hidden retry occurs.
@@ -718,7 +789,7 @@ Acceptance range: `AC-01` through `AC-40` (40 criteria).
 - `NAC-14`: accepting partial or non-ready RTISA as complete.
 - `NAC-15`: accepting a stale or unconfirmed target authority.
 - `NAC-16`: accepting mismatched client/planning/target identities.
-- `NAC-17`: accepting malformed or non-recomputing upstream fingerprints.
+- `NAC-17`: accepting malformed upstream fingerprints or a non-recomputing Category B fingerprint, or attempting to recompute Category C without its complete authoritative preimage.
 - `NAC-18`: non-deterministic source, reason, blocker, or failure ordering, including a generic/alternate observed-authority representation in a failure envelope or preimage.
 - `NAC-19`: collapsing distinct source identities solely because their bases match.
 - `NAC-20`: independently adding RTICB-local actor/time metadata to fingerprint preimages, or stripping/weakening actor/time sensitivity already bound by an accepted upstream fingerprint.
@@ -739,11 +810,23 @@ Negative-acceptance range: `NAC-01` through `NAC-25` (25 criteria).
 - `SC-05`: complete coverage would require independent source discovery or bypassing RTISA.
 - `SC-06`: correctness would require persistence, normalization, totals, gaps, tax, CPI, or scenario semantics.
 - `SC-07`: implementation would require reopening a closed authority rather than narrow non-semantic extraction.
-- `SC-08`: deterministic identity or single-snapshot behavior cannot be proven with the accepted repository contracts.
+- `SC-08`: deterministic identity or single-snapshot behavior cannot be proven, a fingerprint classified as Category B lacks its complete canonical preimage in the permitted results, or implementation would independently recompute/reclassify Category C without an explicit Definition change.
 
 Stop-condition range: `SC-01` through `SC-08` (8 conditions). Encountering any
 condition stops Definition/implementation progression and requires explicit
 owner/governance resolution; no implementation workaround is implied.
+
+### 20.1 Fingerprint-boundary implementation stop rule
+
+If implementation finds that any Category B fingerprint lacks its complete
+canonical preimage inside the two permitted consumed result objects, it must
+stop and return for Definition clarification. It must not fetch hidden/raw
+evidence, reconstruct an upstream record, or add a reader as a workaround.
+
+Implementation likewise must stop rather than independently recompute or
+silently reclassify any Category C fingerprint. Moving a fingerprint between
+Categories B and C requires a separately authorized Definition change, even if
+an upstream producer later exposes additional evidence.
 
 ## 21. Pre-implementation contract enumeration requirement
 
@@ -756,7 +839,9 @@ After Definition acceptance, the mandatory enumeration must cover at least:
 - empty, singleton, and multi-source universes;
 - valid combinations and malformed near-misses;
 - deterministic failure envelopes and precedence;
-- fingerprint mutation controls for every bound input and non-input;
+- fingerprint mutation controls for every Category A/B recomputable identity,
+  plus structural, relationship, preservation, and transitive-binding controls
+  for every Category C identity and relevant non-input;
 - source coverage/order mutations;
 - single-session/snapshot transaction mutations; and
 - reusable harnesses for later implementation acceptance.

@@ -327,6 +327,35 @@ def test_sticky_planning_stale_once_a_b_a_and_reconfirm(engine,monkeypatch):
     assert current["authority_state"]=="CURRENT" and current["authority"]["record_version"]==3
 
 
+def test_non_owning_assessment_projects_stale_without_lock_write_or_transaction_ownership(engine):
+    prepare(engine)
+    confirm(engine, command(engine))
+    with Session(engine) as db, db.begin():
+        from app.models.planning_input_decision import PlanningInputDecision
+        db.get(PlanningInputDecision, 1).planning_base_date = date(2029, 12, 31)
+
+    statements = []
+    from sqlalchemy import event
+    def capture(conn, cursor, sql, *args):
+        statements.append(sql.strip().upper())
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        with Session(engine) as db:
+            result = rit.assess_in_snapshot(db, 1)
+            assert db.in_transaction()
+            db.rollback()
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert result["authority_state"] == "STALE"
+    assert result["authority"]["record_version"] == 2
+    assert result["authority"]["lifecycle_state"] == "STALE"
+    assert not any("FOR UPDATE" in statement for statement in statements)
+    assert not any(statement.startswith(("INSERT ", "UPDATE ", "DELETE ")) for statement in statements)
+    with Session(engine) as db:
+        row = db.get(Election, 1)
+        assert row.version == 1 and row.lifecycle_state == "CONFIRMED"
+
+
 def test_target_date_stale_and_semantics_preserved(engine,monkeypatch):
     prepare(engine); monkeypatch.setattr(rit,"_utc_now",lambda:FIXED_TIME)
     before=confirm(engine,command(engine,price_basis="REAL_AT_REFERENCE_DATE",price_reference_date="2040-01-01"))

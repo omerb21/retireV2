@@ -1,0 +1,24 @@
+{
+  "direct_nominal": {
+    "input_canonical_json": "{\"client_id\":1,\"contract\":\"CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1\",\"planning_calculation_input_fingerprint\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"retirement_target_date\":\"2030-01-01\",\"rtisa_admission_result_fingerprint\":\"9017c86eeb84c584c0b7b6da4b7c9cf264e82fb8320deb2369df3b1c39669e2f\",\"target_result_fingerprint\":\"3267f239170cc936f009aeb24eeb7f7ec49329af52668dca9b1a3be93016cde2\",\"target_semantic_fingerprint\":\"f1db992970066a2e1365953936484127e61fdfb8ea63121059039b31fe9838f7\"}",
+    "input": "0637c3f80f29cbaf448cdca7b763376112cd99036f0498f2ccf771523d30b1db",
+    "entry": "bfb5e3628f7fb0ab1e098509cc28a0637613acebe78ca6e298325cf8fad56d75",
+    "result": "318f2386f98bd778b8513a0cc689cdf4bd4a68cf2c380c81c56af42287cab9e8"
+  },
+  "excluded": {
+    "result": "f49caead6cd93f92a54902d7f5df69f9d2c48a98ce07b093ac40b3e665006372"
+  },
+  "empty": {
+    "result": "7534e96e8af1e5514825989743e5c85e52a180028b13bcdec05d05ebda827ea5"
+  },
+  "fresh_transaction_failure": "5a6c49d0810b6f83cee1ce78712b4a839a4707630ae376d369a702e7428a62c1"
+  ,"direct_real": {"input":"193f5ac50d3d25f5107816aef30895003af489ba84be07ed11008430ed418bd8","entries":["64df0eadda2cf32ccf792aab0e7a02f8ea8592f480b96e61bc8a81af68918e73"],"result":"2a812ced2d3d3396cbb0bde4e8b96311fd3b1845e35e1180113e29302ad1edaf"}
+  ,"price_mismatch": {"input":"9650250d8cd1f249d52d2970f02145fb8801e1080d021a511ac6758f20d3bdd4","entries":["e1053c081f14b48658fc5730a021e51a0b51b4a740c3627299f5ae5cc4d5c702"],"result":"31862694e3001e884d39ae2bf18fe51fab0f962737fdeae11d1a8017e612acb3"}
+  ,"real_date_mismatch": {"input":"5b29d8cae98254c93ccd0efbaa37fbd5d1eaf9266255b911ae7439800e91962c","entries":["2659e90f7ab010d229519483678a0f0097a9b28c7a35ddc3df9bc881047ca87a"],"result":"fc45e813f28e6b83eef2a318d7ba5b3d31ec04660f0e31f2ea87ec6c4b815aca"}
+  ,"missing_real_date": {"input":"af0c8ac48e1c9636e592ff1f919ff1ed8f88d0f9e9518d9f78a9bdefce001bd8","entries":["08f4f9cfc7f671b7c39cf26dd34703b9a62ea1359fdb150c7b6f604cc3525881"],"result":"3810121dc36533da4e439790ab2e5f645697c71789f29b2467a73ce5689088bf"}
+  ,"combined_unresolved_mismatch": {"input":"1d725500a908776c52d05152f1167c9503c45b501b0e197d1b4b32eaa520383c","entries":["d7dd3b81dc0a5e55e14b86f2fc2744b4269919018f5eea78e1f5f1f6f661bf28"],"result":"b3a969ce700ea3da9397c21e4414b0bc50be3743de0498b5bbbff91264baf8ff"}
+  ,"all_excluded": {"input":"68da4a899dad0e02f2ac1c3511d173965215811a0929ffbb4597ce033a209444","entries":["60098d3c722d87e2042a6e820e4338df7195608572f7819a220dc02d67a5ec6e","2bce49cf48cd551137a45086903056bbad52b8d4383c30b9d49e81ef9038e2fd"],"result":"193d03500aa4f0e58853c0b1894c4c059b6032c36ee61f802a1badbefe91ff86"}
+  ,"request_observation_failure":"2b12d03445b854a0ac742e885a8a5915b90a750054d0f1bcbdf5a9216383bfe7"
+  ,"target_observation_failure":"0984cf2383e5266b162fbf149e4176ab6a25c4207a7629d7ffeb0b273a88f808"
+  ,"rtisa_observation_failure":"1c877c0f40c492975c4c507f0677c63e6fba3d39cd15bab082bc530bd5b96b93"
+}

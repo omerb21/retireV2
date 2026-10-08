@@ -162,9 +162,16 @@ def test_internal_boundary_has_only_db_and_two_logical_inputs():
     assert list(inspect.signature(subject.read).parameters) == [
         "db", "client_id", "expected_planning_calculation_input_fingerprint"
     ]
-    source = inspect.getsource(subject.read)
-    assert "planning_input_service.derive" in source
-    assert "planning_input_service.read" not in source
+    assert list(inspect.signature(subject.read_in_snapshot).parameters) == [
+        "db", "client_id", "expected_planning_calculation_input_fingerprint"
+    ]
+    public_source = inspect.getsource(subject.read)
+    snapshot_source = inspect.getsource(subject.read_in_snapshot)
+    assert "read_in_snapshot" in public_source
+    assert "planning_input_service.derive" in snapshot_source
+    assert "planning_input_service.read" not in public_source + snapshot_source
+    assert "commit(" not in snapshot_source
+    assert "rollback(" not in snapshot_source
 
 
 def test_command_boundary_missing_and_extra_arguments_fail_before_reads():

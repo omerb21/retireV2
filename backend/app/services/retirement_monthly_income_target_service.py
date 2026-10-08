@@ -270,7 +270,14 @@ def _stored_target(row: Election) -> tuple[dict | None, list[str]]:
         price_basis=row.price_basis, reference_date=row.price_reference_date), []
 
 
-def _result(context: dict, row: Election | None, blockers: list[str] | None = None, state: str | None = None) -> dict:
+def _result(
+    context: dict,
+    row: Election | None,
+    blockers: list[str] | None = None,
+    state: str | None = None,
+    *,
+    project_stale_transition: bool = False,
+) -> dict:
     blockers = list(blockers or [])
     target = authority = None
     semantic = None
@@ -297,6 +304,14 @@ def _result(context: dict, row: Election | None, blockers: list[str] | None = No
             if row.lifecycle_state == "STALE" or blockers:
                 blockers.append("RIT_RECONFIRMATION_REQUIRED")
                 state = "STALE"
+                if project_stale_transition and row.lifecycle_state == "CONFIRMED" and authority is not None:
+                    if row.version >= MAX_VERSION:
+                        _fail("RIT_RECORD_VERSION_EXHAUSTED")
+                    authority = {
+                        **authority,
+                        "record_version": row.version + 1,
+                        "lifecycle_state": "STALE",
+                    }
             else:
                 state = "CURRENT"
     blockers = sorted(set(blockers))
@@ -320,6 +335,39 @@ def _result(context: dict, row: Election | None, blockers: list[str] | None = No
 
 def _locked_row(db: Session, client_id: int) -> Election | None:
     return db.scalar(select(Election).where(Election.client_id == client_id).with_for_update().execution_options(populate_existing=True))
+
+
+def _unlocked_row(db: Session, client_id: int) -> Election | None:
+    """Read the authoritative row without taking ownership of the caller's snapshot."""
+    return db.scalar(
+        select(Election)
+        .where(Election.client_id == client_id)
+        .execution_options(populate_existing=True)
+    )
+
+
+def assess_in_snapshot(db: Session, client_id: int) -> dict:
+    """Derive the public assessment semantics inside an already-owned read snapshot.
+
+    This boundary never begins, commits, rolls back, retries, locks, flushes, or
+    persists the sticky stale transition.  The transition is projected into the
+    returned plain result so its observable authority semantics match ``assess``.
+    """
+    if isinstance(client_id, bool) or not isinstance(client_id, int) or client_id <= 0:
+        context = {"client_id": None, "fingerprint": None, "retirement_target_date": None}
+        return _result(context, None, ["RIT_CLIENT_ID_INVALID"], "UNAVAILABLE")
+    try:
+        context = _context(db, client_id)
+    except RetirementMonthlyIncomeTargetError as exc:
+        if exc.code not in {
+            "RIT_PLANNING_CONTEXT_UNAVAILABLE",
+            "RIT_PLANNING_CONTEXT_INVALID",
+            "RIT_RETIREMENT_TARGET_NOT_READY",
+        }:
+            raise
+        context = {"client_id": client_id, "fingerprint": None, "retirement_target_date": None}
+        return _result(context, None, [exc.code], "UNAVAILABLE")
+    return _result(context, _unlocked_row(db, client_id), project_stale_transition=True)
 
 
 def _retryable(exc: BaseException) -> bool:

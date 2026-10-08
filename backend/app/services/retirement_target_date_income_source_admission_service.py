@@ -655,66 +655,77 @@ def _assemble(client_id: int, planning: dict, portfolio: dict, rows: list[Recurr
     return {**result, "admission_result_fingerprint": _result_fingerprint(result)}
 
 
-def read(db, client_id: int, expected_planning_calculation_input_fingerprint: str) -> dict:
-    """Derive the closed candidate universe under one fresh guarded snapshot."""
+def _validate_read_request(client_id: int, expected_planning_calculation_input_fingerprint: str) -> None:
     if isinstance(client_id, bool) or not isinstance(client_id, int) or client_id <= 0:
         raise RetirementTargetIncomeSourceAdmissionError("RTISA_CLIENT_ID_INVALID")
     if not isinstance(expected_planning_calculation_input_fingerprint, str) \
             or not SHA256.fullmatch(expected_planning_calculation_input_fingerprint):
         raise RetirementTargetIncomeSourceAdmissionError("RTISA_EXPECTED_PLANNING_FINGERPRINT_INVALID")
+
+
+def read_in_snapshot(db, client_id: int, expected_planning_calculation_input_fingerprint: str) -> dict:
+    """Derive RTISA inside a transaction/snapshot owned by the caller.
+
+    This boundary preserves the public reader's derivation and result semantics
+    but never begins, commits, rolls back, retries, or opens another Session.
+    """
+    _validate_read_request(client_id, expected_planning_calculation_input_fingerprint)
+    with db.no_autoflush:
+        try:
+            planning = planning_input_service.derive(db, client_id)
+        except PensionProductError:
+            return serialize(_empty_result(client_id, None, None, "RTISA_PLANNING_CONTEXT_UNAVAILABLE"))
+        planning_fp = planning.get("planning_calculation_input_fingerprint")
+        target_record = planning.get("retirement_target")
+        target = target_record.get("retirement_target_date") if isinstance(target_record, dict) else None
+        if planning.get("client_id") != client_id or not isinstance(planning_fp, str) or not SHA256.fullmatch(planning_fp):
+            result = _empty_result(client_id, None, None, "RTISA_PLANNING_CONTEXT_INVALID")
+        elif planning_fp != expected_planning_calculation_input_fingerprint:
+            result = _empty_result(client_id, planning_fp, target if isinstance(target, str) else None, "RTISA_PLANNING_IDENTITY_STALE")
+        elif not isinstance(target_record, dict) or target_record.get("retirement_target_ready") is not True \
+                or not _is_iso_date(target):
+            result = _empty_result(client_id, planning_fp, target if isinstance(target, str) else None, "RTISA_RETIREMENT_TARGET_NOT_READY")
+        elif not isinstance(planning.get("pension_inputs"), list) \
+                or any(not isinstance(source, dict) or not isinstance(source.get("source_id"), str) or not source["source_id"]
+                       or not isinstance(source.get("source_fingerprint"), str) or not SHA256.fullmatch(source["source_fingerprint"])
+                       for source in planning["pension_inputs"]) \
+                or len({source["source_id"] for source in planning["pension_inputs"]}) != len(planning["pension_inputs"]):
+            result = _empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID")
+        else:
+            portfolio = portfolio_service.execute_from_planning_result(
+                planning, client_id, expected_planning_calculation_input_fingerprint
+            )
+            if not _portfolio_is_valid(portfolio, client_id, planning, target):
+                result = _empty_result(client_id, planning_fp, target, "RTISA_PENSION_RESULT_INVALID")
+            else:
+                technical = _is_technical_fatal(portfolio)
+                if technical:
+                    raise RetirementTargetIncomeSourceAdmissionTechnicalError(*technical)
+                rows = list(db.scalars(select(RecurringIncome).where(
+                    RecurringIncome.client_id == client_id, RecurringIncome.lifecycle_status == "current"
+                ).order_by(RecurringIncome.id)))
+                if any(isinstance(row.id, bool) or not isinstance(row.id, int) or row.id <= 0 for row in rows):
+                    return serialize(_empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID"))
+                ids = [row.id for row in rows]
+                resolutions = list(db.scalars(select(PensionIncomeResolution).where(or_(
+                    PensionIncomeResolution.client_id == client_id,
+                    PensionIncomeResolution.income_id.in_(ids) if ids else False,
+                )).order_by(PensionIncomeResolution.income_id)))
+                if any(item.client_id != client_id or item.income_id not in ids for item in resolutions):
+                    result = _empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID")
+                else:
+                    result = _assemble(client_id, planning, portfolio, rows, resolutions)
+    return serialize(result)
+
+
+def read(db, client_id: int, expected_planning_calculation_input_fingerprint: str) -> dict:
+    """Derive the closed candidate universe under one fresh guarded snapshot."""
+    _validate_read_request(client_id, expected_planning_calculation_input_fingerprint)
     try:
         _begin_read(db)
-        with db.no_autoflush:
-            try:
-                planning = planning_input_service.derive(db, client_id)
-            except PensionProductError:
-                result = _empty_result(client_id, None, None, "RTISA_PLANNING_CONTEXT_UNAVAILABLE")
-                db.commit()
-                return result
-            planning_fp = planning.get("planning_calculation_input_fingerprint")
-            target_record = planning.get("retirement_target")
-            target = target_record.get("retirement_target_date") if isinstance(target_record, dict) else None
-            if planning.get("client_id") != client_id or not isinstance(planning_fp, str) or not SHA256.fullmatch(planning_fp):
-                result = _empty_result(client_id, None, None, "RTISA_PLANNING_CONTEXT_INVALID")
-            elif planning_fp != expected_planning_calculation_input_fingerprint:
-                result = _empty_result(client_id, planning_fp, target if isinstance(target, str) else None, "RTISA_PLANNING_IDENTITY_STALE")
-            elif not isinstance(target_record, dict) or target_record.get("retirement_target_ready") is not True \
-                    or not _is_iso_date(target):
-                result = _empty_result(client_id, planning_fp, target if isinstance(target, str) else None, "RTISA_RETIREMENT_TARGET_NOT_READY")
-            elif not isinstance(planning.get("pension_inputs"), list) \
-                    or any(not isinstance(source, dict) or not isinstance(source.get("source_id"), str) or not source["source_id"]
-                           or not isinstance(source.get("source_fingerprint"), str) or not SHA256.fullmatch(source["source_fingerprint"])
-                           for source in planning["pension_inputs"]) \
-                    or len({source["source_id"] for source in planning["pension_inputs"]}) != len(planning["pension_inputs"]):
-                result = _empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID")
-            else:
-                portfolio = portfolio_service.execute_from_planning_result(
-                    planning, client_id, expected_planning_calculation_input_fingerprint
-                )
-                if not _portfolio_is_valid(portfolio, client_id, planning, target):
-                    result = _empty_result(client_id, planning_fp, target, "RTISA_PENSION_RESULT_INVALID")
-                else:
-                    technical = _is_technical_fatal(portfolio)
-                    if technical:
-                        raise RetirementTargetIncomeSourceAdmissionTechnicalError(*technical)
-                    rows = list(db.scalars(select(RecurringIncome).where(
-                        RecurringIncome.client_id == client_id, RecurringIncome.lifecycle_status == "current"
-                    ).order_by(RecurringIncome.id)))
-                    if any(isinstance(row.id, bool) or not isinstance(row.id, int) or row.id <= 0 for row in rows):
-                        result = _empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID")
-                        db.commit()
-                        return serialize(result)
-                    ids = [row.id for row in rows]
-                    resolutions = list(db.scalars(select(PensionIncomeResolution).where(or_(
-                        PensionIncomeResolution.client_id == client_id,
-                        PensionIncomeResolution.income_id.in_(ids) if ids else False,
-                    )).order_by(PensionIncomeResolution.income_id)))
-                    if any(item.client_id != client_id or item.income_id not in ids for item in resolutions):
-                        result = _empty_result(client_id, planning_fp, target, "RTISA_SOURCE_UNIVERSE_INVALID")
-                    else:
-                        result = _assemble(client_id, planning, portfolio, rows, resolutions)
+        result = read_in_snapshot(db, client_id, expected_planning_calculation_input_fingerprint)
         db.commit()
-        return serialize(result)
+        return result
     except RetirementTargetIncomeSourceAdmissionError:
         raise
     except Exception:

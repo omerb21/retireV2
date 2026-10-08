@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import json
 import re
@@ -53,6 +53,9 @@ RTISA_ENTRY_FIELDS = frozenset({
     "native_tax_characterization", "native_price_evidence", "applicability",
     "provenance", "upstream_identity", "reason_codes",
 })
+RTISA_NON_BASIS_ENTRY_FIELDS = RTISA_ENTRY_FIELDS - {
+    "native_income_basis", "native_price_evidence",
+}
 PRICE_EVIDENCE_FIELDS = frozenset({
     "price_basis", "price_reference_date", "temporal_authority_kind",
     "temporal_origin_date", "annual_rate", "rate_basis",
@@ -77,6 +80,31 @@ PRICE_BASES = frozenset({
     "NOMINAL_AT_RETIREMENT_TARGET_DATE", "REAL_AT_REFERENCE_DATE", "UNKNOWN",
 })
 TARGET_PRICE_BASES = frozenset({"NOMINAL_AT_RETIREMENT_TARGET_DATE", "REAL_AT_REFERENCE_DATE"})
+TARGET_BLOCKERS = frozenset({
+    "RIT_AMOUNT_INVALID",
+    "RIT_AMOUNT_MISSING",
+    "RIT_AMOUNT_PRECISION_UNSUPPORTED",
+    "RIT_CLIENT_ID_INVALID",
+    "RIT_CONFIRMATION_INVALID",
+    "RIT_CONFIRMATION_MISSING",
+    "RIT_CURRENCY_INVALID",
+    "RIT_INCOME_BASIS_INVALID",
+    "RIT_INCOME_BASIS_MISSING",
+    "RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL",
+    "RIT_PLANNING_CONTEXT_INVALID",
+    "RIT_PLANNING_CONTEXT_UNAVAILABLE",
+    "RIT_PLANNING_IDENTITY_STALE",
+    "RIT_PRICE_BASIS_INVALID",
+    "RIT_PRICE_BASIS_MISSING",
+    "RIT_PRICE_REFERENCE_DATE_MISSING",
+    "RIT_RECONFIRMATION_REQUIRED",
+    "RIT_RETIREMENT_TARGET_NOT_READY",
+    "RIT_RETIREMENT_TARGET_STALE",
+    "RIT_STORED_FINGERPRINT_MISMATCH",
+    "RIT_TARGET_CLIENT_MISMATCH",
+    "RIT_TARGET_MISSING",
+    "RIT_TARGET_RECORD_INVALID",
+})
 ADMISSION_STATES = frozenset({"INCLUDED", "EXCLUDED", "UNRESOLVED"})
 RESOLUTION_DECISIONS = frozenset({
     "SAME_CANONICAL_PENSION", "PENSION_NOT_YET_CANONICAL", "MISCLASSIFIED_GENERAL_INCOME",
@@ -130,11 +158,29 @@ def _canonical_string(value: Any) -> bool:
     )
 
 
+def _canonical_source_id(value: Any) -> bool:
+    """Validate RTISA identifiers without repairing Unicode whitespace."""
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and not any(unicodedata.category(character) == "Cc" for character in value)
+    )
+
+
 def _sorted_unique_strings(value: Any, *, allow_empty: bool = True) -> bool:
     return (
         isinstance(value, list)
         and (allow_empty or bool(value))
         and all(_canonical_string(item) for item in value)
+        and value == sorted(set(value))
+    )
+
+
+def _sorted_unique_source_ids(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and all(_canonical_source_id(item) for item in value)
         and value == sorted(set(value))
     )
 
@@ -226,11 +272,13 @@ def _target_object_valid(value: Any) -> bool:
         return False
     reference = value["price_reference_date"]
     price_basis = value["price_basis"]
+    canonical_amount, amount_error = target_service._canonical_amount(value["monthly_amount"])
     return (
         _positive_int(value["client_id"])
         and _is_sha(value["planning_calculation_input_fingerprint"])
         and _is_date(value["retirement_target_date"])
-        and _canonical_string(value["monthly_amount"])
+        and amount_error is None
+        and canonical_amount == value["monthly_amount"]
         and value["currency"] == "ILS"
         and isinstance(value["income_basis"], str)
         and value["income_basis"] in TARGET_INCOME_BASES
@@ -246,17 +294,68 @@ def _target_object_valid(value: Any) -> bool:
 def _target_authority_valid(value: Any) -> bool:
     if not isinstance(value, dict) or set(value) != TARGET_AUTHORITY_FIELDS:
         return False
+    confirmed_at = value["confirmed_at"]
+    try:
+        timestamp_valid = (
+            isinstance(confirmed_at, str)
+            and TIMESTAMP_RE.fullmatch(confirmed_at) is not None
+            and datetime.strptime(confirmed_at, "%Y-%m-%dT%H:%M:%S.%fZ").strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ) == confirmed_at
+        )
+    except ValueError:
+        timestamp_valid = False
     return (
         _positive_int(value["record_version"])
+        and value["record_version"] <= target_service.MAX_VERSION
         and isinstance(value["source_kind"], str)
         and value["source_kind"] in target_service.SOURCE_KINDS
         and value["confirmation_state"] == "CONFIRMED"
-        and _canonical_string(value["confirmation_actor"])
-        and isinstance(value["confirmed_at"], str)
-        and TIMESTAMP_RE.fullmatch(value["confirmed_at"]) is not None
+        and target_service._valid_actor(value["confirmation_actor"])
+        and timestamp_valid
         and isinstance(value["lifecycle_state"], str)
         and value["lifecycle_state"] in {"CONFIRMED", "STALE"}
     )
+
+
+def _target_state_valid(result: dict) -> bool:
+    target = result["target"]
+    authority = result["authority"]
+    state = result["authority_state"]
+    ready = result["target_ready"]
+    readiness = result["target_readiness_state"]
+    blockers = result["blockers"]
+    if (readiness == "READY") != ready:
+        return False
+    if ready != (
+        state == "CURRENT"
+        and target is not None
+        and authority is not None
+        and not blockers
+    ):
+        return False
+    if state == "CURRENT":
+        return authority is not None and authority["lifecycle_state"] == "CONFIRMED"
+    if state == "STALE":
+        return (
+            target is not None
+            and authority is not None
+            and authority["lifecycle_state"] == "STALE"
+            and "RIT_RECONFIRMATION_REQUIRED" in blockers
+        )
+    if state == "MISSING":
+        return target is None and authority is None and blockers == ["RIT_TARGET_MISSING"]
+    if state == "UNAVAILABLE":
+        return (
+            target is None
+            and authority is None
+            and result["planning_calculation_input_fingerprint"] is None
+            and result["retirement_target_date"] is None
+            and bool(blockers)
+        )
+    if state == "INVALID":
+        return bool(blockers)
+    return False
 
 
 def _target_schema_valid(result: Any) -> bool:
@@ -288,9 +387,11 @@ def _target_schema_valid(result: Any) -> bool:
         and result["target_readiness_state"] in {"READY", "NOT_READY"}
         and isinstance(result["target_ready"], bool)
         and _sorted_unique_strings(result["blockers"])
+        and set(result["blockers"]).issubset(TARGET_BLOCKERS)
         and (result["target_semantic_fingerprint"] is None
              or isinstance(result["target_semantic_fingerprint"], str))
         and isinstance(result["target_result_fingerprint"], str)
+        and _target_state_valid(result)
     )
 
 
@@ -395,13 +496,16 @@ def _exact_string_object(value: Any, fields: frozenset[str]) -> bool:
 
 
 def _entry_non_basis_valid(entry: Any) -> bool:
-    if not isinstance(entry, dict) or set(entry) != RTISA_ENTRY_FIELDS:
+    if not isinstance(entry, dict):
+        return False
+    keys = set(entry)
+    if not RTISA_NON_BASIS_ENTRY_FIELDS.issubset(keys) or not keys.issubset(RTISA_ENTRY_FIELDS):
         return False
     amount = entry["native_amount"]
     monthly = entry["monthly_equivalent"]
     tax = entry["native_tax_characterization"]
     return (
-        _canonical_string(entry["source_id"])
+        _canonical_source_id(entry["source_id"])
         and _canonical_string(entry["source_category"])
         and _canonical_string(entry["source_authority"])
         and isinstance(entry["admission_state"], str)
@@ -447,7 +551,7 @@ def _coverage_valid(result: dict) -> bool:
         "EXCLUDED": result["excluded_source_ids"],
         "UNRESOLVED": result["unresolved_source_ids"],
     }
-    if not all(_sorted_unique_strings(values) for values in partitions.values()):
+    if not all(_sorted_unique_source_ids(values) for values in partitions.values()):
         return False
     actual = {state: [] for state in partitions}
     for entry in result["source_entries"]:
@@ -464,6 +568,8 @@ def _coverage_valid(result: dict) -> bool:
 
 
 def _basis_valid(entry: dict) -> bool:
+    if "native_income_basis" not in entry or "native_price_evidence" not in entry:
+        return False
     income = entry["native_income_basis"]
     price = entry["native_price_evidence"]
     if not isinstance(price, dict) or set(price) != PRICE_EVIDENCE_FIELDS:

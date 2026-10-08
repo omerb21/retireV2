@@ -130,6 +130,31 @@ def _rehash_rtisa(result):
     return result
 
 
+def _rehash_target(result):
+    result = deepcopy(result)
+    if result["target"] is None:
+        result["target_semantic_fingerprint"] = None
+    else:
+        result["target_semantic_fingerprint"] = _digest({
+            "contract": target_service.SEMANTIC_CONTRACT,
+            **result["target"],
+        })
+    result.pop("target_result_fingerprint", None)
+    result["target_result_fingerprint"] = _digest({
+        "contract": target_service.RESULT_CONTRACT,
+        **result,
+    })
+    return result
+
+
+def _assert_exact_failure_fingerprint(result):
+    failure = {key: value for key, value in result.items() if key != "result_fingerprint"}
+    assert result["result_fingerprint"] == _digest({
+        "contract": subject.FAILURE_FINGERPRINT_CONTRACT,
+        "failure": failure,
+    })
+
+
 class _Connection:
     def __init__(self, db):
         self.db = db
@@ -215,25 +240,36 @@ def _run(monkeypatch, *, target=None, rtisa=None, request=None, db=None):
     return result, db_value, reached
 
 
-PRICE_CASES = [
-    ("NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, []),
-    ("NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", ["RTICB_PRICE_BASIS_MISMATCH"]),
-    ("NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, ["RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"]),
-    ("REAL_AT_REFERENCE_DATE", "2029-01-01", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, ["RTICB_PRICE_BASIS_MISMATCH"]),
-    ("REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", ["RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"]),
-    ("REAL_AT_REFERENCE_DATE", "2029-01-01", "UNKNOWN", None, ["RTICB_PRICE_BASIS_UNKNOWN"]),
+INCLUDED_OUTPUT_CLASSES = [
+    ("gross_nominal_direct", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "DIRECTLY_COMPARABLE", [], []),
+    ("gross_nominal_real_mismatch", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", "NORMALIZATION_REQUIRED", ["RTICB_PRICE_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("gross_nominal_real_missing", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("gross_real_direct", "GROSS", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-01-01", "DIRECTLY_COMPARABLE", [], []),
+    ("gross_real_date_mismatch", "GROSS", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", "NORMALIZATION_REQUIRED", ["RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("gross_real_missing", "GROSS", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("net_nominal_direct", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("net_nominal_real_mismatch", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_PRICE_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("net_nominal_real_missing", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("net_real_direct", "NET", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-01-01", "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("net_real_date_mismatch", "NET", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("net_real_missing", "NET", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_nominal_direct", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_nominal_real_mismatch", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_PRICE_BASIS_MISMATCH"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_nominal_real_missing", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_real_direct", "UNKNOWN", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-01-01", "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_real_date_mismatch", "UNKNOWN", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_real_missing", "UNKNOWN", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
 ]
 
 
-@pytest.mark.parametrize("source_income,income_reasons", [
-    ("GROSS", []),
-    ("NET", ["RTICB_INCOME_BASIS_MISMATCH"]),
-    ("UNKNOWN", ["RTICB_INCOME_BASIS_UNKNOWN"]),
-])
-@pytest.mark.parametrize("target_price,target_reference,source_price,source_reference,price_reasons", PRICE_CASES)
-def test_all_18_included_output_classes(
-    monkeypatch, source_income, income_reasons, target_price, target_reference,
-    source_price, source_reference, price_reasons,
+@pytest.mark.parametrize(
+    "name,source_income,target_price,target_reference,source_price,source_reference,expected_state,expected_reasons,expected_blockers",
+    INCLUDED_OUTPUT_CLASSES,
+    ids=[case[0] for case in INCLUDED_OUTPUT_CLASSES],
+)
+def test_all_18_distinct_included_output_classes(
+    monkeypatch, name, source_income, target_price, target_reference,
+    source_price, source_reference, expected_state, expected_reasons, expected_blockers,
 ):
     result, db, reached = _run(
         monkeypatch,
@@ -241,16 +277,44 @@ def test_all_18_included_output_classes(
         rtisa=_rtisa([_entry(income=source_income, price=source_price, reference=source_reference)]),
     )
     comparison = result["source_comparisons"][0]
-    reasons = sorted(income_reasons + price_reasons)
-    assert comparison["reason_codes"] == reasons
-    if any("UNKNOWN" in reason or "MISSING" in reason for reason in reasons):
-        assert comparison["comparison_state"] == "BASIS_UNRESOLVED"
-    elif reasons:
-        assert comparison["comparison_state"] == "NORMALIZATION_REQUIRED"
-    else:
-        assert comparison["comparison_state"] == "DIRECTLY_COMPARABLE"
+    assert comparison["comparison_state"] == expected_state
+    assert comparison["reason_codes"] == expected_reasons
+    expected_comparison = {
+        "source_id": "income:1",
+        "rtisa_admission_state": "INCLUDED",
+        "source_upstream_identity": _entry()["upstream_identity"],
+        "source_income_basis": source_income,
+        "source_price_basis": source_price,
+        "source_price_reference_date": source_reference,
+        "comparison_state": expected_state,
+        "reason_codes": expected_reasons,
+    }
+    assert comparison["source_comparison_fingerprint"] == _digest({
+        "contract": subject.ENTRY_FINGERPRINT_CONTRACT,
+        "comparison_input_fingerprint": result["comparison_input_fingerprint"],
+        "source_comparison": expected_comparison,
+    }), name
+    assert result["blockers"] == expected_blockers
+    assert result["direct_comparison_ready"] is (not expected_blockers)
     assert reached == {"target": 1, "rtisa": 1}
     assert db.rollback_count == 1 and not db.active
+
+
+def test_included_matrix_has_18_distinct_contract_classes_and_net_net_positive_control(monkeypatch):
+    identities = {
+        (case[1], case[2], case[3], case[4], case[5], case[6], tuple(case[7]))
+        for case in INCLUDED_OUTPUT_CLASSES
+    }
+    assert len(INCLUDED_OUTPUT_CLASSES) == len(identities) == 18
+    result, _, _ = _run(
+        monkeypatch,
+        target=_target(income="NET"),
+        rtisa=_rtisa([_entry(income="NET")]),
+    )
+    comparison = result["source_comparisons"][0]
+    assert comparison["comparison_state"] == "DIRECTLY_COMPARABLE"
+    assert comparison["reason_codes"] == []
+    assert result["direct_comparison_ready"] is True
 
 
 @pytest.mark.parametrize("income,price,reference", [
@@ -295,6 +359,61 @@ def test_malformed_excluded_basis_is_fatal_after_independent_rtisa_rehash(monkey
     assert result["observed_rtisa_admission_result_fingerprint"] == rtisa["admission_result_fingerprint"]
     assert "source_comparisons" not in result
     assert reached == {"target": 1, "rtisa": 1}
+
+
+@pytest.mark.parametrize("admission", ["INCLUDED", "EXCLUDED"])
+@pytest.mark.parametrize("missing", [
+    "native_income_basis",
+    "native_price_evidence",
+    "native_price_evidence.price_basis",
+    "native_price_evidence.price_reference_date",
+])
+def test_missing_basis_keys_route_to_classification_with_exact_identity(
+    monkeypatch, admission, missing,
+):
+    entry = _entry(admission=admission)
+    container = entry
+    key = missing
+    if "." in missing:
+        outer, key = missing.split(".")
+        container = entry[outer]
+    del container[key]
+    rtisa = _rtisa([entry])
+    result, _, reached = _run(monkeypatch, rtisa=rtisa)
+    assert result["result_state"] == "block_no_result"
+    assert result["failure_stage"] == "classification"
+    assert result["failure_detail_code"] == "RTICB_SOURCE_BASIS_EVIDENCE_INVALID"
+    assert result["observed_target_result_fingerprint"] is not None
+    assert result["observed_rtisa_admission_result_fingerprint"] == rtisa["admission_result_fingerprint"]
+    assert "source_comparisons" not in result
+    _assert_exact_failure_fingerprint(result)
+    assert reached == {"target": 1, "rtisa": 1}
+
+
+@pytest.mark.parametrize("source_id", [
+    " income:1", "income:1 ", "\tincome:1", "income:1\n",
+    "\u00a0income:1", "income:1\u00a0", "income:\x001", "",
+])
+def test_source_ids_must_be_canonical_without_ascii_or_unicode_repair(monkeypatch, source_id):
+    result, _, _ = _run(monkeypatch, rtisa=_rtisa([_entry(source_id)]))
+    assert result["failure_stage"] == "source_universe"
+    assert result["failure_detail_code"] == "RTICB_SOURCE_UNIVERSE_INVALID"
+
+
+def test_valid_non_ascii_source_id_and_partition_are_preserved(monkeypatch):
+    source_id = "הכנסה:קצבה"
+    result, _, _ = _run(monkeypatch, rtisa=_rtisa([_entry(source_id)]))
+    assert result["directly_comparable_source_ids"] == [source_id]
+    assert result["source_comparisons"][0]["source_id"] == source_id
+
+
+def test_partition_ids_use_same_unicode_canonicality_contract(monkeypatch):
+    rtisa = _rtisa([_entry()])
+    rtisa["included_source_ids"] = ["\u00a0income:1"]
+    rtisa = _rehash_rtisa(rtisa)
+    result, _, _ = _run(monkeypatch, rtisa=rtisa)
+    assert result["failure_stage"] == "source_universe"
+    assert result["failure_detail_code"] == "RTICB_SOURCE_COVERAGE_MISMATCH"
 
 
 def test_empty_all_excluded_and_mixed_universes(monkeypatch):
@@ -342,6 +461,32 @@ def test_fresh_transaction_rejection_never_mutates_caller(monkeypatch):
     assert db.active is True
 
 
+def test_fresh_transaction_rejection_oracle_kills_caller_rollback_mutation(monkeypatch):
+    original = subject.assess
+    reached = []
+
+    def mutated(db, request):
+        if db.in_transaction():
+            reached.append("caller_rollback")
+            db.rollback()
+        return subject._failure(
+            request, "snapshot_admission", "RTICB_REQUIRES_FRESH_TRANSACTION"
+        )
+
+    def ordinary_oracle(db):
+        result = subject.assess(db, _request())
+        assert result["failure_detail_code"] == "RTICB_REQUIRES_FRESH_TRANSACTION"
+        assert db.active is True, "caller-owned transaction must remain active"
+
+    monkeypatch.setattr(subject, "assess", mutated)
+    with pytest.raises(AssertionError, match="caller-owned transaction"):
+        ordinary_oracle(_DB(active=True))
+    assert reached == ["caller_rollback"]
+
+    monkeypatch.setattr(subject, "assess", original)
+    ordinary_oracle(_DB(active=True))
+
+
 def test_unsupported_database_is_semantic_and_opens_no_connection():
     db = _DB(dialect="oracle")
     db.connection = lambda: (_ for _ in ()).throw(AssertionError("connection opened"))
@@ -357,6 +502,82 @@ def test_category_b_target_and_rtisa_mutations_fail_closed(monkeypatch):
     bad_rtisa = _rtisa([_entry()]); bad_rtisa["source_entries"][0]["native_income_basis"] = "NET"
     result, _, _ = _run(monkeypatch, rtisa=bad_rtisa)
     assert result["failure_detail_code"] == "RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID"
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: value["target"].update(monthly_amount="abc"),
+    lambda value: value["target"].update(monthly_amount="0"),
+    lambda value: value["target"].update(monthly_amount="-1"),
+    lambda value: value["target"].update(monthly_amount="01.00"),
+    lambda value: value["authority"].update(confirmed_at="2026-02-30T00:00:00.000000Z"),
+    lambda value: value["authority"].update(record_version=target_service.MAX_VERSION + 1),
+    lambda value: value["authority"].update(confirmation_actor="x" * 129),
+    lambda value: value["authority"].update(lifecycle_state="STALE"),
+    lambda value: value.update(blockers=["RIT_INVENTED_BLOCKER"]),
+])
+def test_rehashed_noncanonical_target_results_fail_schema_validation(monkeypatch, mutation):
+    target = _target()
+    mutation(target)
+    target = _rehash_target(target)
+    result, _, reached = _run(monkeypatch, target=target)
+    assert result["failure_stage"] == "target_authority"
+    assert result["failure_detail_code"] == "RTICB_TARGET_AUTHORITY_SCHEMA_INVALID"
+    _assert_exact_failure_fingerprint(result)
+    assert reached == {"target": 1, "rtisa": 0}
+
+
+def test_canonical_target_current_stale_missing_unavailable_and_nullable_invalid_routes():
+    current = _target()
+    stale = _target(state="STALE", ready=False)
+
+    missing = _target()
+    missing.update(
+        target=None,
+        authority=None,
+        authority_state="MISSING",
+        target_readiness_state="NOT_READY",
+        target_ready=False,
+        blockers=["RIT_TARGET_MISSING"],
+    )
+    missing = _rehash_target(missing)
+
+    unavailable = _target()
+    unavailable.update(
+        planning_calculation_input_fingerprint=None,
+        retirement_target_date=None,
+        target=None,
+        authority=None,
+        authority_state="UNAVAILABLE",
+        target_readiness_state="NOT_READY",
+        target_ready=False,
+        blockers=["RIT_PLANNING_CONTEXT_UNAVAILABLE"],
+    )
+    unavailable = _rehash_target(unavailable)
+
+    invalid = _target()
+    invalid.update(
+        authority=None,
+        authority_state="INVALID",
+        target_readiness_state="NOT_READY",
+        target_ready=False,
+        blockers=["RIT_CONFIRMATION_MISSING"],
+    )
+    invalid = _rehash_target(invalid)
+
+    invalid_with_stale_authority = _target()
+    invalid_with_stale_authority["authority"]["lifecycle_state"] = "STALE"
+    invalid_with_stale_authority.update(
+        target=None,
+        authority_state="INVALID",
+        target_readiness_state="NOT_READY",
+        target_ready=False,
+        blockers=["RIT_TARGET_RECORD_INVALID"],
+    )
+    invalid_with_stale_authority = _rehash_target(invalid_with_stale_authority)
+
+    for result in (current, stale, missing, unavailable, invalid, invalid_with_stale_authority):
+        assert subject._target_schema_valid(result)
+        assert subject._target_fingerprints_valid(result)
 
 
 def test_wrong_type_enums_and_resolution_relationships_are_semantic_schema_failures(monkeypatch):
@@ -398,9 +619,17 @@ def test_semantic_failure_stage_and_precedence(monkeypatch, kind, stage, code):
     target = _target(); rtisa = _rtisa([_entry()])
     if kind == "target_schema": target["extra"] = 1
     elif kind == "target_unavailable":
-        target["authority_state"] = "UNAVAILABLE"; target["target_ready"] = False
-        target["target_readiness_state"] = "NOT_READY"; target["blockers"] = ["RIT_PLANNING_CONTEXT_UNAVAILABLE"]
-        target["target_result_fingerprint"] = _digest({"contract": target_service.RESULT_CONTRACT, **{k: v for k, v in target.items() if k != "target_result_fingerprint"}})
+        target.update(
+            planning_calculation_input_fingerprint=None,
+            retirement_target_date=None,
+            target=None,
+            authority=None,
+            authority_state="UNAVAILABLE",
+            target_ready=False,
+            target_readiness_state="NOT_READY",
+            blockers=["RIT_PLANNING_CONTEXT_UNAVAILABLE"],
+        )
+        target = _rehash_target(target)
     elif kind == "target_not_ready": target = _target(state="STALE", ready=False)
     elif kind == "rtisa_schema": rtisa["extra"] = 1
     elif kind == "rtisa_unavailable":
@@ -506,6 +735,42 @@ def test_mutation_sensitive_classification_oracle(
     with pytest.raises(AssertionError):
         assert (actual["comparison_state"], actual["reason_codes"]) == (expected_state, expected_reasons)
     assert reached == [name]
+
+
+def test_real_target_real_source_missing_date_oracle_kills_normalization_mutation(monkeypatch):
+    original = subject._comparison_entry
+    reached = []
+
+    def mutated(entry, target_basis, input_fingerprint):
+        value = original(entry, target_basis, input_fingerprint)
+        if (
+            target_basis["price_basis"] == "REAL_AT_REFERENCE_DATE"
+            and entry["native_price_evidence"]["price_basis"] == "REAL_AT_REFERENCE_DATE"
+            and entry["native_price_evidence"]["price_reference_date"] is None
+        ):
+            reached.append(entry["source_id"])
+            value["comparison_state"] = "NORMALIZATION_REQUIRED"
+            value["reason_codes"] = ["RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"]
+        return value
+
+    monkeypatch.setattr(subject, "_comparison_entry", mutated)
+    result, _, _ = _run(
+        monkeypatch,
+        target=_target(price="REAL_AT_REFERENCE_DATE", reference="2029-01-01"),
+        rtisa=_rtisa([_entry(price="REAL_AT_REFERENCE_DATE", reference=None)]),
+    )
+    comparison = result["source_comparisons"][0]
+    with pytest.raises(AssertionError):
+        assert (
+            comparison["comparison_state"],
+            comparison["reason_codes"],
+            result["blockers"],
+        ) == (
+            "BASIS_UNRESOLVED",
+            ["RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"],
+            ["RTICB_BASIS_UNRESOLVED"],
+        )
+    assert reached == ["income:1"]
 
 
 def test_mutation_sensitive_excluded_basis_validation_cannot_be_bypassed(monkeypatch):

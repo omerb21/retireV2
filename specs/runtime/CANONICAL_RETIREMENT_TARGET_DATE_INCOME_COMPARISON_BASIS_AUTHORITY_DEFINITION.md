@@ -175,43 +175,48 @@ The state/reason mapping is exact:
 
 For each RTISA entry, in canonical source order:
 
-1. If `admission_state = EXCLUDED`, emit `NOT_ADMITTED` according to Section 8
-   and stop classification for that entry. `UNRESOLVED` is not a successful
-   per-entry case: its presence deterministically selects
-   `RTICB_RTISA_AUTHORITY_NOT_READY` before source classification. Any other
-   admission-state value is a schema defect.
-2. Validate source native income basis. The valid closed vocabulary is
-   `GROSS`, `NET`, and `UNKNOWN`. The literal `UNKNOWN` produces
-   `RTICB_INCOME_BASIS_UNKNOWN`; a value outside that vocabulary is malformed
-   canonical authority data and routes to `block_no_result`. Otherwise,
-   inequality with the target produces `RTICB_INCOME_BASIS_MISMATCH`.
-3. Validate source native price basis. The valid closed vocabulary is
-   `NOMINAL_AT_RETIREMENT_TARGET_DATE`, `REAL_AT_REFERENCE_DATE`, and `UNKNOWN`.
-   The literal `UNKNOWN` with a null reference date produces
-   `RTICB_PRICE_BASIS_UNKNOWN`; any other unsupported value or an `UNKNOWN`
-   object with a non-null reference date is malformed canonical authority data
-   and routes to `block_no_result`.
-4. Validate source-local REAL reference-date evidence independently of the
-   target price basis. Whenever source price basis is
-   `REAL_AT_REFERENCE_DATE`, a null source date is valid incomplete evidence
-   and produces `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; a non-null source
-   date must be canonical ISO or the RTISA authority is malformed and the whole
-   operation routes to `block_no_result`. This validation is unconditional even
-   when target and source price bases differ.
-5. If the source price basis is known and differs from the target price basis,
-   emit `RTICB_PRICE_BASIS_MISMATCH`. This known mismatch is preserved even
-   when Step 4 also produced unresolved source evidence.
-6. Only when both price bases are `REAL_AT_REFERENCE_DATE` and both dates are
+1. Source-universe validation has already established that `admission_state` is
+   `INCLUDED` or `EXCLUDED`. `UNRESOLVED` deterministically selects
+   `RTICB_RTISA_AUTHORITY_NOT_READY` before this stage; any other admission-state
+   value selects `RTICB_SOURCE_UNIVERSE_INVALID`.
+2. For every entry, including `EXCLUDED`, validate `native_income_basis` as a
+   required non-null string in the exact closed vocabulary `GROSS`, `NET`, or
+   `UNKNOWN`. Missing, null, wrong-type, padded, or unsupported values select
+   `RTICB_SOURCE_BASIS_EVIDENCE_INVALID`. This step records no comparison reason.
+3. For every entry, including `EXCLUDED`, validate
+   `native_price_evidence.price_basis` as a required non-null string in the
+   exact closed vocabulary `NOMINAL_AT_RETIREMENT_TARGET_DATE`,
+   `REAL_AT_REFERENCE_DATE`, or `UNKNOWN`, and validate the paired reference
+   date shape. `NOMINAL_AT_RETIREMENT_TARGET_DATE` and `UNKNOWN` require null;
+   `REAL_AT_REFERENCE_DATE` permits either null or a canonical ISO date.
+   Missing keys, null/wrong-type/padded/unsupported enums, malformed non-null
+   dates, or forbidden enum/date combinations select
+   `RTICB_SOURCE_BASIS_EVIDENCE_INVALID`. This step records no comparison reason.
+4. If the structurally valid entry is `EXCLUDED`, preserve its validated basis
+   fields verbatim, emit `NOT_ADMITTED` with exactly
+   `[RTICB_SOURCE_NOT_ADMITTED]`, and stop professional comparison for that
+   entry. In particular, structurally valid `UNKNOWN` and structurally valid
+   `REAL_AT_REFERENCE_DATE`/null remain provenance and do not produce unknown,
+   missing, or mismatch reasons for an excluded source.
+5. For an `INCLUDED` entry, `UNKNOWN` native income basis produces
+   `RTICB_INCOME_BASIS_UNKNOWN`; otherwise inequality with the target produces
+   `RTICB_INCOME_BASIS_MISMATCH`.
+6. For an `INCLUDED` entry, `UNKNOWN` native price basis produces
+   `RTICB_PRICE_BASIS_UNKNOWN`.
+7. For an `INCLUDED` `REAL_AT_REFERENCE_DATE` source, a null source date
+   produces `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`. This source-local
+   evidence handling is independent of the target price basis.
+8. If an `INCLUDED` source price basis is known and differs from the target
+   price basis, emit `RTICB_PRICE_BASIS_MISMATCH`. This known mismatch is
+   preserved when Step 7 also produced unresolved source evidence.
+9. Only when both price bases are `REAL_AT_REFERENCE_DATE` and both dates are
    valid, compare the dates for equality. The confirmed target authority already
    guarantees its REAL target date is present and canonical. Unequal dates
    produce `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`.
-7. A `NOMINAL_AT_RETIREMENT_TARGET_DATE` source must have a null reference date
-   under the upstream contract. A non-null value is invalid upstream authority,
-   not a normalization case. The confirmed target authority independently owns
-   and guarantees the corresponding target-side nullability rule.
-8. Resolve the state from the complete reason set using Section 8. Any unknown
-   or missing reason selects `BASIS_UNRESOLVED`; otherwise any mismatch reason
-   selects `NORMALIZATION_REQUIRED`; otherwise select `DIRECTLY_COMPARABLE`.
+10. Resolve the included-source state from the complete reason set using
+    Section 8. Any unknown or missing reason selects `BASIS_UNRESOLVED`;
+    otherwise any mismatch reason selects `NORMALIZATION_REQUIRED`; otherwise
+    select `DIRECTLY_COMPARABLE`.
 
 Comparison never reads or changes amount fields. An admitted source with zero
 amount is still classified because comparability is a basis property, not an
@@ -219,14 +224,33 @@ amount-materiality shortcut.
 
 ### 9.1 Binding admission and income-basis matrix
 
-Admission is resolved before basis comparison:
+Canonical basis shape is validated for every entry before admission routing.
+Admission is then resolved before any professional basis comparison:
 
 | RTISA admission state | RTICB route |
 |---|---|
-| `INCLUDED` | continue with income and price classification |
-| `EXCLUDED` | `NOT_ADMITTED` with exactly `[RTICB_SOURCE_NOT_ADMITTED]` |
+| `INCLUDED` with canonical basis shape | continue with income and price classification |
+| `EXCLUDED` with canonical basis shape, including permitted `UNKNOWN` or REAL/null evidence | preserve the basis fields; `NOT_ADMITTED` with exactly `[RTICB_SOURCE_NOT_ADMITTED]`; no target comparison |
 | `UNRESOLVED` | no successful result; `RTICB_RTISA_AUTHORITY_NOT_READY` |
 | any other/malformed value | no successful result; `RTICB_SOURCE_UNIVERSE_INVALID` |
+| `INCLUDED` or `EXCLUDED` with malformed/noncanonical basis evidence | no successful result; `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+
+The excluded-source boundary is exhaustive for the enumeration cases relevant
+to this Definition:
+
+| Excluded-source basis evidence | Exact outcome |
+|---|---|
+| valid `GROSS` or `NET` income and otherwise-valid price evidence | `NOT_ADMITTED`; `[RTICB_SOURCE_NOT_ADMITTED]` |
+| valid `UNKNOWN` income and/or valid `UNKNOWN` price with null date | `NOT_ADMITTED`; preserve `UNKNOWN`; `[RTICB_SOURCE_NOT_ADMITTED]` |
+| missing or null required income basis | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+| unsupported or whitespace-padded income basis | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+| missing, null, unsupported, padded, or wrong-type price basis | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+| REAL price basis with malformed non-null reference date | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+| nominal or `UNKNOWN` price basis with non-null reference date | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+| REAL price basis with null reference date | `NOT_ADMITTED`; preserve null; `[RTICB_SOURCE_NOT_ADMITTED]` |
+
+No row in this table authorizes target comparison, missing-value inference, or
+normalization for an excluded source.
 
 For an `INCLUDED` source, after target and source structures are valid:
 
@@ -365,6 +389,15 @@ key is permitted.
 - `reason_codes`
 - `source_comparison_fingerprint`
 
+For every source comparison, including `NOT_ADMITTED`, `source_income_basis`
+is exactly `GROSS`, `NET`, or `UNKNOWN`; `source_price_basis` is exactly
+`NOMINAL_AT_RETIREMENT_TARGET_DATE`, `REAL_AT_REFERENCE_DATE`, or `UNKNOWN`;
+and `source_price_reference_date` is null unless the price basis is
+`REAL_AT_REFERENCE_DATE`, for which it is null or a canonical ISO date. These
+are representational requirements, not permission to compare an excluded
+source with the target. A successful result never contains missing, null,
+wrong-type, padded, unsupported, or otherwise noncanonical basis fields.
+
 No normalized or calculated amount is present.
 
 ## 12. Determinism and exact fingerprint contracts
@@ -449,6 +482,14 @@ nulls are nullable positions, not fixed values:
   canonical_fingerprint}` in canonical JSON key order. `record_version` is a
   positive integer; `income_fingerprint` is a SHA-256; the two canonical fields
   are either both null or respectively a non-empty string and SHA-256.
+
+The basis enums and reference-date nullability in this preimage are the exact
+Section 11.2 successful-entry contract for both `INCLUDED` and `EXCLUDED`
+entries. Basis shape is validated before this preimage is constructed. An
+excluded entry is fingerprinted with its validated basis fields verbatim and
+with `comparison_state = NOT_ADMITTED` and
+`reason_codes = [RTICB_SOURCE_NOT_ADMITTED]`; no target comparison result is
+derived from those fields.
 
 No other RTISA fields, amount, actor, or RTICB execution metadata enter the
 entry preimage. Distinct source identities therefore remain distinct even when
@@ -695,10 +736,13 @@ failure; later conditions are not reported.
 |  | `RTICB_RETIREMENT_TARGET_DATE_MISMATCH` | valid target/RTISA/supplied retirement dates are not all equal |
 | `source_universe` | `RTICB_SOURCE_UNIVERSE_INVALID` | source ID/order/uniqueness, non-basis entry shape, or nested Category C identity structure/relationship is invalid |
 |  | `RTICB_SOURCE_COVERAGE_MISMATCH` | valid entry IDs and included/excluded/unresolved partitions are not exact, disjoint coverage, or a ready RTISA contains an unresolved ID/entry |
-| `classification` | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` | an included entry uses an unsupported basis enum, wrong basis-field type, missing/null required basis key, malformed non-null basis date, or illegal basis/date nullability combination |
+| `classification` | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` | any source entry, including `EXCLUDED`, uses an unsupported/padded basis enum, wrong basis-field type, missing/null required basis key, malformed non-null basis date, or illegal basis/date nullability combination |
 
 The table is the complete `failure_stage` and `failure_detail_code` vocabulary.
-Codes cannot move between stages. There is no `result_identity` failure stage,
+The `classification` stage name includes the preliminary canonical
+basis-evidence validation for every projected entry; it does not imply that an
+excluded source undergoes professional comparison. Codes cannot move between
+stages. There is no `result_identity` failure stage,
 `RTICB_RESULT_IDENTITY_CONSTRUCTION_FAILED` code, or
 `RTICB_CLASSIFICATION_CONSTRUCTION_FAILED` code. After semantic validation,
 classification cardinality, result assembly, canonical JSON, and fingerprint
@@ -709,17 +753,24 @@ machinery is an internal technical exception, not a semantic input condition.
 
 The route boundary is exact:
 
-- Valid source-level evidence producing classification is limited to the
-  accepted enums and null forms: income `UNKNOWN`, price `UNKNOWN` with null
-  date, and `REAL_AT_REFERENCE_DATE` with null source date. These produce
-  `BASIS_UNRESOLVED`, never a fatal envelope.
-- Source-local REAL reference-date validation occurs regardless of target price
-  basis. A null REAL source date contributes
-  `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; any simultaneously known price-basis
-  mismatch is also preserved. The unresolved reason controls the state.
-- Known valid unequal bases/dates contribute mismatch reasons and, only when no
-  unknown/missing reason exists, produce `NORMALIZATION_REQUIRED`; they never
-  produce a fatal envelope.
+- Structural/canonical validation of native income basis, native price basis,
+  and paired source reference date applies to every RTISA entry that would be
+  projected into a successful result, including `EXCLUDED`. It determines only
+  whether the evidence is representable; it does not compare excluded evidence
+  with the target.
+- For an `INCLUDED` source, valid `UNKNOWN` income, valid `UNKNOWN` price with
+  null date, and valid `REAL_AT_REFERENCE_DATE` with null date produce
+  `BASIS_UNRESOLVED`, never a fatal envelope. For an `EXCLUDED` source, the same
+  structurally valid values are preserved under `NOT_ADMITTED` and produce no
+  professional comparison reason.
+- For an `INCLUDED` REAL source, a null reference date contributes
+  `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; any simultaneously known
+  price-basis mismatch is also preserved. The unresolved reason controls the
+  state. An excluded REAL/null source is structurally valid but is not compared.
+- Known valid unequal bases/dates contribute mismatch reasons only for
+  `INCLUDED` sources and, only when no unknown/missing reason exists, produce
+  `NORMALIZATION_REQUIRED`; they never produce a fatal envelope. Excluded
+  sources never receive mismatch reasons.
 - Wrong types, missing required keys, unsupported enum strings, malformed
   non-null dates, illegal enum/date nullability, malformed upstream identity,
   a Category A/B recomputation mismatch, or a structurally invalid Category C
@@ -761,8 +812,9 @@ runtime exception:
 | malformed Category C identity or invalid relationship visible in an RTISA entry | `source_universe` / `RTICB_SOURCE_UNIVERSE_INVALID` |
 | duplicate/empty/whitespace-padded/non-string/out-of-order source ID or malformed non-basis entry shape | `source_universe` / `RTICB_SOURCE_UNIVERSE_INVALID` |
 | source-universe omission/addition, partition overlap, state/partition mismatch, or unresolved source in a purported ready RTISA | `source_universe` / `RTICB_SOURCE_COVERAGE_MISMATCH` |
-| included source missing a basis key, null/wrong-type/unsupported basis enum, malformed non-null REAL date, or non-null date with `UNKNOWN`/nominal price basis | `classification` / `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| REAL source with null date | valid `BASIS_UNRESOLVED` classification with `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING` |
+| any source, including `EXCLUDED`, missing a basis key or using null/wrong-type/padded/unsupported basis enum, malformed non-null REAL date, or non-null date with `UNKNOWN`/nominal price basis | `classification` / `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
+| `INCLUDED` REAL source with null date | valid `BASIS_UNRESOLVED` classification with `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING` |
+| `EXCLUDED` REAL source with null date | valid `NOT_ADMITTED`; preserve null and emit only `RTICB_SOURCE_NOT_ADMITTED` |
 | unexpected serializer, JSON, SHA-256, assertion, programming, or other internal runtime failure | technical exception; rollback/re-raise, no semantic envelope |
 
 Primitive validation is lexical and type-strict: booleans are not integers;
@@ -854,16 +906,16 @@ frontend code, navigation, totals/gap engines, and normalization engines.
 - `AC-09`: partial, unavailable, malformed, or non-ready RTISA fails closed.
 - `AC-10`: source universe equals RTISA source entries exactly.
 - `AC-11`: every entry of the accepted ready RTISA result has exactly one ordered comparison entry.
-- `AC-12`: only RTISA `INCLUDED` entries undergo basis comparison.
-- `AC-13`: excluded RTISA entries remain explicit successful-result coverage evidence; any unresolved RTISA entry makes the upstream authority not ready and prevents a successful RTICB result.
+- `AC-12`: every projected RTISA entry passes canonical basis-evidence validation, while only `INCLUDED` entries undergo professional basis comparison.
+- `AC-13`: a canonically valid excluded RTISA entry remains explicit `NOT_ADMITTED` coverage evidence with only `RTICB_SOURCE_NOT_ADMITTED`; malformed excluded basis evidence fails closed, and any unresolved RTISA entry makes the upstream authority not ready.
 - `AC-14`: `GROSS/GROSS` and `NET/NET` income bases match directly.
 - `AC-15`: known unequal income bases require normalization.
-- `AC-16`: the accepted source literal `UNKNOWN` is unresolved; unsupported or malformed income-basis authority is fatal.
+- `AC-16`: for an included source the accepted income literal `UNKNOWN` is unresolved; for an excluded source it is preserved without comparison; unsupported or malformed income-basis authority is fatal for every entry.
 - `AC-17`: equal nominal-at-target price bases match directly.
 - `AC-18`: known unequal price bases always contribute the price-basis mismatch reason and require normalization when no unresolved source evidence takes precedence.
-- `AC-19`: the accepted source literal `UNKNOWN` with null date is unresolved; unsupported or malformed price-basis authority is fatal.
+- `AC-19`: for an included source the accepted price literal `UNKNOWN` with null date is unresolved; for an excluded source it is preserved without comparison; unsupported or malformed price-basis authority is fatal for every entry.
 - `AC-20`: equal real price bases require equal valid reference dates.
-- `AC-21`: every REAL source requires source-local reference-date validation regardless of target basis; null is unresolved, while a malformed non-null date is fatal authority data.
+- `AC-21`: every REAL source requires source-local reference-date shape validation regardless of admission or target basis; null is unresolved only for an included source and is preserved under `NOT_ADMITTED` for an excluded source, while a malformed non-null date is always fatal.
 - `AC-22`: unequal real reference dates require normalization.
 - `AC-23`: nominal authorities require null reference dates and malformed upstream data fails closed.
 - `AC-24`: classification reasons use only the closed vocabulary and canonical ordering.
@@ -898,7 +950,7 @@ Acceptance range: `AC-01` through `AC-40` (40 criteria).
 - `NAC-08`: emitting a normalized source amount.
 - `NAC-09`: calculating income totals, gaps, coverage, or eligibility.
 - `NAC-10`: independently discovering or rebuilding the source universe.
-- `NAC-11`: bypassing RTISA admission state.
+- `NAC-11`: bypassing RTISA admission state, or using `EXCLUDED` to bypass canonical basis-evidence validation required by the successful-entry contract.
 - `NAC-12`: dropping an admitted non-comparable source from readiness assessment.
 - `NAC-13`: upgrading an excluded source to admitted, or admitting/classifying an unresolved RTISA source instead of failing at upstream readiness.
 - `NAC-14`: accepting partial or non-ready RTISA as complete.
@@ -952,6 +1004,9 @@ After Definition acceptance, the mandatory enumeration must cover at least:
 - nominal and real reference-date equality, mismatch, missing, and malformed cases;
 - admitted and excluded successful-entry states, plus the unresolved RTISA
   whole-authority not-ready route;
+- valid and malformed excluded-source basis evidence, including `UNKNOWN`,
+  REAL/null, missing/null/padded/unsupported enums, malformed REAL dates, and
+  forbidden nominal/unknown non-null dates;
 - empty, singleton, and multi-source universes;
 - valid combinations and malformed near-misses;
 - deterministic failure envelopes and precedence, plus mutation controls proving

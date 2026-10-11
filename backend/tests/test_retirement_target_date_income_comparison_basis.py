@@ -244,38 +244,28 @@ INCLUDED_OUTPUT_CLASSES = [
     ("gross_nominal_direct", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "DIRECTLY_COMPARABLE", [], []),
     ("gross_nominal_real_mismatch", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", "NORMALIZATION_REQUIRED", ["RTICB_PRICE_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
     ("gross_nominal_real_missing", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
-    ("gross_real_direct", "GROSS", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-01-01", "DIRECTLY_COMPARABLE", [], []),
+    ("gross_unknown_price", "GROSS", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "UNKNOWN", None, "BASIS_UNRESOLVED", ["RTICB_PRICE_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
     ("gross_real_date_mismatch", "GROSS", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", "NORMALIZATION_REQUIRED", ["RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
     ("gross_real_missing", "GROSS", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
     ("net_nominal_direct", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
     ("net_nominal_real_mismatch", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_PRICE_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
     ("net_nominal_real_missing", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
-    ("net_real_direct", "NET", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-01-01", "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
+    ("net_unknown_price", "NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "UNKNOWN", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_PRICE_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
     ("net_real_date_mismatch", "NET", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", "NORMALIZATION_REQUIRED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"], ["RTICB_NORMALIZATION_REQUIRED"]),
     ("net_real_missing", "NET", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
     ("unknown_nominal_direct", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
     ("unknown_nominal_real_mismatch", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", "2029-01-01", "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_PRICE_BASIS_MISMATCH"], ["RTICB_BASIS_UNRESOLVED"]),
     ("unknown_nominal_real_missing", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_PRICE_BASIS_MISMATCH", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
-    ("unknown_real_direct", "UNKNOWN", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-01-01", "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
+    ("unknown_unknown_price", "UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "UNKNOWN", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_PRICE_BASIS_UNKNOWN"], ["RTICB_BASIS_UNRESOLVED"]),
     ("unknown_real_date_mismatch", "UNKNOWN", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", "2029-02-01", "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH"], ["RTICB_BASIS_UNRESOLVED"]),
     ("unknown_real_missing", "UNKNOWN", "REAL_AT_REFERENCE_DATE", "2029-01-01", "REAL_AT_REFERENCE_DATE", None, "BASIS_UNRESOLVED", ["RTICB_INCOME_BASIS_UNKNOWN", "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING"], ["RTICB_BASIS_UNRESOLVED"]),
 ]
 
 
-@pytest.mark.parametrize(
-    "name,source_income,target_price,target_reference,source_price,source_reference,expected_state,expected_reasons,expected_blockers",
-    INCLUDED_OUTPUT_CLASSES,
-    ids=[case[0] for case in INCLUDED_OUTPUT_CLASSES],
-)
-def test_all_18_distinct_included_output_classes(
-    monkeypatch, name, source_income, target_price, target_reference,
-    source_price, source_reference, expected_state, expected_reasons, expected_blockers,
+def _assert_included_output_class(
+    result, source_income, source_price, source_reference,
+    expected_state, expected_reasons, expected_blockers,
 ):
-    result, db, reached = _run(
-        monkeypatch,
-        target=_target(price=target_price, reference=target_reference),
-        rtisa=_rtisa([_entry(income=source_income, price=source_price, reference=source_reference)]),
-    )
     comparison = result["source_comparisons"][0]
     assert comparison["comparison_state"] == expected_state
     assert comparison["reason_codes"] == expected_reasons
@@ -293,28 +283,78 @@ def test_all_18_distinct_included_output_classes(
         "contract": subject.ENTRY_FINGERPRINT_CONTRACT,
         "comparison_input_fingerprint": result["comparison_input_fingerprint"],
         "source_comparison": expected_comparison,
-    }), name
+    })
     assert result["blockers"] == expected_blockers
     assert result["direct_comparison_ready"] is (not expected_blockers)
+
+
+@pytest.mark.parametrize(
+    "name,source_income,target_price,target_reference,source_price,source_reference,expected_state,expected_reasons,expected_blockers",
+    INCLUDED_OUTPUT_CLASSES,
+    ids=[case[0] for case in INCLUDED_OUTPUT_CLASSES],
+)
+def test_all_18_distinct_included_output_classes(
+    monkeypatch, name, source_income, target_price, target_reference,
+    source_price, source_reference, expected_state, expected_reasons, expected_blockers,
+):
+    result, db, reached = _run(
+        monkeypatch,
+        target=_target(price=target_price, reference=target_reference),
+        rtisa=_rtisa([_entry(income=source_income, price=source_price, reference=source_reference)]),
+    )
+    _assert_included_output_class(
+        result, source_income, source_price, source_reference,
+        expected_state, expected_reasons, expected_blockers,
+    )
     assert reached == {"target": 1, "rtisa": 1}
     assert db.rollback_count == 1 and not db.active
 
 
-def test_included_matrix_has_18_distinct_contract_classes_and_net_net_positive_control(monkeypatch):
+def test_included_matrix_has_18_distinct_contract_output_classes():
     identities = {
-        (case[1], case[2], case[3], case[4], case[5], case[6], tuple(case[7]))
+        (case[6], tuple(case[7]))
         for case in INCLUDED_OUTPUT_CLASSES
     }
     assert len(INCLUDED_OUTPUT_CLASSES) == len(identities) == 18
+
+
+@pytest.mark.parametrize("income", ["GROSS", "NET"])
+def test_matching_income_and_nominal_price_basis_is_directly_comparable(monkeypatch, income):
     result, _, _ = _run(
         monkeypatch,
-        target=_target(income="NET"),
-        rtisa=_rtisa([_entry(income="NET")]),
+        target=_target(income=income),
+        rtisa=_rtisa([_entry(income=income)]),
     )
     comparison = result["source_comparisons"][0]
     assert comparison["comparison_state"] == "DIRECTLY_COMPARABLE"
     assert comparison["reason_codes"] == []
     assert result["direct_comparison_ready"] is True
+
+
+def test_real_target_and_real_source_same_date_is_directly_comparable(monkeypatch):
+    result, _, _ = _run(
+        monkeypatch,
+        target=_target(price="REAL_AT_REFERENCE_DATE", reference="2029-01-01"),
+        rtisa=_rtisa([_entry(price="REAL_AT_REFERENCE_DATE", reference="2029-01-01")]),
+    )
+    comparison = result["source_comparisons"][0]
+    assert comparison["comparison_state"] == "DIRECTLY_COMPARABLE"
+    assert comparison["reason_codes"] == []
+    assert result["blockers"] == []
+    assert result["direct_comparison_ready"] is True
+
+
+def test_real_target_and_nominal_source_requires_normalization(monkeypatch):
+    result, _, _ = _run(
+        monkeypatch,
+        target=_target(price="REAL_AT_REFERENCE_DATE", reference="2029-01-01"),
+        rtisa=_rtisa([_entry(price="NOMINAL_AT_RETIREMENT_TARGET_DATE")]),
+    )
+    comparison = result["source_comparisons"][0]
+    assert comparison["comparison_state"] == "NORMALIZATION_REQUIRED"
+    assert comparison["reason_codes"] == ["RTICB_PRICE_BASIS_MISMATCH"]
+    assert result["blockers"] == ["RTICB_NORMALIZATION_REQUIRED"]
+    assert result["direct_comparison_ready"] is False
 
 
 @pytest.mark.parametrize("income,price,reference", [
@@ -735,6 +775,48 @@ def test_mutation_sensitive_classification_oracle(
     with pytest.raises(AssertionError):
         assert (actual["comparison_state"], actual["reason_codes"]) == (expected_state, expected_reasons)
     assert reached == [name]
+
+
+def test_ordinary_18_class_oracle_kills_unknown_price_as_direct_mutation(monkeypatch):
+    case = next(item for item in INCLUDED_OUTPUT_CLASSES if item[0] == "gross_unknown_price")
+    (
+        _, source_income, target_price, target_reference, source_price,
+        source_reference, expected_state, expected_reasons, expected_blockers,
+    ) = case
+    original = subject._comparison_entry
+    reached = []
+
+    def mutated(entry, target_basis, input_fingerprint):
+        value = original(entry, target_basis, input_fingerprint)
+        if entry["native_price_evidence"]["price_basis"] == "UNKNOWN":
+            reached.append(entry["source_id"])
+            value["comparison_state"] = "DIRECTLY_COMPARABLE"
+            value["reason_codes"] = []
+        return value
+
+    monkeypatch.setattr(subject, "_comparison_entry", mutated)
+    mutated_result, _, _ = _run(
+        monkeypatch,
+        target=_target(price=target_price, reference=target_reference),
+        rtisa=_rtisa([_entry(income=source_income, price=source_price, reference=source_reference)]),
+    )
+    with pytest.raises(AssertionError):
+        _assert_included_output_class(
+            mutated_result, source_income, source_price, source_reference,
+            expected_state, expected_reasons, expected_blockers,
+        )
+    assert reached == ["income:1"]
+
+    monkeypatch.setattr(subject, "_comparison_entry", original)
+    restored_result, _, _ = _run(
+        monkeypatch,
+        target=_target(price=target_price, reference=target_reference),
+        rtisa=_rtisa([_entry(income=source_income, price=source_price, reference=source_reference)]),
+    )
+    _assert_included_output_class(
+        restored_result, source_income, source_price, source_reference,
+        expected_state, expected_reasons, expected_blockers,
+    )
 
 
 def test_real_target_real_source_missing_date_oracle_kills_normalization_mutation(monkeypatch):

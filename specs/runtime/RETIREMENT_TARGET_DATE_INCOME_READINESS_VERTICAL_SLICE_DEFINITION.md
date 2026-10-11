@@ -7,7 +7,8 @@
 - Governance: `RETIREMENT_PLANNING_V2_GOVERNANCE_PROTOCOL v1.1`.
 - Definition base: `93058f3f4e6a54f7e5c02254a6fd444f651326d4`.
 - This document is the consolidated correction of the Definition candidate whose parent is
-  `7370a4f47433142f68e0af4850e74b36f9b2d201`.
+  `7370a4f47433142f68e0af4850e74b36f9b2d201`, followed by the focused five-blocker correction
+  whose parent is `41d36c4bc5d8eb5e71fb3fc12d3ae688fe578769`.
 - Owner model: one professional user, one shared workspace, and all clients accessible to that
   authenticated professional.
 - This Definition consumes the accepted Planning Input, retirement monthly income target (`RIT`),
@@ -41,8 +42,11 @@ The deployment facts referenced by this Definition are Railway's official public
 variables, and replica guidance:
 
 - `https://docs.railway.com/networking/public-networking`
+- `https://docs.railway.com/networking/public-networking/specs-and-limits`
 - `https://docs.railway.com/variables`
 - `https://docs.railway.com/deployments/optimize-performance`
+- `https://docs.railway.com/deployments/healthchecks`
+- `https://docs.railway.com/deployments/deployment-teardown`
 
 The following invariants govern every later section:
 
@@ -61,20 +65,24 @@ The following invariants govern every later section:
 
 ### 3.1 Primary supported topology
 
-The only supported production topology for this package is:
+The only supported production topology for this package is option A: one Railway service and one
+FastAPI process serve both the compiled Vite frontend and `/api`. There is no second public gateway,
+private-backend hop, Caddy service, or browser cross-origin request.
 
-1. One canonical HTTPS origin, `AUTH_PUBLIC_ORIGIN`, serves the compiled frontend and routes
-   `/api/*` to the FastAPI application. The browser never needs a cross-site production cookie.
-2. Railway terminates public TLS. The application accepts forwarded protocol/client information
-   only from an explicitly configured trusted Railway proxy boundary described in section 4.
+1. One canonical HTTPS origin, `AUTH_PUBLIC_ORIGIN`, reaches the Railway public HTTP edge and then
+   the single FastAPI service. FastAPI serves compiled frontend files and all API routes itself.
+2. Railway terminates public TLS. Security-relevant forwarded information is accepted only under
+   the exact public-edge provenance contract in section 4.2; private-network ingress is forbidden.
 3. Exactly one backend Railway replica and exactly one Uvicorn worker are permitted. Production
    startup requires `WEB_CONCURRENCY=1`; deployment acceptance independently verifies replica
    count `1`. Horizontal replicas, overlapping rolling instances, and multiple workers are not
    supported by this Definition.
 4. The existing Railway PostgreSQL service is the shared durable authority for login-attempt
    limiting. Authentication sessions themselves remain stateless signed cookies.
-5. A deploy or signing-key rotation uses stop-then-start replacement, accepting a brief service
-   interruption. Mixed-secret overlap is prohibited.
+5. Ordinary code deploys set `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0`; the old deployment is drained
+   and removed before the new deployment may serve authenticated traffic. A signing-key rotation is
+   a deliberate stop, variable replacement, and start with observable downtime. Mixed-secret
+   overlap is prohibited in both cases.
 
 This constraint is intentional: it avoids a distributed session/revocation system and does not
 make an unsupported multi-replica security claim. A future multi-replica topology requires a
@@ -104,8 +112,9 @@ through committed values:
 | `AUTH_ACTOR_ID` | Exact accepted RIT actor predicate in section 8 |
 | `AUTH_SESSION_SECRET_B64` | Unpadded base64url, exactly 43 characters decoding to exactly 32 random bytes |
 | `AUTH_RATE_LIMIT_SECRET_B64` | Independent unpadded base64url, exactly 43 characters decoding to exactly 32 random bytes |
-| `AUTH_TRUSTED_PROXY_CIDRS` | Non-empty comma-separated canonical IPv4/IPv6 CIDRs; no `0.0.0.0/0` or `::/0` |
+| `AUTH_INGRESS_MODE` | Exact value `railway_public_edge`; no private-network or direct-container production ingress |
 | `WEB_CONCURRENCY` | Exact decimal string `1` |
+| `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS` | Exact decimal string `0` |
 
 No default, local-development value, dynamically generated secret, or plaintext password may be
 used as a production fallback. Startup parses and validates the complete set before serving a
@@ -117,30 +126,38 @@ with 256 bits of source entropy. Deployment evidence records the generator/proce
 presence without recording either value. Startup can prove encoding and decoded length, not source
 entropy; absence of the provisioning evidence stops deployment under `SC-006`.
 
-### 4.2 Trusted proxy and client-IP derivation
+### 4.2 Railway public-edge provenance and client-IP derivation
 
-The immediate socket peer is authoritative unless it belongs to `AUTH_TRUSTED_PROXY_CIDRS`.
+Railway's public-networking specification identifies `X-Real-IP` as the client's remote IP and
+`X-Forwarded-Proto` as `https`; it does not publish stable ingress proxy CIDRs. The application
+therefore does not implement CIDR or XFF hop inference and never reads `Forwarded`,
+`X-Forwarded-For`, `CF-Connecting-IP`, or the socket peer as the end-user identity.
 
-- If the peer is untrusted, all `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, and equivalent headers
-  are ignored for identity/security decisions; production requests that require HTTPS and arrive
-  directly are rejected.
-- If the peer is trusted, only `X-Forwarded-For` and `X-Forwarded-Proto` are accepted. Any duplicate,
-  empty, malformed, overlong, or ambiguous header is rejected before authentication.
-- The XFF list is parsed as IP literals only. Traversing right-to-left, trusted proxy addresses are
-  removed; the first remaining address is the client. Absence of exactly one resulting client
-  boundary is `PROXY_CHAIN_INVALID`.
-- The canonical attempt IP is Python `ipaddress.ip_address(value).compressed`; IPv4-mapped IPv6 is
-  converted to canonical IPv4. Zone identifiers are forbidden.
-- `X-Forwarded-Proto` must be the single exact value `https`. Caller-supplied host/proto/IP headers
-  cannot override the socket/trusted-proxy boundary.
-- `Host` must equal the host and optional port of `AUTH_PUBLIC_ORIGIN` after standards-based
-  canonical parsing. Origin equality is then exact string equality against `AUTH_PUBLIC_ORIGIN`.
+The authority boundary is the deployment topology, not a caller-selectable header:
 
-Deployment acceptance must first record the actual Railway proxy chain/CIDRs and prove the rule
-against the deployed service. If Railway cannot supply a stable, testable trust boundary, `SC-003`
-stops deployment; the implementation must not trust all proxies.
+1. the FastAPI service has exactly one public Railway domain/custom domain attached;
+2. no TCP proxy, private-network HTTP caller, sidecar, second service, or direct container port may
+   reach the production listener;
+3. Railway public HTTP ingress is the only network path to that listener; and
+4. deployed black-box evidence must prove that Railway overwrites a caller-supplied `X-Real-IP`
+   before the request reaches the application. Railway documents the header's meaning, but marks
+   public-network specifications as changeable; this proof is repeated at every release.
 
-### 4.3 Health and startup
+Only after all four conditions hold may the application consume the single `X-Real-IP` value.
+Missing, duplicate, comma-containing, whitespace-repaired, zone-qualified, non-IP, or overlong
+values are `400 CLIENT_IP_INVALID`. The canonical attempt IP is
+`ipaddress.ip_address(value).compressed`; IPv4-mapped IPv6 is converted to canonical IPv4.
+Caller-supplied `X-Forwarded-For` is ignored even when present. If a forged `X-Real-IP` survives the
+edge, if the edge behavior cannot be proven, or if any alternate ingress exists, `SC-003` stops
+deployment rather than accepting a spoofable limiter key.
+
+`X-Forwarded-Proto` must occur exactly once with exact value `https`. `X-Forwarded-Host` must occur
+exactly once and, after standards-based parsing, equal the host and optional port in
+`AUTH_PUBLIC_ORIGIN`. The received `Host` must equal the same authority, except for the narrowly
+defined Railway healthcheck in section 4.3. `Origin`, when required, is exact string equality with
+`AUTH_PUBLIC_ORIGIN`.
+
+### 4.3 Health, startup, and Railway lifecycle
 
 - `GET /healthz/live` is data-free and returns `200` with exactly `{"status":"ok"}` when the
   process event loop is serving.
@@ -149,8 +166,23 @@ stops deployment; the implementation must not trust all proxies.
   returns `503` with exactly `{"status":"unavailable"}`.
 - Neither endpoint returns environment values, database details, version strings, client data, or
   authentication state.
-- Railway must route traffic only when readiness succeeds. These two GET endpoints and exact CORS
-  preflight are the only unauthenticated non-login requests.
+- Existing `GET /health` remains a public, data-free legacy liveness alias returning exactly
+  `{"status":"ok"}`; it is not the Railway deployment healthcheck and performs no database query.
+- Railway deployment healthcheck path is exactly `/healthz/ready`. Railway calls it over plain HTTP
+  on the injected `PORT`, with Host `healthcheck.railway.app`. That Host exception is accepted only
+  for `GET /healthz/live`, `GET /healthz/ready`, and `GET /health`; it never applies to `/api`, SPA,
+  static, docs, or unknown paths and never authorizes forwarded client-IP input.
+- A Railway healthcheck is a deployment-start gate, not continuous monitoring. Continuous uptime
+  requires a separately configured external HTTPS monitor of `/healthz/ready`; absence of such a
+  monitor blocks a production-readiness claim, not implementation acceptance.
+- Startup listens on Railway's injected `PORT`, validates configuration, applies no migration
+  implicitly, verifies migration head/schema availability read-only, and serves readiness only
+  after the limiter table is usable. A smoke test then proves login shell, login, session, one
+  protected route, logout, cache headers, and forged-forwarding rejection.
+- Exactly one replica and `WEB_CONCURRENCY=1` are read back before activation. Overlap is zero.
+  Railway may restart or relocate a singleton; stateless sessions and PostgreSQL limiter state
+  survive process replacement, but session-secret changes follow the explicit downtime rotation
+  procedure in section 6.3.
 
 ## 5. Login credential and brute-force authority
 
@@ -188,13 +220,26 @@ invent or set a production username, password, verifier, or secret.
 
 ### 5.3 Durable login-attempt limiter
 
-One additive migration may create an authentication-infrastructure table containing only:
+Implementation requires exactly one additive Alembic revision, `b3c9d6f2a410`, with
+`down_revision = "a2b8c5e1f309"`. It creates only table `rtdir_login_rate_limit_buckets` and index
+`ix_rtdir_login_rate_limit_buckets_updated_at`; it neither references nor mutates professional
+retirement-planning tables. The table contract is exact:
 
-- `bucket_key`: HMAC-SHA-256 digest/hex primary key;
-- `window_started_at`: PostgreSQL timestamptz;
-- `failure_count`: bounded non-negative integer;
-- `locked_until`: nullable PostgreSQL timestamptz; and
-- `updated_at`: PostgreSQL timestamptz.
+| Column | PostgreSQL type | Null | Constraint |
+|---|---|---:|---|
+| `bucket_key` | `CHAR(64)` | no | primary key; lowercase hexadecimal check `bucket_key ~ '^[0-9a-f]{64}$'` |
+| `bucket_kind` | `VARCHAR(8)` | no | check in `('GLOBAL','USER','IP')` |
+| `window_started_at` | `TIMESTAMPTZ` | no | database-time value |
+| `failure_count` | `INTEGER` | no | check `0 <= failure_count AND failure_count <= 2147483647` |
+| `locked_until` | `TIMESTAMPTZ` | yes | null below threshold; otherwise exact window end |
+| `updated_at` | `TIMESTAMPTZ` | no | database-time value |
+
+The primary key is the only uniqueness authority. The named checks are
+`ck_rtdir_login_bucket_key_hex`, `ck_rtdir_login_bucket_kind`,
+`ck_rtdir_login_failure_count`, and `ck_rtdir_login_lock_window` (the last requires
+`locked_until IS NULL OR locked_until = window_started_at + INTERVAL '900 seconds'`). Downgrade
+drops the index and table only. PostgreSQL migration tests prove upgrade, downgrade, parent/head,
+names, types, nullability, checks, and isolation from professional tables.
 
 No username, password, raw IP, actor, cookie, token, or client record is stored. Keys use
 HMAC-SHA-256 with decoded `AUTH_RATE_LIMIT_SECRET_B64` over these exact UTF-8 preimages:
@@ -203,39 +248,74 @@ HMAC-SHA-256 with decoded `AUTH_RATE_LIMIT_SECRET_B64` over these exact UTF-8 pr
 - username: `RTDIR_LOGIN_LIMIT_V1\0USER\0` plus the exact submitted valid username; and
 - IP: `RTDIR_LOGIN_LIMIT_V1\0IP\0` plus the canonical client IP.
 
-The PostgreSQL transaction uses database time and atomic row locking/upsert. Fixed windows begin at
+All time is one transaction-local `SELECT transaction_timestamp()` value. Fixed windows begin at
 the first counted failure and last exactly 900 seconds:
 
 - username threshold: 5 failures per window;
 - IP threshold: 20 failures per window; and
 - global threshold: 200 failures per window.
 
-Processing order is exact:
+HMAC input is the bytes shown above: ASCII namespace/type including literal NUL bytes, followed by
+the exact UTF-8 username bytes or canonical ASCII IP bytes. `bucket_key` stores
+`hmac.new(secret, preimage, sha256).hexdigest()` only; `bucket_kind` is independently checked when a
+row is loaded. No raw identifier is stored.
 
-1. validate trusted transport and Origin;
-2. derive the trusted client IP and atomically read the IP/global windows;
-3. enforce body-size and JSON framing; on malformed input atomically count IP/global failure and
-   return `400` unless that increment reaches a threshold, in which case return `429`;
-4. enforce the exact request schema; on schema failure atomically count IP/global failure and
-   return `422` unless that increment reaches a threshold, in which case return `429`;
-5. derive the username key and atomically read its current window together with refreshed IP/global
-   windows;
-6. if any applicable valid window is already at threshold, return `429 LOGIN_RATE_LIMITED` without password
-   verification and with integer `Retry-After` equal to the ceiling of the longest remaining lock;
-7. otherwise execute real/dummy Argon2id verification;
-8. on failure, atomically increment username, IP, and global buckets; the failure that reaches a
-   threshold returns `429`, earlier failures return `401 AUTHENTICATION_FAILED`;
-9. on success, atomically clear the matching username and IP buckets, retain the global failures
-   until their window expires, and issue the session only after that transaction commits.
+Every required bucket operation uses this exact transaction primitive:
 
-Malformed/schema-invalid login attempts do not reach hashing or a username bucket. Expired windows
-reset to count zero on the next atomic operation. Reaching a threshold sets `locked_until` to
-exactly `window_started_at + 900 seconds`. There is no manual/frontend
-reset and no progressive delay. Store timeout, unavailable database, missing table, transaction
-failure, or ambiguous time fails closed as `503 AUTH_RATE_LIMIT_UNAVAILABLE`; no password hash is
-evaluated and no session is issued. Because the limiter is PostgreSQL-backed, restart does not
-reset it. The deployment remains constrained to one replica/worker for the other reasons in
-section 3; no cross-replica claim is made.
+1. begin `READ COMMITTED`; obtain database time once;
+2. for each required key in ascending `bucket_key` order execute `INSERT ... VALUES (..., 0, NULL,
+   db_now) ON CONFLICT (bucket_key) DO NOTHING`;
+3. select all required rows in the same order `FOR UPDATE`; a kind mismatch is store corruption;
+4. if `db_now >= window_started_at + INTERVAL '900 seconds'`, reset that row to
+   `window_started_at=db_now, failure_count=0, locked_until=NULL, updated_at=db_now`;
+5. read or mutate the locked rows, then commit; any exception rolls back the whole operation.
+
+The unique primary key serializes concurrent first insertions: one insert wins and every contender
+then locks the same row. Sorted row locking prevents cross-bucket lock-order cycles. There is no
+advisory or table/global lock. The exact login sequence is:
+
+1. validate public-edge provenance, protocol, Host, and Origin; derive the canonical IP;
+2. validate the 8 KiB framing and JSON/schema. A malformed request runs one mutation primitive for
+   IP and GLOBAL only, incrementing both; no username key or Argon2 call exists;
+3. a valid-shaped request derives USER, IP, and GLOBAL keys and runs a read/check primitive. If any
+   locked row is at its threshold, commit the observed decision and return `429` without Argon2;
+4. when below threshold, commit and release every database lock, then perform exactly one real or
+   dummy Argon2 verification outside every database transaction;
+5. begin a new mutation primitive for USER, IP, and GLOBAL and re-evaluate all windows/thresholds.
+   If another request reached a threshold during Argon2, commit no reset/increment for this attempt
+   and return `429`;
+6. on failed verification, increment all three counts using
+   `LEAST(failure_count + 1, 2147483647)`. The transition reaching a threshold sets
+   `locked_until=window_started_at + INTERVAL '900 seconds'`; saturation never wraps. Commit, then
+   return `429` if any threshold is reached, otherwise `401`;
+7. on successful verification below every threshold, delete the USER and IP rows in the same
+   locked transaction, leave GLOBAL unchanged, commit, and only then sign/issue a session.
+
+The linearization point is the commit of the final locked decision/mutation transaction (or the
+commit of the precheck that returns an already-limited result). Thus concurrent threshold crossing
+has exactly one database commit order; later commits see the threshold and cannot issue a session.
+Argon2 never runs while a row/table/advisory lock is held. This permits concurrent expensive
+verification while retaining a linearizable outcome at the final commit.
+
+`Retry-After` is the ceiling of the longest positive `(locked_until - db_now)` among applicable
+rows, clamped to integer `1..900`. Malformed/schema-invalid attempts never create USER rows. There
+is no manual/frontend reset or progressive delay.
+
+Before each precheck, a separate bounded cleanup transaction deletes at most 64 rows selected by
+`updated_at, bucket_key` with `FOR UPDATE SKIP LOCKED` where
+`updated_at < transaction_timestamp() - INTERVAL '1800 seconds'`. A single-process lifespan task
+runs the same cleanup every 900 seconds; startup and each scheduled run repeat 64-row transactions
+until no eligible row remains. Thus a healthy running deployment retains no expired row beyond one
+cleanup interval after the 1800-second eligibility delay, while each transaction remains bounded.
+No current or immediately previous window is deleted. Cleanup failure rolls back, marks readiness
+unavailable, and causes login to return `503 AUTH_RATE_LIMIT_UNAVAILABLE` before Argon2 until a
+cleanup succeeds; already-authenticated professional requests remain available because the limiter
+is not their authority. It never silently disables retention. Store timeout, unavailable database,
+missing/malformed table, lock/deadlock exhaustion, transaction failure, or ambiguous database time
+has the same fail-closed login result. PostgreSQL tests must interleave concurrent first insertion,
+threshold crossing, success/failure reset order, saturation, cleanup/`SKIP LOCKED`, restart
+persistence, scheduled cleanup failure/recovery, and injected store failure; each asserts committed
+rows and returned status, not only mocked calls.
 
 ## 6. Signed session and secret-rotation contract
 
@@ -327,7 +407,7 @@ on a safe browser request it must also match exactly.
 
 Semantic middleware order is mandatory:
 
-1. trusted proxy/protocol/Host validation;
+1. Railway public-edge provenance/protocol/Host validation;
 2. request-ID and response-cache wrapper;
 3. exact CORS preflight handling;
 4. route allowlist and signed-session authentication;
@@ -361,6 +441,96 @@ Every login, session, logout, authenticated API, and authentication-error respon
 `Cache-Control: no-store, private` and `Pragma: no-cache`. Browser service workers, local storage,
 session storage, IndexedDB, and persistent client caches must not retain credentials, CSRF values,
 authenticated DTOs, or client results.
+
+### 7.4 Complete public/protected HTTP surface
+
+Production constructs FastAPI with `docs_url=None`, `redoc_url=None`, and `openapi_url=None`.
+Consequently `/docs`, `/redoc`, and `/openapi.json` are ordinary `404 ROUTE_NOT_FOUND` responses;
+they are neither public documentation nor an authentication side channel. Development may enable
+them only under non-production configuration bound to loopback; production startup fails if any is
+registered.
+
+The complete unauthenticated production allowlist is:
+
+- `GET`/`HEAD /`, `GET`/`HEAD /login`, and `GET`/`HEAD` for each exact existing frontend route
+  pattern: `/clients`, `/clients/new`, `/clients/{positive_id}`,
+  `/clients/{positive_id}/employment-history`, `/clients/{positive_id}/pension-products`,
+  `/clients/{positive_id}/legacy-conversion-history`,
+  `/clients/{positive_id}/professional-sources`, `/clients/{positive_id}/planning-input`,
+  `/clients/{positive_id}/grants`, `/clients/{positive_id}/actual-capitalizations`,
+  `/clients/{positive_id}/fixation/workspace`, `/clients/{positive_id}/fixation/input`,
+  `/clients/{positive_id}/fixation/result`, `/clients/{positive_id}/fixation/history`,
+  `/clients/{positive_id}/fixation/runs/{positive_run_id}`, plus the existing non-client
+  `/fixation/input`, `/fixation/result`, `/fixation/history`, and
+  `/fixation/runs/{positive_run_id}`; these exact paths return the same data-free `index.html` shell;
+- `GET`/`HEAD /assets/{build-manifest filename}` and exact root static files emitted by the compiled
+  build manifest. Path traversal, source maps, dotfiles, arbitrary filesystem paths, and a filename
+  absent from the manifest are never served;
+- `POST /api/auth/login`;
+- valid CORS `OPTIONS` under section 7.2; and
+- `GET`/`HEAD /health`, `/healthz/live`, and `/healthz/ready` under section 4.3.
+
+The public shell and static assets contain no client data, actor value, username, credential,
+secret, CSRF, environment value, or serialized authenticated state. Public immutable hashed assets
+use `Cache-Control: public, max-age=31536000, immutable`; `index.html`, login shell, and un-hashed
+root assets use `Cache-Control: no-store`. A public shell may render only the authentication gate
+until `GET /api/auth/session` succeeds.
+
+Every other registered HTTP route is authenticated before route existence, path parsing, or data
+disclosure. This includes every current router family in the repository: `/api/clients` and all
+client case/profile/clearinghouse/document/historical-analysis/capital/income/expense/work-intention/
+assumption/missing-item/employment/grant/capitalization descendants; professional-source and
+canonical-pension-source routes; all retirement-planning-input and projection routes; all fixation
+and M07 routes; official-parameter-set routes; pension-product/import routes; canonical-conversion
+routes; legacy M06 archive reads; M09 reads; and the four new RTDIR context/target/comparison routes.
+It also includes `GET /api/auth/session` and `POST /api/auth/logout`. The implementation test
+enumerates `app.routes` and fails if any APIRoute is neither in this protected set nor the exact
+public allowlist; protection is not inferred from an `/api` prefix.
+
+At this Definition base, the exact protected route-pattern inventory (method is the method already
+registered by the referenced router; no additional method is implied) is:
+
+- `/api/clients`, `/api/clients/{client_id}`, `/case`, `/profile`;
+- client descendants `/clearinghouse-snapshots[/{clearinghouse_snapshot_id}[/verification]]`,
+  `/documents[/{document_id}[/verification]]`,
+  `/pension-holdings/{pension_holding_id}/analysis-record`,
+  `/capital-assets[/{capital_asset_id}]`, `/recurring-incomes[/{recurring_income_id}]`,
+  `/recurring-expenses[/{recurring_expense_id}]`,
+  `/retirement-timing-work-intentions[/{retirement_timing_work_intention_id}]`,
+  `/planner-assumptions[/{planner_assumption_id}]`, `/missing-items[/{missing_data_item_id}]`,
+  `/employment-records[/{employment_record_id}]`, `/grants[/{grant_id}]`, and
+  `/actual-capitalizations[/{capitalization_id}]`;
+- client descendants `/professional-source-snapshot`,
+  `/canonical-pension-sources/manual[/{source_id}]`, and
+  `/canonical-pension-sources/conversion/{destination_id}/temporal-authority`;
+- client descendant `/retirement-planning-input` plus `/capital-projection`, `/base-date`,
+  `/income-resolutions/{income_id}`, `/target-date`, `/projection-basis`,
+  `/projection-basis/{capital_asset_id}`, and `/projection-basis/{capital_asset_id}/clear`;
+- `/api/fixation/review/validate`, `/api/fixation/review/convert`, `/api/fixation/save`, and client
+  descendants `/fixation/validate`, `/fixation/calculate`, `/fixation/latest`, `/fixation/history`,
+  `/fixation/runs/{run_id}`, `/fixation/runs/{run_id}/internal-planner-judgment`,
+  `/fixation/runs/{run_id}/dependency-manifest`,
+  `/fixation/runs/{run_id}/dependency-comparison`, `/fixation/m07/revisions`, and
+  `/fixation/m07/eligibility-date-revisions`;
+- `/api/official-parameter-sets`, `/resolve`, and `/{parameter_set_id}`;
+- client descendant `/pension-products`, `/imports`, `/save-selected`, and `/{product_id}`;
+- client descendant `/canonical-conversions`, `/preview`, and `/{conversion_id}/reverse`;
+- client descendants `/m06/subjects[/{subject_id}[/history]]` and
+  `/m09/inventories/{inventory_id}`, `/m09/runs[/{run_id}]`,
+  `/m09/subjects[/{subject_id}[/runs[/{run_id}]]]`;
+- new `/api/auth/session`, `/api/auth/logout`; and
+- new client descendants `/retirement-income-readiness/context`,
+  `/retirement-income-readiness/target`, and `/retirement-income-readiness/comparison`.
+
+Square brackets above are inventory notation only. The runtime oracle compares concrete
+`(method, path_format)` pairs, including every GET/POST/PUT/DELETE registration, against a checked-in
+expected set. Any newly registered route fails closed until this Definition or an accepted successor
+classifies it.
+
+Unknown `/api/*` requests authenticate first, then return `404 ROUTE_NOT_FOUND`. Unknown non-API
+paths do not receive SPA fallback and return the same 404 envelope after the public-route matcher.
+Methods not registered on a known path return `405 METHOD_NOT_ALLOWED`; they never fall through to
+`index.html`. The healthcheck Host exception cannot reach any route outside the three health paths.
 
 ## 8. Trusted professional actor and client addressing
 
@@ -407,8 +577,11 @@ All DTOs use strict types and `extra="forbid"`.
 }
 ```
 
-`field_paths` is a deterministically sorted unique list of JSON/path field paths and contains no
-submitted values. Authentication failures always use an empty list. Unknown internal exceptions
+`field_paths` is a deterministically sorted unique list of RFC 6901 JSON Pointers and contains no
+submitted values. Body fields use `/<escaped-field-name>`; path parameters use
+`/path/<escaped-parameter-name>`; a missing body itself uses `/`; an extra field uses its actual
+escaped field name. Multiple failures are sorted by UTF-8 byte order after pointer construction.
+Authentication failures always use an empty list. Unknown internal exceptions
 return generic `INTERNAL_ERROR`; sensitive exception text is logged only under the request ID and
 never returned.
 
@@ -549,28 +722,49 @@ and no value, null, list order, enum, blocker, reason, or fingerprint is repaire
 ### 9.4 Exact status mapping and precedence
 
 Authentication/transport checks precede route semantics. The first failing layer determines the
-response:
+response. Precedence is exactly: public-edge/proto/forwarded-host/Host; public/preflight/protected
+classification; CORS preflight; Origin where required; login Content-Type and byte limit; session;
+CSRF; JSON framing; path/query/body schema; client/address identity; accepted service execution;
+producer shape/response identity; known infrastructure mapping; unexpected failure. For an unknown
+`/api` path, the protected classification deliberately authenticates before the final route-not-found
+decision. No later failure may replace an earlier response:
 
-| Condition | HTTP | Code/response |
-|---|---:|---|
-| Malformed JSON syntax/encoding/body framing | 400 | `REQUEST_JSON_INVALID` |
-| Invalid proxy chain/forwarded protocol/Host | 400 | `PROXY_CHAIN_INVALID` or `REQUEST_HOST_INVALID` |
-| Missing/invalid/expired session on protected endpoint | 401 | `AUTHENTICATION_REQUIRED` |
-| Wrong username or password below threshold | 401 | `AUTHENTICATION_FAILED` |
-| Missing/wrong Origin or invalid CSRF | 403 | `ORIGIN_FORBIDDEN` or `CSRF_INVALID` |
-| Route not found | 404 | `ROUTE_NOT_FOUND` |
-| Context route client absent | 404 | existing `CLIENT_NOT_FOUND` mapped into `TransportErrorV1` |
-| Login bucket reaches/is at threshold | 429 | `LOGIN_RATE_LIMITED` plus exact `Retry-After` |
-| Missing/extra/wrong-type/out-of-range request/path field | 422 | `REQUEST_SCHEMA_INVALID` or `LOGIN_REQUEST_INVALID` |
-| RIT confirmation stale context, CAS/version conflict, exhausted version, or accepted domain validation failure | 409 | exact existing RIT error code in `TransportErrorV1` |
-| Context producer accepted conflict/integrity error | 409 | exact existing producer code |
-| RIT assessment `RIT_CLIENT_ID_INVALID`, exhausted version, or dirty/non-fresh `RIT_RECORD_UNAVAILABLE` | 409 | exact existing RIT code; ordinary MISSING/STALE/INVALID/UNAVAILABLE result remains `200` |
-| RIT assessment/confirmation unsupported-dialect `RIT_RECORD_UNAVAILABLE` | 503 | exact existing RIT code |
-| RTICB `block_no_result`, including unavailable authority or identity mismatch | 200 | exact RTICB failure envelope, never 404/409/503 by reclassification |
-| Known database/rate-limit store unavailability or unsupported production database | 503 | `AUTH_RATE_LIMIT_UNAVAILABLE`, `SERVICE_UNAVAILABLE`, or exact accepted 503 code |
-| Unexpected programming/serialization/framework failure | 500 | generic `INTERNAL_ERROR` |
+Every transport failure uses exactly `TransportErrorV1`, the listed status/code/field paths, and
+`Cache-Control: no-store, private` plus `Pragma: no-cache`. “Retry” below means a caller may retry
+only after satisfying the stated condition; it is not an automatic frontend loop.
 
-`400`, `401`, `403`, `404`, `409`, `422`, `429`, `500`, and `503` use
+| Failure class | HTTP | Unique code or professional response | `field_paths` | Retry |
+|---|---:|---|---|---|
+| Login Content-Type not exactly JSON (parameters allowed only valid UTF-8 charset) | 415 | `LOGIN_CONTENT_TYPE_UNSUPPORTED` | `[]` | no; correct request |
+| Login body exceeds 8192 bytes before JSON parse | 413 | `LOGIN_BODY_TOO_LARGE` | `[]` | no; reduce body |
+| Malformed JSON/UTF-8/framing | 400 | `REQUEST_JSON_INVALID` | `[]` | no; correct request |
+| Login missing/unknown/extra/wrong-type/invalid field | 422 | `LOGIN_REQUEST_INVALID` | sorted exact `/username`, `/password`, and/or actual extra-field pointer | no; correct request |
+| Other request/path schema failure | 422 | `REQUEST_SCHEMA_INVALID` | sorted exact failing paths | no; correct request |
+| Missing/duplicate/malformed edge IP, proto, forwarded host, or ordinary Host | 400 | `EDGE_REQUEST_INVALID` | `[]` | no; deployment/client correction |
+| Wrong/missing login or unsafe-request Origin | 403 | `ORIGIN_FORBIDDEN` | `[]` | no; correct origin |
+| Wrong username or password below every threshold | 401 | `AUTHENTICATION_FAILED` | `[]` | yes; new deliberate login |
+| Bucket already/recently reaches threshold | 429 | `LOGIN_RATE_LIMITED` plus exact `Retry-After` | `[]` | only after Retry-After |
+| Limiter cleanup/store/schema/time/transaction unavailable | 503 | `AUTH_RATE_LIMIT_UNAVAILABLE` | `[]` | yes; after service recovery |
+| Protected request has no session cookie | 401 | `SESSION_MISSING` | `[]` | yes; login |
+| Bad signature, malformed/extra/wrong-type payload, wrong actor, or future-dated session | 401 | `SESSION_INVALID` | `[]` | yes; login |
+| Validly signed but expired session | 401 | `SESSION_EXPIRED` | `[]` | yes; login |
+| Missing/malformed/mismatched CSRF on unsafe authenticated request | 403 | `CSRF_INVALID` | `[]` | yes; reload session then retry deliberately |
+| Addressed client does not exist on a route that owns lookup | 404 | `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no; select valid client |
+| Stale planning-input/target identity | 409 | `PLANNING_IDENTITY_STALE` | `[]` | yes; reload context |
+| RIT record-version CAS conflict | 409 | `RIT_VERSION_CONFLICT` | `["/expected_record_version"]` | yes; reload target |
+| Accepted producer returns malformed/missing required output | 500 | `PRODUCER_RESPONSE_INVALID` | `[]` | no automatic retry |
+| Non-null producer response client differs from path | 500 | `RESPONSE_CLIENT_MISMATCH` | `[]` | no automatic retry |
+| Context database retry exhausted | 503 | `CONTEXT_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; after backoff |
+| RIT assessment database retry exhausted | 503 | `RIT_ASSESS_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; after backoff |
+| RIT confirmation database retry exhausted | 503 | `RIT_CONFIRM_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; reload before retry |
+| RTICB technical database retry exhausted before a professional envelope exists | 503 | `RTICB_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; after backoff |
+| RTICB professional `block_no_result` | 200 | exact accepted RTICB envelope | not applicable | professional workflow only |
+| Known non-limiter backend infrastructure unavailable | 503 | `BACKEND_INFRASTRUCTURE_UNAVAILABLE` | `[]` | yes; after service recovery |
+| Unexpected programming/serialization/framework failure | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
+| Authenticated unknown path | 404 | `ROUTE_NOT_FOUND` | `[]` | no |
+| Unsupported method on known route | 405 | `METHOD_NOT_ALLOWED` | `[]` | no; correct method |
+
+`400`, `401`, `403`, `404`, `405`, `409`, `413`, `415`, `422`, `429`, `500`, and `503` use
 `TransportErrorV1`, except the exact data-free health response. For an `/api` path, authentication
 precedes route-not-found disclosure, so an unauthenticated unknown API path is `401`; authenticated
 unknown paths are `404`. An accepted professional result is never converted to a transport error.
@@ -676,15 +870,15 @@ M11–M14, frozen `02M`, excluded `M08E`, and any production-readiness claim.
 | `PURE-001` | Strict config, origin, actor, login DTO, canonical IP/proxy parser, Argon2 PHC parser, session payload, expiry, cookie, and CSRF pure tests |
 | `PURE-002` | Deterministic rate-limit key/window/threshold/reset/Retry-After tests with fixed database time |
 | `API-001` | Login/session/logout ordinary, negative, cache, cookie, Origin, CSRF, expiry, copied-token, and rotation route tests |
-| `API-002` | Registered-route inventory proving every `/api` route is protected except the exact allowlist; actor/client addressing and response-identity tests |
-| `API-003` | Exact DTO/status/body tests for context, target assessment/confirmation, comparison, malformed JSON, schema errors, domain conflicts, and technical failures |
+| `API-002` | Runtime `app.routes` inventory proving the complete HTTP surface is public or protected exactly as section 7.4; actor/client addressing and response-identity tests |
+| `API-003` | Table-driven exact DTO/status/code/body/field-path/retry/cache tests for every row in section 9.4 and preservation of professional envelopes |
 | `API-004` | Spies/mutations proving exact once-only service calls, argument construction, pristine session admission, and no route-owned transaction leakage |
-| `PG-001` | Real PostgreSQL concurrent limiter threshold/upsert/lock/restart persistence and fail-closed store tests |
+| `PG-001` | Real PostgreSQL migration/schema, concurrent first-insert, threshold-crossing, recheck-after-Argon, reset order, saturation, cleanup/retention, restart persistence, and fail-closed store tests |
 | `PG-002` | Real PostgreSQL RIT confirmation/CAS/retry/actor/no-partial-write regressions through the route |
 | `PG-003` | Real PostgreSQL RTICB repeatable-read/read-only single-snapshot and no-prequery/no-second-session tests |
 | `BROWSER-001` | Hebrew RTL login/session-expiry/logout-failure/cache and no-persistent-secret tests |
 | `BROWSER-002` | Context/target/confirmation/refresh/client-switch and mixed RTICB blocker/source/reason presentation tests |
-| `DEPLOY-001` | Railway staging black-box proof of one origin, HTTPS, Host/proxy boundary, one replica/worker, shared variables, restart persistence, rotation downtime, health, cookie, CORS, and cache headers |
+| `DEPLOY-001` | Railway staging black-box proof of one FastAPI origin/service, compiled SPA routing, HTTPS, overwritten `X-Real-IP`, forbidden alternate ingress, healthcheck Host/HTTP behavior, one replica/worker, zero overlap, rotation downtime, smoke test, cookie, CORS, and cache headers |
 | `GOV-001` | Scope, dependency pin, migration count/head, protected-path, secret scanning, route inventory, and no-downstream governance tests |
 | `MUT-001` | Mutation harness recording mutant, reached-path evidence, failing ordinary oracle, restoration, and passing control |
 
@@ -711,6 +905,26 @@ self-injected expected exception is insufficient. Required mutation inventory:
 | Convert RTICB `block_no_result` to transport error | `API-003`, `BROWSER-002` |
 | Recompute/reorder/drop UI blockers/reasons or infer portfolio readiness | `BROWSER-002` |
 | Render late client-A result under B | `BROWSER-002` |
+| Skip dummy Argon2 or distinguish unknown username timing/body/logging | `API-001`, `MUT-001` |
+| Accept tampered, expired, future-dated, malformed, wrong-actor, or sliding session | `PURE-001`, `API-001`, `MUT-001` |
+| Leave one pre-existing registered data route outside authentication | `API-002`, `MUT-001` |
+| Make docs/OpenAPI public in production or authenticate/deny the login shell/assets | `API-002`, `DEPLOY-001`, `MUT-001` |
+| Apply SPA fallback to unknown API/path or embed client/auth state in public shell | `API-002`, `BROWSER-001`, `MUT-001` |
+| Let Railway health Host exception reach API/static/SPA or treat deploy check as monitoring | `DEPLOY-001`, `MUT-001` |
+| Trust forged `X-Real-IP`, XFF, `Forwarded`, or private-network header provenance | `PURE-001`, `DEPLOY-001`, `MUT-001` |
+| Hold limiter row/global lock during Argon or omit final locked threshold recheck | `PG-001`, `MUT-001` |
+| Race concurrent initial insert/threshold commit or wrap saturated counter | `PG-001`, `MUT-001` |
+| Delete current limiter row, make cleanup unbounded, or ignore cleanup failure | `PG-001`, `MUT-001` |
+| Merge ambiguous 500/503 or retry-exhaustion mappings | `API-003`, `MUT-001` |
+| Pre-query/duplicate-invoke RIT assess or allow confirm actor/client override | `API-004`, `PG-002`, `MUT-001` |
+| Reclassify context result or accept response client mismatch | `API-003`, `API-004`, `MUT-001` |
+| Permit overlapping old/new signing secrets or nonzero Railway deployment overlap | `API-001`, `DEPLOY-001`, `MUT-001` |
+
+For every row above, `MUT-001` records the concrete mutated statement/branch, executes through the
+ordinary HTTP/service/PostgreSQL/deployed path, proves the mutant line/branch was reached, observes
+the named ordinary oracle fail, restores the source, and observes the unmodified control pass.
+Mock-only reachability, a mutant-specific assertion, or an expected exception injected directly by
+the test does not satisfy the mutation contract.
 
 ## 14. Acceptance criteria
 
@@ -752,8 +966,17 @@ self-injected expected exception is insufficient. Required mutation inventory:
 | `AC-034` | Pure, API, browser, PostgreSQL, governance, mutation, and deployed-topology suites cover their assigned boundaries. | `GOV-001`, `MUT-001` |
 | `AC-035` | Every material mutation records reached-path evidence, fails its ordinary oracle, and passes after restoration. | `MUT-001` |
 | `AC-036` | Implementation changes no accepted professional authority and introduces no excluded calculation/downstream behavior. | `GOV-001`, `API-003`, `BROWSER-002` |
+| `AC-037` | Migration `b3c9d6f2a410` has exact parent/schema/check/index/downgrade and remains isolated from professional authorities. | `PG-001`, `GOV-001` |
+| `AC-038` | Limiter operations are linearizable at commit, including concurrent first insert and threshold crossing, without a database lock during Argon2. | `PG-001`, `MUT-001` |
+| `AC-039` | Failure saturation, successful reset, Retry-After, cleanup retention, and every store/cleanup failure match section 5.3. | `PURE-002`, `PG-001`, `API-001` |
+| `AC-040` | Every section 9.4 failure has its sole status/code/envelope/field-path/cache/retry behavior and professional `block_no_result` remains HTTP 200. | `API-003`, `BROWSER-002` |
+| `AC-041` | One FastAPI Railway service serves compiled SPA and API at one HTTPS origin with no alternate/private ingress. | `DEPLOY-001`, `GOV-001` |
+| `AC-042` | Client IP is derived only from Railway-edge-overwritten `X-Real-IP`; XFF/Forwarded/CF/direct/private inputs cannot forge it. | `PURE-001`, `DEPLOY-001` |
+| `AC-043` | Railway readiness uses its exact Host/HTTP exception, remains deployment-only, and startup/smoke/replica/worker/zero-overlap conditions are proven. | `DEPLOY-001` |
+| `AC-044` | Full runtime route inventory enforces the exact public data-free surface, production docs disablement, protected data routes, cache policy, and closed SPA fallback. | `API-002`, `BROWSER-001`, `DEPLOY-001` |
+| `AC-045` | All newly enumerated security/transport/deployment mutants reach and fail ordinary acceptance oracles before restoration. | `MUT-001` |
 
-Acceptance range: `AC-001` through `AC-036`; count: `36`.
+Acceptance range: `AC-001` through `AC-045`; count: `45`.
 
 ## 15. Negative acceptance criteria
 
@@ -781,8 +1004,14 @@ Acceptance range: `AC-001` through `AC-036`; count: `36`.
 | `NAC-020` | UI reorders/drops/reclassifies reasons, blockers, excluded entries, or mixed evidence. | `BROWSER-002` |
 | `NAC-021` | Directly comparable entries are presented as portfolio income/funding readiness. | `BROWSER-002` |
 | `NAC-022` | Totals, gap, funding, eligibility, normalization, tax, scenario, downstream, or production-readiness behavior is introduced. | `GOV-001`, `BROWSER-002` |
+| `NAC-023` | Limiter lock is held during Argon2, a concurrent commit can bypass threshold, or a counter wraps. | `PG-001`, `MUT-001` |
+| `NAC-024` | Cleanup deletes an active/recent row, grows without bound by contract, fails open, or blocks the whole table. | `PG-001`, `MUT-001` |
+| `NAC-025` | Any alternative status/code is selected for a section 9.4 failure or a professional envelope is reclassified. | `API-003`, `MUT-001` |
+| `NAC-026` | Separate public frontend/backend origins, alternate ingress, caller-trusted IP header, or unverified Railway edge provenance. | `DEPLOY-001`, `GOV-001` |
+| `NAC-027` | Production docs/OpenAPI, unknown SPA fallback, client-bearing public shell, or unauthenticated data route. | `API-002`, `BROWSER-001`, `MUT-001` |
+| `NAC-028` | Healthcheck Host exception reaches non-health routes, overlap is nonzero, or healthcheck is represented as continuous monitoring. | `DEPLOY-001`, `MUT-001` |
 
-Negative-acceptance range: `NAC-001` through `NAC-022`; count: `22`.
+Negative-acceptance range: `NAC-001` through `NAC-028`; count: `28`.
 
 ## 16. Deterministic implementation and deployment stop conditions
 
@@ -790,20 +1019,22 @@ Negative-acceptance range: `NAC-001` through `NAC-022`; count: `22`.
 |---|---|---|
 | `SC-001` | Repository/base/accepted upstream contract differs from the accepted implementation authorization. | `GOV-001` identity check |
 | `SC-002` | One same-origin HTTPS frontend/API topology cannot be implemented without an unaccepted architecture change. | `DEPLOY-001` topology proof |
-| `SC-003` | Actual Railway proxy CIDRs/chain cannot be identified and tested without trusting arbitrary forwarding headers. | `DEPLOY-001` proxy proof |
+| `SC-003` | Railway public ingress does not demonstrably replace caller `X-Real-IP`, or an alternate/private path reaches the listener. | `DEPLOY-001` ingress proof |
 | `SC-004` | Railway cannot enforce/read back exactly one backend replica and one worker or requires overlapping mixed-secret instances. | `DEPLOY-001` configuration readback |
 | `SC-005` | PostgreSQL limiter migration/atomic locking/database time cannot satisfy section 5.3. | `PG-001` |
 | `SC-006` | Required production secret/config input is absent/malformed or would require a committed/plaintext fallback. | `PURE-001`, startup/readiness proof |
 | `SC-007` | Pinned Argon2/signing dependency or exact cryptographic parameters cannot be installed and verified on the deployment runtime. | `PURE-001`, `DEPLOY-001` |
-| `SC-008` | Global middleware cannot protect the complete registered `/api` inventory with only the exact allowlist. | `API-002` route inventory |
+| `SC-008` | Global middleware cannot classify and protect the complete registered HTTP inventory with only the exact public allowlist. | `API-002` route inventory |
 | `SC-009` | Configured actor fails the exact RIT predicate or accepted RIT cannot receive it solely from authenticated server context. | `PURE-001`, `API-002`, `PG-002` |
 | `SC-010` | Exact DTO/status mapping would require changing an accepted Planning Input/RIT/RTISA/RTICB professional contract. | `API-003`, contract diff |
 | `SC-011` | Comparison cannot pass a pristine session to public RTICB assess without pre-query, second session, or transaction workaround. | `API-004`, `PG-003` |
 | `SC-012` | A material security/transaction/UI mutation cannot reach and fail an ordinary production-path oracle. | `MUT-001` |
 | `SC-013` | Deployment black-box evidence cannot prove HTTPS, Host/proxy, cookie, CORS, cache, limiter persistence, health, and rotation constraints. | `DEPLOY-001` |
 | `SC-014` | Implementation discovers a new professional decision, calculation authority, multi-user need, or downstream dependency. | `GOV-001` and owner/governance review |
+| `SC-015` | Railway public-edge testing does not prove caller `X-Real-IP` replacement, or an alternate/private path can reach the listener. | `DEPLOY-001` ingress proof |
+| `SC-016` | FastAPI cannot serve the exact compiled SPA/static allowlist and protected API on one Railway service without widening the public surface. | `API-002`, `DEPLOY-001` |
 
-Stop-condition range: `SC-001` through `SC-014`; count: `14`. Encountering any condition stops
+Stop-condition range: `SC-001` through `SC-016`; count: `16`. Encountering any condition stops
 implementation or deployment at that gate. It does not authorize a workaround, weaker guarantee,
 new infrastructure, or scope expansion.
 
@@ -811,8 +1042,8 @@ new infrastructure, or scope expansion.
 
 | Blocker | Definition disposition |
 |---|---|
-| `RTDIR-VS-GOV-001` | Closed by sections 13–16: contiguous unique `AC-001..036`, `NAC-001..022`, `SC-001..014`, exact counts, oracle mappings, and deterministic stop conditions. |
-| `RTDIR-VS-SEC-001` | Closed by section 5.3: exact durable PostgreSQL limiter thresholds/windows/keys/order/reset/failure/restart contract and mutation oracles. |
+| `RTDIR-VS-GOV-001` | Closed by sections 13–16: contiguous unique `AC-001..045`, `NAC-001..028`, `SC-001..016`, exact counts, oracle mappings, and deterministic stop conditions. |
+| `RTDIR-VS-SEC-001` | Closed by section 5.3 and `AC-037..039`: mandatory revision/parent, exact PostgreSQL schema, HMAC storage, bounded/saturating counters, sorted insert-and-lock primitive, no lock during Argon2, final linearization commit, concurrent insertion/crossing, cleanup/retention, reset, restart and fail-closed oracles. |
 | `RTDIR-VS-SEC-002` | Closed by sections 4–6: exact input limits, Argon2id policy, token/signature/secret/nonce/lifetime/cookie/config/startup contract. |
 | `RTDIR-VS-SEC-003` | Closed by section 6.3: single active key, stop/start rotation, no overlap/previous key, explicit copied-token behavior. |
 | `RTDIR-VS-SEC-004` | Closed by section 7.1–7.2: exact CSRF header/token binding/order/constant-time checks and closed CORS/preflight/origin policy. |
@@ -820,14 +1051,17 @@ new infrastructure, or scope expansion.
 | `RTDIR-VS-ACTOR-001` | Closed by section 8: exact RIT `_valid_actor` predicate and server-only authenticated binding. |
 | `RTDIR-VS-API-001` | Closed by section 9.2: exact two-field browser comparison DTO, forbidden caller client ID/extras, then path injection. |
 | `RTDIR-VS-API-002` | Closed by section 10: no comparison pre-query/second session/rollback workaround and exact RTICB public snapshot ownership. |
-| `RTDIR-VS-API-003` | Closed by section 9: exact DTOs, response identity, complete status mapping, precedence, professional-envelope preservation, and technical errors. |
+| `RTDIR-VS-API-003` | Closed by section 9.4 and `AC-040`: every listed failure has one status, machine code/professional response, field-path rule, retry rule, no-store behavior, and executable ordinary oracle without reclassifying `block_no_result`. |
 | `RTDIR-VS-UI-001` | Closed by section 11: deterministic multi-blocker/source/reason composition, neutral readiness, refresh/conflict/client isolation, Hebrew RTL, and logout/cache behavior. |
-| `RTDIR-VS-DEPLOY-001` | Closed at Definition level by sections 3–4: one-origin, one-replica/worker Railway topology, TLS/proxy/cookie/secrets/health/startup contracts and explicit deployment proof gate. |
-| `RTDIR-VS-TEST-001` | Closed by section 13 and mapped criteria: complete ordinary/mutation inventory separated across pure/API/browser/PostgreSQL/deployed-topology evidence. |
+| `RTDIR-VS-DEPLOY-001` | Closed at Definition level by sections 3–4 and `AC-041..043`: one FastAPI service/origin, compiled SPA plus API, public-edge-only ingress, Railway `X-Real-IP` deployment proof, exact health Host/HTTP behavior, one replica/worker, zero overlap, rotation downtime and smoke gate. |
+| `RTDIR-VS-TEST-001` | Closed by section 13 and `AC-045`: complete ordinary and reached-path mutation inventory covers all five focused surfaces and records mutant, production path, reach evidence, oracle failure, restoration and passing control. |
+| `RTDIR-VS-SEC-006` | Closed by section 7.4 and `AC-044`: exact public data-free login/static/SPA/preflight/health surface, complete protected registered-route inventory, production docs disablement, closed fallback/unknown/method behavior, Host exception and cache policy. |
 
 ## 18. Final consistency and authorization gate
 
-The thirteen reported Definition blockers are addressed by one internally consistent architecture.
+The original thirteen blockers plus focused `RTDIR-VS-SEC-006` are addressed by one internally
+consistent architecture. The five focused blockers are `SEC-001`, `API-003`, `DEPLOY-001`,
+`TEST-001`, and `SEC-006`; the nine previously closed blockers retain their accepted dispositions.
 No professional ambiguity and no additional Owner/Product Decision remains.
 
 Remaining prerequisites are deterministic implementation/deployment work, not unresolved
@@ -836,7 +1070,8 @@ Definition choices:
 1. independently accept this corrected Definition;
 2. separately authorize implementation;
 3. provision actual non-committed credentials/secrets and the canonical HTTPS origin;
-4. record and verify the actual Railway trusted-proxy boundary;
+4. prove the deployed Railway public edge overwrites caller `X-Real-IP` and that no alternate
+   ingress reaches the FastAPI listener;
 5. enforce/read back one replica and one worker;
 6. apply and validate the PostgreSQL limiter migration;
 7. execute all mapped ordinary and mutation suites; and

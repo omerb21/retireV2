@@ -168,10 +168,20 @@ defined Railway healthcheck in section 4.3. `Origin`, when required, is exact st
   authentication state.
 - Existing `GET /health` remains a public, data-free legacy liveness alias returning exactly
   `{"status":"ok"}`; it is not the Railway deployment healthcheck and performs no database query.
-- Railway deployment healthcheck path is exactly `/healthz/ready`. Railway calls it over plain HTTP
-  on the injected `PORT`, with Host `healthcheck.railway.app`. That Host exception is accepted only
-  for `GET /healthz/live`, `GET /healthz/ready`, and `GET /health`; it never applies to `/api`, SPA,
-  static, docs, or unknown paths and never authorizes forwarded client-IP input.
+- Railway's sole internal deployment-health exception is the exact tuple `GET`,
+  `/healthz/ready`, and case-insensitively parsed Host authority `healthcheck.railway.app` with no
+  port. Railway calls that tuple over plain HTTP on the injected `PORT`. The classifier uses only
+  the received method, normalized path, and Host; it deliberately ignores any supplied
+  `X-Real-IP`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `Forwarded`, `X-Forwarded-For`, and `Origin`.
+  It runs before ordinary public-edge validation and proceeds only to the request-ID/cache wrapper
+  and the data-free readiness handler. It requires no session or CSRF and discloses only the exact
+  ready/unavailable DTO above.
+- No other method, path, Host value, Host port, or health endpoint receives that exception.
+  `/healthz/live` and `/health`, login, every `/api` business route, SPA/static resources,
+  documentation/OpenAPI, and unknown paths always follow the ordinary public-edge contract. A
+  public HTTPS request to any health endpoint likewise supplies the canonical public Host and
+  valid public-edge headers and is validated normally. The exception neither widens ingress nor
+  makes caller-supplied forwarding headers authoritative.
 - A Railway healthcheck is a deployment-start gate, not continuous monitoring. Continuous uptime
   requires a separately configured external HTTPS monitor of `/healthz/ready`; absence of such a
   monitor blocks a production-readiness claim, not implementation acceptance.
@@ -260,14 +270,21 @@ the exact UTF-8 username bytes or canonical ASCII IP bytes. `bucket_key` stores
 `hmac.new(secret, preimage, sha256).hexdigest()` only; `bucket_kind` is independently checked when a
 row is loaded. No raw identifier is stored.
 
-Every required bucket operation uses this exact transaction primitive:
+Every required bucket operation uses this exact transaction primitive. A row with
+`failure_count=0` is an unanchored placeholder: its non-null `window_started_at` satisfies the
+preserved schema but has no counted-window meaning. Only the final transaction that changes zero to
+one establishes the fixed-window anchor:
 
 1. begin `READ COMMITTED`; obtain database time once;
-2. for each required key in ascending `bucket_key` order execute `INSERT ... VALUES (..., 0, NULL,
-   db_now) ON CONFLICT (bucket_key) DO NOTHING`;
+2. for each required key in ascending `bucket_key` order execute an insert whose
+   `window_started_at` and `updated_at` are `db_now`, `failure_count=0`, and `locked_until=NULL`,
+   with `ON CONFLICT (bucket_key) DO NOTHING`; this zero row is only a lockable placeholder and
+   does not start a window;
 3. select all required rows in the same order `FOR UPDATE`; a kind mismatch is store corruption;
-4. if `db_now >= window_started_at + INTERVAL '900 seconds'`, reset that row to
-   `window_started_at=db_now, failure_count=0, locked_until=NULL, updated_at=db_now`;
+4. only when `failure_count>0` and
+   `db_now >= window_started_at + INTERVAL '900 seconds'`, reset that row to
+   `failure_count=0, locked_until=NULL, updated_at=db_now`; the stored timestamp may be set to
+   `db_now`, but remains semantically unanchored while the count is zero;
 5. read or mutate the locked rows, then commit; any exception rolls back the whole operation.
 
 The unique primary key serializes concurrent first insertions: one insert wins and every contender
@@ -284,12 +301,26 @@ advisory or table/global lock. The exact login sequence is:
 5. begin a new mutation primitive for USER, IP, and GLOBAL and re-evaluate all windows/thresholds.
    If another request reached a threshold during Argon2, commit no reset/increment for this attempt
    and return `429`;
-6. on failed verification, increment all three counts using
-   `LEAST(failure_count + 1, 2147483647)`. The transition reaching a threshold sets
-   `locked_until=window_started_at + INTERVAL '900 seconds'`; saturation never wraps. Commit, then
-   return `429` if any threshold is reached, otherwise `401`;
+6. on failed verification, for each locked row first set `window_started_at` to this final
+   transaction's `db_now` whenever `failure_count=0`, then increment with the PostgreSQL-safe exact
+   expression `CASE WHEN failure_count >= 2147483647 THEN 2147483647 ELSE failure_count + 1 END`.
+   The transition reaching a threshold sets
+   `locked_until=window_started_at + INTERVAL '900 seconds'`; saturation at maximum INTEGER never
+   evaluates an overflowing addition and never wraps. Commit, then return `429` if any threshold is
+   reached, otherwise `401`;
 7. on successful verification below every threshold, delete the USER and IP rows in the same
-   locked transaction, leave GLOBAL unchanged, commit, and only then sign/issue a session.
+   locked transaction. Delete the GLOBAL row only when its locked `failure_count=0`; an existing
+   positive GLOBAL count and its original window anchor remain unchanged. Commit, and only then
+   sign/issue a session.
+
+Thus a precheck placeholder followed much later by its first failure receives the later final
+database time and the full 900 seconds. A successful login cannot leave a GLOBAL zero placeholder
+that shortens a later first-failure window, but it cannot erase a positive GLOBAL history. Precheck
+and final mutation apply the identical positive-count expiry predicate before checking thresholds;
+the final mutation alone anchors zero-to-one. Concurrent first failures serialize on the primary
+key and row lock: the first commit anchors and counts one, and the next sees that positive anchored
+row. A success/failure race is determined by the same locked commit order, and no commit can bypass
+an already reached threshold.
 
 The linearization point is the commit of the final locked decision/mutation transaction (or the
 commit of the precheck that returns an already-limited result). Thus concurrent threshold crossing
@@ -313,7 +344,8 @@ cleanup succeeds; already-authenticated professional requests remain available b
 is not their authority. It never silently disables retention. Store timeout, unavailable database,
 missing/malformed table, lock/deadlock exhaustion, transaction failure, or ambiguous database time
 has the same fail-closed login result. PostgreSQL tests must interleave concurrent first insertion,
-threshold crossing, success/failure reset order, saturation, cleanup/`SKIP LOCKED`, restart
+threshold crossing, success/failure reset order, zero-placeholder anchoring, the exact
+`2147483647` saturation case, cleanup/`SKIP LOCKED`, restart
 persistence, scheduled cleanup failure/recovery, and injected store failure; each asserts committed
 rows and returned status, not only mocked calls.
 
@@ -407,13 +439,17 @@ on a safe browser request it must also match exactly.
 
 Semantic middleware order is mandatory:
 
-1. Railway public-edge provenance/protocol/Host validation;
-2. request-ID and response-cache wrapper;
-3. exact CORS preflight handling;
-4. route allowlist and signed-session authentication;
-5. Origin and CSRF validation;
-6. JSON/DTO validation; and
-7. route and accepted service execution.
+1. classify the exact internal Railway readiness tuple from section 4.3; a match bypasses the
+   ordinary public-edge/CORS/authentication/Origin/CSRF/DTO steps and goes only through step 3 and
+   then the exact readiness handler in step 8;
+2. for every non-matching request, perform Railway public-edge provenance/protocol/forwarded-Host/
+   ordinary-Host validation;
+3. request-ID and response-cache wrapper;
+4. exact CORS preflight handling;
+5. route allowlist and signed-session authentication;
+6. Origin and CSRF validation;
+7. JSON/DTO validation; and
+8. route and accepted service execution.
 
 Framework registration order must be tested to prove this runtime order rather than inferred from
 source order.
@@ -468,7 +504,9 @@ The complete unauthenticated production allowlist is:
   absent from the manifest are never served;
 - `POST /api/auth/login`;
 - valid CORS `OPTIONS` under section 7.2; and
-- `GET`/`HEAD /health`, `/healthz/live`, and `/healthz/ready` under section 4.3.
+- public `GET`/`HEAD /health`, `/healthz/live`, and `/healthz/ready` under the ordinary public-edge
+  contract in section 4.3; the internal Railway exception is separately limited to exact
+  `GET /healthz/ready` and its exact internal Host.
 
 The public shell and static assets contain no client data, actor value, username, credential,
 secret, CSRF, environment value, or serialized authenticated state. Public immutable hashed assets
@@ -530,7 +568,8 @@ classifies it.
 Unknown `/api/*` requests authenticate first, then return `404 ROUTE_NOT_FOUND`. Unknown non-API
 paths do not receive SPA fallback and return the same 404 envelope after the public-route matcher.
 Methods not registered on a known path return `405 METHOD_NOT_ALLOWED`; they never fall through to
-`index.html`. The healthcheck Host exception cannot reach any route outside the three health paths.
+`index.html`. The internal Railway exception can reach only exact `GET /healthz/ready`; the two
+other public health routes use ordinary public-edge validation.
 
 ## 8. Trusted professional actor and client addressing
 
@@ -722,7 +761,8 @@ and no value, null, list order, enum, blocker, reason, or fingerprint is repaire
 ### 9.4 Exact status mapping and precedence
 
 Authentication/transport checks precede route semantics. The first failing layer determines the
-response. Precedence is exactly: public-edge/proto/forwarded-host/Host; public/preflight/protected
+response. Precedence is exactly: exact internal-Railway-readiness tuple classification; otherwise
+public-edge/proto/forwarded-host/Host; public/preflight/protected
 classification; CORS preflight; Origin where required; login Content-Type and byte limit; session;
 CSRF; JSON framing; path/query/body schema; client/address identity; accepted service execution;
 producer shape/response identity; known infrastructure mapping; unexpected failure. For an unknown
@@ -750,14 +790,14 @@ only after satisfying the stated condition; it is not an automatic frontend loop
 | Validly signed but expired session | 401 | `SESSION_EXPIRED` | `[]` | yes; login |
 | Missing/malformed/mismatched CSRF on unsafe authenticated request | 403 | `CSRF_INVALID` | `[]` | yes; reload session then retry deliberately |
 | Addressed client does not exist on a route that owns lookup | 404 | `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no; select valid client |
-| Stale planning-input/target identity | 409 | `PLANNING_IDENTITY_STALE` | `[]` | yes; reload context |
-| RIT record-version CAS conflict | 409 | `RIT_VERSION_CONFLICT` | `["/expected_record_version"]` | yes; reload target |
 | Accepted producer returns malformed/missing required output | 500 | `PRODUCER_RESPONSE_INVALID` | `[]` | no automatic retry |
 | Non-null producer response client differs from path | 500 | `RESPONSE_CLIENT_MISMATCH` | `[]` | no automatic retry |
-| Context database retry exhausted | 503 | `CONTEXT_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; after backoff |
+| Context database/transaction failure; Planning Input has no retry loop | 503 | `CONTEXT_DATABASE_FAILURE` | `[]` | yes; after service recovery and deliberate reload |
 | RIT assessment database retry exhausted | 503 | `RIT_ASSESS_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; after backoff |
 | RIT confirmation database retry exhausted | 503 | `RIT_CONFIRM_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; reload before retry |
-| RTICB technical database retry exhausted before a professional envelope exists | 503 | `RTICB_DATABASE_RETRY_EXHAUSTED` | `[]` | yes; after backoff |
+| RIT assessment non-retryable database failure | 503 | `RIT_ASSESS_DATABASE_FAILURE` | `[]` | yes; after service recovery |
+| RIT confirmation non-retryable database failure | 503 | `RIT_CONFIRM_DATABASE_FAILURE` | `[]` | yes; after service recovery and reload |
+| RTICB technical database/transaction failure; RTICB has no retry loop | 503 | `RTICB_DATABASE_FAILURE` | `[]` | yes; after service recovery and deliberate rerun |
 | RTICB professional `block_no_result` | 200 | exact accepted RTICB envelope | not applicable | professional workflow only |
 | Known non-limiter backend infrastructure unavailable | 503 | `BACKEND_INFRASTRUCTURE_UNAVAILABLE` | `[]` | yes; after service recovery |
 | Unexpected programming/serialization/framework failure | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
@@ -769,6 +809,135 @@ only after satisfying the stated condition; it is not an automatic frontend loop
 precedes route-not-found disclosure, so an unauthenticated unknown API path is `401`; authenticated
 unknown paths are `404`. An accepted professional result is never converted to a transport error.
 A returned client identity is never rewritten to match the path.
+
+### 9.5 Exhaustive accepted-producer failure inventory
+
+The tables below are derived from the current producer implementations. “Final” is the sole API
+adapter result. Every transport row returns `TransportErrorV1` with `Cache-Control: no-store,
+private` and `Pragma: no-cache`; every professional HTTP-200 row returns the producer envelope
+unchanged with the same cache headers. There is no route-level retry and each producer is invoked
+once. A retry permission means a later deliberate request under the stated condition, never an
+automatic browser loop.
+
+#### Planning Input and retirement-target-date producer errors
+
+| Originating producer / route | Original code or failure | HTTP / final code | Exact `field_paths` | Retry |
+|---|---|---|---|---|
+| Planning Input read `/context` | `CLIENT_NOT_FOUND` | 404 / `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no; choose an existing client |
+| Planning Input read `/context` | `SNAPSHOT_REQUIRES_FRESH_TRANSACTION` | 409 / `SNAPSHOT_REQUIRES_FRESH_TRANSACTION` | `[]` | no automatic retry; route/session invariant must be restored |
+| Planning Input read `/context` | `UNSUPPORTED_DATABASE` | 503 / `UNSUPPORTED_DATABASE` | `[]` | after supported service recovery |
+| Planning Input derivation | `SOURCE_STRUCTURE_INVALID`, `BASIS_SOURCE_STRUCTURE_INVALID`, `TEMPORAL_SOURCE_STRUCTURE_INVALID`, `RESOLUTION_OWNERSHIP_INVALID`, or `TARGET_REFERENCE_STRUCTURE_INVALID` | 409 / original code unchanged | `[]` | after authoritative data repair, then reload |
+| Planning Input base-date/income-resolution mutation | `PLANNING_DECISION_STALE` | 409 / `PLANNING_DECISION_STALE` | `["/expected_version"]` | reload context before deliberate retry |
+| Planning Input income-resolution mutation | `INCOME_SOURCE_STALE` | 409 / `INCOME_SOURCE_STALE` | `["/expected_income_fingerprint"]` | reload context before deliberate retry |
+| Planning Input income-resolution mutation | `INCOME_NOT_PENSION` | 409 / `INCOME_NOT_PENSION` | `["/decision_kind"]` | correct the decision after reload |
+| Planning Input income-resolution mutation | `CANONICAL_PENSION_NOT_CURRENT` | 409 / `CANONICAL_PENSION_NOT_CURRENT` | `["/canonical_source_id"]` | select a current source after reload |
+| Planning Input income-resolution mutation | `CANONICAL_PENSION_STALE` | 409 / `CANONICAL_PENSION_STALE` | `["/expected_canonical_fingerprint"]` | reload before deliberate retry |
+| Planning Input income-resolution mutation | `RESOLUTION_OWNERSHIP_INVALID` | 409 / `RESOLUTION_OWNERSHIP_INVALID` | `[]` | only after authoritative data repair |
+| retirement-target-date mutation | `TARGET_REQUIRES_FRESH_TRANSACTION` | 409 / `TARGET_REQUIRES_FRESH_TRANSACTION` | `[]` | no automatic retry; supply a pristine route-owned session |
+| retirement-target-date mutation | `PLANNING_DECISION_STALE` | 409 / `PLANNING_DECISION_STALE` | `["/expected_version"]` | reload context before deliberate retry |
+| retirement-target-date mutation | `TARGET_REFERENCE_STATE_STALE` | 409 / `TARGET_REFERENCE_STATE_STALE` | `["/expected_target_reference_fingerprint"]` | reload context before deliberate retry |
+| retirement-target-date mutation | `CLIENT_NOT_FOUND`, `UNSUPPORTED_DATABASE`, `SOURCE_STRUCTURE_INVALID`, or `TARGET_REFERENCE_STRUCTURE_INVALID` | original 404/503/409 / original code unchanged | client-not-found uses `["/path/client_id"]`; otherwise `[]` | only after the named condition is corrected |
+| Planning Input read `/context` | raw SQLAlchemy/driver transaction failure | 503 / `CONTEXT_DATABASE_FAILURE` | `[]` | after service recovery and deliberate reload; no retry occurred |
+| Planning Input base-date/income-resolution adapter | existing generic `_write` `PRODUCT_INTEGRITY_CONFLICT` from `IntegrityError` | 409 / `PLANNING_MUTATION_INTEGRITY_CONFLICT` | `[]` | reload context, then deliberate retry if still applicable |
+| Planning Input base-date/income-resolution adapter | existing generic `_write` `PRODUCT_TRANSACTION_RETRY` from `OperationalError`; no loop exists | 503 / `PLANNING_MUTATION_DATABASE_FAILURE` | `[]` | after service recovery and deliberate reload; no retry occurred |
+| retirement-target-date adapter | existing `TARGET_DECISION_TRANSACTION_RETRY` from `OperationalError`; no loop exists | 503 / `TARGET_DECISION_TRANSACTION_FAILURE` | `[]` | after service recovery and deliberate reload; no retry occurred |
+
+The existing Planning Input producer also exposes projection-basis/execution routes, but they are
+not invoked by these four vertical-slice routes and therefore are not fictitiously mapped here.
+The stale mutation codes are included because the accepted UI can reach the existing planning and
+target-date authority mutations before reloading `/context`.
+
+#### RIT assessment and confirmation transport errors
+
+| Originating producer | Original code/failure | HTTP / final code | Exact `field_paths` | Retry |
+|---|---|---|---|---|
+| RIT assess or confirm | `RIT_CLIENT_ID_INVALID` | 404 / `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no; choose an existing client |
+| RIT assess or confirm | `RIT_RECORD_UNAVAILABLE` with status 409 | 409 / `RIT_RECORD_UNAVAILABLE` | `[]` | only with a pristine session, then deliberate retry |
+| RIT assess or confirm | `RIT_RECORD_UNAVAILABLE` with status 503 | 503 / `RIT_UNSUPPORTED_DATABASE` | `[]` | after supported service recovery |
+| RIT confirm command (strict string reaches producer validation) | `RIT_AMOUNT_INVALID` or `RIT_AMOUNT_PRECISION_UNSUPPORTED` | 422 / original code unchanged | `["/monthly_amount"]` | correct request |
+| RIT confirm command (cross-field semantic rule) | `RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL` or `RIT_PRICE_REFERENCE_DATE_MISSING` | 422 / original code unchanged | `["/price_reference_date"]` | correct request |
+| RIT confirm | `RIT_CONFIRMATION_CONTEXT_STALE` | 409 / `RIT_CONFIRMATION_CONTEXT_STALE` | `["/expected_planning_calculation_input_fingerprint","/expected_retirement_target_date"]` | reload context and target |
+| RIT confirm | `RIT_RECORD_VERSION_CONFLICT` | 409 / `RIT_RECORD_VERSION_CONFLICT` | `["/expected_record_version"]` | reload target before deliberate retry |
+| RIT assess or confirm | `RIT_RECORD_VERSION_EXHAUSTED` | 409 / `RIT_RECORD_VERSION_EXHAUSTED` | `[]` | no; governance/data intervention required |
+| RIT context | `RIT_PLANNING_CONTEXT_UNAVAILABLE`, `RIT_PLANNING_CONTEXT_INVALID`, or `RIT_RETIREMENT_TARGET_NOT_READY` when raised during confirm | 409 / original code unchanged | `[]` | reload/resolve professional context before retry |
+| RIT internal retry loop | retryable SQLSTATE `40001`/`40P01`, the accepted target primary-key `23505`, or accepted SQLite busy/locked still raised after attempt 3 | 503 / assess: `RIT_ASSESS_DATABASE_RETRY_EXHAUSTED`; confirm: `RIT_CONFIRM_DATABASE_RETRY_EXHAUSTED` | `[]` | assess after backoff; confirm only after reload |
+| RIT internal retry loop | any other raised `OperationalError`, `IntegrityError`, or `DBAPIError` | 503 / assess: `RIT_ASSESS_DATABASE_FAILURE`; confirm: `RIT_CONFIRM_DATABASE_FAILURE` | `[]` | after service recovery; confirm reloads first |
+
+The following producer command codes are impossible on this route and therefore have no fictitious
+transport mapping. Missing/wrong-type/out-of-range `monthly_amount`, `income_basis`, `price_basis`,
+`price_reference_date`, `expected_record_version`, expected fingerprint/date, or `source_kind` is
+rejected first as `422 REQUEST_SCHEMA_INVALID` with the exact affected body pointers. Consequently
+RIT is not invoked and cannot emit `RIT_AMOUNT_MISSING`, `RIT_INCOME_BASIS_MISSING`,
+`RIT_INCOME_BASIS_INVALID`, `RIT_PRICE_BASIS_MISSING`, `RIT_PRICE_BASIS_INVALID`,
+`RIT_PRICE_REFERENCE_DATE_INVALID`, `RIT_TARGET_RECORD_INVALID`, or command-derived
+`RIT_PLANNING_CONTEXT_INVALID`. `RIT_COMMAND_SCHEMA_INVALID` and command-side
+`RIT_CLIENT_ID_INVALID` are impossible because the adapter constructs the exact complete command,
+injects a validated positive path ID, and forbids extra browser fields. `RIT_CONFIRMATION_INVALID`
+from `source_kind` is impossible because the DTO accepts only the three producer literals; its actor
+variant is impossible because startup requires exact `_valid_actor` conformance and the browser
+cannot supply the actor. Failure of the construction/actor proof is `500 PRODUCER_RESPONSE_INVALID`,
+not a fabricated producer transport mapping. Context-derived `RIT_PLANNING_CONTEXT_INVALID` remains
+the route-reachable 409 row above with empty field paths because it is not caused by browser fields.
+
+RIT assessment represents these accepted professional blockers inside its exact HTTP-200 result,
+never as transport errors: `RIT_CLIENT_ID_INVALID`, `RIT_PLANNING_CONTEXT_UNAVAILABLE`,
+`RIT_PLANNING_CONTEXT_INVALID`, `RIT_RETIREMENT_TARGET_NOT_READY`, `RIT_TARGET_MISSING`,
+`RIT_CONFIRMATION_MISSING`, `RIT_TARGET_RECORD_INVALID`, `RIT_CONFIRMATION_INVALID`,
+`RIT_AMOUNT_MISSING`, `RIT_AMOUNT_INVALID`, `RIT_AMOUNT_PRECISION_UNSUPPORTED`,
+`RIT_CURRENCY_INVALID`, `RIT_INCOME_BASIS_MISSING`, `RIT_INCOME_BASIS_INVALID`,
+`RIT_PRICE_BASIS_MISSING`, `RIT_PRICE_BASIS_INVALID`,
+`RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL`, `RIT_PRICE_REFERENCE_DATE_MISSING`,
+`RIT_TARGET_CLIENT_MISMATCH`, `RIT_STORED_FINGERPRINT_MISMATCH`, `RIT_PLANNING_IDENTITY_STALE`,
+`RIT_RETIREMENT_TARGET_STALE`, and `RIT_RECONFIRMATION_REQUIRED`. Their envelope is the exact RIT
+result, their field paths are not applicable, and retry is professional resolution or explicit
+reload only.
+
+#### RTICB execution
+
+RTICB returns HTTP 200 with the exact accepted `block_no_result` envelope for every one of these
+route-reachable failure-detail codes; `field_paths` and transport retry are not applicable:
+
+- request validation: `RTICB_REQUEST_SCHEMA_INVALID`, `RTICB_CLIENT_ID_INVALID`,
+  `RTICB_EXPECTED_PLANNING_FINGERPRINT_INVALID`, `RTICB_EXPECTED_RETIREMENT_TARGET_DATE_INVALID`;
+- snapshot admission: `RTICB_REQUIRES_FRESH_TRANSACTION`, `RTICB_UNSUPPORTED_DATABASE`;
+- target authority: `RTICB_TARGET_AUTHORITY_SCHEMA_INVALID`,
+  `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID`, `RTICB_TARGET_AUTHORITY_UNAVAILABLE`,
+  `RTICB_TARGET_AUTHORITY_NOT_READY`;
+- RTISA authority: `RTICB_RTISA_AUTHORITY_SCHEMA_INVALID`,
+  `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID`, `RTICB_RTISA_AUTHORITY_UNAVAILABLE`,
+  `RTICB_RTISA_AUTHORITY_NOT_READY`;
+- cross-authority/source evidence: `RTICB_CLIENT_ID_MISMATCH`,
+  `RTICB_PLANNING_IDENTITY_MISMATCH`, `RTICB_RETIREMENT_TARGET_DATE_MISMATCH`,
+  `RTICB_SOURCE_UNIVERSE_INVALID`, `RTICB_SOURCE_COVERAGE_MISMATCH`, and
+  `RTICB_SOURCE_BASIS_EVIDENCE_INVALID`.
+
+The adapter's strict two-field body and positive path-ID validation make the four request-validation
+codes unreachable through a valid constructed call; malformed browser input instead receives
+`422 REQUEST_SCHEMA_INVALID` with its exact request pointers before RTICB invocation. All remaining
+codes are preserved value-for-value in the professional envelope. Classification/reason codes such
+as `RTICB_SOURCE_NOT_ADMITTED`, `RTICB_INCOME_BASIS_UNKNOWN`,
+`RTICB_INCOME_BASIS_MISMATCH`, `RTICB_PRICE_BASIS_UNKNOWN`, `RTICB_PRICE_BASIS_MISMATCH`,
+`RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`, `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`,
+`RTICB_NORMALIZATION_REQUIRED`, and `RTICB_BASIS_UNRESOLVED` are successful professional evidence,
+not failures.
+
+RTICB owns one snapshot and implements no retry loop. A raw database/transaction exception before a
+professional result is therefore `503 RTICB_DATABASE_FAILURE`, `field_paths=[]`, and may be
+deliberately retried only after service recovery. `RTICB_DATABASE_RETRY_EXHAUSTED` is forbidden
+because no retry occurred. Likewise, Planning Input read has no retry loop, so
+`CONTEXT_DATABASE_RETRY_EXHAUSTED` is forbidden. These mappings preserve once-only invocation and
+do not wrap, reset, or retry an accepted service transaction.
+
+Two non-database exceptions can also escape the actual RTICB call chain. A target assessment that
+projects a stale transition at maximum version raises original `RIT_RECORD_VERSION_EXHAUSTED`; the
+comparison route returns `409 RIT_RECORD_VERSION_EXHAUSTED`, `field_paths=[]`, with no retry until
+governance/data intervention. RTISA can raise
+`RetirementTargetIncomeSourceAdmissionTechnicalError` only for the exact accepted tuples
+`PORTFOLIO_SOURCE_EXECUTION_ERROR/source_execution/PTE_EXECUTOR_EXCEPTION` and
+`PORTFOLIO_IDENTITY_ERROR/portfolio_identity/PORTFOLIO_EXECUTION_IDENTITY_ASSEMBLY_FAILED`; the
+route returns `503 RTICB_UPSTREAM_TECHNICAL_FAILURE`, `field_paths=[]`, and permits a deliberate
+rerun only after upstream recovery. Both use `TransportErrorV1` and the mandatory no-store headers;
+neither is converted into `block_no_result` or described as retry exhaustion.
 
 ## 10. Database transaction and RTICB snapshot ownership
 
@@ -871,14 +1040,14 @@ M11–M14, frozen `02M`, excluded `M08E`, and any production-readiness claim.
 | `PURE-002` | Deterministic rate-limit key/window/threshold/reset/Retry-After tests with fixed database time |
 | `API-001` | Login/session/logout ordinary, negative, cache, cookie, Origin, CSRF, expiry, copied-token, and rotation route tests |
 | `API-002` | Runtime `app.routes` inventory proving the complete HTTP surface is public or protected exactly as section 7.4; actor/client addressing and response-identity tests |
-| `API-003` | Table-driven exact DTO/status/code/body/field-path/retry/cache tests for every row in section 9.4 and preservation of professional envelopes |
+| `API-003` | Table-driven exact DTO/status/code/body/field-path/retry/cache tests for every row and producer code in sections 9.4–9.5, including unreachable-code proofs and preservation of professional envelopes |
 | `API-004` | Spies/mutations proving exact once-only service calls, argument construction, pristine session admission, and no route-owned transaction leakage |
 | `PG-001` | Real PostgreSQL migration/schema, concurrent first-insert, threshold-crossing, recheck-after-Argon, reset order, saturation, cleanup/retention, restart persistence, and fail-closed store tests |
 | `PG-002` | Real PostgreSQL RIT confirmation/CAS/retry/actor/no-partial-write regressions through the route |
 | `PG-003` | Real PostgreSQL RTICB repeatable-read/read-only single-snapshot and no-prequery/no-second-session tests |
 | `BROWSER-001` | Hebrew RTL login/session-expiry/logout-failure/cache and no-persistent-secret tests |
 | `BROWSER-002` | Context/target/confirmation/refresh/client-switch and mixed RTICB blocker/source/reason presentation tests |
-| `DEPLOY-001` | Railway staging black-box proof of one FastAPI origin/service, compiled SPA routing, HTTPS, overwritten `X-Real-IP`, forbidden alternate ingress, healthcheck Host/HTTP behavior, one replica/worker, zero overlap, rotation downtime, smoke test, cookie, CORS, and cache headers |
+| `DEPLOY-001` | Railway staging black-box proof of one FastAPI origin/service, compiled SPA routing, HTTPS, overwritten `X-Real-IP`, forbidden alternate ingress, exact internal `GET /healthz/ready` Host/HTTP exception before public-edge validation, ordinary public health behavior, one replica/worker, zero overlap, rotation downtime, smoke test, cookie, CORS, and cache headers |
 | `GOV-001` | Scope, dependency pin, migration count/head, protected-path, secret scanning, route inventory, and no-downstream governance tests |
 | `MUT-001` | Mutation harness recording mutant, reached-path evidence, failing ordinary oracle, restoration, and passing control |
 
@@ -910,7 +1079,7 @@ self-injected expected exception is insufficient. Required mutation inventory:
 | Leave one pre-existing registered data route outside authentication | `API-002`, `MUT-001` |
 | Make docs/OpenAPI public in production or authenticate/deny the login shell/assets | `API-002`, `DEPLOY-001`, `MUT-001` |
 | Apply SPA fallback to unknown API/path or embed client/auth state in public shell | `API-002`, `BROWSER-001`, `MUT-001` |
-| Let Railway health Host exception reach API/static/SPA or treat deploy check as monitoring | `DEPLOY-001`, `MUT-001` |
+| Widen the exact internal Railway readiness tuple to another method/path/Host, let it reach API/static/SPA/docs/unknown, or treat deploy check as monitoring | `DEPLOY-001`, `MUT-001` |
 | Trust forged `X-Real-IP`, XFF, `Forwarded`, or private-network header provenance | `PURE-001`, `DEPLOY-001`, `MUT-001` |
 | Hold limiter row/global lock during Argon or omit final locked threshold recheck | `PG-001`, `MUT-001` |
 | Race concurrent initial insert/threshold commit or wrap saturated counter | `PG-001`, `MUT-001` |
@@ -919,6 +1088,44 @@ self-injected expected exception is insufficient. Required mutation inventory:
 | Pre-query/duplicate-invoke RIT assess or allow confirm actor/client override | `API-004`, `PG-002`, `MUT-001` |
 | Reclassify context result or accept response client mismatch | `API-003`, `API-004`, `MUT-001` |
 | Permit overlapping old/new signing secrets or nonzero Railway deployment overlap | `API-001`, `DEPLOY-001`, `MUT-001` |
+
+The following directly affected ordinary and mutation obligations are mandatory and are not
+satisfied by the broader labels alone:
+
+A. create a zero-count precheck placeholder, delay, then fail authentication; ordinary PostgreSQL
+   evidence proves the first counted window starts at the final transaction time. Mutating the
+   implementation to retain the precheck timestamp must be reached and fail `PURE-002`/`PG-001`;
+B. perform a successful login that created a GLOBAL zero placeholder, delay, then produce the first
+   failure; ordinary evidence proves the zero GLOBAL row was deleted or re-anchored on zero-to-one,
+   while a parallel case proves a positive GLOBAL row survives success unchanged. Mutating either
+   branch must fail `PG-001`/`API-001`;
+C. cover expired zero-count and positive-count rows in both precheck and final mutation. Zero is
+   always unanchored; expired positive resets before decision and re-anchors only on a new failure.
+   A divergent expiry predicate mutation must fail `PURE-002`/`PG-001`;
+D. seed `failure_count=2147483647`, execute an actual failed-login mutation, and prove no PostgreSQL
+   overflow and exact saturation. Replacing the CASE with INTEGER addition-before-clamp must reach
+   the SQL path and fail `PG-001`;
+E. interleave concurrent first failures and threshold-crossing success/failure attempts after the
+   anchor correction, proving one commit order, one shared anchor, atomic threshold visibility, and
+   no session issuance after the winning threshold commit. Removing the final locked recheck or
+   zero-to-one anchor branch must fail the ordinary concurrency oracle;
+F. table-drive every section 9.5 Planning Input and RIT producer code through its actual public
+   route or prove the stated pre-service impossibility; assert originating code, final HTTP/code,
+   exact field paths, retry permission, envelope, and cache headers. Substituting, merging, or
+   omitting any mapping must fail `API-003`;
+G. inject a real route-reachable database exception into Planning Input context and RTICB execution;
+   prove one producer call and exact `CONTEXT_DATABASE_FAILURE`/`RTICB_DATABASE_FAILURE`, with no
+   invented retry-exhausted code. Adding a route retry or the forbidden code must fail
+   `API-003`/`API-004`/`PG-003`;
+H. in deployed topology, send exact internal `GET /healthz/ready` with Host
+   `healthcheck.railway.app` and none of `X-Real-IP`, forwarded proto/host, Origin, session, or CSRF;
+   prove it reaches only the data-free readiness handler before ordinary edge validation. Moving
+   the classifier after edge validation must fail `DEPLOY-001`;
+I. attempt forged/malformed variants: wrong method, other health path, Host with port/suffix,
+   canonical public Host over internal HTTP, and exact health Host aimed at login, API, SPA/static,
+   docs/OpenAPI, and unknown paths. Every variant must follow the ordinary edge/public/protected
+   contract and disclose no data; widening method/path/Host or trusting supplied forwarding headers
+   must fail `API-002`/`DEPLOY-001`/`MUT-001`.
 
 For every row above, `MUT-001` records the concrete mutated statement/branch, executes through the
 ordinary HTTP/service/PostgreSQL/deployed path, proves the mutant line/branch was reached, observes
@@ -969,10 +1176,10 @@ the test does not satisfy the mutation contract.
 | `AC-037` | Migration `b3c9d6f2a410` has exact parent/schema/check/index/downgrade and remains isolated from professional authorities. | `PG-001`, `GOV-001` |
 | `AC-038` | Limiter operations are linearizable at commit, including concurrent first insert and threshold crossing, without a database lock during Argon2. | `PG-001`, `MUT-001` |
 | `AC-039` | Failure saturation, successful reset, Retry-After, cleanup retention, and every store/cleanup failure match section 5.3. | `PURE-002`, `PG-001`, `API-001` |
-| `AC-040` | Every section 9.4 failure has its sole status/code/envelope/field-path/cache/retry behavior and professional `block_no_result` remains HTTP 200. | `API-003`, `BROWSER-002` |
+| `AC-040` | Every sections 9.4–9.5 failure has its sole producer, original/final code, status, envelope, field-path, cache, and retry behavior; impossible codes have executable proofs and professional `block_no_result` remains HTTP 200. | `API-003`, `BROWSER-002` |
 | `AC-041` | One FastAPI Railway service serves compiled SPA and API at one HTTPS origin with no alternate/private ingress. | `DEPLOY-001`, `GOV-001` |
 | `AC-042` | Client IP is derived only from Railway-edge-overwritten `X-Real-IP`; XFF/Forwarded/CF/direct/private inputs cannot forge it. | `PURE-001`, `DEPLOY-001` |
-| `AC-043` | Railway readiness uses its exact Host/HTTP exception, remains deployment-only, and startup/smoke/replica/worker/zero-overlap conditions are proven. | `DEPLOY-001` |
+| `AC-043` | Only internal `GET /healthz/ready` with exact `healthcheck.railway.app` Host bypasses ordinary forwarding/session checks before public-edge validation; public health requests remain ordinary, and startup/smoke/replica/worker/zero-overlap conditions are proven. | `DEPLOY-001` |
 | `AC-044` | Full runtime route inventory enforces the exact public data-free surface, production docs disablement, protected data routes, cache policy, and closed SPA fallback. | `API-002`, `BROWSER-001`, `DEPLOY-001` |
 | `AC-045` | All newly enumerated security/transport/deployment mutants reach and fail ordinary acceptance oracles before restoration. | `MUT-001` |
 
@@ -1006,10 +1213,10 @@ Acceptance range: `AC-001` through `AC-045`; count: `45`.
 | `NAC-022` | Totals, gap, funding, eligibility, normalization, tax, scenario, downstream, or production-readiness behavior is introduced. | `GOV-001`, `BROWSER-002` |
 | `NAC-023` | Limiter lock is held during Argon2, a concurrent commit can bypass threshold, or a counter wraps. | `PG-001`, `MUT-001` |
 | `NAC-024` | Cleanup deletes an active/recent row, grows without bound by contract, fails open, or blocks the whole table. | `PG-001`, `MUT-001` |
-| `NAC-025` | Any alternative status/code is selected for a section 9.4 failure or a professional envelope is reclassified. | `API-003`, `MUT-001` |
+| `NAC-025` | Any alternative status/code is selected for a sections 9.4–9.5 failure or a professional envelope is reclassified. | `API-003`, `MUT-001` |
 | `NAC-026` | Separate public frontend/backend origins, alternate ingress, caller-trusted IP header, or unverified Railway edge provenance. | `DEPLOY-001`, `GOV-001` |
 | `NAC-027` | Production docs/OpenAPI, unknown SPA fallback, client-bearing public shell, or unauthenticated data route. | `API-002`, `BROWSER-001`, `MUT-001` |
-| `NAC-028` | Healthcheck Host exception reaches non-health routes, overlap is nonzero, or healthcheck is represented as continuous monitoring. | `DEPLOY-001`, `MUT-001` |
+| `NAC-028` | Internal readiness exception accepts anything other than exact `GET /healthz/ready` plus exact internal Host, reaches another route, overlap is nonzero, or deploy health is represented as continuous monitoring. | `DEPLOY-001`, `MUT-001` |
 
 Negative-acceptance range: `NAC-001` through `NAC-028`; count: `28`.
 
@@ -1031,7 +1238,7 @@ Negative-acceptance range: `NAC-001` through `NAC-028`; count: `28`.
 | `SC-012` | A material security/transaction/UI mutation cannot reach and fail an ordinary production-path oracle. | `MUT-001` |
 | `SC-013` | Deployment black-box evidence cannot prove HTTPS, Host/proxy, cookie, CORS, cache, limiter persistence, health, and rotation constraints. | `DEPLOY-001` |
 | `SC-014` | Implementation discovers a new professional decision, calculation authority, multi-user need, or downstream dependency. | `GOV-001` and owner/governance review |
-| `SC-015` | Railway public-edge testing does not prove caller `X-Real-IP` replacement, or an alternate/private path can reach the listener. | `DEPLOY-001` ingress proof |
+| `SC-015` | Railway's deployed internal healthcheck method/path/Host behavior differs from the exact tuple in section 4.3, so the narrow pre-edge exception cannot be distinguished without widening the public surface. | `DEPLOY-001` internal-health black-box proof |
 | `SC-016` | FastAPI cannot serve the exact compiled SPA/static allowlist and protected API on one Railway service without widening the public surface. | `API-002`, `DEPLOY-001` |
 
 Stop-condition range: `SC-001` through `SC-016`; count: `16`. Encountering any condition stops
@@ -1043,7 +1250,7 @@ new infrastructure, or scope expansion.
 | Blocker | Definition disposition |
 |---|---|
 | `RTDIR-VS-GOV-001` | Closed by sections 13–16: contiguous unique `AC-001..045`, `NAC-001..028`, `SC-001..016`, exact counts, oracle mappings, and deterministic stop conditions. |
-| `RTDIR-VS-SEC-001` | Closed by section 5.3 and `AC-037..039`: mandatory revision/parent, exact PostgreSQL schema, HMAC storage, bounded/saturating counters, sorted insert-and-lock primitive, no lock during Argon2, final linearization commit, concurrent insertion/crossing, cleanup/retention, reset, restart and fail-closed oracles. |
+| `RTDIR-VS-SEC-001` | Closed by section 5.3 and `AC-037..039`: zero rows are unanchored placeholders, zero-to-one uses final database time, success removes only GLOBAL zero while preserving positive GLOBAL history, positive expiry is identical in both transactions, the exact CASE saturates maximum INTEGER without overflow, and sorted locking/final recheck preserves concurrent linearizability. |
 | `RTDIR-VS-SEC-002` | Closed by sections 4–6: exact input limits, Argon2id policy, token/signature/secret/nonce/lifetime/cookie/config/startup contract. |
 | `RTDIR-VS-SEC-003` | Closed by section 6.3: single active key, stop/start rotation, no overlap/previous key, explicit copied-token behavior. |
 | `RTDIR-VS-SEC-004` | Closed by section 7.1–7.2: exact CSRF header/token binding/order/constant-time checks and closed CORS/preflight/origin policy. |
@@ -1051,18 +1258,29 @@ new infrastructure, or scope expansion.
 | `RTDIR-VS-ACTOR-001` | Closed by section 8: exact RIT `_valid_actor` predicate and server-only authenticated binding. |
 | `RTDIR-VS-API-001` | Closed by section 9.2: exact two-field browser comparison DTO, forbidden caller client ID/extras, then path injection. |
 | `RTDIR-VS-API-002` | Closed by section 10: no comparison pre-query/second session/rollback workaround and exact RTICB public snapshot ownership. |
-| `RTDIR-VS-API-003` | Closed by section 9.4 and `AC-040`: every listed failure has one status, machine code/professional response, field-path rule, retry rule, no-store behavior, and executable ordinary oracle without reclassifying `block_no_result`. |
+| `RTDIR-VS-API-003` | Closed by sections 9.4–9.5 and `AC-040`: exhaustive source-derived Planning Input/RIT/RTICB inventories bind producer/original code to one final status/code/envelope/field-path/cache/retry rule; impossible paths have proofs, context/RTICB do not claim nonexistent retry, and `block_no_result` remains HTTP 200. |
 | `RTDIR-VS-UI-001` | Closed by section 11: deterministic multi-blocker/source/reason composition, neutral readiness, refresh/conflict/client isolation, Hebrew RTL, and logout/cache behavior. |
-| `RTDIR-VS-DEPLOY-001` | Closed at Definition level by sections 3–4 and `AC-041..043`: one FastAPI service/origin, compiled SPA plus API, public-edge-only ingress, Railway `X-Real-IP` deployment proof, exact health Host/HTTP behavior, one replica/worker, zero overlap, rotation downtime and smoke gate. |
-| `RTDIR-VS-TEST-001` | Closed by section 13 and `AC-045`: complete ordinary and reached-path mutation inventory covers all five focused surfaces and records mutant, production path, reach evidence, oracle failure, restoration and passing control. |
+| `RTDIR-VS-DEPLOY-001` | Closed at Definition level by sections 3–4 and `AC-041..043`: one FastAPI service/origin, public-edge-only ingress, and a pre-edge exception limited to exact internal `GET /healthz/ready` plus Host `healthcheck.railway.app`; all other health/business/login/SPA/static/docs/unknown traffic retains ordinary validation. |
+| `RTDIR-VS-TEST-001` | Closed by section 13 and `AC-045`: obligations A–I directly exercise corrected zero anchoring, GLOBAL success, expiry, INTEGER maximum, concurrency, every producer mapping, no-retry failures, internal readiness, and forged variants; every mutant records production-path reach, ordinary-oracle failure, restoration, and passing control. |
 | `RTDIR-VS-SEC-006` | Closed by section 7.4 and `AC-044`: exact public data-free login/static/SPA/preflight/health surface, complete protected registered-route inventory, production docs disablement, closed fallback/unknown/method behavior, Host exception and cache policy. |
 
 ## 18. Final consistency and authorization gate
 
-The original thirteen blockers plus focused `RTDIR-VS-SEC-006` are addressed by one internally
-consistent architecture. The five focused blockers are `SEC-001`, `API-003`, `DEPLOY-001`,
-`TEST-001`, and `SEC-006`; the nine previously closed blockers retain their accepted dispositions.
+The four open blockers `SEC-001`, `API-003`, `DEPLOY-001`, and `TEST-001` are now addressed by one
+internally consistent correction. All ten previously closed blocker decisions, including focused
+`RTDIR-VS-SEC-006`, retain their accepted dispositions.
 No professional ambiguity and no additional Owner/Product Decision remains.
+
+Final counterexample review is explicit: a placeholder inserted at `t0` and first failed
+verification committed at `t0+600s` expires at `t0+1500s`, not `t0+900s`; a successful login at
+`t0` cannot leave GLOBAL zero to shorten a first failure at `t0+901s`; a positive GLOBAL row is not
+erased by success; an expired positive row is reset before either precheck or final decision; two
+first failures serialize as counts one then two under one anchor; and a row at INTEGER maximum
+remains `2147483647` without evaluating overflow. Exact internal readiness succeeds without
+forwarding headers, while the same Host aimed at login/API/SPA/static/docs/unknown cannot enter the
+exception. Context and RTICB database failures invoke their producer once and cannot claim retry
+exhaustion. No directly detectable contradiction remains across the corrected limiter, transport,
+transaction ownership, health middleware, route inventory, criteria, or mutation contracts.
 
 Remaining prerequisites are deterministic implementation/deployment work, not unresolved
 Definition choices:

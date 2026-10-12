@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { AppRoutes } from "./routes/AppRoutes";
+import { AuthenticationGate } from "./components/AuthenticationGate";
 
 const navLinks = [
   { path: "/clients", label: "לקוחות" },
@@ -12,7 +13,7 @@ const navLinks = [
 
 function App() {
   return (
-    <div dir="rtl" lang="he">
+    <AuthenticationGate><div dir="rtl" lang="he">
       <h1>מערכת תכנון פרישה</h1>
       <nav aria-label="ניווט ראשי">
         <ul>
@@ -24,7 +25,7 @@ function App() {
         </ul>
       </nav>
       <AppRoutes />
-    </div>
+    </div></AuthenticationGate>
   );
 }
 

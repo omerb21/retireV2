@@ -1,4 +1,4 @@
-import { buildApiUrl } from "./apiBase";
+import { apiFetch, buildApiUrl } from "./apiBase";
 
 export class ApiTransportError extends Error {
   status: number;
@@ -272,7 +272,7 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 }
 
 async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(buildApiUrl(path), {
+  const response = await apiFetch(buildApiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",

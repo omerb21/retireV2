@@ -14,6 +14,7 @@ import { PensionProductsScreen } from "../pages/PensionProductsScreen";
 import { LegacyConversionHistoryScreen } from "../pages/LegacyConversionHistoryScreen";
 import { ProfessionalSourceSnapshotScreen } from "../pages/ProfessionalSourceSnapshotScreen";
 import { PlanningInputScreen } from "../pages/PlanningInputScreen";
+import { RetirementIncomeReadinessScreen } from "../pages/RetirementIncomeReadinessScreen";
 
 export function AppRoutes() {
   return (
@@ -27,6 +28,7 @@ export function AppRoutes() {
       <Route path="/clients/:clientId/legacy-conversion-history" element={<LegacyConversionHistoryScreen />} />
       <Route path="/clients/:clientId/professional-sources" element={<ProfessionalSourceSnapshotScreen />} />
       <Route path="/clients/:clientId/planning-input" element={<PlanningInputScreen />} />
+      <Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} />
       <Route path="/clients/:clientId/grants" element={<GrantsScreen />} />
       <Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} />
       <Route path="/clients/:clientId/fixation/workspace" element={<FixationWorkspaceScreen />} />

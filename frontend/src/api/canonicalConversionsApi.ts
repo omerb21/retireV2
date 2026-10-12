@@ -1,4 +1,4 @@
-import { buildApiUrl } from "./apiBase";
+import { apiFetch, buildApiUrl } from "./apiBase";
 
 export type Destination = "pension" | "capital";
 export interface ConversionComponent { component_id: string; component_code: string; balance: string; allowed_destinations: Partial<Record<Destination, string>> }
@@ -23,7 +23,7 @@ export interface ConversionHistoryItem {
 
 async function request<T>(clientId: number, path = "", body?: unknown): Promise<T> {
   let response: Response;
-  try { response = await fetch(buildApiUrl(`/clients/${clientId}/canonical-conversions${path}`), body === undefined ? undefined : {
+  try { response = await apiFetch(buildApiUrl(`/clients/${clientId}/canonical-conversions${path}`), body === undefined ? undefined : {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }); } catch { throw new Error("לא ניתן להתחבר לשרת ההמרות. יש לנסות שוב."); }
   if (!response.ok) {

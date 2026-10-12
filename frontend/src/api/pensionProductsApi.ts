@@ -1,4 +1,4 @@
-import { buildApiUrl } from "./apiBase";
+import { apiFetch, buildApiUrl } from "./apiBase";
 import type { ConversionComponent } from "./canonicalConversionsApi";
 
 export interface PensionProductMetadata {
@@ -45,7 +45,7 @@ export type ProductSave = PensionProductMetadata & {
 async function request<T>(clientId: number, path = "", init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(buildApiUrl(`/clients/${clientId}/pension-products${path}`), init);
+    response = await apiFetch(buildApiUrl(`/clients/${clientId}/pension-products${path}`), init);
   } catch {
     throw new Error("לא ניתן להתחבר לשרת. הנתונים לא נשמרו.");
   }

@@ -16,11 +16,15 @@ def _build_session_local() -> sessionmaker:
 SessionLocal: sessionmaker | None = None
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_session_factory() -> sessionmaker:
     global SessionLocal
     if SessionLocal is None:
         SessionLocal = _build_session_local()
-    db = SessionLocal()
+    return SessionLocal
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = get_session_factory()()
     try:
         yield db
     finally:

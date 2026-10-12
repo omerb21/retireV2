@@ -1,0 +1,10 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+frontend/node_modules
+frontend/dist
+CURRENT_PROJECT_STATE.md
+_evidence
+specs/bootstraps
+start_retire_v2_fixed.bat

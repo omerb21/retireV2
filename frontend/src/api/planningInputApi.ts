@@ -1,4 +1,4 @@
-import { buildApiUrl } from "./apiBase";
+import { apiFetch, buildApiUrl } from "./apiBase";
 
 export interface PlanningItem {
   source_id: string; id?: number; source_fingerprint?: string; description?: string; payer_name?: string;
@@ -54,7 +54,7 @@ export interface ProjectionBasis {
   noncurrent_or_historical_bound_decisions: Array<{source_id: string}>;
 }
 export async function planningCall<T>(id: number, path = "", body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(buildApiUrl(`/clients/${id}/retirement-planning-input${path}`), {
+  const response = await apiFetch(buildApiUrl(`/clients/${id}/retirement-planning-input${path}`), {
     method: body === undefined ? "GET" : "PUT", signal,
     ...(body === undefined ? {} : {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}),
   });

@@ -1,4 +1,4 @@
-import { buildApiUrl } from "./apiBase";
+import { apiFetch, buildApiUrl } from "./apiBase";
 
 export interface ManualInput {
   input_mode: "entered" | "calculated";
@@ -41,7 +41,7 @@ export interface SourceSnapshot {
 async function call<T>(clientId: number, path: string, method: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(buildApiUrl(`/clients/${clientId}/${path}`), {
+    response = await apiFetch(buildApiUrl(`/clients/${clientId}/${path}`), {
       method, signal, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     });
   } catch {

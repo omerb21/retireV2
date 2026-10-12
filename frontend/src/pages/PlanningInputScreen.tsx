@@ -114,7 +114,7 @@ function Workspace({id}: {id: number}) {
     finally {setBusy(false);}
   }
   return <main dir="rtl"><h1>קלט בסיס לתכנון פרישה</h1>
-    <Link to={`/clients/${id}/professional-sources`}>תמונת המקורות ותיקון עובדות</Link>{" · "}<Link to={`/clients/${id}`}>פרטי הלקוח</Link>
+    <Link to={`/clients/${id}/professional-sources`}>תמונת המקורות ותיקון עובדות</Link>{" · "}<Link to={`/clients/${id}`}>פרטי הלקוח</Link>{" · "}<Link to={`/clients/${id}/retirement-income-readiness`}>מוכנות הכנסה במועד היעד</Link>
     <p>קלט בלבד — ללא חישוב תזרים, תחזית או מס.</p>
     {error && <p role="alert">{error}</p>}
     <button onClick={() => setGeneration(n => n + 1)} disabled={busy}>רענון הקלט</button>

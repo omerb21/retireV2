@@ -1,6 +1,6 @@
 # RTDIR implementation traceability evidence
 
-Package: `RETIREMENT_TARGET_DATE_INCOME_READINESS_VERTICAL_SLICE`  
+Package: `RETIREMENT_TARGET_DATE_INCOME_READINESS_VERTICAL_SLICE`
 Accepted definition: `07f9025d8e2aadf850491e69eedae3c99a4d27cc`
 
 This is implementation evidence, not a new Definition, independent acceptance, downstream

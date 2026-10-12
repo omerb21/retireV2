@@ -817,9 +817,9 @@ through every direct and transitive call. Pass B searched every reached service 
 codes, returned failure-detail codes, and professional blocker/reason emitters, and then reconciled
 each hit to Pass A. The countable *boundary producer universe* is the 67 distinct codes exposed by
 Planning Input (18), RIT (29), and RTICB (20). The reached RTISA sub-producer contributes 30 further
-distinct observations. Thus 97 distinct codes were reconciled: 76 are reached in the route call
-graph (48 boundary-visible plus 28 RTISA observations consumed by RTICB) and 21 are proven
-preempted (19 boundary codes plus two RTISA request codes). There are zero unresolved
+distinct observations. Thus 97 distinct codes were reconciled: 73 are reached in the route call
+graph (45 boundary-visible plus 28 RTISA observations consumed by RTICB) and 24 are proven
+preempted (22 boundary codes plus two RTISA request codes). There are zero unresolved
 classifications. Successful context blocker vocabulary and RTICB comparison reason vocabulary are
 not failures and are preserved value-for-value; they are listed after the failure census so their
 exclusion from the count is independently checkable.
@@ -877,21 +877,21 @@ transport response with mandatory no-store headers.
 | `CLIENT_NOT_FOUND` | `_snapshot`; positive addressed client does not exist | YES | 404 `CLIENT_NOT_FOUND`; `["/path/client_id"]`; no retry without selecting an existing client |
 | `SOURCE_STRUCTURE_INVALID` | `_snapshot.invalid`; product/component/conversion/allocation/capital relation, exact numeric fact, or active-destination coverage invariant fails | YES | 409 same code; `[]`; repair authoritative data |
 | `RESOLUTION_OWNERSHIP_INVALID` | `planning_input_service.derive`; a loaded pension-income resolution belongs to another client or absent income | YES | 409 same code; `[]`; repair authoritative data |
-| `TARGET_REFERENCE_STRUCTURE_INVALID` | `retirement_target_service.canonical_references`; duplicate target `reference_id` | YES | 409 same code; `[]`; repair authoritative data |
-| `BASIS_SOURCE_STRUCTURE_INVALID` | monthly `manual` invalid mode/non-factor canonicalization, or `registry` duplicate; conversion malformed facts may also collapse to this code only where `fail()` actually does so | YES | 409 same code; `[]`; repair source facts |
+| `TARGET_REFERENCE_STRUCTURE_INVALID` | `retirement_target_service.canonical_references`; duplicate target `reference_id` | NO | reference IDs are constructed deterministically from unique client/timing/pension keys with separate prefixes; a duplicate requires fabricated producer output and is not constructible through `/context` |
+| `BASIS_SOURCE_STRUCTURE_INVALID` | monthly `manual` invalid mode/non-factor canonicalization, or `registry` duplicate | NO | DB-constrained `input_mode`, canonical persisted non-factor types, professional blocker handling for factor errors, unique primary keys, and distinct `manual:`/`conversion:` registry prefixes preempt every emitting condition |
 | `BASIS_SOURCE_OWNERSHIP_INVALID` | monthly `manual|conversion`; supplied source client differs | NO | `_snapshot` queries manual rows by client and conversion/batch/destination maps by client and rejects cross-client joins as `SOURCE_STRUCTURE_INVALID` before monthly call |
 | `BASIS_SOURCE_NOT_CURRENT` | monthly `manual|conversion`; lifecycle/status is not current/active | NO | `_snapshot` queries only current manual rows and skips non-active pension destinations after requiring conversion/destination status equality |
-| `CONVERSION_EFFECTIVE_DATE_MISSING` | monthly `conversion`; batch or destination effective date is null | YES | 409 same code; `[]`; repair conversion facts |
+| `CONVERSION_EFFECTIVE_DATE_MISSING` | monthly `conversion`; batch or destination effective date is null | NO | both accepted persistence columns are non-nullable, so the missing-date state is not constructible through the database-backed `/context` route |
 | `CONVERSION_EFFECTIVE_DATE_MISMATCH` | monthly `conversion`; batch and destination effective dates differ | YES | 409 same code; `[]`; repair conversion facts |
 | `BASIS_CONVERSION_PROVENANCE_INVALID` | monthly `conversion`; not exactly one matching conversion audit event, missing/invalid statement date, malformed allocation/provenance field, or noncanonical exact value | YES | 409 same code; `[]`; repair immutable provenance |
-| `PERSISTED_CONVERSION_RATIO_INVALID` | monthly `conversion`; persisted numerator or denominator is non-positive (including a zero numerator which passes the earlier equality reconciliation) | YES | 409 same code; `[]`; repair persisted ratio |
+| `PERSISTED_CONVERSION_RATIO_INVALID` | monthly `conversion`; persisted numerator is non-positive (including zero which can pass the earlier equality reconciliation) | YES | 409 same code; `[]`; repair persisted ratio. A non-positive denominator is preempted by `_snapshot.number(..., positive=True)` as `SOURCE_STRUCTURE_INVALID` before this producer call |
 | `TEMPORAL_SOURCE_OWNERSHIP_INVALID` | temporal `manual|_validate_conversion`; source client differs | NO | same client-scoped `_snapshot` queries and cross-client structural checks preempt it |
 | `TEMPORAL_SOURCE_NOT_CURRENT` | temporal `manual|_validate_conversion`; manual is not current or conversion/destination pair is reversed | NO | only current manual and active destination rows reach temporal functions; reversed destinations are skipped |
 | `TEMPORAL_SOURCE_NOT_FOUND` | temporal `_validate_conversion`; destination is null | NO | `_snapshot` invokes conversion only while iterating a concrete destination row |
 | `TEMPORAL_DECISION_STRUCTURE_INVALID` | temporal `manual`; explicit authority has unsupported raw method or a `none` method with non-null rate | YES | 409 same code; `[]`; repair stored decision |
 | `TEMPORAL_SOURCE_STRUCTURE_INVALID` | temporal `_validate_conversion|conversion|registry`; missing/mismatched conversion/batch relation, invalid status/date/version, malformed decision ownership/shape/rate canonical form, or duplicate source IDs | YES | 409 same code; `[]`; repair authoritative temporal/source facts |
 
-For each of the 13 YES codes above, transitive containment is also exact:
+For each of the 10 YES codes above, transitive containment is also exact:
 
 | Calling route / producer path | HTTP / final code | Envelope / fields / retry / cache |
 |---|---|---|
@@ -1057,17 +1057,20 @@ intervention. `RTICBFingerprintConstructionError`, malformed serialization, or a
 programming/framework exception maps to 500 `INTERNAL_ERROR`, `[]`, transport/no-store, no
 automatic retry.
 
-#### 9.5.6 Completeness reconciliation and technical classes
+#### 9.5.6 Completeness reconciliation and technical mapping categories
 
 Pass A and Pass B produced the same 97-code ledger: Planning Input 18, RIT 29, reached RTISA 30,
-and RTICB 20. The disposition arithmetic is exact: 76 route-reached plus 21 preempted equals 97;
-of the 76 reached, 28 are RTISA observations consumed by RTICB and 48 are boundary-visible codes.
+and RTICB 20. The disposition arithmetic is exact: 73 route-reached plus 24 preempted equals 97;
+of the 73 reached, 28 are RTISA observations consumed by RTICB and 45 are boundary-visible codes.
+Planning Input is exactly 18 universe, 10 reached, and eight preempted; RIT remains 29/19/10,
+RTISA remains 30/28/2, and RTICB remains 20/16/4.
 No code remains unresolved. Public RTISA-only `RTISA_REQUIRES_FRESH_TRANSACTION` and
 `RTISA_UNSUPPORTED_DATABASE`, Planning mutation codes, retirement-target-date mutation codes, and
 projection/execution route codes were emitter-search hits but are excluded with call-graph proof:
 none of their defining functions is invoked by the four vertical-slice routes.
 
-Technical exceptions are counted separately from the 97 codes: (1) Planning-context
+Eight technical mapping categories are counted separately from the 97 codes; these are not claimed
+to be eight unique Python exception classes: (1) Planning-context
 SQLAlchemy/driver transaction failure; (2) exhausted RIT retryable DBAPI family; (3) non-retryable
 RIT DBAPI family; (4) `TargetResultFingerprintConstructionError`; (5) RTICB snapshot DBAPI family;
 (6) the two exact `RetirementTargetIncomeSourceAdmissionTechnicalError` tuples; (7)
@@ -1249,8 +1252,10 @@ F. table-drive all 97 section 9.5 codes. For every YES row, execute the actual p
    transitive producer path and assert the originating code/observation, final HTTP/code, exact
    field paths, retry permission, envelope, and cache headers. For every NO row, execute the prior
    DTO/query/persistence invariant and prove the named producer function is not entered. The oracle
-   must assert the 18/29/30/20 per-producer counts, the `76 + 21 = 97` disposition, the 48
-   boundary-visible/28 RTISA-consumed split, and zero unresolved classifications. Substituting,
+   must assert the 18/29/30/20 per-producer counts, the `73 + 24 = 97` disposition, the 45
+   boundary-visible/28 RTISA-consumed split, and zero unresolved classifications. It must execute
+   ordinary route tests for all 45 boundary-visible codes, cover all 28 RTISA observations inside
+   RTICB, and independently prove all 24 preemptions. Substituting,
    merging, omitting, or merely mocking a mapping must fail `API-003`;
 G. inject a real route-reachable database exception into Planning Input context and RTICB execution;
    prove one producer call and exact `CONTEXT_DATABASE_FAILURE`/`RTICB_DATABASE_FAILURE`, with no
@@ -1265,12 +1270,18 @@ I. attempt forged/malformed variants: wrong method, other health path, Host with
    docs/OpenAPI, and unknown paths. Every variant must follow the ordinary edge/public/protected
    contract and disclose no data; widening method/path/Host or trusting supplied forwarding headers
    must fail `API-002`/`DEPLOY-001`/`MUT-001`.
-J. exercise all 18 Planning Input boundary rows through `GET /context`, including ordinary fixtures
-   for `CONVERSION_EFFECTIVE_DATE_MISMATCH`, `BASIS_CONVERSION_PROVENANCE_INVALID`,
-   `PERSISTED_CONVERSION_RATIO_INVALID`, and `TEMPORAL_DECISION_STRUCTURE_INVALID`; independently
-   prove all five monthly/temporal NO rows are preempted by `_snapshot` selection/assembly. Delete,
-   collapse, or redirect each mapping one at a time and require the same ordinary `API-003` oracle
-   to fail before restoration and pass afterward;
+J. reconcile all 18 Planning Input rows: execute the 10 YES rows through the actual `GET /context`
+   route and independently prove the eight NO rows at their stated schema/query/assembly boundary.
+   Ordinary fixtures must cover `CONVERSION_EFFECTIVE_DATE_MISMATCH`,
+   `BASIS_CONVERSION_PROVENANCE_INVALID`, `PERSISTED_CONVERSION_RATIO_INVALID`, and
+   `TEMPORAL_DECISION_STRUCTURE_INVALID`, but must not fabricate production-route fixtures for
+   `CONVERSION_EFFECTIVE_DATE_MISSING`, `BASIS_SOURCE_STRUCTURE_INVALID`, or
+   `TARGET_REFERENCE_STRUCTURE_INVALID`. For persisted ratio, an additional oracle supplies a
+   non-positive denominator and proves `_snapshot.number(..., positive=True)` produces
+   `SOURCE_STRUCTURE_INVALID` before monthly conversion, while a non-positive numerator reaches
+   `PERSISTED_CONVERSION_RATIO_INVALID`. Delete, collapse, or redirect each reachable mapping one
+   at a time and require the ordinary `API-003` oracle to fail, then restore it and require the
+   same oracle to pass;
 K. exercise both containment branches for every transitive Planning error (direct `/context`, RIT
    GET/PUT, RTICB target side, RTICB RTISA side), every reached RTISA observation, and all 20 RTICB
    failure-detail codes. The four RTICB request codes and two RTISA request codes require executable
@@ -1410,7 +1421,7 @@ new infrastructure, or scope expansion.
 | `RTDIR-VS-ACTOR-001` | Closed by section 8: exact RIT `_valid_actor` predicate and server-only authenticated binding. |
 | `RTDIR-VS-API-001` | Closed by section 9.2: exact two-field browser comparison DTO, forbidden caller client ID/extras, then path injection. |
 | `RTDIR-VS-API-002` | Closed by section 10: no comparison pre-query/second session/rollback workaround and exact RTICB public snapshot ownership. |
-| `RTDIR-VS-API-003` | Corrected for focused re-audit by sections 9.4–9.5 and `AC-040`: two independent traversals reconcile 97 codes (18 Planning Input, 29 RIT, 30 reached RTISA, 20 RTICB), 76 reached, 21 preempted, zero unresolved; every boundary/transitive code has one final disposition, context/RTICB do not claim nonexistent retry, and `block_no_result` remains HTTP 200. Independent closure is not self-claimed. |
+| `RTDIR-VS-API-003` | Corrected for focused re-audit by sections 9.4–9.5 and `AC-040`: two independent traversals reconcile 97 codes (18 Planning Input, 29 RIT, 30 reached RTISA, 20 RTICB), 73 reached, 24 preempted, zero unresolved; every boundary/transitive code has one final disposition, context/RTICB do not claim nonexistent retry, and `block_no_result` remains HTTP 200. Independent closure is not self-claimed. |
 | `RTDIR-VS-UI-001` | Closed by section 11: deterministic multi-blocker/source/reason composition, neutral readiness, refresh/conflict/client isolation, Hebrew RTL, and logout/cache behavior. |
 | `RTDIR-VS-DEPLOY-001` | Closed at Definition level by sections 3–4 and `AC-041..043`: one FastAPI service/origin, public-edge-only ingress, and a pre-edge exception limited to exact internal `GET /healthz/ready` plus Host `healthcheck.railway.app`; all other health/business/login/SPA/static/docs/unknown traffic retains ordinary validation. |
 | `RTDIR-VS-TEST-001` | Corrected for focused re-audit by section 13 and `AC-045`: obligations A–K exercise corrected zero anchoring, GLOBAL success, expiry, INTEGER maximum, concurrency, all 97 producer/transitive dispositions, explicit monthly/temporal examples, RTISA containment, RTICB request preemption, no-retry failures, internal readiness, and forged variants; every mutant records production-path reach, ordinary-oracle failure, restoration, and passing control. Independent closure is not self-claimed. |

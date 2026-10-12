@@ -812,132 +812,268 @@ A returned client identity is never rewritten to match the path.
 
 ### 9.5 Exhaustive accepted-producer failure inventory
 
-The tables below are derived from the current producer implementations. “Final” is the sole API
-adapter result. Every transport row returns `TransportErrorV1` with `Cache-Control: no-store,
-private` and `Pragma: no-cache`; every professional HTTP-200 row returns the producer envelope
-unchanged with the same cache headers. There is no route-level retry and each producer is invoked
-once. A retry permission means a later deliberate request under the stated condition, never an
-automatic browser loop.
+This inventory is frozen from two independent source traversals. Pass A followed each public route
+through every direct and transitive call. Pass B searched every reached service module for raised
+codes, returned failure-detail codes, and professional blocker/reason emitters, and then reconciled
+each hit to Pass A. The countable *boundary producer universe* is the 67 distinct codes exposed by
+Planning Input (18), RIT (29), and RTICB (20). The reached RTISA sub-producer contributes 30 further
+distinct observations. Thus 97 distinct codes were reconciled: 76 are reached in the route call
+graph (48 boundary-visible plus 28 RTISA observations consumed by RTICB) and 21 are proven
+preempted (19 boundary codes plus two RTISA request codes). There are zero unresolved
+classifications. Successful context blocker vocabulary and RTICB comparison reason vocabulary are
+not failures and are preserved value-for-value; they are listed after the failure census so their
+exclusion from the count is independently checkable.
 
-#### Planning Input and retirement-target-date producer errors
+Every `transport` result below means exact `TransportErrorV1`, the stated `field_paths`,
+`Cache-Control: no-store, private`, and `Pragma: no-cache`. Every `professional` result means the
+producer's exact accepted HTTP-200 envelope, no API field insertion/removal/reordering, field paths
+not applicable, and the same cache headers. There is no adapter retry. “Retry” always means a later
+deliberate user request after the stated correction; it never means a browser loop. A `NO` row has
+no producer mapping: it records the exact earlier boundary and its response, or a persistence/query
+invariant which makes the state unrepresentable.
 
-| Originating producer / route | Original code or failure | HTTP / final code | Exact `field_paths` | Retry |
-|---|---|---|---|---|
-| Planning Input read `/context` | `CLIENT_NOT_FOUND` | 404 / `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no; choose an existing client |
-| Planning Input read `/context` | `SNAPSHOT_REQUIRES_FRESH_TRANSACTION` | 409 / `SNAPSHOT_REQUIRES_FRESH_TRANSACTION` | `[]` | no automatic retry; route/session invariant must be restored |
-| Planning Input read `/context` | `UNSUPPORTED_DATABASE` | 503 / `UNSUPPORTED_DATABASE` | `[]` | after supported service recovery |
-| Planning Input derivation | `SOURCE_STRUCTURE_INVALID`, `BASIS_SOURCE_STRUCTURE_INVALID`, `TEMPORAL_SOURCE_STRUCTURE_INVALID`, `RESOLUTION_OWNERSHIP_INVALID`, or `TARGET_REFERENCE_STRUCTURE_INVALID` | 409 / original code unchanged | `[]` | after authoritative data repair, then reload |
-| Planning Input base-date/income-resolution mutation | `PLANNING_DECISION_STALE` | 409 / `PLANNING_DECISION_STALE` | `["/expected_version"]` | reload context before deliberate retry |
-| Planning Input income-resolution mutation | `INCOME_SOURCE_STALE` | 409 / `INCOME_SOURCE_STALE` | `["/expected_income_fingerprint"]` | reload context before deliberate retry |
-| Planning Input income-resolution mutation | `INCOME_NOT_PENSION` | 409 / `INCOME_NOT_PENSION` | `["/decision_kind"]` | correct the decision after reload |
-| Planning Input income-resolution mutation | `CANONICAL_PENSION_NOT_CURRENT` | 409 / `CANONICAL_PENSION_NOT_CURRENT` | `["/canonical_source_id"]` | select a current source after reload |
-| Planning Input income-resolution mutation | `CANONICAL_PENSION_STALE` | 409 / `CANONICAL_PENSION_STALE` | `["/expected_canonical_fingerprint"]` | reload before deliberate retry |
-| Planning Input income-resolution mutation | `RESOLUTION_OWNERSHIP_INVALID` | 409 / `RESOLUTION_OWNERSHIP_INVALID` | `[]` | only after authoritative data repair |
-| retirement-target-date mutation | `TARGET_REQUIRES_FRESH_TRANSACTION` | 409 / `TARGET_REQUIRES_FRESH_TRANSACTION` | `[]` | no automatic retry; supply a pristine route-owned session |
-| retirement-target-date mutation | `PLANNING_DECISION_STALE` | 409 / `PLANNING_DECISION_STALE` | `["/expected_version"]` | reload context before deliberate retry |
-| retirement-target-date mutation | `TARGET_REFERENCE_STATE_STALE` | 409 / `TARGET_REFERENCE_STATE_STALE` | `["/expected_target_reference_fingerprint"]` | reload context before deliberate retry |
-| retirement-target-date mutation | `CLIENT_NOT_FOUND`, `UNSUPPORTED_DATABASE`, `SOURCE_STRUCTURE_INVALID`, or `TARGET_REFERENCE_STRUCTURE_INVALID` | original 404/503/409 / original code unchanged | client-not-found uses `["/path/client_id"]`; otherwise `[]` | only after the named condition is corrected |
-| Planning Input read `/context` | raw SQLAlchemy/driver transaction failure | 503 / `CONTEXT_DATABASE_FAILURE` | `[]` | after service recovery and deliberate reload; no retry occurred |
-| Planning Input base-date/income-resolution adapter | existing generic `_write` `PRODUCT_INTEGRITY_CONFLICT` from `IntegrityError` | 409 / `PLANNING_MUTATION_INTEGRITY_CONFLICT` | `[]` | reload context, then deliberate retry if still applicable |
-| Planning Input base-date/income-resolution adapter | existing generic `_write` `PRODUCT_TRANSACTION_RETRY` from `OperationalError`; no loop exists | 503 / `PLANNING_MUTATION_DATABASE_FAILURE` | `[]` | after service recovery and deliberate reload; no retry occurred |
-| retirement-target-date adapter | existing `TARGET_DECISION_TRANSACTION_RETRY` from `OperationalError`; no loop exists | 503 / `TARGET_DECISION_TRANSACTION_FAILURE` | `[]` | after service recovery and deliberate reload; no retry occurred |
+#### 9.5.1 Exact transitive call graph
 
-The existing Planning Input producer also exposes projection-basis/execution routes, but they are
-not invoked by these four vertical-slice routes and therefore are not fictitiously mapped here.
-The stale mutation codes are included because the accepted UI can reach the existing planning and
-target-date authority mutations before reloading `/context`.
+1. `GET /context` validates a positive path `client_id`, then invokes
+   `planning_input_service.read` exactly once. `read -> begin_read -> derive -> _snapshot` reaches
+   `professional_source_snapshot_service._snapshot`; `_snapshot` calls
+   `pension_monthly_basis_service.conversion|manual|registry` and
+   `pension_temporal_basis_service.conversion|manual|registry`; `derive` then calls
+   `retirement_target_service.extend_read`. No Planning Input mutation or target-date mutation is
+   in this route.
+2. `GET /target` invokes `retirement_monthly_income_target_service.assess` exactly once.
+   `assess -> _begin -> _lock_client -> _context -> planning_input_service.derive`, so the complete
+   `/context` derivation chain is transitive, after which `_locked_row -> _result` runs.
+3. `PUT /target` validates the exact eight browser fields, injects positive path `client_id` and the
+   server actor, and invokes `retirement_monthly_income_target_service.confirm` exactly once.
+   `confirm -> _validate_command -> _begin -> _lock_client -> _context -> planning_input_service.derive
+   -> _locked_row/_stored_target/_authority -> _result`.
+4. `POST /comparison` validates exactly two browser fields, injects the positive path `client_id`,
+   and invokes `retirement_target_date_income_comparison_basis_service.assess` exactly once with a
+   pristine session. `RTICB.assess -> _request_error -> _begin_snapshot ->
+   RIT.assess_in_snapshot -> RIT._context -> planning_input_service.derive`; when target authority
+   is admissible it continues to `RTISA.read_in_snapshot -> planning_input_service.derive ->
+   pension_target_date_portfolio_service.execute_from_planning_result -> RTISA._assemble`, then
+   RTICB validates identity, coverage, basis evidence, and constructs failure or success.
 
-#### RIT assessment and confirmation transport errors
+The same Planning error has route-specific containment: `/context` exposes it as transport;
+`GET /target` catches it as the exact HTTP-200 `RIT_PLANNING_CONTEXT_UNAVAILABLE` result;
+`PUT /target` exposes `409 RIT_PLANNING_CONTEXT_UNAVAILABLE`; target-side comparison converts the
+RIT unavailable result to HTTP-200 `RTICB_TARGET_AUTHORITY_UNAVAILABLE`; RTISA-side comparison
+converts it first to `RTISA_PLANNING_CONTEXT_UNAVAILABLE` and then to HTTP-200
+`RTICB_RTISA_AUTHORITY_UNAVAILABLE`. No adapter bypasses those accepted producer boundaries.
 
-| Originating producer | Original code/failure | HTTP / final code | Exact `field_paths` | Retry |
-|---|---|---|---|---|
-| RIT assess or confirm | `RIT_CLIENT_ID_INVALID` | 404 / `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no; choose an existing client |
-| RIT assess or confirm | `RIT_RECORD_UNAVAILABLE` with status 409 | 409 / `RIT_RECORD_UNAVAILABLE` | `[]` | only with a pristine session, then deliberate retry |
-| RIT assess or confirm | `RIT_RECORD_UNAVAILABLE` with status 503 | 503 / `RIT_UNSUPPORTED_DATABASE` | `[]` | after supported service recovery |
-| RIT confirm command (strict string reaches producer validation) | `RIT_AMOUNT_INVALID` or `RIT_AMOUNT_PRECISION_UNSUPPORTED` | 422 / original code unchanged | `["/monthly_amount"]` | correct request |
-| RIT confirm command (cross-field semantic rule) | `RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL` or `RIT_PRICE_REFERENCE_DATE_MISSING` | 422 / original code unchanged | `["/price_reference_date"]` | correct request |
-| RIT confirm | `RIT_CONFIRMATION_CONTEXT_STALE` | 409 / `RIT_CONFIRMATION_CONTEXT_STALE` | `["/expected_planning_calculation_input_fingerprint","/expected_retirement_target_date"]` | reload context and target |
-| RIT confirm | `RIT_RECORD_VERSION_CONFLICT` | 409 / `RIT_RECORD_VERSION_CONFLICT` | `["/expected_record_version"]` | reload target before deliberate retry |
-| RIT assess or confirm | `RIT_RECORD_VERSION_EXHAUSTED` | 409 / `RIT_RECORD_VERSION_EXHAUSTED` | `[]` | no; governance/data intervention required |
-| RIT context | `RIT_PLANNING_CONTEXT_UNAVAILABLE`, `RIT_PLANNING_CONTEXT_INVALID`, or `RIT_RETIREMENT_TARGET_NOT_READY` when raised during confirm | 409 / original code unchanged | `[]` | reload/resolve professional context before retry |
-| RIT internal retry loop | retryable SQLSTATE `40001`/`40P01`, the accepted target primary-key `23505`, or accepted SQLite busy/locked still raised after attempt 3 | 503 / assess: `RIT_ASSESS_DATABASE_RETRY_EXHAUSTED`; confirm: `RIT_CONFIRM_DATABASE_RETRY_EXHAUSTED` | `[]` | assess after backoff; confirm only after reload |
-| RIT internal retry loop | any other raised `OperationalError`, `IntegrityError`, or `DBAPIError` | 503 / assess: `RIT_ASSESS_DATABASE_FAILURE`; confirm: `RIT_CONFIRM_DATABASE_FAILURE` | `[]` | after service recovery; confirm reloads first |
+#### 9.5.2 Planning Input boundary: all 18 producer codes
 
-The following producer command codes are impossible on this route and therefore have no fictitious
-transport mapping. Missing/wrong-type/out-of-range `monthly_amount`, `income_basis`, `price_basis`,
-`price_reference_date`, `expected_record_version`, expected fingerprint/date, or `source_kind` is
-rejected first as `422 REQUEST_SCHEMA_INVALID` with the exact affected body pointers. Consequently
-RIT is not invoked and cannot emit `RIT_AMOUNT_MISSING`, `RIT_INCOME_BASIS_MISSING`,
-`RIT_INCOME_BASIS_INVALID`, `RIT_PRICE_BASIS_MISSING`, `RIT_PRICE_BASIS_INVALID`,
-`RIT_PRICE_REFERENCE_DATE_INVALID`, `RIT_TARGET_RECORD_INVALID`, or command-derived
-`RIT_PLANNING_CONTEXT_INVALID`. `RIT_COMMAND_SCHEMA_INVALID` and command-side
-`RIT_CLIENT_ID_INVALID` are impossible because the adapter constructs the exact complete command,
-injects a validated positive path ID, and forbids extra browser fields. `RIT_CONFIRMATION_INVALID`
-from `source_kind` is impossible because the DTO accepts only the three producer literals; its actor
-variant is impossible because startup requires exact `_valid_actor` conformance and the browser
-cannot supply the actor. Failure of the construction/actor proof is `500 PRODUCER_RESPONSE_INVALID`,
-not a fabricated producer transport mapping. Context-derived `RIT_PLANNING_CONTEXT_INVALID` remains
-the route-reachable 409 row above with empty field paths because it is not caused by browser fields.
+All YES rows follow `/context -> read -> begin_read/derive -> _snapshot -> monthly/temporal ->
+extend_read`. Unless a row states otherwise, a reachable 409 preserves the original code,
+`field_paths=[]`, permits a deliberate reload only after authoritative data repair, and is a
+transport response with mandatory no-store headers.
 
-RIT assessment represents these accepted professional blockers inside its exact HTTP-200 result,
-never as transport errors: `RIT_CLIENT_ID_INVALID`, `RIT_PLANNING_CONTEXT_UNAVAILABLE`,
-`RIT_PLANNING_CONTEXT_INVALID`, `RIT_RETIREMENT_TARGET_NOT_READY`, `RIT_TARGET_MISSING`,
-`RIT_CONFIRMATION_MISSING`, `RIT_TARGET_RECORD_INVALID`, `RIT_CONFIRMATION_INVALID`,
-`RIT_AMOUNT_MISSING`, `RIT_AMOUNT_INVALID`, `RIT_AMOUNT_PRECISION_UNSUPPORTED`,
-`RIT_CURRENCY_INVALID`, `RIT_INCOME_BASIS_MISSING`, `RIT_INCOME_BASIS_INVALID`,
-`RIT_PRICE_BASIS_MISSING`, `RIT_PRICE_BASIS_INVALID`,
-`RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL`, `RIT_PRICE_REFERENCE_DATE_MISSING`,
-`RIT_TARGET_CLIENT_MISMATCH`, `RIT_STORED_FINGERPRINT_MISMATCH`, `RIT_PLANNING_IDENTITY_STALE`,
-`RIT_RETIREMENT_TARGET_STALE`, and `RIT_RECONFIRMATION_REQUIRED`. Their envelope is the exact RIT
-result, their field paths are not applicable, and retry is professional resolution or explicit
-reload only.
+| Original code | Origin and exact emitting condition | Reachable | Sole route result / preemption proof |
+|---|---|:---:|---|
+| `SNAPSHOT_REQUIRES_FRESH_TRANSACTION` | `professional_source_snapshot_service.begin_read`; session already in transaction or has new/dirty/deleted ORM state | YES | 409 same code; `[]`; retry only after pristine-session invariant is restored |
+| `UNSUPPORTED_DATABASE` | `begin_read`; dialect is neither PostgreSQL nor SQLite | YES | 503 same code; `[]`; retry after supported service recovery |
+| `CLIENT_NOT_FOUND` | `_snapshot`; positive addressed client does not exist | YES | 404 `CLIENT_NOT_FOUND`; `["/path/client_id"]`; no retry without selecting an existing client |
+| `SOURCE_STRUCTURE_INVALID` | `_snapshot.invalid`; product/component/conversion/allocation/capital relation, exact numeric fact, or active-destination coverage invariant fails | YES | 409 same code; `[]`; repair authoritative data |
+| `RESOLUTION_OWNERSHIP_INVALID` | `planning_input_service.derive`; a loaded pension-income resolution belongs to another client or absent income | YES | 409 same code; `[]`; repair authoritative data |
+| `TARGET_REFERENCE_STRUCTURE_INVALID` | `retirement_target_service.canonical_references`; duplicate target `reference_id` | YES | 409 same code; `[]`; repair authoritative data |
+| `BASIS_SOURCE_STRUCTURE_INVALID` | monthly `manual` invalid mode/non-factor canonicalization, or `registry` duplicate; conversion malformed facts may also collapse to this code only where `fail()` actually does so | YES | 409 same code; `[]`; repair source facts |
+| `BASIS_SOURCE_OWNERSHIP_INVALID` | monthly `manual|conversion`; supplied source client differs | NO | `_snapshot` queries manual rows by client and conversion/batch/destination maps by client and rejects cross-client joins as `SOURCE_STRUCTURE_INVALID` before monthly call |
+| `BASIS_SOURCE_NOT_CURRENT` | monthly `manual|conversion`; lifecycle/status is not current/active | NO | `_snapshot` queries only current manual rows and skips non-active pension destinations after requiring conversion/destination status equality |
+| `CONVERSION_EFFECTIVE_DATE_MISSING` | monthly `conversion`; batch or destination effective date is null | YES | 409 same code; `[]`; repair conversion facts |
+| `CONVERSION_EFFECTIVE_DATE_MISMATCH` | monthly `conversion`; batch and destination effective dates differ | YES | 409 same code; `[]`; repair conversion facts |
+| `BASIS_CONVERSION_PROVENANCE_INVALID` | monthly `conversion`; not exactly one matching conversion audit event, missing/invalid statement date, malformed allocation/provenance field, or noncanonical exact value | YES | 409 same code; `[]`; repair immutable provenance |
+| `PERSISTED_CONVERSION_RATIO_INVALID` | monthly `conversion`; persisted numerator or denominator is non-positive (including a zero numerator which passes the earlier equality reconciliation) | YES | 409 same code; `[]`; repair persisted ratio |
+| `TEMPORAL_SOURCE_OWNERSHIP_INVALID` | temporal `manual|_validate_conversion`; source client differs | NO | same client-scoped `_snapshot` queries and cross-client structural checks preempt it |
+| `TEMPORAL_SOURCE_NOT_CURRENT` | temporal `manual|_validate_conversion`; manual is not current or conversion/destination pair is reversed | NO | only current manual and active destination rows reach temporal functions; reversed destinations are skipped |
+| `TEMPORAL_SOURCE_NOT_FOUND` | temporal `_validate_conversion`; destination is null | NO | `_snapshot` invokes conversion only while iterating a concrete destination row |
+| `TEMPORAL_DECISION_STRUCTURE_INVALID` | temporal `manual`; explicit authority has unsupported raw method or a `none` method with non-null rate | YES | 409 same code; `[]`; repair stored decision |
+| `TEMPORAL_SOURCE_STRUCTURE_INVALID` | temporal `_validate_conversion|conversion|registry`; missing/mismatched conversion/batch relation, invalid status/date/version, malformed decision ownership/shape/rate canonical form, or duplicate source IDs | YES | 409 same code; `[]`; repair authoritative temporal/source facts |
 
-#### RTICB execution
+For each of the 13 YES codes above, transitive containment is also exact:
 
-RTICB returns HTTP 200 with the exact accepted `block_no_result` envelope for every one of these
-route-reachable failure-detail codes; `field_paths` and transport retry are not applicable:
+| Calling route / producer path | HTTP / final code | Envelope / fields / retry / cache |
+|---|---|---|
+| `GET /context -> Planning.read` | originating 404/409/503 and original code as specified above | `TransportErrorV1`; row-specific fields/retry; mandatory no-store |
+| `GET /target -> RIT.assess -> RIT._context -> Planning.derive` | 200, blocker `RIT_PLANNING_CONTEXT_UNAVAILABLE` | exact RIT result; fields N/A; professional resolution/reload; mandatory no-store |
+| `PUT /target -> RIT.confirm -> RIT._context -> Planning.derive` | 409 `RIT_PLANNING_CONTEXT_UNAVAILABLE` | `TransportErrorV1`; `[]`; reload after repair; mandatory no-store |
+| `POST /comparison -> RTICB -> RIT.assess_in_snapshot -> Planning.derive` | 200 `RTICB_TARGET_AUTHORITY_UNAVAILABLE` | exact RTICB `block_no_result`; fields/retry N/A; mandatory no-store |
+| `POST /comparison -> RTICB -> RTISA.read_in_snapshot -> Planning.derive` | 200 `RTICB_RTISA_AUTHORITY_UNAVAILABLE` | exact RTICB `block_no_result`; fields/retry N/A; mandatory no-store |
 
-- request validation: `RTICB_REQUEST_SCHEMA_INVALID`, `RTICB_CLIENT_ID_INVALID`,
-  `RTICB_EXPECTED_PLANNING_FINGERPRINT_INVALID`, `RTICB_EXPECTED_RETIREMENT_TARGET_DATE_INVALID`;
-- snapshot admission: `RTICB_REQUIRES_FRESH_TRANSACTION`, `RTICB_UNSUPPORTED_DATABASE`;
-- target authority: `RTICB_TARGET_AUTHORITY_SCHEMA_INVALID`,
-  `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID`, `RTICB_TARGET_AUTHORITY_UNAVAILABLE`,
-  `RTICB_TARGET_AUTHORITY_NOT_READY`;
-- RTISA authority: `RTICB_RTISA_AUTHORITY_SCHEMA_INVALID`,
-  `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID`, `RTICB_RTISA_AUTHORITY_UNAVAILABLE`,
-  `RTICB_RTISA_AUTHORITY_NOT_READY`;
-- cross-authority/source evidence: `RTICB_CLIENT_ID_MISMATCH`,
-  `RTICB_PLANNING_IDENTITY_MISMATCH`, `RTICB_RETIREMENT_TARGET_DATE_MISMATCH`,
-  `RTICB_SOURCE_UNIVERSE_INVALID`, `RTICB_SOURCE_COVERAGE_MISMATCH`, and
-  `RTICB_SOURCE_BASIS_EVIDENCE_INVALID`.
+Monthly codes `BASE_AMOUNT_EFFECTIVE_DATE_MISSING`, `ENTERED_MONTHLY_AMOUNT_MISSING`,
+`ENTERED_MONTHLY_AMOUNT_NOT_POSITIVE`, `MANUAL_BALANCE_MISSING`,
+`MANUAL_BALANCE_NOT_POSITIVE`, `MANUAL_ANNUITY_FACTOR_MISSING`,
+`MANUAL_ANNUITY_FACTOR_NOT_POSITIVE`, and `MANUAL_ANNUITY_FACTOR_INVALID`, and temporal codes
+`TEMPORAL_AUTHORITY_MISSING`, `TEMPORAL_CPI_NOT_AUTHORIZED`,
+`TEMPORAL_AUTHORITY_UNSUPPORTED`, `TEMPORAL_ORIGIN_DATE_MISSING`,
+`TEMPORAL_FIXED_ANNUAL_RATE_MISSING`, `TEMPORAL_FIXED_ANNUAL_RATE_INVALID`,
+`TEMPORAL_FIXED_ANNUAL_RATE_NOT_POSITIVE`, `TEMPORAL_CONVERSION_DECISION_MISSING`, and
+`TEMPORAL_CONVERSION_DECISION_STALE` are professional blocker content in a successful context, not
+adapter failures. In particular, `manual` catches the three fixed-rate exceptions and places the
+exact code in `temporal_blockers`; conversion canonical-rate failure becomes
+`TEMPORAL_SOURCE_STRUCTURE_INVALID`. The adapter preserves every such context blocker unchanged.
 
-The adapter's strict two-field body and positive path-ID validation make the four request-validation
-codes unreachable through a valid constructed call; malformed browser input instead receives
-`422 REQUEST_SCHEMA_INVALID` with its exact request pointers before RTICB invocation. All remaining
-codes are preserved value-for-value in the professional envelope. Classification/reason codes such
-as `RTICB_SOURCE_NOT_ADMITTED`, `RTICB_INCOME_BASIS_UNKNOWN`,
-`RTICB_INCOME_BASIS_MISMATCH`, `RTICB_PRICE_BASIS_UNKNOWN`, `RTICB_PRICE_BASIS_MISMATCH`,
-`RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`, `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`,
-`RTICB_NORMALIZATION_REQUIRED`, and `RTICB_BASIS_UNRESOLVED` are successful professional evidence,
-not failures.
+Raw SQLAlchemy/driver failure anywhere in this once-only chain is 503
+`CONTEXT_DATABASE_FAILURE`, `field_paths=[]`, transport/no-store, deliberate retry only after
+service recovery. `CONTEXT_DATABASE_RETRY_EXHAUSTED` is forbidden because no retry occurred.
 
-RTICB owns one snapshot and implements no retry loop. A raw database/transaction exception before a
-professional result is therefore `503 RTICB_DATABASE_FAILURE`, `field_paths=[]`, and may be
-deliberately retried only after service recovery. `RTICB_DATABASE_RETRY_EXHAUSTED` is forbidden
-because no retry occurred. Likewise, Planning Input read has no retry loop, so
-`CONTEXT_DATABASE_RETRY_EXHAUSTED` is forbidden. These mappings preserve once-only invocation and
-do not wrap, reset, or retry an accepted service transaction.
+#### 9.5.3 RIT boundary: all 29 producer codes
 
-Two non-database exceptions can also escape the actual RTICB call chain. A target assessment that
-projects a stale transition at maximum version raises original `RIT_RECORD_VERSION_EXHAUSTED`; the
-comparison route returns `409 RIT_RECORD_VERSION_EXHAUSTED`, `field_paths=[]`, with no retry until
-governance/data intervention. RTISA can raise
-`RetirementTargetIncomeSourceAdmissionTechnicalError` only for the exact accepted tuples
-`PORTFOLIO_SOURCE_EXECUTION_ERROR/source_execution/PTE_EXECUTOR_EXCEPTION` and
-`PORTFOLIO_IDENTITY_ERROR/portfolio_identity/PORTFOLIO_EXECUTION_IDENTITY_ASSEMBLY_FAILED`; the
-route returns `503 RTICB_UPSTREAM_TECHNICAL_FAILURE`, `field_paths=[]`, and permits a deliberate
-rerun only after upstream recovery. Both use `TransportErrorV1` and the mandatory no-store headers;
-neither is converted into `block_no_result` or described as retry exhaustion.
+`GET /target` returns an accepted RIT result unchanged at HTTP 200. `PUT /target` exposes the
+reachable command/transaction errors below as transport. Where a code has both a stored-result and
+command origin, YES means at least one actual route path produces it; the ordinary oracle must
+exercise every distinct origin. GET professional rows have exact RIT envelope, field paths not
+applicable, professional resolution/reload only, and no-store headers.
+
+| Original code | Origin/condition | Reachable | Sole result / exact preemption |
+|---|---|:---:|---|
+| `RIT_COMMAND_SCHEMA_INVALID` | `_validate_command`; command key set differs | NO | adapter accepts exactly eight body fields, rejects extras/missing as 422 `REQUEST_SCHEMA_INVALID`, then injects exactly `client_id`; RIT not called |
+| `RIT_CLIENT_ID_INVALID` | invalid ID or `_lock_client` translates missing client | YES | invalid syntax is preempted; nonexistent positive client is 404 `CLIENT_NOT_FOUND`, `["/path/client_id"]`, transport, no retry except valid client |
+| `RIT_TARGET_RECORD_INVALID` | command version invalid or stored row shape/canonical amount/fingerprint invalid | YES | command origin preempted by 422 `/expected_record_version`; stored origin is exact HTTP-200 RIT result |
+| `RIT_PLANNING_CONTEXT_INVALID` | malformed expected identity/date or derived context shape | YES | body origin preempted by 422 exact expected-field pointer; derived GET is exact HTTP-200 RIT result; derived PUT is 409 same code, `[]`, reload/repair |
+| `RIT_AMOUNT_MISSING` | null command amount or null stored amount | NO | required non-null DTO preempts with 422 `/monthly_amount`; persisted column is non-null |
+| `RIT_AMOUNT_INVALID` | noncanonical/nonpositive amount command or stored text | YES | PUT: 422 same code, `["/monthly_amount"]`, correct request; GET: exact HTTP-200 RIT result |
+| `RIT_AMOUNT_PRECISION_UNSUPPORTED` | amount exceeds 18 integer or six fractional digits | YES | PUT 422 same code, `["/monthly_amount"]`; GET exact HTTP-200 RIT result |
+| `RIT_INCOME_BASIS_MISSING` | null command/stored income basis | NO | required enum DTO gives 422 `/income_basis`; persisted column is non-null |
+| `RIT_INCOME_BASIS_INVALID` | non-enum command/stored income basis | NO | enum DTO gives 422 `/income_basis`; DB check restricts stored values |
+| `RIT_PRICE_BASIS_MISSING` | null command/stored price basis | NO | required enum DTO gives 422 `/price_basis`; persisted column is non-null |
+| `RIT_PRICE_BASIS_INVALID` | non-enum command/stored price basis | NO | enum DTO gives 422 `/price_basis`; DB check restricts stored values |
+| `RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL` | nominal basis with non-null reference date | YES | PUT 422 same code, `["/price_reference_date"]`, correct request |
+| `RIT_PRICE_REFERENCE_DATE_MISSING` | real basis with null reference date | YES | PUT 422 same code, `["/price_reference_date"]`, correct request |
+| `RIT_PRICE_REFERENCE_DATE_INVALID` | noncanonical date text | NO | strict nullable-date DTO returns 422 `REQUEST_SCHEMA_INVALID`, `["/price_reference_date"]`; stored column is typed Date |
+| `RIT_CONFIRMATION_INVALID` | invalid source kind/actor or stored authority/timestamp | YES | caller source-kind is preempted by enum DTO and actor by startup/server injection; a structurally invalid stored authority remains exact HTTP-200 RIT result |
+| `RIT_RECORD_UNAVAILABLE` | dirty/nonfresh session (409) or unsupported dialect (503) | YES | 409 same code or 503 `RIT_UNSUPPORTED_DATABASE`; `[]`; retry only after pristine/supported service restoration |
+| `RIT_PLANNING_CONTEXT_UNAVAILABLE` | transitive Planning `PensionProductError` | YES | GET exact HTTP-200 RIT result; PUT 409 same code, `[]`; resolve/reload |
+| `RIT_RETIREMENT_TARGET_NOT_READY` | derived target absent/not ready | YES | GET exact HTTP-200 RIT result; PUT 409 same code, `[]`; professional resolution/reload |
+| `RIT_CONFIRMATION_CONTEXT_STALE` | expected planning fingerprint or target date differs | YES | PUT 409 same code; `["/expected_planning_calculation_input_fingerprint","/expected_retirement_target_date"]`; reload context and target |
+| `RIT_RECORD_VERSION_CONFLICT` | expected record version differs or bounded retry conflicts semantically | YES | PUT 409 same code; `["/expected_record_version"]`; reload target |
+| `RIT_RECORD_VERSION_EXHAUSTED` | current/stale projected version is maximum | YES | 409 same code; `[]`; no retry without governance/data intervention |
+| `RIT_CONFIRMATION_MISSING` | persisted authority columns absent | NO | all columns are non-null and created atomically in one transaction |
+| `RIT_CURRENCY_INVALID` | stored currency is not ILS | NO | DB check fixes `currency='ILS'`; write path assigns ILS |
+| `RIT_TARGET_MISSING` | no election row | YES | GET exact HTTP-200 RIT result |
+| `RIT_TARGET_CLIENT_MISMATCH` | loaded row client differs from context | NO | `_locked_row/_unlocked_row` query by the client primary key; FK/PK identity cannot return another client row |
+| `RIT_STORED_FINGERPRINT_MISMATCH` | stored semantic fingerprint absent/malformed/different | YES | GET exact HTTP-200 RIT result |
+| `RIT_PLANNING_IDENTITY_STALE` | stored and current planning fingerprints differ | YES | GET exact HTTP-200 RIT result |
+| `RIT_RETIREMENT_TARGET_STALE` | stored and current retirement dates differ | YES | GET exact HTTP-200 RIT result |
+| `RIT_RECONFIRMATION_REQUIRED` | stale lifecycle or either accepted identity is stale | YES | GET exact HTTP-200 RIT result |
+
+RIT retries only its own transaction, at most three attempts. Exhausted retryable SQLSTATE
+`40001`/`40P01`, the exact accepted target-primary-key `23505`, or SQLite busy/locked maps to 503
+`RIT_ASSESS_DATABASE_RETRY_EXHAUSTED` or `RIT_CONFIRM_DATABASE_RETRY_EXHAUSTED`, `[]`, transport;
+assess may be deliberately retried after backoff and confirm only after reload. Any non-retryable
+`OperationalError`, `IntegrityError`, or `DBAPIError` maps to 503 `RIT_ASSESS_DATABASE_FAILURE` or
+`RIT_CONFIRM_DATABASE_FAILURE`, `[]`, transport, after-service-recovery retry (confirm reloads).
+`TargetResultFingerprintConstructionError` and other non-database construction/programming errors
+map to 500 `INTERNAL_ERROR`, `[]`, no automatic retry.
+
+#### 9.5.4 RTISA transitive producer: all 30 reached codes
+
+RTICB calls `read_in_snapshot`, not public `read`; therefore `RTISA_REQUIRES_FRESH_TRANSACTION` and
+`RTISA_UNSUPPORTED_DATABASE` are not in this producer universe. The two input errors are producer
+codes but are preempted; the other 28 are reachable observations. All RTISA outputs remain inside
+RTICB: no RTISA code becomes a transport response and every resulting RTICB professional envelope
+is HTTP 200/no-store with field paths and transport retry not applicable.
+
+| Original RTISA code | Origin/condition | Reachable | Sole comparison outcome |
+|---|---|:---:|---|
+| `RTISA_CLIENT_ID_INVALID` | `_validate_read_request`; invalid client ID | NO | RTICB validated positive request ID, itself constructed from validated path ID |
+| `RTISA_EXPECTED_PLANNING_FINGERPRINT_INVALID` | `_validate_read_request`; malformed hash | NO | strict comparison DTO validates SHA-256 before constructing RTICB request; RTICB validates again before RTISA |
+| `RTISA_PLANNING_CONTEXT_UNAVAILABLE` | Planning derivation raised `PensionProductError` | YES | RTISA unavailable result -> `RTICB_RTISA_AUTHORITY_UNAVAILABLE` |
+| `RTISA_PLANNING_CONTEXT_INVALID` | Planning client/fingerprint shape invalid | YES | unavailable -> `RTICB_RTISA_AUTHORITY_UNAVAILABLE` |
+| `RTISA_PLANNING_IDENTITY_STALE` | expected/current planning fingerprints differ | YES | unavailable -> `RTICB_RTISA_AUTHORITY_UNAVAILABLE` |
+| `RTISA_RETIREMENT_TARGET_NOT_READY` | target absent/not ready/noncanonical | YES | unavailable -> `RTICB_RTISA_AUTHORITY_UNAVAILABLE` |
+| `RTISA_SOURCE_UNIVERSE_INVALID` | malformed/duplicate pension or recurring-income universe/ownership | YES | unavailable -> `RTICB_RTISA_AUTHORITY_UNAVAILABLE` |
+| `RTISA_PENSION_RESULT_INVALID` | portfolio output fails accepted schema/identity/fingerprint contract | YES | unavailable -> `RTICB_RTISA_AUTHORITY_UNAVAILABLE` |
+| `RTISA_PENSION_AUTHORITY_UNAVAILABLE` | no pension target-date execution entry | YES | unresolved RTISA entry -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_PENSION_SOURCE_NOT_READY` | pension execution/applicability is not payable-current ready | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_PENSION_APPLICABILITY_UNRESOLVED` | portfolio places pension source in unresolved group | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_CURRENCY_UNSUPPORTED` | pension execution currency is not accepted ILS/null | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_IDENTITY_UNRESOLVED` | pension-like recurring income has no resolution | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_IDENTITY_STALE` | pension/misclassification resolution identity is stale | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_RECORD_INVALID` | category/description/status/verification/basis/continuation shape invalid | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_AUTHORITY_NOT_RECORDED` | recurring source status is `not recorded` | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_REVIEW_INCOMPLETE` | verification is collected but not reviewed | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_AMOUNT_INVALID` | amount is non-Decimal/nonfinite/negative/out of exact range | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_FREQUENCY_UNSUPPORTED` | frequency has no accepted exact denominator | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_NATIVE_INCOME_BASIS_UNKNOWN` | native income basis is `unknown` | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_START_DATE_MISSING` | start date absent/invalid | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_CONTINUATION_UNRESOLVED` | continuation is `unknown` | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_END_DATE_MISSING` | known-end continuation lacks end date | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_DATE_RANGE_INVALID` | end precedes start | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_IDENTITY_AMBIGUOUS` | duplicate group contains multiple otherwise included sources | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_DUPLICATE_COLLISION_UNRESOLVED` | same duplicate collision | YES | unresolved -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_SOURCE_UNIVERSE_INCOMPLETE` | any unresolved source makes the universe partial | YES | partial -> `RTICB_RTISA_AUTHORITY_NOT_READY` |
+| `RTISA_FUTURE_SOURCE` | valid source begins after target | YES | successful exclusion evidence; RTICB can continue to success |
+| `RTISA_ENDED_SOURCE` | valid source ends before target | YES | successful exclusion evidence; RTICB can continue to success |
+| `RTISA_SAME_CANONICAL_PENSION` | recurring row delegates to the same canonical pension | YES | successful exclusion evidence; RTICB can continue to success |
+
+`RetirementTargetIncomeSourceAdmissionTechnicalError` can escape only with exact tuple
+`PORTFOLIO_SOURCE_EXECUTION_ERROR/source_execution/PTE_EXECUTOR_EXCEPTION` or
+`PORTFOLIO_IDENTITY_ERROR/portfolio_identity/PORTFOLIO_EXECUTION_IDENTITY_ASSEMBLY_FAILED`.
+The comparison route maps either to 503 `RTICB_UPSTREAM_TECHNICAL_FAILURE`, `[]`, transport/no-store,
+deliberate retry only after upstream recovery; it never fabricates a professional result.
+
+#### 9.5.5 RTICB boundary: all 20 failure-detail codes
+
+Every YES row returns HTTP 200, exact accepted `block_no_result`, unchanged original/final detail
+code, no field paths, professional resolution only, and mandatory no-store headers. The strict
+adapter contradiction is resolved: the first four are in the producer universe but are NO.
+
+| Original/final code | Origin/condition | Reachable | Sole result / exact preemption |
+|---|---|:---:|---|
+| `RTICB_REQUEST_SCHEMA_INVALID` | `_request_error`; request key set is not exact three-field producer contract | NO | browser DTO is exact two fields, forbids extras, then adapter injects exactly path `client_id`; malformed input is 422 `REQUEST_SCHEMA_INVALID` with exact offending body pointers |
+| `RTICB_CLIENT_ID_INVALID` | `_request_error`; producer request client is not positive int | NO | path DTO rejects as 422 `REQUEST_SCHEMA_INVALID`, `["/path/client_id"]`; adapter injects, never accepts body client ID |
+| `RTICB_EXPECTED_PLANNING_FINGERPRINT_INVALID` | `_request_error`; expected fingerprint not lowercase SHA-256 | NO | strict body DTO rejects as 422 `REQUEST_SCHEMA_INVALID`, `["/expected_planning_calculation_input_fingerprint"]` |
+| `RTICB_EXPECTED_RETIREMENT_TARGET_DATE_INVALID` | `_request_error`; expected date not canonical ISO date | NO | strict date DTO rejects as 422 `REQUEST_SCHEMA_INVALID`, `["/expected_retirement_target_date"]` |
+| `RTICB_REQUIRES_FRESH_TRANSACTION` | `assess`; session already in transaction or has pending ORM state | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_UNSUPPORTED_DATABASE` | `assess`; dialect is neither PostgreSQL nor SQLite | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_TARGET_AUTHORITY_SCHEMA_INVALID` | target result fails exact RIT schema/state validator | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID` | target semantic/result fingerprint invalid | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_TARGET_AUTHORITY_UNAVAILABLE` | accepted target result has `UNAVAILABLE` authority | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_TARGET_AUTHORITY_NOT_READY` | target is not exact current/ready/confirmed/no-blocker state | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_RTISA_AUTHORITY_SCHEMA_INVALID` | RTISA result fails exact schema validator | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID` | RTISA result fingerprint invalid | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_RTISA_AUTHORITY_UNAVAILABLE` | RTISA universe state is unavailable | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_RTISA_AUTHORITY_NOT_READY` | RTISA is not exact complete-evidenced/ready state | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_CLIENT_ID_MISMATCH` | target or RTISA client differs from request | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_PLANNING_IDENTITY_MISMATCH` | target/RTISA/request planning fingerprints differ | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_RETIREMENT_TARGET_DATE_MISMATCH` | target/RTISA/request dates differ | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_SOURCE_UNIVERSE_INVALID` | RTISA source-entry universe shape/identity/order invalid | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_SOURCE_COVERAGE_MISMATCH` | included/excluded/unresolved partitions do not cover entries exactly | YES | exact professional HTTP-200 failure envelope |
+| `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` | source basis evidence shape/semantics invalid | YES | exact professional HTTP-200 failure envelope |
+
+`RTICB_SOURCE_NOT_ADMITTED`, `RTICB_INCOME_BASIS_UNKNOWN`, `RTICB_INCOME_BASIS_MISMATCH`,
+`RTICB_PRICE_BASIS_UNKNOWN`, `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`,
+`RTICB_PRICE_BASIS_MISMATCH`, `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`,
+`RTICB_NORMALIZATION_REQUIRED`, and `RTICB_BASIS_UNRESOLVED` are successful comparison-entry/result
+evidence, not failure-detail codes; the adapter preserves them unchanged.
+
+RTICB owns one snapshot and has no retry loop. Raw SQLAlchemy/driver transaction failure maps once
+to 503 `RTICB_DATABASE_FAILURE`, `[]`, transport/no-store, deliberate rerun after recovery;
+`RTICB_DATABASE_RETRY_EXHAUSTED` is forbidden. A transitive target stale transition at maximum
+version escapes as 409 `RIT_RECORD_VERSION_EXHAUSTED`, `[]`, transport/no-store, with no retry until
+intervention. `RTICBFingerprintConstructionError`, malformed serialization, or another unexpected
+programming/framework exception maps to 500 `INTERNAL_ERROR`, `[]`, transport/no-store, no
+automatic retry.
+
+#### 9.5.6 Completeness reconciliation and technical classes
+
+Pass A and Pass B produced the same 97-code ledger: Planning Input 18, RIT 29, reached RTISA 30,
+and RTICB 20. The disposition arithmetic is exact: 76 route-reached plus 21 preempted equals 97;
+of the 76 reached, 28 are RTISA observations consumed by RTICB and 48 are boundary-visible codes.
+No code remains unresolved. Public RTISA-only `RTISA_REQUIRES_FRESH_TRANSACTION` and
+`RTISA_UNSUPPORTED_DATABASE`, Planning mutation codes, retirement-target-date mutation codes, and
+projection/execution route codes were emitter-search hits but are excluded with call-graph proof:
+none of their defining functions is invoked by the four vertical-slice routes.
+
+Technical exceptions are counted separately from the 97 codes: (1) Planning-context
+SQLAlchemy/driver transaction failure; (2) exhausted RIT retryable DBAPI family; (3) non-retryable
+RIT DBAPI family; (4) `TargetResultFingerprintConstructionError`; (5) RTICB snapshot DBAPI family;
+(6) the two exact `RetirementTargetIncomeSourceAdmissionTechnicalError` tuples; (7)
+`RTICBFingerprintConstructionError`; and (8) other unexpected programming/serialization/framework
+failure. Each has exactly the mapping stated above or the section 9.4 `INTERNAL_ERROR` fallback;
+none is converted to a professional result, and none invents retry exhaustion where no retry ran.
 
 ## 10. Database transaction and RTICB snapshot ownership
 
@@ -1109,10 +1245,13 @@ E. interleave concurrent first failures and threshold-crossing success/failure a
    anchor correction, proving one commit order, one shared anchor, atomic threshold visibility, and
    no session issuance after the winning threshold commit. Removing the final locked recheck or
    zero-to-one anchor branch must fail the ordinary concurrency oracle;
-F. table-drive every section 9.5 Planning Input and RIT producer code through its actual public
-   route or prove the stated pre-service impossibility; assert originating code, final HTTP/code,
-   exact field paths, retry permission, envelope, and cache headers. Substituting, merging, or
-   omitting any mapping must fail `API-003`;
+F. table-drive all 97 section 9.5 codes. For every YES row, execute the actual public-route and
+   transitive producer path and assert the originating code/observation, final HTTP/code, exact
+   field paths, retry permission, envelope, and cache headers. For every NO row, execute the prior
+   DTO/query/persistence invariant and prove the named producer function is not entered. The oracle
+   must assert the 18/29/30/20 per-producer counts, the `76 + 21 = 97` disposition, the 48
+   boundary-visible/28 RTISA-consumed split, and zero unresolved classifications. Substituting,
+   merging, omitting, or merely mocking a mapping must fail `API-003`;
 G. inject a real route-reachable database exception into Planning Input context and RTICB execution;
    prove one producer call and exact `CONTEXT_DATABASE_FAILURE`/`RTICB_DATABASE_FAILURE`, with no
    invented retry-exhausted code. Adding a route retry or the forbidden code must fail
@@ -1126,6 +1265,19 @@ I. attempt forged/malformed variants: wrong method, other health path, Host with
    docs/OpenAPI, and unknown paths. Every variant must follow the ordinary edge/public/protected
    contract and disclose no data; widening method/path/Host or trusting supplied forwarding headers
    must fail `API-002`/`DEPLOY-001`/`MUT-001`.
+J. exercise all 18 Planning Input boundary rows through `GET /context`, including ordinary fixtures
+   for `CONVERSION_EFFECTIVE_DATE_MISMATCH`, `BASIS_CONVERSION_PROVENANCE_INVALID`,
+   `PERSISTED_CONVERSION_RATIO_INVALID`, and `TEMPORAL_DECISION_STRUCTURE_INVALID`; independently
+   prove all five monthly/temporal NO rows are preempted by `_snapshot` selection/assembly. Delete,
+   collapse, or redirect each mapping one at a time and require the same ordinary `API-003` oracle
+   to fail before restoration and pass afterward;
+K. exercise both containment branches for every transitive Planning error (direct `/context`, RIT
+   GET/PUT, RTICB target side, RTICB RTISA side), every reached RTISA observation, and all 20 RTICB
+   failure-detail codes. The four RTICB request codes and two RTISA request codes require executable
+   adapter-preemption tests, not fabricated producer results. Mutations which admit a body
+   `client_id`, drop exact-field rejection, reinterpret an RTISA reason, convert `block_no_result`
+   to transport, add a route retry, or map a technical class to a professional result must reach
+   the production branch and fail `API-003`/`API-004`/`PG-003`, then pass after restoration.
 
 For every row above, `MUT-001` records the concrete mutated statement/branch, executes through the
 ordinary HTTP/service/PostgreSQL/deployed path, proves the mutant line/branch was reached, observes
@@ -1258,17 +1410,18 @@ new infrastructure, or scope expansion.
 | `RTDIR-VS-ACTOR-001` | Closed by section 8: exact RIT `_valid_actor` predicate and server-only authenticated binding. |
 | `RTDIR-VS-API-001` | Closed by section 9.2: exact two-field browser comparison DTO, forbidden caller client ID/extras, then path injection. |
 | `RTDIR-VS-API-002` | Closed by section 10: no comparison pre-query/second session/rollback workaround and exact RTICB public snapshot ownership. |
-| `RTDIR-VS-API-003` | Closed by sections 9.4–9.5 and `AC-040`: exhaustive source-derived Planning Input/RIT/RTICB inventories bind producer/original code to one final status/code/envelope/field-path/cache/retry rule; impossible paths have proofs, context/RTICB do not claim nonexistent retry, and `block_no_result` remains HTTP 200. |
+| `RTDIR-VS-API-003` | Corrected for focused re-audit by sections 9.4–9.5 and `AC-040`: two independent traversals reconcile 97 codes (18 Planning Input, 29 RIT, 30 reached RTISA, 20 RTICB), 76 reached, 21 preempted, zero unresolved; every boundary/transitive code has one final disposition, context/RTICB do not claim nonexistent retry, and `block_no_result` remains HTTP 200. Independent closure is not self-claimed. |
 | `RTDIR-VS-UI-001` | Closed by section 11: deterministic multi-blocker/source/reason composition, neutral readiness, refresh/conflict/client isolation, Hebrew RTL, and logout/cache behavior. |
 | `RTDIR-VS-DEPLOY-001` | Closed at Definition level by sections 3–4 and `AC-041..043`: one FastAPI service/origin, public-edge-only ingress, and a pre-edge exception limited to exact internal `GET /healthz/ready` plus Host `healthcheck.railway.app`; all other health/business/login/SPA/static/docs/unknown traffic retains ordinary validation. |
-| `RTDIR-VS-TEST-001` | Closed by section 13 and `AC-045`: obligations A–I directly exercise corrected zero anchoring, GLOBAL success, expiry, INTEGER maximum, concurrency, every producer mapping, no-retry failures, internal readiness, and forged variants; every mutant records production-path reach, ordinary-oracle failure, restoration, and passing control. |
+| `RTDIR-VS-TEST-001` | Corrected for focused re-audit by section 13 and `AC-045`: obligations A–K exercise corrected zero anchoring, GLOBAL success, expiry, INTEGER maximum, concurrency, all 97 producer/transitive dispositions, explicit monthly/temporal examples, RTISA containment, RTICB request preemption, no-retry failures, internal readiness, and forged variants; every mutant records production-path reach, ordinary-oracle failure, restoration, and passing control. Independent closure is not self-claimed. |
 | `RTDIR-VS-SEC-006` | Closed by section 7.4 and `AC-044`: exact public data-free login/static/SPA/preflight/health surface, complete protected registered-route inventory, production docs disablement, closed fallback/unknown/method behavior, Host exception and cache policy. |
 
 ## 18. Final consistency and authorization gate
 
-The four open blockers `SEC-001`, `API-003`, `DEPLOY-001`, and `TEST-001` are now addressed by one
-internally consistent correction. All ten previously closed blocker decisions, including focused
-`RTDIR-VS-SEC-006`, retain their accepted dispositions.
+The two blockers left open by the latest independent audit, `API-003` and `TEST-001`, are addressed
+for focused re-acceptance by the complete enumeration and executable obligations above. The
+independently closed `SEC-001` and `DEPLOY-001` decisions and all ten earlier closed blocker
+decisions, including focused `RTDIR-VS-SEC-006`, retain their accepted dispositions.
 No professional ambiguity and no additional Owner/Product Decision remains.
 
 Final counterexample review is explicit: a placeholder inserted at `t0` and first failed

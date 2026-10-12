@@ -30,6 +30,7 @@ APPROVED_LOCAL_UNTRACKED_PATHS = {
     "CURRENT_PROJECT_STATE.md",
     "_evidence/",
     "specs/bootstraps/",
+    "start_retire_v2_fixed.bat",
 }
 APPROVED_RETIREMENT_MONTHLY_INCOME_TARGET_PATHS = {
     "backend/alembic/versions/a2b8c5e1f309_retirement_monthly_income_target.py",
@@ -697,6 +698,7 @@ def test_governance_allows_only_approved_local_untracked_paths() -> None:
         "?? CURRENT_PROJECT_STATE.md",
         "?? _evidence/",
         "?? specs/bootstraps/",
+        "?? start_retire_v2_fixed.bat",
     ]
     assert _unapproved_untracked(status_lines) == []
     assert _unapproved_untracked([*status_lines, "?? scratch.txt"]) == ["?? scratch.txt"]

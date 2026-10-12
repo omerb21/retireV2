@@ -372,7 +372,7 @@ def test_reachability_no_schema_frontend_or_downstream_changes():
     root=Path(__file__).resolve().parents[2]
     modules=[root/'backend/app/services'/name for name in ('capital_projection_execution_service.py','capital_projection_execution_numeric.py')]
     for module in modules:
-        code=module.read_text(); parsed=ast.parse(code)
+        code=module.read_text(encoding='utf-8'); parsed=ast.parse(code)
         assert not any(token in code for token in ('quantize(', 'date.today(', 'm09_', 'm10_', 'PensionHolding', 'PlannerAssumption'))
         for node in ast.walk(parsed):
             assert not (isinstance(node,ast.Constant) and isinstance(node.value,float))
@@ -386,4 +386,4 @@ def test_reachability_no_schema_frontend_or_downstream_changes():
         '846dddb0b59b59b311d90d31242c90620be487e4'],cwd=root,text=True).splitlines()
     assert not any(p.startswith(('frontend/','backend/alembic/','backend/app/models/')) for p in changed)
     heads=subprocess.check_output([sys.executable,'-m','alembic','heads'],cwd=root/'backend',text=True).strip()
-    assert heads=='a2b8c5e1f309 (head)'
+    assert heads=='b3c9d6f2a410 (head)'

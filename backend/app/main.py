@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -107,7 +108,7 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError):
         if not config.production:
-            return JSONResponse(status_code=422, content={"detail": exc.errors()})
+            return await request_validation_exception_handler(request, exc)
         return error(request, 422, "REQUEST_SCHEMA_INVALID", [_pointer(tuple(item["loc"])) for item in exc.errors()])
 
     @app.api_route("/health", methods=["GET", "HEAD"])

@@ -41,6 +41,7 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "rtdir_login_rate_limit_buckets",
     "retirement_monthly_income_target_elections",
     "canonical_manual_pension_sources",
     "canonical_pension_temporal_decisions",

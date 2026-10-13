@@ -10,10 +10,11 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from inspect import getsource
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
 from sqlalchemy.orm import Session
 
 from app.api import retirement_income_readiness_routes as routes
@@ -23,6 +24,7 @@ from app.models.canonical_conversion import allocations, batches, conversions, p
 from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.retirement_facts import RecurringIncome
 from app.services import pension_monthly_basis_service as monthly_basis
+from app.services import pension_temporal_basis_service as temporal_basis
 from app.services import planning_input_service
 from app.services import professional_source_snapshot_service as snapshot_service
 from app.services import retirement_target_service
@@ -168,6 +170,119 @@ def test_context_reaches_resolution_ownership_guard(engine):
     _assert_transport(_context(engine), 409, "RESOLUTION_OWNERSHIP_INVALID")
 
 
+def _context_through_producer(engine, monkeypatch, producer, *, client_id=1):
+    """Keep the public adapter real while invoking the real accepted producer."""
+    entered = []
+
+    def read(db, observed_client_id):
+        assert observed_client_id == client_id
+        entered.append(True)
+        return producer(db, observed_client_id)
+
+    monkeypatch.setattr(planning_input_service, "read", read)
+    app.dependency_overrides[get_db] = _session_override(engine)
+    try:
+        response = TestClient(app).get(
+            f"/api/clients/{client_id}/retirement-income-readiness/context"
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert entered == [True]
+    return response
+
+
+def test_context_reaches_unsupported_database_producer_with_exact_transport(engine, monkeypatch):
+    class UnsupportedBind:
+        dialect = SimpleNamespace(name="unsupported")
+
+    class FreshUnsupportedSession:
+        new = dirty = deleted = ()
+
+        @staticmethod
+        def in_transaction():
+            return False
+
+        @staticmethod
+        def get_bind():
+            return UnsupportedBind()
+
+        @staticmethod
+        def connection():
+            return SimpleNamespace()
+
+    response = _context_through_producer(
+        engine, monkeypatch,
+        lambda _db, _client_id: snapshot_service.begin_read(FreshUnsupportedSession()),
+    )
+    _assert_transport(response, 503, "UNSUPPORTED_DATABASE")
+
+
+def test_context_reaches_client_not_found_producer_with_exact_transport(engine):
+    app.dependency_overrides[get_db] = _session_override(engine)
+    try:
+        response = TestClient(app).get(
+            "/api/clients/999999/retirement-income-readiness/context"
+        )
+    finally:
+        app.dependency_overrides.clear()
+    _assert_transport(response, 404, "CLIENT_NOT_FOUND", ("/path/client_id",))
+
+
+def test_context_reaches_source_structure_producer_with_exact_transport(engine, monkeypatch):
+    response = _context_through_producer(
+        engine, monkeypatch, lambda _db, _client_id: snapshot_service.invalid()
+    )
+    _assert_transport(response, 409, "SOURCE_STRUCTURE_INVALID")
+
+
+@pytest.mark.parametrize(
+    "expected,mutation",
+    [
+        ("CONVERSION_EFFECTIVE_DATE_MISMATCH", "monthly-date"),
+        ("BASIS_CONVERSION_PROVENANCE_INVALID", "monthly-audit"),
+        ("PERSISTED_CONVERSION_RATIO_INVALID", "monthly-ratio"),
+        ("TEMPORAL_DECISION_STRUCTURE_INVALID", "temporal-decision"),
+        ("TEMPORAL_SOURCE_STRUCTURE_INVALID", "temporal-source"),
+    ],
+)
+def test_context_reaches_basis_and_temporal_producers_with_exact_transport(
+    engine, monkeypatch, expected, mutation
+):
+    batch, converted, destination, trace, audit_event = conversion_arguments(engine)
+
+    def producer(_db, client_id):
+        if mutation == "monthly-date":
+            destination["effective_date"] = date(1900, 1, 1)
+            return monthly_basis.conversion(
+                AuditSession([audit_event]), client_id, batch, converted, destination, trace
+            )
+        if mutation == "monthly-audit":
+            return monthly_basis.conversion(
+                AuditSession([]), client_id, batch, converted, destination, trace
+            )
+        if mutation == "monthly-ratio":
+            destination["monthly_numerator"] = "0"
+            return monthly_basis.conversion(
+                AuditSession([audit_event]), client_id, batch, converted, destination, trace
+            )
+        if mutation == "temporal-decision":
+            row = SimpleNamespace(
+                client_id=client_id, manual_pension_source_id="inventory-manual",
+                lifecycle_status="current", base_amount_effective_date=date(2030, 1, 1),
+                indexation_method="none", fixed_indexation_rate="0.01",
+                temporal_authority_explicit=True, input_mode="entered",
+            )
+            return temporal_basis.manual(row, client_id)
+        destination["status"] = "reversed"
+        return temporal_basis.conversion(
+            _db, client_id, destination, converted, batch
+        )
+
+    _assert_transport(
+        _context_through_producer(engine, monkeypatch, producer), 409, expected
+    )
+
+
 @pytest.mark.parametrize(
     "side,expected,monthly_entered",
     [("numerator", "PERSISTED_CONVERSION_RATIO_INVALID", True),
@@ -197,21 +312,67 @@ def test_persisted_ratio_numerator_and_denominator_have_distinct_producer_bounda
     assert bool(calls) is monthly_entered
 
 
-def test_all_eight_planning_preemptions_are_backed_by_live_schema_query_invariants():
+def test_all_eight_planning_preemptions_are_backed_by_live_schema_query_invariants(
+    engine, monkeypatch
+):
     assert set(code for code, reached in PLANNING.items() if not reached) == {
         "TARGET_REFERENCE_STRUCTURE_INVALID", "BASIS_SOURCE_STRUCTURE_INVALID",
         "BASIS_SOURCE_OWNERSHIP_INVALID", "BASIS_SOURCE_NOT_CURRENT",
         "CONVERSION_EFFECTIVE_DATE_MISSING", "TEMPORAL_SOURCE_OWNERSHIP_INVALID",
         "TEMPORAL_SOURCE_NOT_CURRENT", "TEMPORAL_SOURCE_NOT_FOUND",
     }
-    assert batches.c.effective_date.nullable is False
-    assert pensions.c.effective_date.nullable is False
-    assert pensions.c.conversion_id.nullable is False
-    assert pensions.c.conversion_id.unique is True
-    assert conversions.c.client_id.nullable is False and pensions.c.client_id.nullable is False
-    assert len(retirement_target_service.canonical_references([
-        {"reference_id": "client:1:date"}, {"reference_id": "timing:1:date"},
-    ])) == 2
+    database = sa_inspect(engine)
+    pension_columns = {
+        column["name"]: column
+        for column in database.get_columns("canonical_pension_destinations")
+    }
+    conversion_columns = {column["name"]: column for column in database.get_columns("canonical_conversions")}
+    batch_columns = {column["name"]: column for column in database.get_columns("canonical_conversion_batches")}
+    assert batch_columns["effective_date"]["nullable"] is False
+    assert pension_columns["effective_date"]["nullable"] is False
+    assert pension_columns["conversion_id"]["nullable"] is False
+    assert conversion_columns["client_id"]["nullable"] is False
+    assert pension_columns["client_id"]["nullable"] is False
+    assert any(
+        constraint["column_names"] == ["conversion_id"]
+        for constraint in database.get_unique_constraints("canonical_pension_destinations")
+    )
+    choose(engine)
+
+    # With no admitted pension source, none of the eight prohibited downstream
+    # branches can be entered from GET /context.  The reference producer still
+    # runs, and its actual inputs prove that duplicate target identities are
+    # preempted before its error branch.
+    forbidden = []
+
+    def must_not_enter(*_args, **_kwargs):
+        forbidden.append(True)
+        pytest.fail("preempted Planning producer branch entered")
+
+    for module, name in (
+        (monthly_basis, "manual"), (monthly_basis, "conversion"),
+        (temporal_basis, "manual"), (temporal_basis, "conversion"),
+    ):
+        monkeypatch.setattr(module, name, must_not_enter)
+    original_references = retirement_target_service.canonical_references
+    observed_references = []
+
+    def observed(values):
+        observed_references.append(list(values))
+        return original_references(values)
+
+    monkeypatch.setattr(retirement_target_service, "canonical_references", observed)
+    response = _context(engine)
+    assert response.status_code == 200, response.text
+    assert forbidden == []
+    assert observed_references
+    for references in observed_references:
+        reference_ids = [item["reference_id"] for item in references]
+        assert len(reference_ids) == len(set(reference_ids))
+
+    # Query membership is an additional executable control, not the oracle by
+    # itself: only current manual rows and client-owned conversion rows can be
+    # materialized before the producer calls above.
     snapshot_source = getsource(planning_input_service._snapshot)
     assert "Manual.client_id == client_id" in snapshot_source
     assert "Manual.lifecycle_status == \"current\"" in snapshot_source

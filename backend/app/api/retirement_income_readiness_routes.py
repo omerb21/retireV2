@@ -82,7 +82,7 @@ def _canonical_date(value: object) -> bool:
 
 
 def _context_valid(result: object, client_id: int) -> bool:
-    if not isinstance(result, dict) or set(result) != CONTEXT_FIELDS:
+    if not isinstance(result, dict) or not CONTEXT_FIELDS <= set(result):
         return False
     target, blockers = result["retirement_target"], result["blocking_facts"]
     return (

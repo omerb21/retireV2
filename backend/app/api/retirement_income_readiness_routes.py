@@ -59,6 +59,11 @@ def _transport(request: Request, exc: PensionProductError, *, target_operation: 
         "RIT_RECORD_VERSION_CONFLICT": ["/expected_record_version"],
     }
     fields = target_fields.get(code, [])
+    if code in {
+        "RIT_AMOUNT_INVALID", "RIT_AMOUNT_PRECISION_UNSUPPORTED",
+        "RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL", "RIT_PRICE_REFERENCE_DATE_MISSING",
+    }:
+        status = 422
     if code == "RIT_RECORD_UNAVAILABLE":
         code = "RIT_UNSUPPORTED_DATABASE" if status == 503 else code
     return error(request, status, code, fields)

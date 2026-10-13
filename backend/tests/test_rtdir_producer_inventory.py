@@ -7,7 +7,7 @@ Planning Input production-path distinctions.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from inspect import getsource
 from types import SimpleNamespace
@@ -473,6 +473,210 @@ def test_rit_dto_preemptions_reject_before_producer_entry(monkeypatch, change, e
     assert response.json()["code"] == "REQUEST_SCHEMA_INVALID"
     assert expected_path in response.json()["field_paths"]
     assert response.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ({"monthly_amount": "0"}, "RIT_AMOUNT_INVALID"),
+        ({"monthly_amount": "1.0000001"}, "RIT_AMOUNT_PRECISION_UNSUPPORTED"),
+        ({"price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE", "price_reference_date": "2025-01-01"},
+         "RIT_NOMINAL_PRICE_REFERENCE_DATE_NOT_NULL"),
+        ({"price_basis": "REAL_AT_REFERENCE_DATE", "price_reference_date": None},
+         "RIT_PRICE_REFERENCE_DATE_MISSING"),
+    ],
+)
+def test_rit_reachable_command_errors_have_exact_public_transport(monkeypatch, change, expected):
+    entered = []
+
+    def confirm(_db, command, _actor):
+        entered.append(command)
+        return routes.target_service._validate_command(command)
+
+    monkeypatch.setattr(routes.target_service, "confirm", confirm)
+    production_app, client, headers = _production_client()
+    response = client.put(
+        "/api/clients/1/retirement-income-readiness/target",
+        json={**TARGET_BODY, **change}, headers=headers,
+    )
+    production_app.dependency_overrides.clear()
+    _assert_transport(response, 422, expected, ("/monthly_amount",) if "AMOUNT" in expected
+                      else ("/price_reference_date",))
+    assert len(entered) == 1
+
+
+def test_price_reference_date_dto_and_producer_precedence(monkeypatch):
+    entered = []
+
+    def confirm(_db, command, _actor):
+        entered.append(routes.target_service._validate_command(command))
+        routes.target_service._fail("RIT_CONFIRMATION_CONTEXT_STALE")
+
+    monkeypatch.setattr(routes.target_service, "confirm", confirm)
+    production_app, client, headers = _production_client()
+    root = "/api/clients/1/retirement-income-readiness/target"
+    malformed = client.put(root, json={**TARGET_BODY, "price_basis": "REAL_AT_REFERENCE_DATE",
+                                       "price_reference_date": "2025-99-99"}, headers=headers)
+    assert malformed.status_code == 422
+    assert malformed.json()["code"] == "REQUEST_SCHEMA_INVALID"
+    assert "/price_reference_date" in malformed.json()["field_paths"]
+    assert entered == []
+
+    valid = client.put(root, json={**TARGET_BODY, "price_basis": "REAL_AT_REFERENCE_DATE",
+                                   "price_reference_date": "2025-01-01"}, headers=headers)
+    production_app.dependency_overrides.clear()
+    _assert_transport(valid, 409, "RIT_CONFIRMATION_CONTEXT_STALE",
+                      ("/expected_planning_calculation_input_fingerprint",
+                       "/expected_retirement_target_date"))
+    assert len(entered) == 1
+    assert entered[0]["price_reference_date"].isoformat() == "2025-01-01"
+
+
+@pytest.mark.parametrize("code", [
+    "RIT_TARGET_RECORD_INVALID", "RIT_PLANNING_CONTEXT_INVALID",
+    "RIT_CONFIRMATION_INVALID", "RIT_PLANNING_CONTEXT_UNAVAILABLE",
+    "RIT_RETIREMENT_TARGET_NOT_READY", "RIT_TARGET_MISSING",
+    "RIT_STORED_FINGERPRINT_MISMATCH", "RIT_PLANNING_IDENTITY_STALE",
+    "RIT_RETIREMENT_TARGET_STALE", "RIT_RECONFIRMATION_REQUIRED",
+])
+def test_rit_get_professional_codes_preserve_exact_public_envelope(monkeypatch, code):
+    context = {
+        "client_id": 1, "fingerprint": "a" * 64,
+        "retirement_target_date": date(2035, 4, 1),
+    }
+    if code in {
+        "RIT_PLANNING_CONTEXT_INVALID", "RIT_PLANNING_CONTEXT_UNAVAILABLE",
+        "RIT_RETIREMENT_TARGET_NOT_READY",
+    }:
+        unavailable = {"client_id": 1, "fingerprint": None, "retirement_target_date": None}
+        produced = routes.target_service._result(unavailable, None, [code], "UNAVAILABLE")
+    elif code == "RIT_TARGET_MISSING":
+        produced = routes.target_service._result(context, None)
+    else:
+        row = SimpleNamespace(
+            client_id=1, version=1, lifecycle_state="CONFIRMED",
+            planning_calculation_input_fingerprint="a" * 64,
+            retirement_target_date=date(2035, 4, 1), monthly_amount_text="1000",
+            currency="ILS", income_basis="GROSS",
+            price_basis="NOMINAL_AT_RETIREMENT_TARGET_DATE", price_reference_date=None,
+            source_kind="PLANNER_SUPPLIED", confirmation_state="CONFIRMED",
+            confirmation_actor="planner:test", confirmed_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+            target_semantic_fingerprint=None,
+        )
+        target = routes.target_service._target_from_values(
+            client_id=1, planning_fingerprint=row.planning_calculation_input_fingerprint,
+            target_date=row.retirement_target_date, amount=row.monthly_amount_text,
+            income_basis=row.income_basis, price_basis=row.price_basis, reference_date=None,
+        )
+        row.target_semantic_fingerprint = routes.target_service._semantic_fingerprint(target)
+        if code == "RIT_TARGET_RECORD_INVALID":
+            row.monthly_amount_text = "01000"
+        elif code == "RIT_CONFIRMATION_INVALID":
+            row.confirmation_actor = ""
+        elif code == "RIT_STORED_FINGERPRINT_MISMATCH":
+            row.target_semantic_fingerprint = "b" * 64
+        elif code == "RIT_PLANNING_IDENTITY_STALE":
+            row.planning_calculation_input_fingerprint = "b" * 64
+            changed = {**target, "planning_calculation_input_fingerprint": "b" * 64}
+            row.target_semantic_fingerprint = routes.target_service._semantic_fingerprint(changed)
+        elif code == "RIT_RETIREMENT_TARGET_STALE":
+            row.retirement_target_date = date(2036, 4, 1)
+            changed = {**target, "retirement_target_date": "2036-04-01"}
+            row.target_semantic_fingerprint = routes.target_service._semantic_fingerprint(changed)
+        elif code == "RIT_RECONFIRMATION_REQUIRED":
+            row.lifecycle_state = "STALE"
+        produced = routes.target_service._result(
+            context, row,
+            project_stale_transition=code in {
+                "RIT_PLANNING_IDENTITY_STALE", "RIT_RETIREMENT_TARGET_STALE",
+            },
+        )
+        assert code in produced["blockers"]
+    entered = []
+
+    def assess(_db, client_id):
+        entered.append(client_id)
+        return produced
+
+    monkeypatch.setattr(routes.target_service, "assess", assess)
+    production_app, client, headers = _production_client()
+    response = client.get("/api/clients/1/retirement-income-readiness/target", headers=headers)
+    production_app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json() == produced
+    assert code in response.json()["blockers"]
+    if code not in {"RIT_PLANNING_IDENTITY_STALE", "RIT_RETIREMENT_TARGET_STALE"}:
+        assert response.json()["blockers"] == [code]
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    assert entered == [1]
+
+
+@pytest.mark.parametrize("code,status,final_code,fields", [
+    ("RIT_CLIENT_ID_INVALID", 404, "CLIENT_NOT_FOUND", ("/path/client_id",)),
+    ("RIT_RECORD_UNAVAILABLE", 409, "RIT_RECORD_UNAVAILABLE", ()),
+    ("RIT_PLANNING_CONTEXT_UNAVAILABLE", 409, "RIT_PLANNING_CONTEXT_UNAVAILABLE", ()),
+    ("RIT_RETIREMENT_TARGET_NOT_READY", 409, "RIT_RETIREMENT_TARGET_NOT_READY", ()),
+    ("RIT_CONFIRMATION_CONTEXT_STALE", 409, "RIT_CONFIRMATION_CONTEXT_STALE",
+     ("/expected_planning_calculation_input_fingerprint", "/expected_retirement_target_date")),
+    ("RIT_RECORD_VERSION_CONFLICT", 409, "RIT_RECORD_VERSION_CONFLICT", ("/expected_record_version",)),
+    ("RIT_RECORD_VERSION_EXHAUSTED", 409, "RIT_RECORD_VERSION_EXHAUSTED", ()),
+])
+def test_rit_reachable_transport_mapping_is_exact(monkeypatch, code, status, final_code, fields):
+    entered = []
+
+    def confirm(_db, _command, _actor):
+        entered.append(True)
+        routes.target_service._fail(code)
+
+    monkeypatch.setattr(routes.target_service, "confirm", confirm)
+    production_app, client, headers = _production_client()
+    response = client.put("/api/clients/1/retirement-income-readiness/target",
+                          json=TARGET_BODY, headers=headers)
+    production_app.dependency_overrides.clear()
+    _assert_transport(response, status, final_code, fields)
+    assert entered == [True]
+
+
+def test_rit_persistence_preemptions_are_executable_and_producer_not_entered(engine, monkeypatch):
+    database = sa_inspect(engine)
+    columns = {
+        column["name"]: column
+        for column in database.get_columns("retirement_monthly_income_target_elections")
+    }
+    assert columns["confirmation_state"]["nullable"] is False
+    assert columns["confirmation_actor"]["nullable"] is False
+    assert columns["confirmed_at"]["nullable"] is False
+    checks = " ".join(
+        constraint["sqltext"]
+        for constraint in database.get_check_constraints("retirement_monthly_income_target_elections")
+    )
+    assert "currency = 'ILS'" in checks
+    primary_key = database.get_pk_constraint("retirement_monthly_income_target_elections")
+    assert primary_key["constrained_columns"] == ["client_id"]
+
+    forbidden = []
+    original_authority = routes.target_service._authority
+    original_stored = routes.target_service._stored_target
+
+    def authority(row):
+        forbidden.append("authority")
+        return original_authority(row)
+
+    def stored(row):
+        forbidden.append("stored")
+        return original_stored(row)
+
+    monkeypatch.setattr(routes.target_service, "_authority", authority)
+    monkeypatch.setattr(routes.target_service, "_stored_target", stored)
+    app.dependency_overrides[get_db] = _session_override(engine)
+    try:
+        response = TestClient(app).get("/api/clients/1/retirement-income-readiness/target")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["blockers"] == ["RIT_RETIREMENT_TARGET_NOT_READY"]
+    assert forbidden == []
 
 
 @pytest.mark.parametrize("path,body,expected_path", [

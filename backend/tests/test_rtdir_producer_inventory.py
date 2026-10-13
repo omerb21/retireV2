@@ -422,6 +422,213 @@ def test_rtisa_unresolved_pension_identity_is_produced_and_consumed_by_rticb(eng
     assert result["failure_detail_code"] == "RTICB_RTISA_AUTHORITY_NOT_READY"
 
 
+RTISA_CONSUMPTION_MATRIX = [
+    ("RTISA_PLANNING_CONTEXT_UNAVAILABLE", "unavailable"),
+    ("RTISA_PLANNING_CONTEXT_INVALID", "unavailable"),
+    ("RTISA_PLANNING_IDENTITY_STALE", "unavailable"),
+    ("RTISA_RETIREMENT_TARGET_NOT_READY", "unavailable"),
+    ("RTISA_SOURCE_UNIVERSE_INVALID", "unavailable"),
+    ("RTISA_PENSION_RESULT_INVALID", "unavailable"),
+    ("RTISA_PENSION_AUTHORITY_UNAVAILABLE", "unresolved"),
+    ("RTISA_PENSION_SOURCE_NOT_READY", "unresolved"),
+    ("RTISA_PENSION_APPLICABILITY_UNRESOLVED", "unresolved"),
+    ("RTISA_SOURCE_CURRENCY_UNSUPPORTED", "unresolved"),
+    ("RTISA_SOURCE_IDENTITY_UNRESOLVED", "unresolved"),
+    ("RTISA_SOURCE_IDENTITY_STALE", "unresolved"),
+    ("RTISA_SOURCE_RECORD_INVALID", "unresolved"),
+    ("RTISA_SOURCE_AUTHORITY_NOT_RECORDED", "unresolved"),
+    ("RTISA_SOURCE_REVIEW_INCOMPLETE", "unresolved"),
+    ("RTISA_SOURCE_AMOUNT_INVALID", "unresolved"),
+    ("RTISA_SOURCE_FREQUENCY_UNSUPPORTED", "unresolved"),
+    ("RTISA_NATIVE_INCOME_BASIS_UNKNOWN", "unresolved"),
+    ("RTISA_SOURCE_START_DATE_MISSING", "unresolved"),
+    ("RTISA_SOURCE_CONTINUATION_UNRESOLVED", "unresolved"),
+    ("RTISA_SOURCE_END_DATE_MISSING", "unresolved"),
+    ("RTISA_SOURCE_DATE_RANGE_INVALID", "unresolved"),
+    ("RTISA_SOURCE_IDENTITY_AMBIGUOUS", "unresolved"),
+    ("RTISA_DUPLICATE_COLLISION_UNRESOLVED", "unresolved"),
+    ("RTISA_SOURCE_UNIVERSE_INCOMPLETE", "unresolved"),
+    ("RTISA_FUTURE_SOURCE", "excluded"),
+    ("RTISA_ENDED_SOURCE", "excluded"),
+    ("RTISA_SAME_CANONICAL_PENSION", "excluded"),
+]
+
+
+def _actual_rtisa_observation(code, disposition):
+    """Build the observation with the production RTISA result/entry producers.
+
+    The origin-specific database and portfolio paths remain covered by the
+    accepted RTISA suite.  This helper deliberately uses the production
+    constructors/classifiers, rather than inventing an RTISA-shaped mapping,
+    for the transitive RTICB consumption oracle.
+    """
+    if disposition == "unavailable":
+        return rtisa_service._empty_result(1, "1" * 64, "2030-01-01", code)
+
+    source = {
+        "source_id": "manual:1", "source_fingerprint": "4" * 64,
+        "pension_start_date": "2025-01-01", "tax_treatment": "taxable",
+    }
+    ready_pte = {
+        "source_id": "manual:1", "result_state": "result_ready",
+        "source_result_fingerprint": "6" * 64,
+        "currency": "ILS", "final_monthly_amount": "1200.00",
+        "unquantized_target_monthly_amount": "1200.00",
+        "temporal_authority_kind": None, "temporal_origin_date": None,
+        "annual_rate": None,
+    }
+    blocked_pte = {**ready_pte, "result_state": "block_no_result"}
+    planning = {
+        "planning_calculation_input_fingerprint": "1" * 64,
+        "retirement_target": {"retirement_target_date": "2030-01-01"},
+        "pension_inputs": [], "warnings": [],
+    }
+    portfolio = {
+        "portfolio_result_fingerprint": "5" * 64,
+        "result_state": "result_ready", "total_completeness_state": "complete",
+        "source_results": [], "payable_current_source_ids": [],
+        "future_start_source_ids": [], "unresolved_source_ids": [],
+        "blocked_source_ids": [],
+    }
+    rows = []
+    resolutions = []
+    pension_cases = {
+        "RTISA_PENSION_AUTHORITY_UNAVAILABLE": (None, None),
+        "RTISA_PENSION_SOURCE_NOT_READY": (blocked_pte, "payable_current"),
+        "RTISA_PENSION_APPLICABILITY_UNRESOLVED": (blocked_pte, "unresolved"),
+        "RTISA_SOURCE_CURRENCY_UNSUPPORTED": ({**ready_pte, "currency": "USD"}, "payable_current"),
+        "RTISA_FUTURE_SOURCE": (ready_pte, "future_start"),
+    }
+    if code in pension_cases:
+        pte, group = pension_cases[code]
+        planning["pension_inputs"] = [source]
+        if pte is None:
+            portfolio["result_state"] = "block_no_result"
+            portfolio["total_completeness_state"] = "unavailable"
+        else:
+            portfolio["source_results"] = [pte]
+            portfolio[f"{group}_source_ids"] = ["manual:1"]
+    else:
+        row = RecurringIncome(
+            id=1, client_id=1, income_category="rental", description="rent",
+            amount=Decimal("1200.00"), amount_basis="gross", frequency="monthly",
+            continuation_status="ongoing", lifecycle_status="current",
+            source_status="planner entered", verification_state="reviewed",
+            start_date=date(2025, 1, 1),
+        )
+        changes = {
+            "RTISA_SOURCE_RECORD_INVALID": ("description", None),
+            "RTISA_SOURCE_AUTHORITY_NOT_RECORDED": ("source_status", "not recorded"),
+            "RTISA_SOURCE_REVIEW_INCOMPLETE": ("verification_state", "collected - not yet reviewed"),
+            "RTISA_SOURCE_AMOUNT_INVALID": ("amount", Decimal("-1")),
+            "RTISA_SOURCE_FREQUENCY_UNSUPPORTED": ("frequency", "other"),
+            "RTISA_NATIVE_INCOME_BASIS_UNKNOWN": ("amount_basis", "unknown"),
+            "RTISA_SOURCE_START_DATE_MISSING": ("start_date", None),
+            "RTISA_SOURCE_CONTINUATION_UNRESOLVED": ("continuation_status", "unknown"),
+            "RTISA_SOURCE_END_DATE_MISSING": ("continuation_status", "known end date"),
+            "RTISA_SOURCE_DATE_RANGE_INVALID": ("end_date", date(2024, 1, 1)),
+            "RTISA_SOURCE_UNIVERSE_INCOMPLETE": ("start_date", None),
+            "RTISA_FUTURE_SOURCE": ("start_date", date(2031, 1, 1)),
+            "RTISA_ENDED_SOURCE": ("end_date", date(2029, 1, 1)),
+        }
+        if code == "RTISA_ENDED_SOURCE":
+            row.continuation_status = "known end date"
+        if code in changes:
+            setattr(row, *changes[code])
+        if code == "RTISA_SOURCE_IDENTITY_UNRESOLVED":
+            row.income_category = "pension"
+        resolution = None
+        pension_map = {}
+        if code in {"RTISA_SOURCE_IDENTITY_STALE", "RTISA_SAME_CANONICAL_PENSION"}:
+            row.income_category = "pension"
+            pension_map = {"manual:1": source}
+            planning["pension_inputs"] = [source]
+            portfolio["source_results"] = [ready_pte]
+            portfolio["payable_current_source_ids"] = ["manual:1"]
+            resolution = PensionIncomeResolution(
+                income_id=1, client_id=1, version=1,
+                decision_kind="SAME_CANONICAL_PENSION", income_fingerprint=(
+                    planning_input_service.fingerprint(planning_input_service.record(row))
+                    if code == "RTISA_SAME_CANONICAL_PENSION" else "f" * 64
+                ),
+                canonical_source_id="manual:1", canonical_fingerprint="4" * 64,
+                reference="test", actor="test",
+            )
+            resolutions = [resolution]
+        rows = [row]
+        if code in {"RTISA_SOURCE_IDENTITY_AMBIGUOUS", "RTISA_DUPLICATE_COLLISION_UNRESOLVED"}:
+            peer = RecurringIncome(
+                id=2, client_id=1, income_category="rental", description="rent",
+                amount=Decimal("1200.00"), amount_basis="gross", frequency="monthly",
+                continuation_status="ongoing", lifecycle_status="current",
+                source_status="planner entered", verification_state="reviewed",
+                start_date=date(2025, 1, 1),
+            )
+            rows.append(peer)
+
+    return rtisa_service._assemble(1, planning, portfolio, rows, resolutions)
+
+
+def _assert_rtisa_observation(admission, code, disposition):
+    observed_codes = admission["blockers"] if (
+        disposition == "unavailable" or code == "RTISA_SOURCE_UNIVERSE_INCOMPLETE"
+    ) else admission["source_entries"][0]["reason_codes"]
+    assert code in observed_codes
+
+
+@pytest.mark.parametrize("code,disposition", RTISA_CONSUMPTION_MATRIX)
+def test_all_28_rtisa_observations_are_produced_and_consumed_by_actual_rticb(
+    monkeypatch, code, disposition
+):
+    admission = _actual_rtisa_observation(code, disposition)
+    _assert_rtisa_observation(admission, code, disposition)
+
+    result, _, reached = _run(monkeypatch, rtisa=admission)
+    assert reached == {"target": 1, "rtisa": 1}
+    if disposition == "unavailable":
+        assert (result["result_state"], result["failure_stage"], result["failure_detail_code"]) == (
+            "block_no_result", "rtisa_authority", "RTICB_RTISA_AUTHORITY_UNAVAILABLE"
+        )
+    elif disposition == "unresolved":
+        assert (result["result_state"], result["failure_stage"], result["failure_detail_code"]) == (
+            "block_no_result", "rtisa_authority", "RTICB_RTISA_AUTHORITY_NOT_READY"
+        )
+    else:
+        comparison = next(
+            item for item in result["source_comparisons"]
+            if item["rtisa_admission_state"] == "EXCLUDED"
+        )
+        assert "failure_detail_code" not in result
+        assert comparison["rtisa_admission_state"] == "EXCLUDED"
+        assert comparison["comparison_state"] == "NOT_ADMITTED"
+        assert comparison["reason_codes"] == ["RTICB_SOURCE_NOT_ADMITTED"]
+
+
+def test_rtisa_observation_mapping_mutation_is_detected_and_restored(monkeypatch):
+    original = rtisa_service._pension_entry
+    reached = []
+
+    def redirected(*args, **kwargs):
+        entry = original(*args, **kwargs)
+        if entry["reason_codes"] == ["RTISA_FUTURE_SOURCE"]:
+            reached.append("future")
+            entry["reason_codes"] = ["RTISA_ENDED_SOURCE"]
+        return entry
+
+    monkeypatch.setattr(rtisa_service, "_pension_entry", redirected)
+    mutant = _actual_rtisa_observation("RTISA_FUTURE_SOURCE", "excluded")
+    with pytest.raises(AssertionError):
+        _assert_rtisa_observation(mutant, "RTISA_FUTURE_SOURCE", "excluded")
+    assert reached == ["future"]
+
+    monkeypatch.setattr(rtisa_service, "_pension_entry", original)
+    restored = _actual_rtisa_observation("RTISA_FUTURE_SOURCE", "excluded")
+    _assert_rtisa_observation(restored, "RTISA_FUTURE_SOURCE", "excluded")
+    result, _, consumed = _run(monkeypatch, rtisa=restored)
+    assert consumed == {"target": 1, "rtisa": 1}
+    assert result["source_comparisons"][0]["comparison_state"] == "NOT_ADMITTED"
+
+
 TARGET_BODY = {
     "expected_record_version": 0,
     "expected_planning_calculation_input_fingerprint": "a" * 64,
@@ -774,3 +981,36 @@ def test_rtisa_rticb_request_preemptions_reject_before_producer_entry(
     assert response.json()["code"] == "REQUEST_SCHEMA_INVALID"
     assert expected_path in response.json()["field_paths"]
     assert response.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.parametrize("path,body,expected_path", [
+    ("/api/clients/0/retirement-income-readiness/comparison", {
+        "expected_planning_calculation_input_fingerprint": "a" * 64,
+        "expected_retirement_target_date": "2035-04-01",
+    }, "/path/client_id"),
+    ("/api/clients/1/retirement-income-readiness/comparison", {
+        "expected_planning_calculation_input_fingerprint": "bad",
+        "expected_retirement_target_date": "2035-04-01",
+    }, "/expected_planning_calculation_input_fingerprint"),
+])
+def test_two_rtisa_request_codes_are_preempted_at_public_dto_boundary(
+    monkeypatch, path, body, expected_path
+):
+    entered = []
+
+    def forbidden_rtisa(*_args, **_kwargs):
+        entered.append(True)
+        pytest.fail("RTISA producer entered")
+
+    monkeypatch.setattr(
+        routes.comparison_service.rtisa_service, "read_in_snapshot", forbidden_rtisa
+    )
+    production_app, client, headers = _production_client()
+    response = client.post(path, json=body, headers=headers)
+    production_app.dependency_overrides.clear()
+    assert response.status_code == 422
+    assert response.json()["code"] == "REQUEST_SCHEMA_INVALID"
+    assert response.json()["field_paths"] == [expected_path]
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    assert entered == []

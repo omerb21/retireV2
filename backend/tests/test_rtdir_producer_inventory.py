@@ -647,6 +647,45 @@ def test_rit_reachable_transport_mapping_is_exact(
     assert entered == [True]
 
 
+def test_rit_transport_mapping_mutation_is_detected_and_restored(monkeypatch):
+    def confirm(_db, _command, _actor):
+        routes.target_service._fail("RIT_RECORD_VERSION_CONFLICT")
+
+    monkeypatch.setattr(routes.target_service, "confirm", confirm)
+    production_app, client, headers = _production_client()
+    original_transport = routes._transport
+
+    baseline = client.put(
+        "/api/clients/1/retirement-income-readiness/target",
+        json=TARGET_BODY, headers=headers,
+    )
+    _assert_transport(baseline, 409, "RIT_RECORD_VERSION_CONFLICT",
+                      ("/expected_record_version",))
+
+    def redirected_transport(request, exc, *args, **kwargs):
+        if exc.code == "RIT_RECORD_VERSION_CONFLICT":
+            exc = PensionProductError("RIT_RECORD_VERSION_EXHAUSTED", "mutant", 409)
+        return original_transport(request, exc, *args, **kwargs)
+
+    monkeypatch.setattr(routes, "_transport", redirected_transport)
+    mutant = client.put(
+        "/api/clients/1/retirement-income-readiness/target",
+        json=TARGET_BODY, headers=headers,
+    )
+    with pytest.raises(AssertionError):
+        _assert_transport(mutant, 409, "RIT_RECORD_VERSION_CONFLICT",
+                          ("/expected_record_version",))
+
+    monkeypatch.setattr(routes, "_transport", original_transport)
+    restored = client.put(
+        "/api/clients/1/retirement-income-readiness/target",
+        json=TARGET_BODY, headers=headers,
+    )
+    production_app.dependency_overrides.clear()
+    _assert_transport(restored, 409, "RIT_RECORD_VERSION_CONFLICT",
+                      ("/expected_record_version",))
+
+
 @pytest.mark.parametrize("change,expected_path", [
     ({"expected_record_version": -1}, "/expected_record_version"),
     ({"expected_planning_calculation_input_fingerprint": "bad"},

@@ -22,6 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.security.config import AuthConfig
 from app.security.rate_limit import MAX_COUNT, cleanup_batch, finalize, login_buckets, precheck
+from app import main as app_main
+from app.main import create_app
 
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -139,9 +141,11 @@ def test_postgresql_limiter_concurrent_threshold_reset_saturation_and_cleanup(rt
         assert finalize(db, buckets, success=True) > 0  # reached threshold cannot be bypassed
     with engine.begin() as db:
         user_key = next(item.key for item in buckets if item.kind == "USER")
-        db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET failure_count=:maximum, locked_until=window_started_at + INTERVAL '900 seconds' WHERE bucket_key=:key"), {"maximum": MAX_COUNT, "key": user_key})
+        # No lock is present, so finalize must reach the actual saturating UPDATE
+        # branch rather than returning from the lock precheck.
+        db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET failure_count=:maximum, locked_until=NULL WHERE bucket_key=:key"), {"maximum": MAX_COUNT, "key": user_key})
     with Session(engine) as db:
-        assert finalize(db, buckets, success=False) > 0
+        finalize(db, buckets, success=False)
     with engine.connect() as db:
         assert db.execute(text("SELECT failure_count FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"), {"key": user_key}).scalar_one() == MAX_COUNT
 
@@ -149,4 +153,51 @@ def test_postgresql_limiter_concurrent_threshold_reset_saturation_and_cleanup(rt
         db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET updated_at=transaction_timestamp() - INTERVAL '1900 seconds'"))
     with Session(engine) as db:
         assert cleanup_batch(db) == 3
+    engine.dispose()
+
+
+def test_postgresql_zero_placeholder_anchor_and_restart_persistence(rtdir_postgres_url):
+    engine = create_engine(rtdir_postgres_url)
+    config = AuthConfig(production=True, actor_id="planner", session_secret=b"a" * 32, rate_limit_secret=b"c" * 32)
+    buckets = login_buckets(config, "new-user", "192.0.2.22")
+    with Session(engine) as db:
+        assert precheck(db, buckets) == 0
+    with engine.connect() as db:
+        placeholders = db.execute(text("""
+            SELECT failure_count, locked_until, window_started_at = updated_at
+            FROM rtdir_login_rate_limit_buckets
+            WHERE bucket_key = ANY(:keys)
+            ORDER BY bucket_key
+        """), {"keys": [item.key for item in buckets]}).all()
+    assert placeholders == [(0, None, True)] * 3
+    with Session(engine) as db:
+        assert finalize(db, buckets, success=False) == 0
+    with engine.connect() as db:
+        anchored = db.execute(text("""
+            SELECT failure_count, locked_until, window_started_at <= updated_at
+            FROM rtdir_login_rate_limit_buckets
+            WHERE bucket_key = ANY(:keys)
+            ORDER BY bucket_key
+        """), {"keys": [item.key for item in buckets]}).all()
+    assert anchored == [(1, None, True)] * 3
+    engine.dispose()
+    restarted = create_engine(rtdir_postgres_url)
+    with restarted.connect() as db:
+        assert db.execute(text("SELECT count(*) FROM rtdir_login_rate_limit_buckets WHERE bucket_key = ANY(:keys)"), {"keys": [item.key for item in buckets]}).scalar_one() == 3
+    restarted.dispose()
+
+
+def test_postgresql_readiness_requires_exact_migration_head(rtdir_postgres_url, monkeypatch):
+    engine = create_engine(rtdir_postgres_url)
+    monkeypatch.setattr(app_main, "get_session_factory", lambda: lambda: Session(engine))
+    application = create_app(AuthConfig(production=True, actor_id="planner", session_secret=b"a" * 32, rate_limit_secret=b"b" * 32))
+    assert app_main._cleanup_once(application) is True
+    assert application.state.rate_limiter_ready is True
+    with engine.begin() as db:
+        db.execute(text("UPDATE alembic_version SET version_num='a2b8c5e1f309'"))
+    assert app_main._cleanup_once(application) is False
+    assert application.state.rate_limiter_ready is False
+    with engine.begin() as db:
+        db.execute(text("UPDATE alembic_version SET version_num='b3c9d6f2a410'"))
+    assert app_main._cleanup_once(application) is True
     engine.dispose()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import base64
 import secrets
 from typing import Iterable
 
@@ -143,6 +144,19 @@ def validate_session(request: Request, config: AuthConfig) -> JSONResponse | Non
 def validate_csrf(request: Request) -> JSONResponse | None:
     values = header_values(request, "x-rtdir-csrf")
     expected = request.state.auth_session["csrf"]
-    if len(values) != 1 or len(values[0]) != 43 or not secrets.compare_digest(values[0].encode(), expected.encode()):
+    def decode(value: object) -> bytes | None:
+        if not isinstance(value, str) or len(value) != 43 or "=" in value:
+            return None
+        try:
+            raw = base64.b64decode(value + "=", altchars=b"-_", validate=True)
+        except (ValueError, TypeError):
+            return None
+        if len(raw) != 32 or base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=") != value:
+            return None
+        return raw
+
+    supplied = decode(values[0]) if len(values) == 1 else None
+    bound = decode(expected)
+    if supplied is None or bound is None or not secrets.compare_digest(supplied, bound):
         return error(request, 403, "CSRF_INVALID")
     return None

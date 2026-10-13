@@ -4,11 +4,17 @@ import { resolveApiBaseUrl } from "./apiBase";
 
 describe("apiBase", () => {
   it("uses the backend runtime origin by default outside tests", () => {
-    expect(resolveApiBaseUrl({ MODE: "development" })).toBe("http://127.0.0.1:8000/api");
+    expect(resolveApiBaseUrl({ MODE: "development" })).toBe("/api");
   });
 
   it("uses relative api paths in test mode", () => {
     expect(resolveApiBaseUrl({ MODE: "test" })).toBe("/api");
+  });
+
+  it("uses same-origin api paths in production and never defaults to localhost", () => {
+    expect(resolveApiBaseUrl({ MODE: "production" })).toBe("/api");
+    expect(resolveApiBaseUrl({ MODE: "production" })).not.toContain("localhost");
+    expect(resolveApiBaseUrl({ MODE: "production" })).not.toContain("127.0.0.1");
   });
 
   it("uses a configured API base URL without a trailing slash", () => {

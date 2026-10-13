@@ -8,6 +8,7 @@ export function AuthenticationGate({children, enforce = import.meta.env.MODE !==
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [logoutUncertain, setLogoutUncertain] = useState(false);
 
   useEffect(() => {
     if (!enforce) { setChecking(false); return; }
@@ -30,15 +31,27 @@ export function AuthenticationGate({children, enforce = import.meta.env.MODE !==
   }
 
   async function signOut() {
-    const prior = session; setSession(null); configureAuthenticatedApi(null);
+    const prior = session; setLogoutUncertain(true); setMessage("");
     if (!prior) return;
     try {
       const status = await logout(prior.csrf_token);
-      if (status !== 204 && status !== 401) {
-        setMessage("ההתנתקות לא אושרה. ניתן לנסות שוב או לרענן את מצב החיבור.");
+      if (status === 204 || status === 401) {
+        setSession(null); configureAuthenticatedApi(null); setLogoutUncertain(false); return;
       }
+      setMessage("ההתנתקות לא אושרה. המידע מוסתר עד לבדיקה או ניסיון חוזר.");
     } catch {
-      setMessage("ההתנתקות לא אושרה. ניתן לנסות שוב או לרענן את מצב החיבור.");
+      setMessage("ההתנתקות לא אושרה. המידע מוסתר עד לבדיקה או ניסיון חוזר.");
+    }
+  }
+
+  async function checkAfterFailedLogout() {
+    setMessage("");
+    try {
+      const value = await restoreSession();
+      setSession(value); configureAuthenticatedApi(value.csrf_token, () => setSession(null));
+      setLogoutUncertain(false);
+    } catch {
+      setSession(null); configureAuthenticatedApi(null); setLogoutUncertain(false);
     }
   }
 
@@ -48,5 +61,10 @@ export function AuthenticationGate({children, enforce = import.meta.env.MODE !==
     <form onSubmit={submit}><label>שם משתמש<input autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} /></label>
       <label>סיסמה<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
       <button type="submit">כניסה</button></form>{message && <p role="alert">{message}</p>}</main>;
+  if (logoutUncertain) return <main dir="rtl"><h1>אימות מצב ההתנתקות</h1>
+    {message && <p role="alert">{message}</p>}
+    <button type="button" onClick={() => void signOut()}>ניסיון התנתקות נוסף</button>
+    <button type="button" onClick={() => void checkAfterFailedLogout()}>בדיקת מצב החיבור</button>
+  </main>;
   return <><div dir="rtl"><button type="button" onClick={() => void signOut()}>התנתקות</button></div>{children}</>;
 }

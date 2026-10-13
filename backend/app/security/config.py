@@ -86,7 +86,18 @@ class AuthConfig:
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
-        production = os.getenv("APP_ENV") == "production"
+        raw_environment = os.getenv("APP_ENV")
+        railway_detected = any(
+            os.getenv(name) is not None
+            for name in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID")
+        )
+        if raw_environment is None:
+            if railway_detected:
+                raise RuntimeError("APP_ENV is invalid")
+            return cls(production=False)
+        if raw_environment not in {"development", "test", "production"}:
+            raise RuntimeError("APP_ENV is invalid")
+        production = raw_environment == "production"
         if not production:
             return cls(production=False)
         if os.getenv("AUTH_INGRESS_MODE") != "railway_public_edge":

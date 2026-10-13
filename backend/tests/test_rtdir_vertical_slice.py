@@ -4,6 +4,7 @@ from datetime import date
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.api import retirement_income_readiness_routes as routes
 from app.api import auth_routes
@@ -14,6 +15,8 @@ from app.security.config import AuthConfig, valid_actor
 from app.security.rate_limit import bucket, login_buckets
 from app.security.session import SESSION_SECONDS, issue, public_dto, verify
 from app.security.session import COOKIE_NAME
+from app.services import retirement_monthly_income_target_service as target_service
+from app.services import retirement_target_date_income_comparison_basis_service as comparison_service
 
 
 class PristineDB:
@@ -44,7 +47,7 @@ def _context_result(client_id=7):
 
 
 def _target_result(client_id=7):
-    return {
+    result = {
         "schema_version": "CANONICAL_RETIREMENT_MONTHLY_INCOME_TARGET_AUTHORITY_RESULT_V1",
         "client_id": client_id,
         "planning_calculation_input_fingerprint": "a" * 64,
@@ -56,8 +59,9 @@ def _target_result(client_id=7):
         "target_ready": False,
         "blockers": ["RIT_TARGET_MISSING"],
         "target_semantic_fingerprint": None,
-        "target_result_fingerprint": "b" * 64,
     }
+    result["target_result_fingerprint"] = target_service._fingerprint({"contract": target_service.RESULT_CONTRACT, **result})
+    return result
 
 
 def test_context_is_a_value_preserving_single_call_adapter(monkeypatch):
@@ -116,7 +120,11 @@ def test_target_confirmation_injects_path_client_and_server_actor(monkeypatch):
 
 def test_comparison_forbids_client_override_and_calls_public_owner_once(monkeypatch):
     db = PristineDB(); calls = []
-    result = {"schema_version": "X", "client_id": 7, "result_state": "block_no_result", "failure_stage": "target_authority", "failure_detail_code": "RTICB_TARGET_AUTHORITY_NOT_READY"}
+    result = comparison_service._failure({
+        "client_id": 7,
+        "expected_planning_calculation_input_fingerprint": "a" * 64,
+        "expected_retirement_target_date": "2035-04-01",
+    }, "target_authority", "RTICB_TARGET_AUTHORITY_NOT_READY")
     monkeypatch.setattr(routes.comparison_service, "assess", lambda actual, request: calls.append((actual, request, list(actual.operations))) or result)
     app.dependency_overrides[get_db] = _db_override(db)
     client = TestClient(app)
@@ -236,6 +244,83 @@ def test_unsafe_request_requires_exact_origin_and_session_bound_csrf():
     assert accepted.status_code == 204
     assert COOKIE_NAME + "=" in accepted.headers["set-cookie"]
     assert "Max-Age=0" in accepted.headers["set-cookie"]
+
+
+def test_logout_missing_invalid_and_expired_sessions_are_401_and_delete_cookie():
+    config = _production_config()
+    client = TestClient(create_app(config))
+    missing = client.post("/api/auth/logout", headers=_edge_headers(origin="https://evil.example"))
+    client.cookies.set(COOKIE_NAME, "not-a-session")
+    invalid = client.post("/api/auth/logout", headers=_edge_headers(origin="https://evil.example"))
+    expired_token, _ = issue(config, now=1)
+    client.cookies.set(COOKIE_NAME, expired_token)
+    expired = client.post("/api/auth/logout", headers=_edge_headers(origin="https://evil.example"))
+    for response, code in ((missing, "SESSION_MISSING"), (invalid, "SESSION_INVALID"), (expired, "SESSION_EXPIRED")):
+        assert (response.status_code, response.json()["code"]) == (401, code)
+        assert COOKIE_NAME + "=" in response.headers["set-cookie"]
+        assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def test_csrf_requires_canonical_decoded_32_bytes_and_session_binding():
+    client, payload = _authenticated_client()
+    headers = _edge_headers(origin="https://retire.example")
+    malformed = ["A" * 42, "A" * 43 + "=", "!" * 43, "_" * 43]
+    for token in malformed:
+        response = client.post("/api/auth/logout", headers={**headers, "x-rtdir-csrf": token})
+        assert (response.status_code, response.json()["code"]) == (403, "CSRF_INVALID")
+    other_config = _production_config()
+    _, other = issue(other_config)
+    assert other["csrf"] != payload["csrf"]
+    cross = client.post("/api/auth/logout", headers={**headers, "x-rtdir-csrf": other["csrf"]})
+    assert (cross.status_code, cross.json()["code"]) == (403, "CSRF_INVALID")
+
+
+def test_deployment_environment_mode_is_explicit_and_fail_closed(monkeypatch):
+    for name in ("APP_ENV", "RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID"):
+        monkeypatch.delenv(name, raising=False)
+    assert AuthConfig.from_env() == AuthConfig(production=False)
+    for invalid in ("", "prod", "Production", " production"):
+        monkeypatch.setenv("APP_ENV", invalid)
+        with pytest.raises(RuntimeError, match="APP_ENV"):
+            AuthConfig.from_env()
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    with pytest.raises(RuntimeError, match="APP_ENV"):
+        AuthConfig.from_env()
+
+
+def test_strict_producer_contracts_reject_malformed_results(monkeypatch):
+    db = PristineDB()
+    app.dependency_overrides[get_db] = _db_override(db)
+    client = TestClient(app)
+    try:
+        monkeypatch.setattr(routes.target_service, "assess", lambda *_: {**_target_result(), "authority_state": "SURPRISE"})
+        target_response = client.get("/api/clients/7/retirement-income-readiness/target")
+        monkeypatch.setattr(routes.comparison_service, "assess", lambda *_: {"client_id": 7, "result_state": "block_no_result"})
+        comparison_response = client.post("/api/clients/7/retirement-income-readiness/comparison", json={
+            "expected_planning_calculation_input_fingerprint": "a" * 64,
+            "expected_retirement_target_date": "2035-04-01",
+        })
+        monkeypatch.setattr(routes.planning_input_service, "read", lambda *_: {**_context_result(), "planning_input_ready": "yes"})
+        context_response = client.get("/api/clients/7/retirement-income-readiness/context")
+    finally:
+        app.dependency_overrides.clear()
+    for response in (target_response, comparison_response, context_response):
+        assert (response.status_code, response.json()["code"]) == (500, "PRODUCER_RESPONSE_INVALID")
+
+
+def test_production_unexpected_exception_is_sanitized(monkeypatch):
+    production_app = create_app(_production_config())
+    client, payload = _authenticated_client()
+    production_app.dependency_overrides[get_db] = _db_override(PristineDB())
+    monkeypatch.setattr(routes.target_service, "assess", lambda *_: (_ for _ in ()).throw(RuntimeError("secret client material")))
+    client = TestClient(production_app, raise_server_exceptions=False)
+    token, _ = issue(_production_config())
+    client.cookies.set(COOKIE_NAME, token)
+    response = client.get("/api/clients/7/retirement-income-readiness/target", headers=_edge_headers())
+    assert (response.status_code, response.json()["code"]) == (500, "INTERNAL_ERROR")
+    assert "secret" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
 
 
 def test_edge_and_preflight_contracts_are_closed_and_exact():

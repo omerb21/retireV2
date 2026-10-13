@@ -24,3 +24,20 @@ test("keeps password only in form state and clears it after failed login", async
   expect(screen.getByRole("alert")).toHaveTextContent("ההתחברות נכשלה");
   expect(mocked).toHaveBeenLastCalledWith("/api/auth/login", expect.objectContaining({credentials: "include"}));
 });
+
+test("failed logout hides client data and offers retry and session check", async () => {
+  const mocked = vi.fn()
+    .mockResolvedValueOnce({ok: true, json: async () => session})
+    .mockResolvedValueOnce({status: 503})
+    .mockResolvedValueOnce({status: 204});
+  vi.stubGlobal("fetch", mocked);
+  render(<AuthenticationGate enforce><p>מידע מקצועי</p></AuthenticationGate>);
+  expect(await screen.findByText("מידע מקצועי")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", {name: "התנתקות"}));
+  expect(await screen.findByText("אימות מצב ההתנתקות")).toBeInTheDocument();
+  expect(screen.queryByText("מידע מקצועי")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", {name: "ניסיון התנתקות נוסף"})).toBeInTheDocument();
+  expect(screen.getByRole("button", {name: "בדיקת מצב החיבור"})).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", {name: "ניסיון התנתקות נוסף"}));
+  await waitFor(() => expect(screen.getByRole("heading", {name: "כניסה למערכת תכנון הפרישה"})).toBeInTheDocument());
+});

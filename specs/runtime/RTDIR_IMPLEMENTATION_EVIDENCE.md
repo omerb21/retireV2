@@ -36,3 +36,18 @@ healthcheck Host behavior, smoke login/session/protected-route/logout, CORS/cach
 external continuous readiness monitoring, and limiter persistence across restart.
 
 Downstream implementation is not authorized. Production readiness is not claimed.
+
+## Consolidated implementation-audit correction
+
+The append-only correction after candidate `a68befe` adds executable ordinary oracles for the
+reported code findings: deployment-mode ambiguity fails closed; readiness queries the exact
+`b3c9d6f2a410` head; production builds use same-origin `/api`; invalid/expired logout preserves
+401 plus cookie deletion; uncertain browser logout hides client data and exposes retry and session
+check actions; CSRF is canonical decoded 32-byte base64url with constant-time byte comparison;
+accepted producer outputs are strictly shape, state, identity, and fingerprint checked; and
+unexpected production exceptions use the no-store `INTERNAL_ERROR` envelope.
+
+The PostgreSQL module reaches the real saturating UPDATE branch and adds migration-head, concurrent
+placeholder/threshold, zero-anchor, restart-persistence, and cleanup evidence. Those tests remain
+opt-in and are not claimed executed when an isolated PostgreSQL 16 environment is unavailable.
+Railway black-box evidence remains a deployment-only gate.

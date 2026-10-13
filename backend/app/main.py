@@ -30,9 +30,11 @@ from app.security.config import AuthConfig
 from app.security.middleware import RTDIRSecurityMiddleware
 from app.security.rate_limit import RateLimitUnavailable, cleanup_batch
 from app.security.transport import NO_STORE, error, is_spa_path
+from sqlalchemy import text
 
 load_all_models()
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+EXPECTED_ALEMBIC_HEAD = "b3c9d6f2a410"
 
 
 def _pointer(location: tuple[object, ...]) -> str:
@@ -49,6 +51,9 @@ def _pointer(location: tuple[object, ...]) -> str:
 def _cleanup_once(app: FastAPI) -> bool:
     db = get_session_factory()()
     try:
+        heads = db.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
+        if heads != [EXPECTED_ALEMBIC_HEAD]:
+            raise RateLimitUnavailable("database migration head mismatch")
         while cleanup_batch(db) == 64:
             pass
         app.state.rate_limiter_ready = True
@@ -110,6 +115,12 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         if not config.production:
             return await request_validation_exception_handler(request, exc)
         return error(request, 422, "REQUEST_SCHEMA_INVALID", [_pointer(tuple(item["loc"])) for item in exc.errors()])
+
+    @app.exception_handler(Exception)
+    async def unexpected_failure(request: Request, exc: Exception):
+        if not config.production:
+            raise exc
+        return error(request, 500, "INTERNAL_ERROR")
 
     @app.api_route("/health", methods=["GET", "HEAD"])
     def health():

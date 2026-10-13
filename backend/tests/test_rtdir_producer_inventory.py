@@ -533,7 +533,8 @@ def test_price_reference_date_dto_and_producer_precedence(monkeypatch):
 
 
 @pytest.mark.parametrize("code", [
-    "RIT_TARGET_RECORD_INVALID", "RIT_PLANNING_CONTEXT_INVALID",
+    "RIT_TARGET_RECORD_INVALID", "RIT_PLANNING_CONTEXT_INVALID", "RIT_AMOUNT_INVALID",
+    "RIT_AMOUNT_PRECISION_UNSUPPORTED",
     "RIT_CONFIRMATION_INVALID", "RIT_PLANNING_CONTEXT_UNAVAILABLE",
     "RIT_RETIREMENT_TARGET_NOT_READY", "RIT_TARGET_MISSING",
     "RIT_STORED_FINGERPRINT_MISMATCH", "RIT_PLANNING_IDENTITY_STALE",
@@ -571,6 +572,10 @@ def test_rit_get_professional_codes_preserve_exact_public_envelope(monkeypatch, 
         row.target_semantic_fingerprint = routes.target_service._semantic_fingerprint(target)
         if code == "RIT_TARGET_RECORD_INVALID":
             row.monthly_amount_text = "01000"
+        elif code == "RIT_AMOUNT_INVALID":
+            row.monthly_amount_text = "0"
+        elif code == "RIT_AMOUNT_PRECISION_UNSUPPORTED":
+            row.monthly_amount_text = "1234567890123456789"
         elif code == "RIT_CONFIRMATION_INVALID":
             row.confirmation_actor = ""
         elif code == "RIT_STORED_FINGERPRINT_MISMATCH":
@@ -612,22 +617,26 @@ def test_rit_get_professional_codes_preserve_exact_public_envelope(monkeypatch, 
     assert entered == [1]
 
 
-@pytest.mark.parametrize("code,status,final_code,fields", [
-    ("RIT_CLIENT_ID_INVALID", 404, "CLIENT_NOT_FOUND", ("/path/client_id",)),
-    ("RIT_RECORD_UNAVAILABLE", 409, "RIT_RECORD_UNAVAILABLE", ()),
-    ("RIT_PLANNING_CONTEXT_UNAVAILABLE", 409, "RIT_PLANNING_CONTEXT_UNAVAILABLE", ()),
-    ("RIT_RETIREMENT_TARGET_NOT_READY", 409, "RIT_RETIREMENT_TARGET_NOT_READY", ()),
-    ("RIT_CONFIRMATION_CONTEXT_STALE", 409, "RIT_CONFIRMATION_CONTEXT_STALE",
+@pytest.mark.parametrize("code,producer_status,status,final_code,fields", [
+    ("RIT_CLIENT_ID_INVALID", 409, 404, "CLIENT_NOT_FOUND", ("/path/client_id",)),
+    ("RIT_RECORD_UNAVAILABLE", 409, 409, "RIT_RECORD_UNAVAILABLE", ()),
+    ("RIT_RECORD_UNAVAILABLE", 503, 503, "RIT_UNSUPPORTED_DATABASE", ()),
+    ("RIT_PLANNING_CONTEXT_INVALID", 409, 409, "RIT_PLANNING_CONTEXT_INVALID", ()),
+    ("RIT_PLANNING_CONTEXT_UNAVAILABLE", 409, 409, "RIT_PLANNING_CONTEXT_UNAVAILABLE", ()),
+    ("RIT_RETIREMENT_TARGET_NOT_READY", 409, 409, "RIT_RETIREMENT_TARGET_NOT_READY", ()),
+    ("RIT_CONFIRMATION_CONTEXT_STALE", 409, 409, "RIT_CONFIRMATION_CONTEXT_STALE",
      ("/expected_planning_calculation_input_fingerprint", "/expected_retirement_target_date")),
-    ("RIT_RECORD_VERSION_CONFLICT", 409, "RIT_RECORD_VERSION_CONFLICT", ("/expected_record_version",)),
-    ("RIT_RECORD_VERSION_EXHAUSTED", 409, "RIT_RECORD_VERSION_EXHAUSTED", ()),
+    ("RIT_RECORD_VERSION_CONFLICT", 409, 409, "RIT_RECORD_VERSION_CONFLICT", ("/expected_record_version",)),
+    ("RIT_RECORD_VERSION_EXHAUSTED", 409, 409, "RIT_RECORD_VERSION_EXHAUSTED", ()),
 ])
-def test_rit_reachable_transport_mapping_is_exact(monkeypatch, code, status, final_code, fields):
+def test_rit_reachable_transport_mapping_is_exact(
+    monkeypatch, code, producer_status, status, final_code, fields
+):
     entered = []
 
     def confirm(_db, _command, _actor):
         entered.append(True)
-        routes.target_service._fail(code)
+        routes.target_service._fail(code, producer_status)
 
     monkeypatch.setattr(routes.target_service, "confirm", confirm)
     production_app, client, headers = _production_client()
@@ -636,6 +645,27 @@ def test_rit_reachable_transport_mapping_is_exact(monkeypatch, code, status, fin
     production_app.dependency_overrides.clear()
     _assert_transport(response, status, final_code, fields)
     assert entered == [True]
+
+
+@pytest.mark.parametrize("change,expected_path", [
+    ({"expected_record_version": -1}, "/expected_record_version"),
+    ({"expected_planning_calculation_input_fingerprint": "bad"},
+     "/expected_planning_calculation_input_fingerprint"),
+    ({"expected_retirement_target_date": "bad"}, "/expected_retirement_target_date"),
+    ({"source_kind": "FORGED"}, "/source_kind"),
+])
+def test_rit_additional_dto_origins_preempt_producer(monkeypatch, change, expected_path):
+    monkeypatch.setattr(routes.target_service, "confirm", lambda *_: pytest.fail("RIT producer entered"))
+    production_app, client, headers = _production_client()
+    response = client.put(
+        "/api/clients/1/retirement-income-readiness/target",
+        json={**TARGET_BODY, **change}, headers=headers,
+    )
+    production_app.dependency_overrides.clear()
+    assert response.status_code == 422
+    assert response.json()["code"] == "REQUEST_SCHEMA_INVALID"
+    assert expected_path in response.json()["field_paths"]
+    assert response.headers["cache-control"] == "no-store, private"
 
 
 def test_rit_persistence_preemptions_are_executable_and_producer_not_entered(engine, monkeypatch):

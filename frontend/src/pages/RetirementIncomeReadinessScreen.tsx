@@ -100,7 +100,7 @@ function Workspace({clientId}: {clientId: number}) {
       {comparison && <section><h2>תוצאת בדיקת בסיסי השוואה</h2>{comparison.result_state === "block_no_result" ? <p>לא הופקה תוצאה: {comparison.failure_stage} · <bdi>{comparison.failure_detail_code}</bdi></p> : <>
         <p>{comparison.direct_comparison_ready ? "בסיס ההשוואה מוכן" : "בסיס ההשוואה אינו מוכן"}</p>
         {comparison.blockers?.map(code => <p key={code}>{describe(code)} <small>{code}</small></p>)}
-        {comparison.source_comparisons?.map(item => <article key={item.source_id}><h3><bdi>{item.source_id}</bdi></h3><p>{describe(item.comparison_state)} · {describe(item.rtisa_admission_state)}</p>{item.reason_codes.map(code => <p key={code}>{describe(code)} <small>{code}</small></p>)}</article>)}</>}</section>}
+        {comparison.source_comparisons?.map(item => <article key={item.source_id}><h3><bdi>{item.source_id}</bdi></h3><p>{describe(item.comparison_state)} <small>{item.comparison_state}</small> · {describe(item.rtisa_admission_state)} <small>{item.rtisa_admission_state}</small></p>{item.reason_codes.map((code, index) => <p key={`${code}:${index}`}>{describe(code)} <small>{code}</small></p>)}</article>)}</>}</section>}
     </>}
   </main>;
 }

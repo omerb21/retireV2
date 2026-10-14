@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import { RetirementIncomeReadinessScreen } from "./RetirementIncomeReadinessScreen";
 
@@ -24,6 +24,24 @@ function renderScreen() {
   return render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}><Routes>
     <Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} />
   </Routes></MemoryRouter>);
+}
+
+const contextFor = (clientId: number, targetDate = "2035-04-01") => ({...context, client_id: clientId, retirement_target_date: targetDate});
+const targetFor = (clientId: number, monthlyAmount = "12000.00") => ({
+  ...target, client_id: clientId, target: {...target.target, monthly_amount: monthlyAmount},
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return {promise, resolve, reject};
+}
+
+function NavigationControls() {
+  const navigate = useNavigate();
+  return <><button onClick={() => navigate("/clients/8/retirement-income-readiness")}>לקוח B</button>
+    <button onClick={() => navigate("/clients/7/retirement-income-readiness")}>לקוח A</button></>;
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -76,4 +94,125 @@ test("confirms only accepted fields, then discards and reloads context before ta
   expect(saved).not.toHaveProperty("trusted_professional_actor");
   expect(fetcher.mock.calls[3][0]).toContain("/context");
   expect(fetcher.mock.calls[4][0]).toContain("/target");
+});
+
+test.each(["0", "-1", "1.5", "abc", "9007199254740992"])(
+  "rejects invalid client id %s before any readiness request", async clientId => {
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    render(<MemoryRouter initialEntries={[`/clients/${clientId}/retirement-income-readiness`]}><Routes>
+      <Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} />
+    </Routes></MemoryRouter>);
+    expect(screen.getByRole("alert")).toHaveTextContent("מזהה לקוח אינו תקין");
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+test("A-to-B-to-A aborts old reads and generation guard rejects their late response", async () => {
+  const oldA = deferred<Response>();
+  const fetcher = vi.fn()
+    .mockImplementationOnce((_url, init) => { expect(init.signal).toBeInstanceOf(AbortSignal); return oldA.promise; })
+    .mockImplementationOnce(() => response(contextFor(8, "2040-02-02")))
+    .mockImplementationOnce(() => response(targetFor(8, "22000.00")))
+    .mockImplementationOnce(() => response(contextFor(7, "2045-03-03")))
+    .mockImplementationOnce(() => response(targetFor(7, "33000.00")));
+  vi.stubGlobal("fetch", fetcher);
+  render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}>
+    <NavigationControls /><Routes><Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} /></Routes>
+  </MemoryRouter>);
+  const firstSignal = fetcher.mock.calls[0][1].signal as AbortSignal;
+  fireEvent.click(screen.getByRole("button", {name: "לקוח B"}));
+  expect(await screen.findByDisplayValue("22000.00")).toBeInTheDocument();
+  expect(firstSignal.aborted).toBe(true);
+  fireEvent.click(screen.getByRole("button", {name: "לקוח A"}));
+  expect(await screen.findByDisplayValue("33000.00")).toBeInTheDocument();
+  oldA.resolve(await response(contextFor(7, "1999-01-01")));
+  await waitFor(() => expect(screen.queryByText(/01\/01\/1999/)).not.toBeInTheDocument());
+  expect(screen.getByDisplayValue("33000.00")).toBeInTheDocument();
+  expect(screen.getByText(/03\/03\/2045/)).toBeInTheDocument();
+});
+
+test("CAS conflict is not retried and only explicit refresh requests fresh state", async () => {
+  const fetcher = vi.fn()
+    .mockImplementationOnce(() => response(context))
+    .mockImplementationOnce(() => response(target))
+    .mockResolvedValueOnce(new Response(JSON.stringify({code: "TARGET_VERSION_CONFLICT"}), {status: 409}))
+    .mockImplementationOnce(() => response(context))
+    .mockImplementationOnce(() => response(targetFor(7, "14000.00")));
+  vi.stubGlobal("fetch", fetcher); renderScreen();
+  expect(await screen.findByDisplayValue("12000.00")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", {name: "אישור מפורש של היעד"}));
+  expect(await screen.findByRole("alert")).toHaveTextContent("יש לרענן לפני ניסיון נוסף");
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  fireEvent.click(screen.getByRole("button", {name: "רענון מפורש"}));
+  expect(await screen.findByDisplayValue("14000.00")).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledTimes(5);
+});
+
+test.each([
+  ["MISSING", "MISSING", "חסר"],
+  ["INVALID", "INVALID", "אינו תקין"],
+  ["STALE", "STALE", "מיושן ונדרש אישור מחדש"],
+  ["UNAVAILABLE", "UNAVAILABLE", "אינו זמין"],
+  ["CURRENT", "READY", "נוכחי"],
+])("renders distinct target authority state %s", async (authorityState, readinessState, label) => {
+  vi.stubGlobal("fetch", vi.fn()
+    .mockImplementationOnce(() => response(context))
+    .mockImplementationOnce(() => response({...target, authority_state: authorityState, target_readiness_state: readinessState, target_ready: authorityState === "CURRENT"})));
+  renderScreen();
+  expect(await screen.findByText(new RegExp(label))).toBeInTheDocument();
+  expect(screen.getByText(new RegExp(`מצב סמכות:`))).toHaveTextContent(labelsForTest(authorityState));
+});
+
+function labelsForTest(code: string) {
+  return ({MISSING: "חסר", INVALID: "אינו תקין", STALE: "מיושן ונדרש אישור מחדש", UNAVAILABLE: "אינו זמין", CURRENT: "נוכחי"} as Record<string, string>)[code];
+}
+
+test("successful comparison preserves blocker source and reason order including excluded entries", async () => {
+  const comparison = {
+    schema_version: "RTICB_RESULT_V1", client_id: 7, direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
+    blockers: ["BLOCKER_Z", "BLOCKER_A"], source_comparisons: [
+      {source_id: "income:2", comparison_state: "BASIS_UNRESOLVED", reason_codes: ["REASON_2", "REASON_1"], rtisa_admission_state: "EXCLUDED", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
+      {source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_B", "NORMALIZE_A"], rtisa_admission_state: "NOT_ADMITTED", source_income_basis: "NET", source_price_basis: "REAL"},
+    ],
+  };
+  vi.stubGlobal("fetch", vi.fn()
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response(comparison)));
+  renderScreen(); await screen.findByDisplayValue("12000.00");
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  const result = await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"});
+  const section = result.closest("section")!;
+  const text = section.textContent ?? "";
+  expect(text.indexOf("BLOCKER_Z")).toBeLessThan(text.indexOf("BLOCKER_A"));
+  expect(text.indexOf("income:2")).toBeLessThan(text.indexOf("income:1"));
+  expect(text.indexOf("REASON_2")).toBeLessThan(text.indexOf("REASON_1"));
+  expect(text).toContain("EXCLUDED"); expect(text).toContain("NOT_ADMITTED");
+  expect(text).toContain("NORMALIZATION_REQUIRED"); expect(text).toContain("BASIS_UNRESOLVED");
+});
+
+test("direct comparability does not invent income availability funding or portfolio readiness", async () => {
+  const comparison = {client_id: 7, direct_comparison_state: "DIRECTLY_COMPARABLE", direct_comparison_ready: true, blockers: [], source_comparisons: [
+    {source_id: "income:1", comparison_state: "DIRECTLY_COMPARABLE", reason_codes: [], rtisa_admission_state: "READY", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
+  ]};
+  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
+  renderScreen(); await screen.findByDisplayValue("12000.00");
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  const section = (await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).closest("section")!;
+  expect(within(section).getByText("בסיס ההשוואה מוכן")).toBeInTheDocument();
+  expect(section).not.toHaveTextContent(/הכנסה זמינה|מימון מוכן|תיק מוכן/);
+});
+
+test("unknown technical and professional codes use neutral presentation and preserve exact codes", async () => {
+  const comparison = {client_id: 7, direct_comparison_ready: false, blockers: ["UNKNOWN_BLOCKER"], source_comparisons: [
+    {source_id: "income:1", comparison_state: "UNKNOWN_COMPARISON", reason_codes: ["UNKNOWN_REASON"], rtisa_admission_state: "UNKNOWN_ADMISSION", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
+  ]};
+  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
+  renderScreen(); await screen.findByDisplayValue("12000.00");
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  await screen.findByText("UNKNOWN_BLOCKER");
+  for (const code of ["UNKNOWN_BLOCKER", "UNKNOWN_COMPARISON", "UNKNOWN_ADMISSION", "UNKNOWN_REASON"]) {
+    expect(screen.getByText(code)).toBeInTheDocument();
+  }
+  const section = screen.getByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"}).closest("section")!;
+  expect(section.textContent?.match(/נדרש טיפול מקצועי/g)).toHaveLength(4);
 });

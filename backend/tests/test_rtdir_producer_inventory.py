@@ -35,7 +35,15 @@ from test_pension_monthly_basis import AuditSession, conversion_arguments
 from test_planning_input import choose
 from test_recovery_pension_products import engine
 from test_rtdir_vertical_slice import _edge_headers, _production_config
-from test_retirement_target_date_income_comparison_basis import _entry, _rtisa, _run
+from test_retirement_target_date_income_comparison_basis import (
+    _DB as RTICBDB,
+    _entry,
+    _rehash_rtisa,
+    _rehash_target,
+    _rtisa,
+    _run,
+    _target,
+)
 from test_retirement_target_date_income_source_admission import _authority, _read
 
 
@@ -627,6 +635,154 @@ def test_rtisa_observation_mapping_mutation_is_detected_and_restored(monkeypatch
     result, _, consumed = _run(monkeypatch, rtisa=restored)
     assert consumed == {"target": 1, "rtisa": 1}
     assert result["source_comparisons"][0]["comparison_state"] == "NOT_ADMITTED"
+
+
+RTICB_ROUTE_MATRIX = [
+    ("fresh", "snapshot_admission", "RTICB_REQUIRES_FRESH_TRANSACTION"),
+    ("database", "snapshot_admission", "RTICB_UNSUPPORTED_DATABASE"),
+    ("target_schema", "target_authority", "RTICB_TARGET_AUTHORITY_SCHEMA_INVALID"),
+    ("target_fingerprint", "target_authority", "RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID"),
+    ("target_unavailable", "target_authority", "RTICB_TARGET_AUTHORITY_UNAVAILABLE"),
+    ("target_not_ready", "target_authority", "RTICB_TARGET_AUTHORITY_NOT_READY"),
+    ("rtisa_schema", "rtisa_authority", "RTICB_RTISA_AUTHORITY_SCHEMA_INVALID"),
+    ("rtisa_fingerprint", "rtisa_authority", "RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID"),
+    ("rtisa_unavailable", "rtisa_authority", "RTICB_RTISA_AUTHORITY_UNAVAILABLE"),
+    ("rtisa_not_ready", "rtisa_authority", "RTICB_RTISA_AUTHORITY_NOT_READY"),
+    ("client", "cross_authority_identity", "RTICB_CLIENT_ID_MISMATCH"),
+    ("planning", "cross_authority_identity", "RTICB_PLANNING_IDENTITY_MISMATCH"),
+    ("date", "cross_authority_identity", "RTICB_RETIREMENT_TARGET_DATE_MISMATCH"),
+    ("source", "source_universe", "RTICB_SOURCE_UNIVERSE_INVALID"),
+    ("coverage", "source_universe", "RTICB_SOURCE_COVERAGE_MISMATCH"),
+    ("basis", "classification", "RTICB_SOURCE_BASIS_EVIDENCE_INVALID"),
+]
+
+
+def _rticb_route_case(kind):
+    target = _target()
+    admission = _rtisa([_entry()])
+    db = RTICBDB()
+    if kind == "fresh":
+        db = RTICBDB(active=True)
+    elif kind == "database":
+        db = RTICBDB(dialect="oracle")
+    elif kind == "target_schema":
+        target["extra"] = True
+    elif kind == "target_fingerprint":
+        target["target"]["income_basis"] = "NET"
+    elif kind == "target_unavailable":
+        target.update(
+            planning_calculation_input_fingerprint=None, retirement_target_date=None,
+            target=None, authority=None, authority_state="UNAVAILABLE",
+            target_readiness_state="NOT_READY", target_ready=False,
+            blockers=["RIT_PLANNING_CONTEXT_UNAVAILABLE"],
+        )
+        target = _rehash_target(target)
+    elif kind == "target_not_ready":
+        target = _target(state="STALE", ready=False)
+    elif kind == "rtisa_schema":
+        admission["extra"] = True
+    elif kind == "rtisa_fingerprint":
+        admission["source_entries"][0]["native_income_basis"] = "NET"
+    elif kind == "rtisa_unavailable":
+        admission = _rtisa([], completeness="UNAVAILABLE", readiness="NOT_READY", ready=False)
+    elif kind == "rtisa_not_ready":
+        admission = _rtisa(
+            [_entry(admission="UNRESOLVED")],
+            completeness="PARTIAL", readiness="NOT_READY", ready=False,
+        )
+    elif kind == "client":
+        admission["client_id"] = 2
+        admission = _rehash_rtisa(admission)
+    elif kind == "planning":
+        admission["planning_calculation_input_fingerprint"] = "6" * 64
+        admission = _rehash_rtisa(admission)
+    elif kind == "date":
+        admission["retirement_target_date"] = "2031-01-01"
+        admission = _rehash_rtisa(admission)
+    elif kind == "source":
+        admission["source_entries"][0]["source_id"] = " income:1"
+        admission["included_source_ids"] = [" income:1"]
+        admission = _rehash_rtisa(admission)
+    elif kind == "coverage":
+        admission["included_source_ids"] = []
+        admission = _rehash_rtisa(admission)
+    elif kind == "basis":
+        admission["source_entries"][0]["native_income_basis"] = None
+        admission = _rehash_rtisa(admission)
+    return db, target, admission
+
+
+def _public_comparison(monkeypatch, kind):
+    db, target, admission = _rticb_route_case(kind)
+    reached = {"target": 0, "rtisa": 0}
+
+    def target_reader(received_db, client_id):
+        reached["target"] += 1
+        assert received_db is db and client_id == 1
+        return target
+
+    def rtisa_reader(received_db, client_id, expected):
+        reached["rtisa"] += 1
+        assert received_db is db and client_id == 1 and expected == "1" * 64
+        return admission
+
+    monkeypatch.setattr(routes.comparison_service.target_service, "assess_in_snapshot", target_reader)
+    monkeypatch.setattr(routes.comparison_service.rtisa_service, "read_in_snapshot", rtisa_reader)
+    production_app, client, headers = _production_client()
+
+    def dependency():
+        yield db
+
+    production_app.dependency_overrides[get_db] = dependency
+    response = client.post(
+        "/api/clients/1/retirement-income-readiness/comparison",
+        json={
+            "expected_planning_calculation_input_fingerprint": "1" * 64,
+            "expected_retirement_target_date": "2030-01-01",
+        },
+        headers=headers,
+    )
+    production_app.dependency_overrides.clear()
+    return response, reached
+
+
+@pytest.mark.parametrize("kind,stage,code", RTICB_ROUTE_MATRIX)
+def test_all_16_reachable_rticb_codes_have_exact_public_route_mapping(
+    monkeypatch, kind, stage, code
+):
+    response, reached = _public_comparison(monkeypatch, kind)
+    assert response.status_code == 200
+    assert response.json()["result_state"] == "block_no_result"
+    assert response.json()["failure_stage"] == stage
+    assert response.json()["failure_detail_code"] == code
+    assert "field_paths" not in response.json()
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    assert reached == ({"target": 0, "rtisa": 0} if kind in {"fresh", "database"} else
+                       {"target": 1, "rtisa": 0} if kind.startswith("target_") else
+                       {"target": 1, "rtisa": 1})
+
+
+def test_rticb_public_envelope_mapping_mutation_is_detected_and_restored(monkeypatch):
+    original = routes._comparison_result_valid
+    reached = []
+
+    def rejected(result, client_id):
+        reached.append(result["failure_detail_code"])
+        return False
+
+    monkeypatch.setattr(routes, "_comparison_result_valid", rejected)
+    mutant, _ = _public_comparison(monkeypatch, "coverage")
+    assert reached == ["RTICB_SOURCE_COVERAGE_MISMATCH"]
+    with pytest.raises(AssertionError):
+        assert mutant.status_code == 200 and \
+            mutant.json()["failure_detail_code"] == "RTICB_SOURCE_COVERAGE_MISMATCH"
+
+    monkeypatch.setattr(routes, "_comparison_result_valid", original)
+    restored, consumed = _public_comparison(monkeypatch, "coverage")
+    assert restored.status_code == 200
+    assert restored.json()["failure_detail_code"] == "RTICB_SOURCE_COVERAGE_MISMATCH"
+    assert consumed == {"target": 1, "rtisa": 1}
 
 
 TARGET_BODY = {

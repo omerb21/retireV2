@@ -250,7 +250,7 @@ test("ordinary comparison presentation oracle kills and restores ordering and vi
   await ordinary();
   const originalMap = Array.prototype.map;
   let mutationReached = false;
-  Array.prototype.map = function (callback: unknown, thisArg?: unknown) {
+  Array.prototype.map = function (this: unknown[], callback: unknown, thisArg?: unknown) {
     const values = this as unknown[];
     if (values[0] === "BLOCKER_Z" || values[0] === "REASON_2") {
       mutationReached = true;

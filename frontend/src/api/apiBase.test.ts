@@ -13,6 +13,7 @@ describe("apiBase", () => {
 
   it("uses same-origin api paths in production and never defaults to localhost", () => {
     expect(resolveApiBaseUrl({ MODE: "production" })).toBe("/api");
+    expect(resolveApiBaseUrl({ MODE: "production", VITE_API_BASE_URL: "https://hostile.example/api" })).toBe("/api");
     expect(resolveApiBaseUrl({ MODE: "production" })).not.toContain("localhost");
     expect(resolveApiBaseUrl({ MODE: "production" })).not.toContain("127.0.0.1");
   });

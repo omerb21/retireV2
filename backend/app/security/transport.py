@@ -20,6 +20,7 @@ PUBLIC_HEALTH = {"/health", "/healthz/live", "/healthz/ready"}
 def error(request: Request, status: int, code: str, fields: Iterable[str] = (), headers: dict[str, str] | None = None) -> JSONResponse:
     messages = {
         "AUTHENTICATION_FAILED": "שם המשתמש או הסיסמה אינם נכונים",
+        "AUTHENTICATION_REQUIRED": "נדרשת התחברות",
         "SESSION_MISSING": "נדרשת התחברות",
         "SESSION_INVALID": "החיבור אינו תקף",
         "SESSION_EXPIRED": "תוקף החיבור פג",

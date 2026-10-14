@@ -6,6 +6,10 @@ interface ApiEnvironment {
 const SAME_ORIGIN_API_BASE_URL = "/api";
 
 export function resolveApiBaseUrl(env: ApiEnvironment = import.meta.env): string {
+  if (env.MODE === "production") {
+    return SAME_ORIGIN_API_BASE_URL;
+  }
+
   const configuredBaseUrl = env.VITE_API_BASE_URL?.trim();
   if (configuredBaseUrl) {
     return configuredBaseUrl.replace(/\/$/, "");

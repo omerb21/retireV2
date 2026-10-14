@@ -248,19 +248,39 @@ def test_unsafe_request_requires_exact_origin_and_session_bound_csrf():
     assert "Max-Age=0" in accepted.headers["set-cookie"]
 
 
-def test_logout_missing_invalid_and_expired_sessions_are_401_and_delete_cookie():
+def test_logout_session_failures_are_normalized_to_authentication_required_and_delete_cookie():
     config = _production_config()
     client = TestClient(create_app(config))
-    missing = client.post("/api/auth/logout", headers=_edge_headers(origin="https://evil.example"))
+    valid_headers = _edge_headers(origin="https://retire.example")
+    missing = client.post("/api/auth/logout", headers=valid_headers)
     client.cookies.set(COOKIE_NAME, "not-a-session")
-    invalid = client.post("/api/auth/logout", headers=_edge_headers(origin="https://evil.example"))
+    malformed = client.post("/api/auth/logout", headers=valid_headers)
     expired_token, _ = issue(config, now=1)
     client.cookies.set(COOKIE_NAME, expired_token)
-    expired = client.post("/api/auth/logout", headers=_edge_headers(origin="https://evil.example"))
-    for response, code in ((missing, "SESSION_MISSING"), (invalid, "SESSION_INVALID"), (expired, "SESSION_EXPIRED")):
-        assert (response.status_code, response.json()["code"]) == (401, code)
+    expired = client.post("/api/auth/logout", headers=valid_headers)
+    wrong_config = AuthConfig(**{**config.__dict__, "session_secret": b"w" * 32})
+    wrong_token, _ = issue(wrong_config)
+    client.cookies.set(COOKIE_NAME, wrong_token)
+    wrong_signature = client.post("/api/auth/logout", headers=valid_headers)
+    for response in (missing, malformed, expired, wrong_signature):
+        assert (response.status_code, response.json()["code"]) == (401, "AUTHENTICATION_REQUIRED")
+        assert response.json()["schema_version"] == "RTDIR_TRANSPORT_ERROR_V1"
+        assert response.json()["field_paths"] == []
         assert COOKIE_NAME + "=" in response.headers["set-cookie"]
         assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def test_logout_wrong_origin_precedes_missing_and_invalid_session():
+    config = _production_config()
+    client = TestClient(create_app(config))
+    wrong_origin = _edge_headers(origin="https://evil.example")
+    missing = client.post("/api/auth/logout", headers=wrong_origin)
+    client.cookies.set(COOKIE_NAME, "not-a-session")
+    invalid = client.post("/api/auth/logout", headers=wrong_origin)
+    for response in (missing, invalid):
+        assert (response.status_code, response.json()["code"]) == (403, "ORIGIN_FORBIDDEN")
+        assert response.json()["schema_version"] == "RTDIR_TRANSPORT_ERROR_V1"
+        assert response.json()["field_paths"] == []
 
 
 def test_csrf_requires_canonical_decoded_32_bytes_and_session_binding():
@@ -380,9 +400,11 @@ def test_every_registered_api_route_is_login_or_protected_by_global_middleware()
             concrete = path
             for parameter in ("client_id", "conversion_id", "run_id", "revision_id"):
                 concrete = concrete.replace("{" + parameter + "}", "1")
-            response = client.request(method, concrete, headers=_edge_headers())
+            headers = _edge_headers(origin="https://retire.example") if (method, path) == ("POST", "/api/auth/logout") else _edge_headers()
+            response = client.request(method, concrete, headers=headers)
             assert response.status_code == 401, (method, path, response.status_code, response.text)
-            assert response.json()["code"] == "SESSION_MISSING"
+            expected_code = "AUTHENTICATION_REQUIRED" if path == "/api/auth/logout" else "SESSION_MISSING"
+            assert response.json()["code"] == expected_code
 
 
 def test_login_uses_real_and_dummy_argon_and_issues_exact_cookie(monkeypatch):

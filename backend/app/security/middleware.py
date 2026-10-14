@@ -50,13 +50,19 @@ class RTDIRSecurityMiddleware(BaseHTTPMiddleware):
             if rejected:
                 return rejected
         elif not public:
+            is_logout = request.url.path == "/api/auth/logout"
+            if is_logout:
+                rejected = validate_origin(request, self.config)
+                if rejected:
+                    return rejected
             rejected = validate_session(request, self.config)
             if rejected:
-                if request.url.path == "/api/auth/logout":
+                if is_logout:
+                    rejected = error(request, 401, "AUTHENTICATION_REQUIRED")
                     rejected.delete_cookie(COOKIE_NAME, path="/", secure=True, httponly=True, samesite="lax")
                 return rejected
             if request.method in UNSAFE:
-                rejected = validate_origin(request, self.config) or validate_csrf(request)
+                rejected = validate_csrf(request) if is_logout else validate_origin(request, self.config) or validate_csrf(request)
                 if rejected:
                     return rejected
             elif exact_header(request, "origin") not in {None, self.config.public_origin}:

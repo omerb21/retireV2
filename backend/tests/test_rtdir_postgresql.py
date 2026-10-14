@@ -511,4 +511,13 @@ def test_postgresql_actual_failed_login_saturation_and_overflow_mutation(rtdir_p
         assert db.execute(text(
             "SELECT failure_count FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
         ), {"key": user_key}).scalar_one() == MAX_COUNT
+    application.state.rate_limiter_ready = True
+    with engine.begin() as db:
+        db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET locked_until=NULL WHERE bucket_key=:key"), {"key": user_key})
+    restored = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "wrong"})
+    assert (restored.status_code, restored.json()["code"]) == (429, "LOGIN_RATE_LIMITED")
+    with engine.connect() as db:
+        assert db.execute(text(
+            "SELECT failure_count FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
+        ), {"key": user_key}).scalar_one() == MAX_COUNT
     engine.dispose()

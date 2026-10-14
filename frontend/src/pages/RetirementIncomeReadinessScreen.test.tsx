@@ -216,3 +216,61 @@ test("unknown technical and professional codes use neutral presentation and pres
   const section = screen.getByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"}).closest("section")!;
   expect(section.textContent?.match(/נדרש טיפול מקצועי/g)).toHaveLength(4);
 });
+
+test("ordinary comparison presentation oracle kills and restores ordering and visibility mapping mutation", async () => {
+  const comparison = {
+    schema_version: "RTICB_RESULT_V1", client_id: 7, direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
+    blockers: ["BLOCKER_Z", "BLOCKER_A"], source_comparisons: [
+      {source_id: "income:2", comparison_state: "BASIS_UNRESOLVED", reason_codes: ["REASON_2", "REASON_1"], rtisa_admission_state: "EXCLUDED", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
+      {source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_B", "NORMALIZE_A"], rtisa_admission_state: "NOT_ADMITTED", source_income_basis: "NET", source_price_basis: "REAL"},
+    ],
+  };
+
+  const ordinary = async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+      .mockImplementationOnce(() => response(comparison)));
+    const view = renderScreen();
+    try {
+      await screen.findByDisplayValue("12000.00");
+      fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+      const section = (await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).closest("section")!;
+      const text = section.textContent ?? "";
+      expect(text.indexOf("BLOCKER_Z")).toBeLessThan(text.indexOf("BLOCKER_A"));
+      expect(text.indexOf("income:2")).toBeLessThan(text.indexOf("income:1"));
+      expect(text.indexOf("REASON_2")).toBeLessThan(text.indexOf("REASON_1"));
+      expect(text).toContain("EXCLUDED");
+      expect(text).toContain("NOT_ADMITTED");
+      expect(text).not.toMatch(/הכנסה זמינה|מימון מוכן|תיק מוכן/);
+    } finally {
+      view.unmount();
+    }
+  };
+
+  await ordinary();
+  const originalMap = Array.prototype.map;
+  let mutationReached = false;
+  Array.prototype.map = function (callback: unknown, thisArg?: unknown) {
+    const values = this as unknown[];
+    if (values[0] === "BLOCKER_Z" || values[0] === "REASON_2") {
+      mutationReached = true;
+      return originalMap.call([...values].reverse(), callback as never, thisArg) as never;
+    }
+    if ((values[0] as {source_id?: string} | undefined)?.source_id === "income:2") {
+      mutationReached = true;
+      return originalMap.call(values.slice(1), callback as never, thisArg) as never;
+    }
+    return originalMap.call(values, callback as never, thisArg) as never;
+  } as typeof Array.prototype.map;
+  let killed = false;
+  try {
+    await ordinary();
+  } catch {
+    killed = true;
+  } finally {
+    Array.prototype.map = originalMap;
+  }
+  expect(mutationReached).toBe(true);
+  expect(killed).toBe(true);
+  await ordinary();
+});

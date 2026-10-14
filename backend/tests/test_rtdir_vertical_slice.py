@@ -12,6 +12,8 @@ from app.db.session import get_db
 from app.main import app
 from app.main import create_app
 from app.security.config import AuthConfig, valid_actor
+from app.security import middleware as security_middleware
+from app.security import session as session_security
 from app.security.rate_limit import bucket, login_buckets
 from app.security.session import SESSION_SECONDS, issue, public_dto, verify
 from app.security.session import COOKIE_NAME
@@ -443,3 +445,262 @@ def test_invalid_login_framing_never_reaches_argon(monkeypatch):
     assert (wrong_media.status_code, wrong_media.json()["code"]) == (415, "LOGIN_CONTENT_TYPE_UNSUPPORTED")
     assert (too_large.status_code, too_large.json()["code"]) == (413, "LOGIN_BODY_TOO_LARGE")
     assert mutations == [False, False]
+
+
+def _assert_mutation_cycle(ordinary, mutate, restore):
+    ordinary()
+    mutate()
+    killed = False
+    try:
+        ordinary()
+    except Exception:
+        killed = True
+    finally:
+        restore()
+    assert killed, "the unchanged ordinary oracle survived the production-branch mutation"
+    ordinary()
+
+
+def test_mutation_dummy_argon_branch_is_detected_and_restored(monkeypatch):
+    from argon2 import PasswordHasher
+
+    config = _production_config()
+    production_app = create_app(config)
+    production_app.state.rate_limiter_ready = True
+
+    class Store:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(auth_routes, "_store", lambda request: Store())
+    monkeypatch.setattr(auth_routes, "cleanup_batch", lambda db: 0)
+    monkeypatch.setattr(auth_routes, "precheck", lambda db, buckets: 0)
+    monkeypatch.setattr(auth_routes, "finalize", lambda db, buckets, success: 0)
+    selected: list[str] = []
+    monkeypatch.setattr(
+        PasswordHasher,
+        "verify",
+        lambda self, encoded, password: selected.append(encoded) or False,
+    )
+    client = TestClient(production_app)
+
+    def ordinary():
+        selected.clear()
+        response = client.post(
+            "/api/auth/login",
+            headers=_edge_headers(origin="https://retire.example"),
+            json={"username": "unknown", "password": "secret"},
+        )
+        assert (response.status_code, response.json()["code"]) == (401, "AUTHENTICATION_FAILED")
+        assert selected == [config.dummy_password_hash]
+
+    original = auth_routes.hmac.compare_digest
+    _assert_mutation_cycle(
+        ordinary,
+        lambda: monkeypatch.setattr(auth_routes.hmac, "compare_digest", lambda *_: True),
+        lambda: monkeypatch.setattr(auth_routes.hmac, "compare_digest", original),
+    )
+
+
+def test_mutation_session_signing_expiry_and_actor_contract_is_detected_and_restored(monkeypatch):
+    old = AuthConfig(production=True, actor_id="planner:one", session_secret=b"o" * 32, rate_limit_secret=b"r" * 32)
+    current = AuthConfig(production=True, actor_id="planner:one", session_secret=b"n" * 32, rate_limit_secret=b"r" * 32)
+    token, payload = session_security.issue(old, now=1_800_000_000)
+
+    def signing_oracle():
+        assert session_security.verify(current, token, now=1_800_000_100)[1] == "SESSION_INVALID"
+
+    original_serializer = session_security._serializer
+    _assert_mutation_cycle(
+        signing_oracle,
+        lambda: monkeypatch.setattr(session_security, "_serializer", lambda config: original_serializer(old)),
+        lambda: monkeypatch.setattr(session_security, "_serializer", original_serializer),
+    )
+
+    def lifetime_oracle():
+        assert session_security.verify(old, token, now=1_800_000_100) == (payload, None)
+        wrong_actor = AuthConfig(production=True, actor_id="planner:two", session_secret=b"o" * 32, rate_limit_secret=b"r" * 32)
+        assert session_security.verify(wrong_actor, token, now=1_800_000_100)[1] == "SESSION_INVALID"
+        assert session_security.verify(old, token, now=payload["exp"])[1] == "SESSION_EXPIRED"
+
+    _assert_mutation_cycle(
+        lifetime_oracle,
+        lambda: monkeypatch.setattr(session_security, "SESSION_SECONDS", SESSION_SECONDS * 2),
+        lambda: monkeypatch.setattr(session_security, "SESSION_SECONDS", SESSION_SECONDS),
+    )
+
+
+def test_mutation_origin_and_csrf_guards_are_detected_and_restored(monkeypatch):
+    def origin_oracle():
+        client, _ = _authenticated_client()
+        response = client.post("/api/auth/logout", headers=_edge_headers())
+        assert (response.status_code, response.json()["code"]) == (403, "ORIGIN_FORBIDDEN")
+
+    original_origin = security_middleware.validate_origin
+    _assert_mutation_cycle(
+        origin_oracle,
+        lambda: monkeypatch.setattr(security_middleware, "validate_origin", lambda *_: None),
+        lambda: monkeypatch.setattr(security_middleware, "validate_origin", original_origin),
+    )
+
+    def csrf_oracle():
+        client, _ = _authenticated_client()
+        response = client.post(
+            "/api/auth/logout",
+            headers=_edge_headers(origin="https://retire.example", **{"x-rtdir-csrf": "B" * 43}),
+        )
+        assert (response.status_code, response.json()["code"]) == (403, "CSRF_INVALID")
+
+    original_csrf = security_middleware.validate_csrf
+    _assert_mutation_cycle(
+        csrf_oracle,
+        lambda: monkeypatch.setattr(security_middleware, "validate_csrf", lambda *_: None),
+        lambda: monkeypatch.setattr(security_middleware, "validate_csrf", original_csrf),
+    )
+
+
+def test_mutation_login_framing_and_cookie_rules_are_detected_and_restored(monkeypatch):
+    from argon2 import PasswordHasher
+
+    config = _production_config()
+    production_app = create_app(config)
+    production_app.state.rate_limiter_ready = True
+
+    class Store:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(auth_routes, "_store", lambda request: Store())
+    monkeypatch.setattr(auth_routes, "cleanup_batch", lambda db: 0)
+    monkeypatch.setattr(auth_routes, "precheck", lambda db, buckets: 0)
+    monkeypatch.setattr(auth_routes, "finalize", lambda db, buckets, success: 0)
+    verify_calls: list[str] = []
+    monkeypatch.setattr(PasswordHasher, "verify", lambda self, encoded, password: verify_calls.append(password) or True)
+    client = TestClient(production_app)
+    headers = _edge_headers(origin="https://retire.example")
+
+    def framing_oracle():
+        verify_calls.clear()
+        response = client.post("/api/auth/login", headers=headers, json={"username": "planner", "password": "bad\n"})
+        assert (response.status_code, response.json()["code"]) == (422, "LOGIN_REQUEST_INVALID")
+        assert verify_calls == []
+
+    original_valid_password = auth_routes._valid_password
+    _assert_mutation_cycle(
+        framing_oracle,
+        lambda: monkeypatch.setattr(auth_routes, "_valid_password", lambda value: True),
+        lambda: monkeypatch.setattr(auth_routes, "_valid_password", original_valid_password),
+    )
+
+    def cookie_oracle():
+        response = client.post("/api/auth/login", headers=headers, json={"username": "planner", "password": "secret"})
+        cookie = response.headers["set-cookie"]
+        assert response.status_code == 200
+        assert all(value in cookie for value in ("HttpOnly", "Max-Age=28800", "Path=/", "SameSite=lax", "Secure"))
+        assert "Domain=" not in cookie
+
+    original_set_cookie = auth_routes.Response.set_cookie
+
+    def insecure_cookie(self, key, value="", **kwargs):
+        kwargs["secure"] = False
+        return original_set_cookie(self, key, value, **kwargs)
+
+    _assert_mutation_cycle(
+        cookie_oracle,
+        lambda: monkeypatch.setattr(auth_routes.Response, "set_cookie", insecure_cookie),
+        lambda: monkeypatch.setattr(auth_routes.Response, "set_cookie", original_set_cookie),
+    )
+
+
+def test_mutation_public_route_health_and_edge_boundaries_are_detected_and_restored(monkeypatch):
+    production_app = create_app(_production_config())
+    production_app.state.rate_limiter_ready = True
+    client = TestClient(production_app, raise_server_exceptions=False)
+
+    def route_oracle():
+        response = client.get("/api/not-a-real-route", headers=_edge_headers())
+        assert (response.status_code, response.json()["code"]) == (401, "SESSION_MISSING")
+
+    original_public = security_middleware.is_public_path
+    _assert_mutation_cycle(
+        route_oracle,
+        lambda: monkeypatch.setattr(security_middleware, "is_public_path", lambda method, path: path == "/api/not-a-real-route" or original_public(method, path)),
+        lambda: monkeypatch.setattr(security_middleware, "is_public_path", original_public),
+    )
+
+    def health_oracle():
+        response = client.get("/healthz/live", headers={"host": "healthcheck.railway.app"})
+        assert (response.status_code, response.json()["code"]) == (400, "EDGE_REQUEST_INVALID")
+
+    original_health = security_middleware.is_internal_health
+    _assert_mutation_cycle(
+        health_oracle,
+        lambda: monkeypatch.setattr(security_middleware, "is_internal_health", lambda request: request.url.path in {"/healthz/ready", "/healthz/live"}),
+        lambda: monkeypatch.setattr(security_middleware, "is_internal_health", original_health),
+    )
+
+    def edge_oracle():
+        response = client.get("/healthz/live", headers={**_edge_headers(), "x-real-ip": "forged"})
+        assert (response.status_code, response.json()["code"]) == (400, "EDGE_REQUEST_INVALID")
+
+    original_edge = security_middleware.validate_edge
+    _assert_mutation_cycle(
+        edge_oracle,
+        lambda: monkeypatch.setattr(security_middleware, "validate_edge", lambda *_: ("127.0.0.1", None)),
+        lambda: monkeypatch.setattr(security_middleware, "validate_edge", original_edge),
+    )
+
+
+def test_mutation_adapter_reclassification_client_identity_and_single_invocation_are_detected_and_restored(monkeypatch):
+    db = PristineDB()
+    app.dependency_overrides[get_db] = _db_override(db)
+    client = TestClient(app)
+    try:
+        malformed_context = {**_context_result(7), "planning_input_ready": "yes"}
+        monkeypatch.setattr(routes.planning_input_service, "read", lambda *_: malformed_context)
+
+        def context_oracle():
+            response = client.get("/api/clients/7/retirement-income-readiness/context")
+            assert (response.status_code, response.json()["code"]) == (500, "PRODUCER_RESPONSE_INVALID")
+
+        original_context_valid = routes._context_valid
+        _assert_mutation_cycle(
+            context_oracle,
+            lambda: monkeypatch.setattr(routes, "_context_valid", lambda *_: True),
+            lambda: monkeypatch.setattr(routes, "_context_valid", original_context_valid),
+        )
+
+        calls: list[int] = []
+        monkeypatch.setattr(routes.target_service, "assess", lambda actual, client_id: calls.append(client_id) or _target_result(client_id))
+
+        def invocation_oracle():
+            calls.clear()
+            response = client.get("/api/clients/7/retirement-income-readiness/target")
+            assert response.status_code == 200
+            assert calls == [7]
+
+        original_target_valid = routes._target_result_valid
+
+        def duplicate_validation(result, client_id):
+            routes.target_service.assess(db, client_id)
+            return original_target_valid(result, client_id)
+
+        _assert_mutation_cycle(
+            invocation_oracle,
+            lambda: monkeypatch.setattr(routes, "_target_result_valid", duplicate_validation),
+            lambda: monkeypatch.setattr(routes, "_target_result_valid", original_target_valid),
+        )
+
+        monkeypatch.setattr(routes.target_service, "assess", lambda *_: _target_result(8))
+
+        def identity_oracle():
+            response = client.get("/api/clients/7/retirement-income-readiness/target")
+            assert (response.status_code, response.json()["code"]) == (500, "PRODUCER_RESPONSE_INVALID")
+
+        _assert_mutation_cycle(
+            identity_oracle,
+            lambda: monkeypatch.setattr(routes, "_target_result_valid", lambda *_: True),
+            lambda: monkeypatch.setattr(routes, "_target_result_valid", original_target_valid),
+        )
+    finally:
+        app.dependency_overrides.clear()

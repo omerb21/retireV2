@@ -24,6 +24,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import auth_routes
+from app.security import rate_limit as rate_limit_module
 from app.security.config import AuthConfig
 from app.security.rate_limit import MAX_COUNT, RateLimitUnavailable, cleanup_batch, finalize, login_buckets, precheck
 from app import main as app_main
@@ -520,4 +521,186 @@ def test_postgresql_actual_failed_login_saturation_and_overflow_mutation(rtdir_p
         assert db.execute(text(
             "SELECT failure_count FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
         ), {"key": user_key}).scalar_one() == MAX_COUNT
+    engine.dispose()
+
+
+def test_postgresql_threshold_and_each_bucket_mutation_kill_and_restore_login_oracle(rtdir_postgres_url, monkeypatch):
+    _alembic(rtdir_postgres_url, "upgrade", "b3c9d6f2a410")
+    engine = create_engine(rtdir_postgres_url)
+    config = _config(b"7" * 32)
+    original_login_buckets = auth_routes.login_buckets
+
+    def ordinary():
+        _clear(engine)
+        client, application = _postgres_client(engine, monkeypatch, config)
+        application.state.rate_limiter_ready = True
+        statuses = [client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "wrong"}).status_code for _ in range(5)]
+        with engine.connect() as db:
+            rows = db.execute(text(
+                "SELECT bucket_kind,failure_count FROM rtdir_login_rate_limit_buckets ORDER BY bucket_kind"
+            )).all()
+        assert statuses == [401, 401, 401, 401, 429]
+        assert rows == [("GLOBAL", 5), ("IP", 5), ("USER", 5)]
+
+    ordinary()
+    rate_limit_module.THRESHOLDS["USER"] = 6
+    try:
+        with pytest.raises(AssertionError):
+            ordinary()
+    finally:
+        rate_limit_module.THRESHOLDS["USER"] = 5
+    ordinary()
+
+    for omitted in ("GLOBAL", "USER", "IP"):
+        monkeypatch.setattr(auth_routes, "login_buckets", lambda actual_config, username, ip, omitted=omitted: [
+            item for item in original_login_buckets(actual_config, username, ip) if item.kind != omitted
+        ])
+        with pytest.raises(AssertionError):
+            ordinary()
+        monkeypatch.setattr(auth_routes, "login_buckets", original_login_buckets)
+        ordinary()
+    engine.dispose()
+
+
+def test_postgresql_storage_failure_and_process_local_mutations_fail_ordinary_login_oracles(rtdir_postgres_url, monkeypatch):
+    _alembic(rtdir_postgres_url, "upgrade", "b3c9d6f2a410")
+    engine = create_engine(rtdir_postgres_url)
+    config = _config(b"8" * 32)
+    original_cleanup = auth_routes.cleanup_batch
+    original_precheck = auth_routes.precheck
+    original_finalize = auth_routes.finalize
+    argon_calls: list[str] = []
+    monkeypatch.setattr(PasswordHasher, "verify", lambda self, encoded, password: argon_calls.append(password) or True)
+
+    def unavailable():
+        _clear(engine)
+        client, application = _postgres_client(engine, monkeypatch, config)
+        application.state.rate_limiter_ready = True
+        argon_calls.clear()
+        response = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "correct"})
+        assert (response.status_code, response.json()["code"]) == (503, "AUTH_RATE_LIMIT_UNAVAILABLE")
+        assert "set-cookie" not in response.headers and argon_calls == []
+
+    def storage_failure(db):
+        raise RateLimitUnavailable("injected durable store failure")
+
+    monkeypatch.setattr(auth_routes, "cleanup_batch", storage_failure)
+    unavailable()
+
+    def fail_open(db):
+        try:
+            return storage_failure(db)
+        except RateLimitUnavailable:
+            return 0
+
+    monkeypatch.setattr(auth_routes, "cleanup_batch", fail_open)
+    with pytest.raises((AssertionError, KeyError)):
+        unavailable()
+    monkeypatch.setattr(auth_routes, "cleanup_batch", storage_failure)
+    unavailable()
+    monkeypatch.setattr(auth_routes, "cleanup_batch", original_cleanup)
+
+    buckets = login_buckets(config, "planner", "192.0.2.10")
+
+    def durable_oracle():
+        client, application = _postgres_client(engine, monkeypatch, config)
+        application.state.rate_limiter_ready = True
+        response = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "correct"})
+        assert (response.status_code, response.json()["code"]) == (429, "LOGIN_RATE_LIMITED")
+        assert "set-cookie" not in response.headers
+
+    _clear(engine)
+    with Session(engine) as db:
+        for _ in range(5):
+            finalize(db, buckets, success=False)
+    durable_oracle()
+    monkeypatch.setattr(auth_routes, "precheck", lambda db, actual: 0)
+    monkeypatch.setattr(auth_routes, "finalize", lambda db, actual, success: 0)
+    with pytest.raises((AssertionError, KeyError)):
+        durable_oracle()
+    monkeypatch.setattr(auth_routes, "precheck", original_precheck)
+    monkeypatch.setattr(auth_routes, "finalize", original_finalize)
+    durable_oracle()
+    engine.dispose()
+
+
+def test_postgresql_cleanup_bound_active_protection_and_failure_mutations_are_detected(rtdir_postgres_url, monkeypatch):
+    _alembic(rtdir_postgres_url, "upgrade", "b3c9d6f2a410")
+    engine = create_engine(rtdir_postgres_url)
+    original_text = rate_limit_module.text
+
+    def seed(stale_count: int):
+        _clear(engine)
+        now = datetime.now(timezone.utc)
+        rows = [{
+            "key": f"{index:064x}", "kind": "USER", "started": now - timedelta(hours=2),
+            "count": 1, "updated": now - timedelta(hours=1),
+        } for index in range(stale_count)]
+        rows.append({"key": "f" * 64, "kind": "IP", "started": now, "count": 19, "updated": now})
+        with engine.begin() as db:
+            db.execute(text("""
+                INSERT INTO rtdir_login_rate_limit_buckets
+                  (bucket_key,bucket_kind,window_started_at,failure_count,locked_until,updated_at)
+                VALUES (:key,:kind,:started,:count,NULL,:updated)
+            """), rows)
+
+    def bounded_oracle():
+        seed(65)
+        with Session(engine) as db:
+            assert cleanup_batch(db) == 64
+            assert cleanup_batch(db) == 1
+        with engine.connect() as db:
+            assert db.execute(text("SELECT count(*) FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"), {"key": "f" * 64}).scalar_one() == 1
+
+    bounded_oracle()
+
+    def limit_mutant(statement):
+        raw = str(statement)
+        if "FOR UPDATE SKIP LOCKED LIMIT 64" in raw:
+            raw = raw.replace("LIMIT 64", "LIMIT 65")
+        return original_text(raw)
+
+    monkeypatch.setattr(rate_limit_module, "text", limit_mutant)
+    with pytest.raises(AssertionError):
+        bounded_oracle()
+    monkeypatch.setattr(rate_limit_module, "text", original_text)
+    bounded_oracle()
+
+    def active_oracle():
+        seed(1)
+        with Session(engine) as db:
+            assert cleanup_batch(db) == 1
+        with engine.connect() as db:
+            assert db.execute(text("SELECT count(*) FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"), {"key": "f" * 64}).scalar_one() == 1
+
+    active_oracle()
+
+    def active_mutant(statement):
+        raw = str(statement)
+        if "SELECT bucket_key FROM rtdir_login_rate_limit_buckets" in raw and "updated_at <" in raw:
+            raw = raw.replace("WHERE updated_at < transaction_timestamp() - INTERVAL '1800 seconds'", "")
+        return original_text(raw)
+
+    monkeypatch.setattr(rate_limit_module, "text", active_mutant)
+    with pytest.raises(AssertionError):
+        active_oracle()
+    monkeypatch.setattr(rate_limit_module, "text", original_text)
+    active_oracle()
+
+    application = create_app(_config(b"9" * 32))
+    monkeypatch.setattr(app_main, "get_session_factory", lambda: sessionmaker(bind=engine))
+    original_cleanup = app_main.cleanup_batch
+
+    def readiness_oracle():
+        assert app_main._cleanup_once(application) is False
+        assert application.state.rate_limiter_ready is False
+
+    monkeypatch.setattr(app_main, "cleanup_batch", lambda db: (_ for _ in ()).throw(RateLimitUnavailable("cleanup failed")))
+    readiness_oracle()
+    monkeypatch.setattr(app_main, "cleanup_batch", lambda db: 0)
+    with pytest.raises(AssertionError):
+        readiness_oracle()
+    monkeypatch.setattr(app_main, "cleanup_batch", lambda db: (_ for _ in ()).throw(RateLimitUnavailable("cleanup failed")))
+    readiness_oracle()
+    monkeypatch.setattr(app_main, "cleanup_batch", original_cleanup)
     engine.dispose()

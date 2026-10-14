@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { compareIncome, confirmTarget, readContext, readTarget, type ComparisonResult, type ReadinessContext, type TargetResult } from "../api/retirementIncomeReadinessApi";
 import { formatIsoDate } from "../utils/dateFormat";
 import { HebrewDateInput } from "../components/HebrewDateInput";
+import * as generationGuard from "./readinessGenerationGuard";
 
 const labels: Record<string, string> = {
   READY: "מוכן", NOT_READY: "אינו מוכן", CURRENT: "נוכחי", STALE: "מיושן ונדרש אישור מחדש",
@@ -38,14 +39,14 @@ function Workspace({clientId}: {clientId: number}) {
     try {
       const nextContext = await readContext(clientId, signal);
       const nextTarget = await readTarget(clientId, signal);
-      if (active !== generation.current) return;
+      if (!generationGuard.generationPolicy.isCurrent(active, generation.current)) return;
       setContext(nextContext); setTarget(nextTarget);
       if (nextTarget.target) {
         setAmount(nextTarget.target.monthly_amount); setIncomeBasis(nextTarget.target.income_basis as "GROSS" | "NET");
         setPriceBasis(nextTarget.target.price_basis as typeof priceBasis); setReferenceDate(nextTarget.target.price_reference_date ?? "");
       }
     } catch (reason) {
-      if (active === generation.current && !(reason instanceof DOMException && reason.name === "AbortError")) setError("טעינת מצב המוכנות נכשלה. יש לרענן במפורש.");
+      if (generationGuard.generationPolicy.isCurrent(active, generation.current) && !(reason instanceof DOMException && reason.name === "AbortError")) setError("טעינת מצב המוכנות נכשלה. יש לרענן במפורש.");
     }
   }
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => { generation.current += 1; controller.abort(); activeMutation.current?.abort(); }; }, [clientId]);
@@ -64,10 +65,10 @@ function Workspace({clientId}: {clientId: number}) {
         price_reference_date: priceBasis === "REAL_AT_REFERENCE_DATE" ? referenceDate : null,
         source_kind: sourceKind,
       }, controller.signal);
-      if (active !== generation.current) return;
+      if (!generationGuard.generationPolicy.isCurrent(active, generation.current)) return;
       setBusy(false); setContext(null); setTarget(null); setComparison(null); await load();
-    } catch (reason) { if (active === generation.current && !(reason instanceof DOMException && reason.name === "AbortError")) setError("האישור לא נשמר. במקרה של שינוי מקביל יש לרענן לפני ניסיון נוסף."); }
-    finally { if (active === generation.current) setBusy(false); }
+    } catch (reason) { if (generationGuard.generationPolicy.isCurrent(active, generation.current) && !(reason instanceof DOMException && reason.name === "AbortError")) setError("האישור לא נשמר. במקרה של שינוי מקביל יש לרענן לפני ניסיון נוסף."); }
+    finally { if (generationGuard.generationPolicy.isCurrent(active, generation.current)) setBusy(false); }
   }
 
   async function compare() {
@@ -75,9 +76,9 @@ function Workspace({clientId}: {clientId: number}) {
     activeMutation.current?.abort(); const controller = new AbortController(); activeMutation.current = controller;
     const active = ++generation.current;
     setBusy(true); setError("");
-    try { const result = await compareIncome(clientId, {expected_planning_calculation_input_fingerprint: context.planning_calculation_input_fingerprint, expected_retirement_target_date: context.retirement_target_date}, controller.signal); if (active === generation.current) setComparison(result); }
-    catch (reason) { if (active === generation.current && !(reason instanceof DOMException && reason.name === "AbortError")) setError("בדיקת בסיס ההשוואה נכשלה. יש לנסות שוב במפורש לאחר רענון."); }
-    finally { if (active === generation.current) setBusy(false); }
+    try { const result = await compareIncome(clientId, {expected_planning_calculation_input_fingerprint: context.planning_calculation_input_fingerprint, expected_retirement_target_date: context.retirement_target_date}, controller.signal); if (generationGuard.generationPolicy.isCurrent(active, generation.current)) setComparison(result); }
+    catch (reason) { if (generationGuard.generationPolicy.isCurrent(active, generation.current) && !(reason instanceof DOMException && reason.name === "AbortError")) setError("בדיקת בסיסי ההשוואה נכשלה. יש לנסות שוב במפורש לאחר רענון."); }
+    finally { if (generationGuard.generationPolicy.isCurrent(active, generation.current)) setBusy(false); }
   }
 
   return <main dir="rtl"><h1>מוכנות הכנסה במועד היעד לפרישה</h1>
@@ -107,5 +108,5 @@ function Workspace({clientId}: {clientId: number}) {
 
 export function RetirementIncomeReadinessScreen() {
   const clientId = Number(useParams().clientId);
-  return Number.isSafeInteger(clientId) && clientId > 0 ? <Workspace key={clientId} clientId={clientId} /> : <p role="alert">מזהה לקוח אינו תקין</p>;
+  return Number.isSafeInteger(clientId) && clientId > 0 ? <Workspace key={generationGuard.generationPolicy.workspaceKey(clientId)} clientId={clientId} /> : <p role="alert">מזהה לקוח אינו תקין</p>;
 }

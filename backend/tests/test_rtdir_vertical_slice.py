@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
+from starlette.responses import Response
 
+from app import main as app_main
 from app.api import retirement_income_readiness_routes as routes
 from app.api import auth_routes
 from app.db.session import get_db
@@ -726,3 +728,196 @@ def test_mutation_adapter_reclassification_client_identity_and_single_invocation
         )
     finally:
         app.dependency_overrides.clear()
+
+
+def test_mutation_cors_contract_is_detected_and_restored(monkeypatch):
+    def ordinary():
+        client = TestClient(create_app(_production_config()))
+        accepted = client.options("/api/auth/session", headers=_edge_headers(
+            origin="https://retire.example",
+            **{"access-control-request-method": "POST", "access-control-request-headers": "Content-Type, X-RTDIR-CSRF"},
+        ))
+        assert accepted.status_code == 204
+        assert accepted.headers["access-control-allow-origin"] == "https://retire.example"
+        assert accepted.headers["access-control-allow-credentials"] == "true"
+        assert accepted.headers["access-control-allow-methods"] == "GET, POST, PUT, DELETE, OPTIONS"
+        assert accepted.headers["access-control-allow-headers"] == "Content-Type, X-RTDIR-CSRF"
+        for extra in (
+            {"access-control-request-method": "TRACE"},
+            {"access-control-request-method": "POST", "access-control-request-headers": "Authorization"},
+        ):
+            rejected = client.options("/api/auth/session", headers=_edge_headers(origin="https://retire.example", **extra))
+            assert (rejected.status_code, rejected.json()["code"]) == (403, "ORIGIN_FORBIDDEN")
+
+    original = security_middleware.RTDIRSecurityMiddleware.dispatch
+
+    async def wildcard_mutant(self, request, call_next):
+        response = await original(self, request, call_next)
+        if request.method == "OPTIONS" and response.status_code == 204:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] += ", TRACE"
+        return response
+
+    _assert_mutation_cycle(
+        ordinary,
+        lambda: monkeypatch.setattr(security_middleware.RTDIRSecurityMiddleware, "dispatch", wildcard_mutant),
+        lambda: monkeypatch.setattr(security_middleware.RTDIRSecurityMiddleware, "dispatch", original),
+    )
+
+
+def test_mutation_sensitive_response_cache_contract_is_detected_and_restored(monkeypatch):
+    def ordinary():
+        client, _ = _authenticated_client()
+        response = client.get("/api/auth/session", headers=_edge_headers())
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.headers["pragma"] == "no-cache"
+
+    original = dict(security_middleware.NO_STORE)
+    _assert_mutation_cycle(
+        ordinary,
+        security_middleware.NO_STORE.clear,
+        lambda: security_middleware.NO_STORE.update(original),
+    )
+
+
+def test_mutation_failed_logout_cannot_be_reported_as_success(monkeypatch):
+    def ordinary():
+        client = TestClient(create_app(_production_config()))
+        response = client.post("/api/auth/logout", headers=_edge_headers(origin="https://retire.example"))
+        assert (response.status_code, response.json()["code"]) == (401, "AUTHENTICATION_REQUIRED")
+        assert "Max-Age=0" in response.headers["set-cookie"]
+
+    original = security_middleware.error
+
+    def success_mutant(request, status, code, fields=(), headers=None):
+        if code == "AUTHENTICATION_REQUIRED":
+            return Response(status_code=204)
+        return original(request, status, code, fields, headers)
+
+    _assert_mutation_cycle(
+        ordinary,
+        lambda: monkeypatch.setattr(security_middleware, "error", success_mutant),
+        lambda: monkeypatch.setattr(security_middleware, "error", original),
+    )
+
+
+def test_mutation_caller_actor_cannot_cross_target_confirmation_boundary(monkeypatch):
+    config = _production_config()
+    production_app = create_app(config)
+    db = PristineDB()
+    production_app.dependency_overrides[get_db] = _db_override(db)
+    token, payload = issue(config)
+    observed: list[str] = []
+    monkeypatch.setattr(routes.target_service, "confirm", lambda actual, command, actor: observed.append(actor) or _target_result(7))
+    body = {
+        "expected_record_version": 0,
+        "expected_planning_calculation_input_fingerprint": "a" * 64,
+        "expected_retirement_target_date": "2035-04-01",
+        "monthly_amount": "12000.00", "income_basis": "GROSS",
+        "price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE", "price_reference_date": None,
+        "source_kind": "PLANNER_SUPPLIED",
+    }
+
+    def ordinary():
+        observed.clear()
+        client = TestClient(production_app)
+        client.cookies.set(COOKIE_NAME, token)
+        response = client.put(
+            "/api/clients/7/retirement-income-readiness/target",
+            headers=_edge_headers(origin="https://retire.example", **{
+                "x-rtdir-csrf": payload["csrf"], "x-professional-actor": "forged:caller",
+            }),
+            json=body,
+        )
+        assert response.status_code == 200
+        assert observed == ["trusted:planner"]
+
+    original = security_middleware.validate_session
+
+    def caller_actor_mutant(request, actual_config):
+        rejected = original(request, actual_config)
+        if rejected is None:
+            request.state.trusted_professional_actor = request.headers.get("x-professional-actor")
+        return rejected
+
+    try:
+        _assert_mutation_cycle(
+            ordinary,
+            lambda: monkeypatch.setattr(security_middleware, "validate_session", caller_actor_mutant),
+            lambda: monkeypatch.setattr(security_middleware, "validate_session", original),
+        )
+    finally:
+        production_app.dependency_overrides.clear()
+
+
+def test_mutation_comparison_dto_extra_fields_are_detected_and_restored(monkeypatch):
+    config = _production_config()
+    production_app = create_app(config)
+    db = PristineDB()
+    production_app.dependency_overrides[get_db] = _db_override(db)
+    token, payload = issue(config)
+    calls: list[dict] = []
+    result = comparison_service._failure({
+        "client_id": 7,
+        "expected_planning_calculation_input_fingerprint": "a" * 64,
+        "expected_retirement_target_date": "2035-04-01",
+    }, "target_authority", "RTICB_TARGET_AUTHORITY_NOT_READY")
+    monkeypatch.setattr(routes.comparison_service, "assess", lambda actual, command: calls.append(command) or result)
+    route = next(item for item in production_app.routes if getattr(item, "path", "") == "/api/clients/{client_id}/retirement-income-readiness/comparison")
+    original_adapter = route.body_field._type_adapter
+
+    def ordinary():
+        for extra in ({"client_id": 99}, {"trusted_professional_actor": "forged:caller"}):
+            calls.clear()
+            client = TestClient(production_app)
+            client.cookies.set(COOKIE_NAME, token)
+            response = client.post(
+                "/api/clients/7/retirement-income-readiness/comparison",
+                headers=_edge_headers(origin="https://retire.example", **{"x-rtdir-csrf": payload["csrf"]}),
+                json={
+                    "expected_planning_calculation_input_fingerprint": "a" * 64,
+                    "expected_retirement_target_date": "2035-04-01",
+                    **extra,
+                },
+            )
+            assert (response.status_code, response.json()["code"]) == (422, "REQUEST_SCHEMA_INVALID")
+            assert calls == []
+
+    class IgnoreExtraAdapter:
+        def validate_python(self, value, *args, **kwargs):
+            if isinstance(value, dict):
+                value = {key: item for key, item in value.items() if key in {
+                    "expected_planning_calculation_input_fingerprint", "expected_retirement_target_date",
+                }}
+            return original_adapter.validate_python(value, *args, **kwargs)
+
+    try:
+        _assert_mutation_cycle(
+            ordinary,
+            lambda: setattr(route.body_field, "_type_adapter", IgnoreExtraAdapter()),
+            lambda: setattr(route.body_field, "_type_adapter", original_adapter),
+        )
+    finally:
+        route.body_field._type_adapter = original_adapter
+        production_app.dependency_overrides.clear()
+
+
+def test_mutation_production_spa_allowlist_rejects_unknown_and_docs_routes(monkeypatch):
+    config = _production_config()
+    production_app = create_app(config)
+    token, _ = issue(config)
+
+    def ordinary():
+        client = TestClient(production_app)
+        client.cookies.set(COOKIE_NAME, token)
+        for path in ("/unknown-client-screen", "/docs", "/openapi.json"):
+            response = client.get(path, headers=_edge_headers())
+            assert (response.status_code, response.json()["code"]) == (404, "ROUTE_NOT_FOUND")
+
+    original = app_main.is_spa_path
+    _assert_mutation_cycle(
+        ordinary,
+        lambda: monkeypatch.setattr(app_main, "is_spa_path", lambda path: True),
+        lambda: monkeypatch.setattr(app_main, "is_spa_path", original),
+    )

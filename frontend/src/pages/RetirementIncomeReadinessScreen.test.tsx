@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import { RetirementIncomeReadinessScreen } from "./RetirementIncomeReadinessScreen";
+import * as generationGuard from "./readinessGenerationGuard";
 
 const context = {
   schema_version: "RTDIR_PLANNING_CONTEXT_V1", client_id: 7,
@@ -129,6 +130,47 @@ test("A-to-B-to-A aborts old reads and generation guard rejects their late respo
   await waitFor(() => expect(screen.queryByText(/01\/01\/1999/)).not.toBeInTheDocument());
   expect(screen.getByDisplayValue("33000.00")).toBeInTheDocument();
   expect(screen.getByText(/03\/03\/2045/)).toBeInTheDocument();
+});
+
+test("ordinary client-isolation oracle kills and restores disabled generation protection", async () => {
+  const ordinary = async () => {
+    const oldA = deferred<Response>();
+    const fetcher = vi.fn()
+      .mockImplementationOnce(() => oldA.promise)
+      .mockImplementationOnce(() => response(contextFor(8, "2040-02-02")))
+      .mockImplementationOnce(() => response(targetFor(8, "22000.00")))
+      .mockImplementationOnce(() => response(targetFor(7, "99000.00")));
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}>
+      <NavigationControls /><Routes><Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} /></Routes>
+    </MemoryRouter>);
+    try {
+      fireEvent.click(screen.getByRole("button", {name: "לקוח B"}));
+      expect(await screen.findByDisplayValue("22000.00")).toBeInTheDocument();
+      oldA.resolve(await response(contextFor(7, "1999-01-01")));
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(4));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(screen.queryByText(/01\/01\/1999/)).not.toBeInTheDocument();
+      expect(screen.getByDisplayValue("22000.00")).toBeInTheDocument();
+    } finally {
+      view.unmount();
+    }
+  };
+
+  await ordinary();
+  const currentMutation = vi.spyOn(generationGuard.generationPolicy, "isCurrent").mockReturnValue(true);
+  const keyMutation = vi.spyOn(generationGuard.generationPolicy, "workspaceKey").mockReturnValue("shared");
+  let killed = false;
+  try {
+    await ordinary();
+  } catch {
+    killed = true;
+  } finally {
+    currentMutation.mockRestore();
+    keyMutation.mockRestore();
+  }
+  expect(killed).toBe(true);
+  await ordinary();
 });
 
 test("CAS conflict is not retried and only explicit refresh requests fresh state", async () => {

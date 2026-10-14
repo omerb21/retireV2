@@ -7,6 +7,7 @@ Planning Input production-path distinctions.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from inspect import getsource
@@ -289,6 +290,165 @@ def test_context_reaches_basis_and_temporal_producers_with_exact_transport(
     _assert_transport(
         _context_through_producer(engine, monkeypatch, producer), 409, expected
     )
+
+
+PLANNING_MAPPING_MUTATIONS = [
+    ("SNAPSHOT_REQUIRES_FRESH_TRANSACTION", 409, ()),
+    ("UNSUPPORTED_DATABASE", 503, ()),
+    ("CLIENT_NOT_FOUND", 404, ("/path/client_id",)),
+    ("SOURCE_STRUCTURE_INVALID", 409, ()),
+    ("RESOLUTION_OWNERSHIP_INVALID", 409, ()),
+    ("CONVERSION_EFFECTIVE_DATE_MISMATCH", 409, ()),
+    ("BASIS_CONVERSION_PROVENANCE_INVALID", 409, ()),
+    ("PERSISTED_CONVERSION_RATIO_INVALID", 409, ()),
+    ("TEMPORAL_DECISION_STRUCTURE_INVALID", 409, ()),
+    ("TEMPORAL_SOURCE_STRUCTURE_INVALID", 409, ()),
+]
+
+
+def _planning_mapping_case(engine, monkeypatch, code):
+    conversion_codes = {
+        "CONVERSION_EFFECTIVE_DATE_MISMATCH", "BASIS_CONVERSION_PROVENANCE_INVALID",
+        "PERSISTED_CONVERSION_RATIO_INVALID", "TEMPORAL_DECISION_STRUCTURE_INVALID",
+        "TEMPORAL_SOURCE_STRUCTURE_INVALID",
+    }
+    conversion_fixture = conversion_arguments(engine) if code in conversion_codes else None
+    if code == "RESOLUTION_OWNERSHIP_INVALID":
+        choose(engine)
+        with Session(engine) as db, db.begin():
+            row = RecurringIncome(
+                client_id=1, income_category="pension", description="ownership mutation control",
+                amount=Decimal("1.00"), amount_basis="gross", frequency="monthly",
+                continuation_status="ongoing", lifecycle_status="current",
+                start_date=date(2020, 1, 1),
+            )
+            db.add(row)
+            db.flush()
+            db.add(PensionIncomeResolution(
+                income_id=row.id, client_id=2, version=1,
+                decision_kind="MISCLASSIFIED_GENERAL_INCOME",
+                income_fingerprint="a" * 64, canonical_source_id=None,
+                canonical_fingerprint=None, reference="test", actor="planner:test",
+            ))
+
+    def invoke():
+        if code == "SNAPSHOT_REQUIRES_FRESH_TRANSACTION":
+            def dependency():
+                with Session(engine) as db:
+                    db.begin()
+                    yield db
+
+            app.dependency_overrides[get_db] = dependency
+            try:
+                return TestClient(app).get(
+                    "/api/clients/1/retirement-income-readiness/context"
+                )
+            finally:
+                app.dependency_overrides.clear()
+
+        if code == "CLIENT_NOT_FOUND":
+            app.dependency_overrides[get_db] = _session_override(engine)
+            try:
+                return TestClient(app).get(
+                    "/api/clients/999999/retirement-income-readiness/context"
+                )
+            finally:
+                app.dependency_overrides.clear()
+
+        if code == "RESOLUTION_OWNERSHIP_INVALID":
+            return _context(engine)
+
+        if code == "UNSUPPORTED_DATABASE":
+            class UnsupportedBind:
+                dialect = SimpleNamespace(name="unsupported")
+
+            class FreshUnsupportedSession:
+                new = dirty = deleted = ()
+
+                @staticmethod
+                def in_transaction():
+                    return False
+
+                @staticmethod
+                def get_bind():
+                    return UnsupportedBind()
+
+                @staticmethod
+                def connection():
+                    return SimpleNamespace()
+
+            producer = lambda _db, _client_id: snapshot_service.begin_read(
+                FreshUnsupportedSession()
+            )
+        elif code == "SOURCE_STRUCTURE_INVALID":
+            producer = lambda _db, _client_id: snapshot_service.invalid()
+        else:
+            mutation_by_code = {
+                "CONVERSION_EFFECTIVE_DATE_MISMATCH": "monthly-date",
+                "BASIS_CONVERSION_PROVENANCE_INVALID": "monthly-audit",
+                "PERSISTED_CONVERSION_RATIO_INVALID": "monthly-ratio",
+                "TEMPORAL_DECISION_STRUCTURE_INVALID": "temporal-decision",
+                "TEMPORAL_SOURCE_STRUCTURE_INVALID": "temporal-source",
+            }
+            mutation = mutation_by_code[code]
+
+            def producer(db, client_id):
+                batch, converted, destination, trace, event = deepcopy(conversion_fixture)
+                if mutation == "monthly-date":
+                    destination["effective_date"] = date(1900, 1, 1)
+                    return monthly_basis.conversion(
+                        AuditSession([event]), client_id, batch, converted, destination, trace
+                    )
+                if mutation == "monthly-audit":
+                    return monthly_basis.conversion(
+                        AuditSession([]), client_id, batch, converted, destination, trace
+                    )
+                if mutation == "monthly-ratio":
+                    destination["monthly_numerator"] = "0"
+                    return monthly_basis.conversion(
+                        AuditSession([event]), client_id, batch, converted, destination, trace
+                    )
+                if mutation == "temporal-decision":
+                    return temporal_basis.manual(SimpleNamespace(
+                        client_id=client_id, manual_pension_source_id="mapping-control",
+                        lifecycle_status="current", base_amount_effective_date=date(2030, 1, 1),
+                        indexation_method="none", fixed_indexation_rate="0.01",
+                        temporal_authority_explicit=True, input_mode="entered",
+                    ), client_id)
+                destination["status"] = "reversed"
+                return temporal_basis.conversion(db, client_id, destination, converted, batch)
+
+        return _context_through_producer(engine, monkeypatch, producer)
+
+    return invoke
+
+
+@pytest.mark.parametrize("code,status,fields", PLANNING_MAPPING_MUTATIONS)
+def test_each_reachable_planning_mapping_mutation_fails_and_restores_ordinary_oracle(
+    engine, monkeypatch, code, status, fields
+):
+    ordinary = _planning_mapping_case(engine, monkeypatch, code)
+
+    before = ordinary()
+    _assert_transport(before, status, code, fields)
+
+    original_transport = routes._transport
+    reached = []
+    with monkeypatch.context() as mutation:
+        def redirected(request, exc, *args, **kwargs):
+            if exc.code == code:
+                reached.append(code)
+                exc = PensionProductError("MUTATED_PLANNING_MAPPING", "mapping mutant", exc.status_code)
+            return original_transport(request, exc, *args, **kwargs)
+
+        mutation.setattr(routes, "_transport", redirected)
+        changed = ordinary()
+        with pytest.raises(AssertionError):
+            _assert_transport(changed, status, code, fields)
+        assert reached == [code]
+
+    after = ordinary()
+    _assert_transport(after, status, code, fields)
 
 
 @pytest.mark.parametrize(

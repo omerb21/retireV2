@@ -6,6 +6,7 @@ ephemeral Docker container and never reads the user's DATABASE_URL.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -17,16 +18,48 @@ from uuid import uuid4
 
 import psycopg2
 import pytest
+from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.api import auth_routes
 from app.security.config import AuthConfig
-from app.security.rate_limit import MAX_COUNT, cleanup_batch, finalize, login_buckets, precheck
+from app.security.rate_limit import MAX_COUNT, RateLimitUnavailable, cleanup_batch, finalize, login_buckets, precheck
 from app import main as app_main
 from app.main import create_app
 
 
 BACKEND = Path(__file__).resolve().parents[1]
+
+
+def _config(secret: bytes = b"z" * 32) -> AuthConfig:
+    hasher = PasswordHasher(time_cost=1, memory_cost=8192, parallelism=1, hash_len=16, salt_len=16)
+    return AuthConfig(
+        production=True, public_origin="https://retire.example", public_authority="retire.example",
+        username="planner", password_hash=hasher.hash("correct"), dummy_password_hash=hasher.hash("dummy"),
+        actor_id="planner", session_secret=b"s" * 32, rate_limit_secret=secret,
+    )
+
+
+def _headers(ip: str = "192.0.2.10") -> dict[str, str]:
+    return {
+        "host": "retire.example", "x-real-ip": ip, "x-forwarded-proto": "https",
+        "x-forwarded-host": "retire.example", "origin": "https://retire.example",
+    }
+
+
+def _postgres_client(engine, monkeypatch, config: AuthConfig):
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(auth_routes, "get_session_factory", lambda: sessions)
+    application = create_app(config)
+    application.state.rate_limiter_ready = True
+    return TestClient(application), application
+
+
+def _clear(engine):
+    with engine.begin() as db:
+        db.execute(text("DELETE FROM rtdir_login_rate_limit_buckets"))
 
 
 @pytest.fixture(scope="module")
@@ -200,4 +233,282 @@ def test_postgresql_readiness_requires_exact_migration_head(rtdir_postgres_url, 
     with engine.begin() as db:
         db.execute(text("UPDATE alembic_version SET version_num='b3c9d6f2a410'"))
     assert app_main._cleanup_once(application) is True
+    engine.dispose()
+
+
+def test_postgresql_placeholder_delay_final_anchor_and_success_deletion_rules(rtdir_postgres_url):
+    engine = create_engine(rtdir_postgres_url)
+    _clear(engine)
+    buckets = login_buckets(_config(b"1" * 32), "planner", "192.0.2.31")
+    keys = {item.kind: item.key for item in buckets}
+    with Session(engine) as db:
+        assert precheck(db, buckets) == 0
+    with engine.connect() as db:
+        placeholder_time = db.execute(text(
+            "SELECT min(window_started_at) FROM rtdir_login_rate_limit_buckets WHERE bucket_key = ANY(:keys)"
+        ), {"keys": list(keys.values())}).scalar_one()
+    time.sleep(0.08)
+    before_final = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        assert finalize(db, buckets, success=False) == 0
+    with engine.connect() as db:
+        anchors = db.execute(text(
+            "SELECT bucket_kind,window_started_at,updated_at,failure_count FROM rtdir_login_rate_limit_buckets "
+            "WHERE bucket_key = ANY(:keys) ORDER BY bucket_kind"
+        ), {"keys": list(keys.values())}).all()
+    assert all(row.window_started_at > placeholder_time for row in anchors)
+    assert all(row.window_started_at >= before_final and row.window_started_at == row.updated_at and row.failure_count == 1 for row in anchors)
+
+    with engine.begin() as db:
+        db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET failure_count=0,locked_until=NULL"))
+    with Session(engine) as db:
+        assert finalize(db, buckets, success=True) == 0
+    with engine.connect() as db:
+        assert db.execute(text("SELECT count(*) FROM rtdir_login_rate_limit_buckets")).scalar_one() == 0
+
+    with Session(engine) as db:
+        assert precheck(db, buckets) == 0
+    with engine.begin() as db:
+        db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET failure_count=3 WHERE bucket_kind='GLOBAL'"))
+    with Session(engine) as db:
+        assert finalize(db, buckets, success=True) == 0
+    with engine.connect() as db:
+        remaining = db.execute(text("SELECT bucket_kind,failure_count FROM rtdir_login_rate_limit_buckets ORDER BY bucket_kind")).all()
+    assert remaining == [("GLOBAL", 3)]
+    engine.dispose()
+
+
+def test_postgresql_expired_zero_and_positive_buckets_precheck_and_final_paths(rtdir_postgres_url):
+    engine = create_engine(rtdir_postgres_url)
+    _clear(engine)
+    buckets = login_buckets(_config(b"2" * 32), "planner", "192.0.2.32")
+    keys = {item.kind: item.key for item in buckets}
+    with Session(engine) as db:
+        assert precheck(db, buckets) == 0
+    with engine.begin() as db:
+        db.execute(text("""
+            UPDATE rtdir_login_rate_limit_buckets
+            SET failure_count=CASE WHEN bucket_kind='USER' THEN 4 ELSE 0 END,
+                window_started_at=transaction_timestamp()-INTERVAL '901 seconds',
+                updated_at=transaction_timestamp()-INTERVAL '901 seconds'
+        """))
+    precheck_start = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        assert precheck(db, buckets) == 0
+    with engine.connect() as db:
+        user = db.execute(text(
+            "SELECT failure_count,window_started_at,updated_at FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
+        ), {"key": keys["USER"]}).one()
+        zeros = db.execute(text(
+            "SELECT failure_count,window_started_at FROM rtdir_login_rate_limit_buckets WHERE bucket_kind IN ('GLOBAL','IP') ORDER BY bucket_kind"
+        )).all()
+    assert user.failure_count == 0 and user.window_started_at >= precheck_start and user.updated_at == user.window_started_at
+    assert [row.failure_count for row in zeros] == [0, 0]
+
+    with engine.begin() as db:
+        db.execute(text("""
+            UPDATE rtdir_login_rate_limit_buckets
+            SET failure_count=CASE WHEN bucket_kind='USER' THEN 4 ELSE 0 END,
+                window_started_at=transaction_timestamp()-INTERVAL '901 seconds',
+                updated_at=transaction_timestamp()-INTERVAL '901 seconds'
+        """))
+    final_start = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        assert finalize(db, buckets, success=False) == 0
+    with engine.connect() as db:
+        rows = db.execute(text(
+            "SELECT bucket_kind,failure_count,window_started_at,updated_at FROM rtdir_login_rate_limit_buckets ORDER BY bucket_kind"
+        )).all()
+    assert all(row.failure_count == 1 and row.window_started_at == row.updated_at and row.window_started_at >= final_start for row in rows)
+    engine.dispose()
+
+
+def test_postgresql_cleanup_skip_locked_current_active_bounded_and_continues(rtdir_postgres_url):
+    engine = create_engine(rtdir_postgres_url, pool_size=4)
+    _clear(engine)
+    now = datetime.now(timezone.utc)
+    rows = []
+    for index in range(67):
+        rows.append({
+            "key": f"{index:064x}", "kind": "USER", "started": now - timedelta(hours=2),
+            "count": 1 if index % 2 else 0, "updated": now - timedelta(hours=1),
+        })
+    rows.extend([
+        {"key": "e" * 64, "kind": "USER", "started": now, "count": 0, "updated": now},
+        {"key": "f" * 64, "kind": "IP", "started": now, "count": 19, "updated": now},
+    ])
+    with engine.begin() as db:
+        db.execute(text("""
+            INSERT INTO rtdir_login_rate_limit_buckets
+              (bucket_key,bucket_kind,window_started_at,failure_count,locked_until,updated_at)
+            VALUES (:key,:kind,:started,:count,NULL,:updated)
+        """), rows)
+    locked_key = rows[0]["key"]
+    locker = Session(engine)
+    try:
+        locker.execute(text(
+            "SELECT bucket_key FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key FOR UPDATE"
+        ), {"key": locked_key}).one()
+        with Session(engine) as db:
+            assert cleanup_batch(db) == 64
+        with engine.connect() as db:
+            assert db.execute(text(
+                "SELECT count(*) FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
+            ), {"key": locked_key}).scalar_one() == 1
+            assert db.execute(text(
+                "SELECT count(*) FROM rtdir_login_rate_limit_buckets WHERE bucket_key IN (:current,:active)"
+            ), {"current": "e" * 64, "active": "f" * 64}).scalar_one() == 2
+    finally:
+        locker.rollback(); locker.close()
+    with Session(engine) as db:
+        assert cleanup_batch(db) == 3
+        assert cleanup_batch(db) == 0
+    with engine.connect() as db:
+        assert db.execute(text("SELECT count(*) FROM rtdir_login_rate_limit_buckets")).scalar_one() == 2
+    engine.dispose()
+
+
+def test_postgresql_cleanup_failure_blocks_argon_and_recovery_restores_readiness(rtdir_postgres_url, monkeypatch):
+    engine = create_engine(rtdir_postgres_url)
+    _clear(engine)
+    config = _config(b"3" * 32)
+    client, application = _postgres_client(engine, monkeypatch, config)
+    argon_calls = []
+    original_verify = PasswordHasher.verify
+    monkeypatch.setattr(PasswordHasher, "verify", lambda self, encoded, password: argon_calls.append(password) or original_verify(self, encoded, password))
+
+    monkeypatch.setattr(app_main, "get_session_factory", lambda: sessionmaker(bind=engine))
+    with monkeypatch.context() as failure:
+        failure.setattr(app_main, "cleanup_batch", lambda db: (_ for _ in ()).throw(RateLimitUnavailable("injected cleanup")))
+        assert app_main._cleanup_once(application) is False
+    unavailable = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "correct"})
+    assert (unavailable.status_code, unavailable.json()["code"]) == (503, "AUTH_RATE_LIMIT_UNAVAILABLE")
+    assert argon_calls == []
+    assert app_main._cleanup_once(application) is True
+    recovered = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "correct"})
+    assert recovered.status_code == 200 and argon_calls == ["correct"]
+    engine.dispose()
+
+
+def test_postgresql_injected_database_failures_never_fail_open(rtdir_postgres_url, monkeypatch):
+    engine = create_engine(rtdir_postgres_url)
+    config = _config(b"4" * 32)
+    client, application = _postgres_client(engine, monkeypatch, config)
+    argon_calls = []
+    monkeypatch.setattr(PasswordHasher, "verify", lambda *args: argon_calls.append(True) or True)
+    with monkeypatch.context() as failure:
+        failure.setattr(auth_routes, "cleanup_batch", lambda db: (_ for _ in ()).throw(RateLimitUnavailable("db unavailable")))
+        response = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "correct"})
+    assert (response.status_code, response.json()["code"]) == (503, "AUTH_RATE_LIMIT_UNAVAILABLE")
+    assert "set-cookie" not in response.headers and argon_calls == []
+    assert application.state.rate_limiter_ready is False
+    engine.dispose()
+
+
+def _run_login_threshold_race(engine, monkeypatch, *, mutant: bool):
+    _clear(engine)
+    config = _config(b"5" * 32)
+    client, _ = _postgres_client(engine, monkeypatch, config)
+    entered = threading.Event(); release = threading.Event()
+    original_verify = PasswordHasher.verify
+
+    def delayed_verify(hasher, encoded, password):
+        if password == "correct":
+            entered.set()
+            assert release.wait(30)
+        return original_verify(hasher, encoded, password)
+
+    monkeypatch.setattr(PasswordHasher, "verify", delayed_verify)
+    original_finalize = auth_routes.finalize
+    if mutant:
+        monkeypatch.setattr(auth_routes, "finalize", lambda db, buckets, success: 0 if success else original_finalize(db, buckets, success=success))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pending = executor.submit(lambda: client.post(
+            "/api/auth/login", headers=_headers(), json={"username": "planner", "password": "correct"}
+        ))
+        assert entered.wait(30)
+        with engine.connect() as db:
+            held = db.execute(text("""
+                SELECT count(*) FROM pg_locks locks
+                LEFT JOIN pg_class relation ON relation.oid=locks.relation
+                WHERE locks.pid <> pg_backend_pid() AND locks.granted
+                  AND (relation.relname='rtdir_login_rate_limit_buckets' OR locks.locktype='advisory')
+            """)).scalar_one()
+        assert held == 0
+        failures = [client.post(
+            "/api/auth/login", headers=_headers(), json={"username": "planner", "password": "wrong"}
+        ) for _ in range(5)]
+        release.set()
+        success = pending.result(timeout=30)
+    return failures, success
+
+
+def test_postgresql_real_login_race_final_recheck_mutation_and_restoration(rtdir_postgres_url, monkeypatch):
+    engine = create_engine(rtdir_postgres_url, pool_size=8, max_overflow=8)
+    failures, ordinary = _run_login_threshold_race(engine, monkeypatch, mutant=False)
+    assert [response.status_code for response in failures] == [401, 401, 401, 401, 429]
+    assert (ordinary.status_code, ordinary.json()["code"]) == (429, "LOGIN_RATE_LIMITED")
+    assert "set-cookie" not in ordinary.headers
+
+    monkeypatch.undo()
+    failures, changed = _run_login_threshold_race(engine, monkeypatch, mutant=True)
+    assert [response.status_code for response in failures] == [401, 401, 401, 401, 429]
+    assert changed.status_code == 200 and "set-cookie" in changed.headers
+
+    monkeypatch.undo()
+    failures, restored = _run_login_threshold_race(engine, monkeypatch, mutant=False)
+    assert [response.status_code for response in failures] == [401, 401, 401, 401, 429]
+    assert (restored.status_code, restored.json()["code"]) == (429, "LOGIN_RATE_LIMITED")
+    assert "set-cookie" not in restored.headers
+    engine.dispose()
+
+
+def test_postgresql_actual_failed_login_saturation_and_overflow_mutation(rtdir_postgres_url, monkeypatch):
+    engine = create_engine(rtdir_postgres_url)
+    _clear(engine)
+    config = _config(b"6" * 32)
+    client, application = _postgres_client(engine, monkeypatch, config)
+    buckets = login_buckets(config, "planner", "192.0.2.10")
+    user_key = next(item.key for item in buckets if item.kind == "USER")
+    with engine.begin() as db:
+        now = db.execute(text("SELECT transaction_timestamp()")) .scalar_one()
+        db.execute(text("""
+            INSERT INTO rtdir_login_rate_limit_buckets
+              (bucket_key,bucket_kind,window_started_at,failure_count,locked_until,updated_at)
+            VALUES (:key,'USER',:now,:maximum,NULL,:now)
+        """), {"key": user_key, "now": now, "maximum": MAX_COUNT})
+    ordinary = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "wrong"})
+    assert (ordinary.status_code, ordinary.json()["code"]) == (429, "LOGIN_RATE_LIMITED")
+    with engine.connect() as db:
+        assert db.execute(text(
+            "SELECT failure_count FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
+        ), {"key": user_key}).scalar_one() == MAX_COUNT
+
+    with engine.begin() as db:
+        db.execute(text("UPDATE rtdir_login_rate_limit_buckets SET locked_until=NULL WHERE bucket_key=:key"), {"key": user_key})
+    original_finalize = auth_routes.finalize
+
+    def overflow_mutant(db, actual_buckets, *, success):
+        if success:
+            return original_finalize(db, actual_buckets, success=True)
+        try:
+            db.execute(text(
+                "UPDATE rtdir_login_rate_limit_buckets SET failure_count=failure_count+1 WHERE bucket_key=:key"
+            ), {"key": user_key})
+            db.commit()
+            return 0
+        except Exception as exc:
+            db.rollback()
+            raise RateLimitUnavailable("overflow-sensitive mutant failed") from exc
+
+    with monkeypatch.context() as mutation:
+        mutation.setattr(auth_routes, "finalize", overflow_mutant)
+        changed = client.post("/api/auth/login", headers=_headers(), json={"username": "planner", "password": "wrong"})
+    assert (changed.status_code, changed.json()["code"]) == (503, "AUTH_RATE_LIMIT_UNAVAILABLE")
+    assert application.state.rate_limiter_ready is False
+    with engine.connect() as db:
+        assert db.execute(text(
+            "SELECT failure_count FROM rtdir_login_rate_limit_buckets WHERE bucket_key=:key"
+        ), {"key": user_key}).scalar_one() == MAX_COUNT
     engine.dispose()

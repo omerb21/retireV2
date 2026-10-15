@@ -118,9 +118,9 @@ these columns; no additional current-pointer or compatibility authority column i
 | `retirement_target_date` | `DATE` | pension non-null; recurring null |
 | `income_basis` | `VARCHAR(16)` | non-null |
 | `income_basis_provenance` | `VARCHAR(40)` | non-null |
-| `price_basis` | `VARCHAR(64)` | non-null |
+| `price_basis` | `VARCHAR(64)` | recurring non-null; pension null |
 | `price_reference_date` | `DATE` | real recurring only; otherwise null |
-| `price_basis_provenance` | `VARCHAR(40)` | non-null |
+| `price_basis_provenance` | `VARCHAR(40)` | recurring non-null; pension null |
 | `decision_actor` | `VARCHAR(128)` | non-null; authenticated server actor |
 | `decided_at` | `TIMESTAMP WITH TIME ZONE` | non-null; `transaction_timestamp()` |
 | `decision_fingerprint` | `VARCHAR(64)` | non-null, no default |
@@ -141,8 +141,10 @@ The exact database object inventory is:
   `ck_crtisba_income_basis_provenance`, `ck_crtisba_price_basis`,
   `ck_crtisba_price_basis_provenance`, `ck_crtisba_kind_payload`,
   `ck_crtisba_reference_date`, and `ck_crtisba_hash_shapes`;
-- trigger `trg_crtisba_decision_immutable`, backed by
-  `reject_crtisba_decision_mutation()`, rejecting every ordinary UPDATE and DELETE. The trigger
+- immediate row trigger `trg_crtisba_decision_immutable`, declared exactly `BEFORE UPDATE OR DELETE
+  ON canonical_retirement_target_date_income_source_basis_decisions FOR EACH ROW`, backed by
+  `reject_crtisba_decision_mutation()`, rejecting every ordinary UPDATE and DELETE before mutation.
+  The trigger
   raises SQLSTATE `P7501` and diagnostic `CONSTRAINT_NAME=trg_crtisba_decision_immutable` with
   `RAISE EXCEPTION USING ERRCODE='P7501', CONSTRAINT='trg_crtisba_decision_immutable', MESSAGE='CRTISBA_DECISION_IMMUTABLE'`;
   message text is not diagnostic authority.
@@ -156,8 +158,11 @@ store OD-3. Clear appends `UNKNOWN` only for the stored decision.
 
 The application database role receives only table `SELECT` and `INSERT`, plus `USAGE, SELECT` on
 the identity sequence generated for `decision_id`. It receives no `UPDATE`, `DELETE`, `TRUNCATE`,
-`TRIGGER`, ownership, or function-alter privilege. Migration ownership remains separate. Trigger
-enforcement remains mandatory defense even when grants are correct.
+`TRIGGER`, ownership, or function-alter privilege. `ck_crtisba_kind_payload` requires pension rows
+to store `price_basis`, `price_reference_date`, and `price_basis_provenance` as SQL NULL, and
+recurring rows to store non-null `price_basis` and `price_basis_provenance`, with
+`price_reference_date` non-null exactly for `REAL_AT_REFERENCE_DATE`. Migration ownership remains
+separate. Trigger enforcement remains mandatory defense even when grants are correct.
 
 ## 6. Transaction ownership and concurrency
 
@@ -214,12 +219,15 @@ Implementation tracks phases `BEFORE_TRANSACTION`, `IN_TRANSACTION`, `FLUSHING`,
 `FLUSHED`, `COMMIT_DISPATCHED`, `COMMITTED`, `ROLLING_BACK`, and `CLOSED`. The
 `COMMIT_DISPATCHED` transition occurs immediately before calling `Session.commit()`.
 
-SQLSTATE is extracted from `exc.orig.pgcode`, then `exc.orig.sqlstate`. The exhaustive
-known-abort set is `40001`, `40P01`, `23503`, `23505`, `23514`, and `25P02`. A cancellation,
-disconnect, missing SQLSTATE, or any other post-dispatch exception is not presumed to prove abort.
+SQLSTATE is normalized to a five-character uppercase string extracted first from
+`exc.orig.pgcode`, then from `exc.orig.sqlstate`; exception message text is never inspected. The
+exhaustive known-abort SQLSTATE set is `{40001, 40P01, 23503, 23505, 23514, 25P02, P7501}`.
+Membership for `P7501` is effective only when the connection remains intact and the structured
+constraint diagnostic is exactly `trg_crtisba_decision_immutable`. A cancellation, disconnect,
+missing SQLSTATE, or any other post-dispatch exception is not presumed to prove abort.
 
-Trigger immutability is recognized only when both `pgcode == "P7501"` and
-`exc.orig.diag.constraint_name == "trg_crtisba_decision_immutable"`. Ordinary check violations are
+Trigger immutability is recognized only when normalized SQLSTATE is `P7501`, the connection is not
+invalidated, and `exc.orig.diag.constraint_name == "trg_crtisba_decision_immutable"`. Ordinary check violations are
 recognized by SQLSTATE `23514` plus membership in the closed set
 `{ck_crtisba_decision_version_positive, ck_crtisba_source_kind,
 ck_crtisba_source_identity_shape, ck_crtisba_income_basis,
@@ -228,11 +236,14 @@ ck_crtisba_price_basis_provenance, ck_crtisba_kind_payload,
 ck_crtisba_reference_date, ck_crtisba_hash_shapes}`. Neither classifier inspects exception text.
 
 - A failure before commit dispatch is known not committed.
-- A commit exception with intact connection and a known-abort SQLSTATE is known not committed.
+- A commit exception with intact connection and a known-abort SQLSTATE is known not committed;
+  `P7501` is known not committed only with the exact structured trigger diagnostic above.
 - A named CRTISBA constraint maps as specified in Section 10 and is known not committed.
 - Normal return from commit is committed.
 - After commit dispatch, `connection_invalidated=true`, SQLSTATE class `08`, absent SQLSTATE, or any
   evidence not proving a known abort is `CRTISBA_COMMIT_OUTCOME_UNKNOWN`.
+- After commit dispatch, `P7501` without the exact structured constraint diagnostic, or with an
+  invalidated connection, is therefore `CRTISBA_COMMIT_OUTCOME_UNKNOWN`, not immutability.
 - Known-not-committed failures attempt rollback. Rollback failure takes precedence as
   `CRTISBA_ROLLBACK_FAILED`, then the connection is invalidated and Session closed.
 - Uncertain outcome remains uncertain even if best-effort rollback succeeds. Connection is
@@ -386,23 +397,50 @@ Partitions have exactly sorted unique arrays: `current`, `missing`, `unknown`, `
 `upstream_unresolved`, `not_applicable_delegated`, `not_applicable_not_admitted`,
 `delegation_unresolved`, and `delegation_stale`.
 
-State-specific values are binding:
+`source_basis_entries` is ordered by ascending canonical `source_id` exactly as
+`sorted(entries, key=lambda entry: entry.source_id)` in the accepted upstream Python implementation:
+lexicographic Python `str` comparison by Unicode code point, with no locale, case folding, numeric
+coercion, or normalization. That ordered array, without reordering, participates in the collection
+result fingerprint.
 
-| State | Decision identity | Effective basis values | Blockers |
-|---|---|---|---|
-| `CURRENT` | non-null version/fingerprint | current pension OD-1+OD-2 or recurring income+OD-3 | empty |
-| `MISSING` | both null | pension income UNKNOWN/MISSING with current OD-2; recurring current income with price UNKNOWN/MISSING | `CRTISBA_DECISION_MISSING` |
-| `UNKNOWN` | both non-null | pension income UNKNOWN/MISSING with current OD-2; recurring current income with price UNKNOWN/MISSING | `CRTISBA_DECISION_UNKNOWN` |
-| `STALE` | both non-null | same safe effective values as MISSING; stale stored choice is not exposed as current | `CRTISBA_DECISION_STALE` |
-| `INVALID` | nullable only if row identity cannot be trusted | same safe effective values as MISSING | `CRTISBA_DECISION_INVALID` |
-| `UPSTREAM_UNRESOLVED` | nullable; may be non-null for stored frequency-other price decision | recurring income/price may be shown only as current evidence, never comparison-ready | exact accepted RTISA reasons |
-| `NOT_APPLICABLE_DELEGATED` | both null | all basis/provenance/reference fields null | empty |
-| `DELEGATION_UNRESOLVED` | both null | all basis/provenance/reference fields null | `RTISA_SOURCE_IDENTITY_UNRESOLVED` |
-| `DELEGATION_STALE` | both null | all basis/provenance/reference fields null | `RTISA_SOURCE_IDENTITY_STALE` |
-| `NOT_APPLICABLE_NOT_ADMITTED` | both null | all basis/provenance/reference fields null | empty |
+State-specific values are binding. In the table, `pension-version` means a positive integer and
+`recurring-version` means the exact lowercase SHA-256 `source_fingerprint`; `source-sha` and
+`amount-sha` mean non-null lowercase SHA-256 values. `safe-missing` means: for pension,
+`income_basis=UNKNOWN`, `income_basis_provenance=MISSING`, and OD-2 derived from the valid current
+PTE; for recurring income, current upstream income basis/provenance and
+`price_basis=UNKNOWN`, `price_reference_date=null`, `price_basis_provenance=MISSING`.
 
-Delegated/not-admitted entries have null amount-authority fingerprint because CRTISBA does not
-authorize an amount decision for them. History persistence has no public API.
+| State | source_version | source_fingerprint | amount_authority_fingerprint | decision_version / decision_fingerprint | Effective basis fields | Blockers |
+|---|---|---|---|---|---|---|
+| `CURRENT` | pension-version or recurring-version | source-sha | amount-sha | both non-null and validated against current identities | pension: stored OD-1 plus current-PTE-derived OD-2; recurring: current upstream income basis plus stored OD-3 | empty |
+| `MISSING` | pension-version or recurring-version | source-sha | amount-sha | both null because no decision row exists | safe-missing | exactly `CRTISBA_DECISION_MISSING` |
+| `UNKNOWN` | pension-version or recurring-version | source-sha | amount-sha | both non-null and validated; latest row is a clear decision | safe-missing | exactly `CRTISBA_DECISION_UNKNOWN` |
+| `STALE` | pension-version or recurring-version | source-sha | amount-sha | both non-null; latest row is structurally valid but one or more stored Planning/source/amount/PTE/portfolio identities differ from current identities | safe-missing; no stale choice is exposed | exactly `CRTISBA_DECISION_STALE` |
+| `INVALID` | pension-version or recurring-version | source-sha | amount-sha | both null; an existing latest row fails schema, enum, kind-payload, hash, canonical fingerprint, or version-chain validation and its identity is not exposed | safe-missing | exactly `CRTISBA_DECISION_INVALID` |
+| `UPSTREAM_UNRESOLVED`, frequency-other sole amount-normalization blocker, validated current stored recurring decision exists | recurring-version | source-sha | amount-sha computed from the valid raw recurring amount authority | both non-null and validated against current Planning/source/amount identities | current upstream income basis/provenance plus stored current OD-3; never comparison-ready | exact sorted unique RTISA reason array, containing `RTISA_SOURCE_FREQUENCY_UNSUPPORTED` and no other unresolved reason |
+| `UPSTREAM_UNRESOLVED`, frequency-other sole amount-normalization blocker, no validated current stored decision | recurring-version | source-sha | amount-sha computed from the valid raw recurring amount authority | both null | current upstream income basis/provenance; price UNKNOWN/null/MISSING | exact sorted unique array containing only `RTISA_SOURCE_FREQUENCY_UNSUPPORTED` |
+| `UPSTREAM_UNRESOLVED`, every other RTISA unresolved case | pension-version or recurring-version | source-sha | null | both null | all income/price basis, provenance, and reference-date fields null | exact sorted unique accepted RTISA unresolved reasons |
+| `NOT_APPLICABLE_DELEGATED` | recurring-version | source-sha | null | both null | all basis/provenance/reference fields null | empty |
+| `DELEGATION_UNRESOLVED` | recurring-version | source-sha | null | both null | all basis/provenance/reference fields null | exactly `RTISA_SOURCE_IDENTITY_UNRESOLVED` |
+| `DELEGATION_STALE` | recurring-version | source-sha | null | both null | all basis/provenance/reference fields null | exactly `RTISA_SOURCE_IDENTITY_STALE` |
+| `NOT_APPLICABLE_NOT_ADMITTED` | pension-version or recurring-version | source-sha | null | both null | all basis/provenance/reference fields null | empty |
+
+The closed non-delegation RTISA unresolved-reason set consumed by `UPSTREAM_UNRESOLVED` is exactly:
+`RTISA_PENSION_AUTHORITY_UNAVAILABLE`, `RTISA_PENSION_SOURCE_NOT_READY`,
+`RTISA_SOURCE_CURRENCY_UNSUPPORTED`, `RTISA_PENSION_APPLICABILITY_UNRESOLVED`,
+`RTISA_SOURCE_IDENTITY_STALE`, `RTISA_SOURCE_RECORD_INVALID`,
+`RTISA_SOURCE_AUTHORITY_NOT_RECORDED`, `RTISA_SOURCE_REVIEW_INCOMPLETE`,
+`RTISA_SOURCE_AMOUNT_INVALID`, `RTISA_SOURCE_FREQUENCY_UNSUPPORTED`,
+`RTISA_NATIVE_INCOME_BASIS_UNKNOWN`, `RTISA_SOURCE_START_DATE_MISSING`,
+`RTISA_SOURCE_CONTINUATION_UNRESOLVED`, `RTISA_SOURCE_END_DATE_MISSING`,
+`RTISA_SOURCE_DATE_RANGE_INVALID`, `RTISA_SOURCE_IDENTITY_AMBIGUOUS`, and
+`RTISA_DUPLICATE_COLLISION_UNRESOLVED`. The frequency-other subtype applies only when its reason
+array is exactly `["RTISA_SOURCE_FREQUENCY_UNSUPPORTED"]`; any combination containing another
+member uses the every-other-unresolved row above.
+
+Delegated/not-admitted and non-frequency upstream-unresolved entries have null amount-authority
+fingerprint because CRTISBA does not authorize an amount decision for them. History persistence has
+no public API.
 
 ### 8.5 Professional blocked result
 
@@ -431,12 +469,18 @@ The only professional stage/code combinations are:
 |---|---|
 | `planning_context` | `CRTISBA_PLANNING_CONTEXT_UNAVAILABLE` |
 | `retirement_target` | `CRTISBA_RETIREMENT_TARGET_NOT_READY` |
-| `pension_portfolio` | `CRTISBA_PENSION_PORTFOLIO_NOT_READY` |
 | `source_universe` | `CRTISBA_SOURCE_UNIVERSE_UNAVAILABLE` |
 
 Observed values remain null until validated by the failing stage. A blocked result contains no
 partial collection. Malformed producer objects, client mismatch, and database failures are
 transport errors, not professional blocked results.
+
+Pension portfolio non-readiness is not a whole-result professional block when RTISA can assemble a
+valid source-universe collection. Each affected source is returned as `UPSTREAM_UNRESOLVED` with
+its exact accepted RTISA reason codes (including pension authority, source-readiness,
+applicability, currency, or other accepted source-level evidence). `block_no_result` is returned
+only when a valid collection cannot be assembled at all; there is no
+`pension_portfolio`/`CRTISBA_PENSION_PORTFOLIO_NOT_READY` stage/code pair.
 
 ## 9. Canonical serialization and fingerprints
 
@@ -453,6 +497,12 @@ Decision namespace is
 `planning_calculation_input_fingerprint`, `source_version`, `source_fingerprint`,
 `amount_authority_fingerprint`, `income_basis`, `income_basis_provenance`, `price_basis`,
 `price_reference_date`, and `price_basis_provenance`. Actor/time and derived OD-2 are excluded.
+For a pension decision, the stored preimage contains JSON null for `price_basis`,
+`price_reference_date`, and `price_basis_provenance`; these null placeholders are fingerprinted.
+The write result and every read result derive OD-2 as
+`NOMINAL_AT_RETIREMENT_TARGET_DATE`/`OWNER_DECISION_OD2` with null reference date only from a valid
+current PTE. Derived OD-2 is never copied into persistence and never substituted into the stored
+decision fingerprint. Recurring OD-3 persistence and fingerprinting are unchanged.
 
 Result namespace is
 `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_RESULT_JSON_V1`; preimage is exactly
@@ -480,8 +530,14 @@ generic fallback `לא ניתן להשלים את הבקשה` unless that exact 
 RTDIR catalogue entry. There is no route-local or discretionary message selection.
 
 Precedence is middleware security, request schema, pristine-session/database admission, client,
-source existence/currentness/kind, planning CAS, source/amount CAS, delegation/admission,
-decision CAS/ceiling, insert/flush/commit. First failure wins.
+source existence/currentness/kind, planning CAS, source/amount CAS, RTISA
+invocation/delegation/admission, decision CAS/ceiling, insert/flush/commit. First failure wins. At
+the RTISA boundary, an actual `RetirementTargetIncomeSourceAdmissionTechnicalError` maps first to
+`CRTISBA_UPSTREAM_TECHNICAL_FAILURE`; only a normally returned object is then checked for exact
+producer schema and maps malformed structure to `PRODUCER_RESPONSE_INVALID`; only a schema-valid
+object is then checked for client identity and maps mismatch to `RESPONSE_CLIENT_MISMATCH`. A
+database/transaction exception raised by the owning CRTISBA transaction keeps its specific database
+classification. Every other uncatalogued exception maps to `INTERNAL_ERROR`.
 
 | Operation | Original condition/code | Public code | HTTP | Exact field_paths | Retry |
 |---|---|---|---:|---|---|
@@ -513,13 +569,14 @@ decision CAS/ceiling, insert/flush/commit. First failure wins.
 | PUT | SQLSTATE `23514`, `ck_crtisba_kind_payload` | `CRTISBA_PERSISTENCE_CONTRACT_VIOLATION` | 500 | empty | no |
 | PUT | SQLSTATE `23514`, `ck_crtisba_reference_date` | `CRTISBA_PERSISTENCE_CONTRACT_VIOLATION` | 500 | empty | no |
 | PUT | SQLSTATE `23514`, `ck_crtisba_hash_shapes` | `CRTISBA_PERSISTENCE_CONTRACT_VIOLATION` | 500 | empty | no |
-| PUT | SQLSTATE `P7501` plus `diag.constraint_name=trg_crtisba_decision_immutable` | `CRTISBA_PERSISTENCE_IMMUTABILITY_VIOLATION` | 500 | empty | no |
+| PUT | intact connection, normalized SQLSTATE `P7501`, and `diag.constraint_name=trg_crtisba_decision_immutable` | `CRTISBA_PERSISTENCE_IMMUTABILITY_VIOLATION` | 500 | empty | no |
 | PUT | SQLSTATE `40001` or `40P01` | `CRTISBA_SERIALIZATION_FAILURE` | 503 | empty | no automatic retry |
 | GET/PUT | connection/database before commit dispatch | `CRTISBA_DATABASE_FAILURE` | 503 | empty | new request only |
 | PUT | flush failure | `CRTISBA_FLUSH_FAILED` | 503 | empty | no automatic retry |
 | PUT | proved known-abort commit failure | `CRTISBA_COMMIT_FAILED` | 503 | empty | no automatic retry |
 | PUT | unproved outcome after commit dispatch | `CRTISBA_COMMIT_OUTCOME_UNKNOWN` | 503 | empty | GET reconciliation only |
 | GET/PUT | rollback failure | `CRTISBA_ROLLBACK_FAILED` | 503 | empty | new Session/request |
+| GET/PUT | RTISA `read_in_snapshot()` raises `RetirementTargetIncomeSourceAdmissionTechnicalError` | `CRTISBA_UPSTREAM_TECHNICAL_FAILURE` | 503 | empty | no automatic retry |
 | GET/PUT | malformed producer object | `PRODUCER_RESPONSE_INVALID` | 500 | empty | no |
 | GET/PUT | producer client mismatch | `RESPONSE_CLIENT_MISMATCH` | 500 | empty | no |
 | GET/PUT | fingerprint or unexpected program failure | `INTERNAL_ERROR` | 500 | empty | no |
@@ -527,6 +584,13 @@ decision CAS/ceiling, insert/flush/commit. First failure wins.
 Professional non-readiness—missing/unknown/stale decisions, unresolved frequency, RTISA unresolved
 identity and stale delegation—returns HTTP 200 in `CRTISBA_COLLECTION_RESULT_V1`, never an RTDIR
 transport error.
+
+`CRTISBA_UPSTREAM_TECHNICAL_FAILURE` uses the exact `RTDIR_TRANSPORT_ERROR_V1` envelope and cache
+headers above, empty `field_paths`, and the fixed generic Hebrew message
+`לא ניתן להשלים את הבקשה`. It is never converted into professional non-readiness and is never
+retried automatically. The original RTISA exception, upstream stage/blocker/detail, traceback, and
+driver detail are restricted to structured internal logs correlated by `request_id`; none appears
+in the public body.
 
 ## 11. Executable acceptance contract
 
@@ -537,12 +601,19 @@ each of the three exact source-table locks; latest-decision lock; non-owning nes
 addressed and unrelated Planning races; observed source version in failures; every schema literal,
 key/type/null rule; recurring SHA version; Decimal/date/golden fingerprints; every named constraint
 mapping; `CRTISBA_SOURCE_NOT_CURRENT`; all known/uncertain commit classes; connection loss before
-and after dispatch; explicit uncertain-outcome reconciliation; and forbidden OD-1/OD-3 inference.
+and after dispatch; explicit uncertain-outcome reconciliation; immediate `BEFORE UPDATE OR DELETE
+FOR EACH ROW` immutability; normalized `P7501` known-abort handling with intact connection and exact
+constraint diagnostic; pension OD-1 rows with all three persisted price fields null; pension stored
+fingerprint null placeholders; derived OD-2 present in results but absent from stored fingerprints;
+exact `INVALID` and both `UPSTREAM_UNRESOLVED` subtype predicates; canonical Python-string
+`source_id` ordering in both entries and result fingerprint; RTISA technical-fatal HTTP 503; valid
+portfolio collections represented by source-level unresolved entries; absence of the removed
+whole-result portfolio stage/code; and forbidden OD-1/OD-3 inference.
 
 The ordinary matrix additionally proves the exact GET and PUT route registrations; successful GET
 rollback/release with zero commit calls; GET derivation failure rollback; GET rollback failure with
 connection invalidation, Session closure and non-reuse; no rollback before acquisition; every
-state-specific entry value/null rule; all four closed professional stage/code pairs; database actor
+state-specific entry value/null rule; all three closed professional stage/code pairs; database actor
 and transaction timestamp provenance; SELECT/INSERT-only application-role grants including identity
 sequence access; and every Section 10 message, pointer, envelope and cache mapping.
 
@@ -551,17 +622,23 @@ FAIL, guaranteed restoration, and same oracle PASS. Required groups are RTISA st
 excluded-source mapping; pristine admission; isolation-before-query; each polymorphic lock target;
 post-lock/global planning revalidation; nested transaction ownership; DTO discriminators;
 serialization/preimage fields; named constraints/immutability; SQLSTATE/commit-dispatch classifier;
-no-retry; transport mapping; forbidden pension inference; forbidden recurring inference.
+no-retry; transport mapping; pension-null-persistence versus derived-OD-2 output; state-predicate
+mapping; canonical entry ordering; RTISA technical-fatal mapping; source-level portfolio
+non-readiness; forbidden pension inference; forbidden recurring inference.
 
-The trigger mutation group must prove structured extraction of SQLSTATE `P7501` and
-`diag.constraint_name`, and that changing either diagnostic makes the unchanged public oracle fail.
+The trigger mutation group must prove immediate pre-mutation enforcement, structured normalized
+extraction of SQLSTATE `P7501`, intact-connection evidence, and exact `diag.constraint_name`, and
+that changing the phase, connection validity, SQLSTATE, or constraint diagnostic makes the
+unchanged public oracle fail.
 A separate check-constraint oracle must raise `23514` with the exact check name and prove it cannot
 be misclassified as immutability. The read-termination group mutates success rollback into commit,
 removes failure rollback, and suppresses invalidation after rollback failure; each unchanged oracle
 must fail and pass after restoration.
 
 Real isolated PostgreSQL must prove migration upgrade/downgrade and one head; all named objects;
-trigger enforcement; first insert/CAS/ceiling; concurrent version uniqueness; all three row locks;
+immediate trigger enforcement before every row UPDATE/DELETE; pension persisted price NULLs and
+stored-fingerprint NULL placeholders; result-only current-PTE OD-2 derivation; first
+insert/CAS/ceiling; concurrent version uniqueness; all three row locks;
 addressed-source and unrelated-Planning race orderings; `40001`/`40P01`; connection loss before and
 after commit dispatch; known versus uncertain outcome; rollback failure/invalidation; explicit GET
 reconciliation; snapshot consistency; and no upstream mutation. SQLite is limited to pure DTO,

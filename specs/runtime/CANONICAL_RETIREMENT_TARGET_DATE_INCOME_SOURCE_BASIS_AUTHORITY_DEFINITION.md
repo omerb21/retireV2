@@ -142,12 +142,16 @@ The exact database object inventory is:
   `ck_crtisba_price_basis_provenance`, `ck_crtisba_kind_payload`,
   `ck_crtisba_reference_date`, and `ck_crtisba_hash_shapes`;
 - immediate row trigger `trg_crtisba_decision_immutable`, declared exactly `BEFORE UPDATE OR DELETE
-  ON canonical_retirement_target_date_income_source_basis_decisions FOR EACH ROW`, backed by
+  ON retirement_target_date_income_source_basis_decisions FOR EACH ROW`, backed by
   `reject_crtisba_decision_mutation()`, rejecting every ordinary UPDATE and DELETE before mutation.
   The trigger
   raises SQLSTATE `P7501` and diagnostic `CONSTRAINT_NAME=trg_crtisba_decision_immutable` with
   `RAISE EXCEPTION USING ERRCODE='P7501', CONSTRAINT='trg_crtisba_decision_immutable', MESSAGE='CRTISBA_DECISION_IMMUTABLE'`;
   message text is not diagnostic authority.
+
+Every primary-key, foreign-key, unique, check, index, identity sequence, grant, trigger, and trigger
+function contract in this section is attached to the exact table
+`retirement_target_date_income_source_basis_decisions`; no prefixed or alias table identifier exists.
 
 First write requires expected decision version 0, proves no row exists, and inserts version 1.
 Later writes lock/select the unique maximum version, require exact CAS, and insert expected+1.
@@ -197,7 +201,7 @@ After strict DTO validation and before any authoritative query, write establishe
 2. locks the addressed source row `FOR UPDATE` in exactly one table:
    `recurring_income`, `canonical_manual_pension_sources`, or
    `canonical_pension_destinations`;
-3. locks the latest CRTISBA decision row when present;
+3. locks the latest row in `retirement_target_date_income_source_basis_decisions` when present;
 4. re-derives all authoritative Planning/source/amount/PTE/portfolio/RTISA identities in the same
    Session and transaction through non-owning internal functions;
 5. applies planning, source, amount, and decision CAS;
@@ -236,14 +240,20 @@ ck_crtisba_price_basis_provenance, ck_crtisba_kind_payload,
 ck_crtisba_reference_date, ck_crtisba_hash_shapes}`. Neither classifier inspects exception text.
 
 - A failure before commit dispatch is known not committed.
-- A commit exception with intact connection and a known-abort SQLSTATE is known not committed;
-  `P7501` is known not committed only with the exact structured trigger diagnostic above.
-- A named CRTISBA constraint maps as specified in Section 10 and is known not committed.
 - Normal return from commit is committed.
-- After commit dispatch, `connection_invalidated=true`, SQLSTATE class `08`, absent SQLSTATE, or any
-  evidence not proving a known abort is `CRTISBA_COMMIT_OUTCOME_UNKNOWN`.
-- After commit dispatch, `P7501` without the exact structured constraint diagnostic, or with an
-  invalidated connection, is therefore `CRTISBA_COMMIT_OUTCOME_UNKNOWN`, not immutability.
+- For every exception after commit dispatch, classification is performed in this exhaustive order:
+  1. if `connection_invalidated=true` or normalized SQLSTATE belongs to class `08`, classify
+     `CRTISBA_COMMIT_OUTCOME_UNKNOWN`; this first rule overrides every SQLSTATE, named constraint,
+     and structured diagnostic carried by the same exception;
+  2. only with an intact connection, `40001`, `40P01`, or `25P02` proves known-not-committed;
+  3. only with an intact connection, constraint SQLSTATE `23503`, `23505`, or `23514` proves
+     known-not-committed when `exc.orig.diag.constraint_name` is exactly one of the closed named
+     CRTISBA constraints mapped in Section 10 and is valid for that SQLSTATE;
+  4. only with an intact connection, `P7501` proves known-not-committed when
+     `exc.orig.diag.constraint_name` is exactly `trg_crtisba_decision_immutable`;
+  5. every remaining post-dispatch exception, including absent SQLSTATE, an unrecognized constraint,
+     a recognized constraint paired with the wrong SQLSTATE, or `P7501` without its exact diagnostic,
+     is `CRTISBA_COMMIT_OUTCOME_UNKNOWN`.
 - Known-not-committed failures attempt rollback. Rollback failure takes precedence as
   `CRTISBA_ROLLBACK_FAILED`, then the connection is invalidated and Session closed.
 - Uncertain outcome remains uncertain even if best-effort rollback succeeds. Connection is
@@ -469,7 +479,8 @@ The only professional stage/code combinations are:
 |---|---|
 | `planning_context` | `CRTISBA_PLANNING_CONTEXT_UNAVAILABLE` |
 | `retirement_target` | `CRTISBA_RETIREMENT_TARGET_NOT_READY` |
-| `source_universe` | `CRTISBA_SOURCE_UNIVERSE_UNAVAILABLE` |
+| `source_universe` | `CRTISBA_SOURCE_UNIVERSE_INVALID` |
+| `pension_result` | `CRTISBA_PENSION_RESULT_INVALID` |
 
 Observed values remain null until validated by the failing stage. A blocked result contains no
 partial collection. Malformed producer objects, client mismatch, and database failures are
@@ -481,6 +492,30 @@ its exact accepted RTISA reason codes (including pension authority, source-readi
 applicability, currency, or other accepted source-level evidence). `block_no_result` is returned
 only when a valid collection cannot be assembled at all; there is no
 `pension_portfolio`/`CRTISBA_PENSION_PORTFOLIO_NOT_READY` stage/code pair.
+
+### 8.6 Exhaustive RTISA no-collection contract
+
+Accepted RTISA production has exactly the following six structurally valid no-collection blocker
+codes. No other no-collection code is accepted by CRTISBA.
+
+| Exact RTISA blocker | Actual producer branch | CRTISBA reachability and exact outcome |
+|---|---|---|
+| `RTISA_PLANNING_CONTEXT_UNAVAILABLE` | `planning_input_service.derive()` raises `PensionProductError` | preempted: CRTISBA's prior Planning derivation returns `planning_context` / `CRTISBA_PLANNING_CONTEXT_UNAVAILABLE`; RTISA is not invoked |
+| `RTISA_PLANNING_CONTEXT_INVALID` | Planning result client identity or planning fingerprint fails RTISA validation | preempted: CRTISBA validates the same Planning object first and returns HTTP 500 `PRODUCER_RESPONSE_INVALID`; RTISA is not invoked |
+| `RTISA_PLANNING_IDENTITY_STALE` | RTISA's expected Planning fingerprint differs from the Planning result fingerprint | preempted: GET passes the fingerprint derived in the same read snapshot; PUT rejects a request mismatch first as HTTP 409 `CRTISBA_PLANNING_IDENTITY_STALE`; RTISA is not invoked with unequal values |
+| `RTISA_RETIREMENT_TARGET_NOT_READY` | Planning retirement target is absent, invalid, or not ready | preempted: CRTISBA checks the same target first and returns `retirement_target` / `CRTISBA_RETIREMENT_TARGET_NOT_READY`; RTISA is not invoked |
+| `RTISA_SOURCE_UNIVERSE_INVALID` | invalid or duplicate Planning pension source identity; invalid current recurring row identity; foreign/orphan resolution; or duplicate assembled source identity | invalid/duplicate Planning pension-input subbranches are preempted by CRTISBA's exact Planning producer validation as HTTP 500 `PRODUCER_RESPONSE_INVALID`; the recurring-row, resolution, and assembled-identity branches reach CRTISBA as `source_universe` / `CRTISBA_SOURCE_UNIVERSE_INVALID` |
+| `RTISA_PENSION_RESULT_INVALID` | portfolio result fails RTISA's exact portfolio schema, identity, or fingerprint validation and is returned as a valid singleton no-collection RTISA result | reaches CRTISBA as `pension_result` / `CRTISBA_PENSION_RESULT_INVALID` |
+
+A structurally valid RTISA no-collection result has `source_entries=[]`, empty included/excluded/
+unresolved ID arrays, unavailable/not-ready states, and exactly one blocker from this table. A
+no-collection object with zero blockers, multiple blockers, duplicates, or any unlisted blocker is
+malformed producer output and maps to HTTP 500 `PRODUCER_RESPONSE_INVALID`; CRTISBA does not choose
+one blocker from it. For a valid source-level collection, multiple unresolved reason codes remain on
+their source entries, the collection blockers remain sorted unique in accepted RTISA order, and
+CRTISBA returns all of them as source-level `UPSTREAM_UNRESOLVED`; no whole-result code is selected.
+An actual `RetirementTargetIncomeSourceAdmissionTechnicalError` is evaluated before any returned-
+object validation and retains the HTTP 503 mapping in Section 10.
 
 ## 9. Canonical serialization and fingerprints
 
@@ -538,6 +573,11 @@ producer schema and maps malformed structure to `PRODUCER_RESPONSE_INVALID`; onl
 object is then checked for client identity and maps mismatch to `RESPONSE_CLIENT_MISMATCH`. A
 database/transaction exception raised by the owning CRTISBA transaction keeps its specific database
 classification. Every other uncatalogued exception maps to `INTERNAL_ERROR`.
+
+For a post-dispatch exception, Section 7's ordered classifier is absolute: invalidated connection or
+SQLSTATE class `08` maps to `CRTISBA_COMMIT_OUTCOME_UNKNOWN` before any Section 10 named-constraint
+row is considered. The named-constraint rows below apply after commit dispatch only when the
+connection is intact and their exact SQLSTATE/structured-diagnostic contract is satisfied.
 
 | Operation | Original condition/code | Public code | HTTP | Exact field_paths | Retry |
 |---|---|---|---:|---|---|
@@ -613,9 +653,16 @@ whole-result portfolio stage/code; and forbidden OD-1/OD-3 inference.
 The ordinary matrix additionally proves the exact GET and PUT route registrations; successful GET
 rollback/release with zero commit calls; GET derivation failure rollback; GET rollback failure with
 connection invalidation, Session closure and non-reuse; no rollback before acquisition; every
-state-specific entry value/null rule; all three closed professional stage/code pairs; database actor
+state-specific entry value/null rule; all four closed professional stage/code pairs; database actor
 and transaction timestamp provenance; SELECT/INSERT-only application-role grants including identity
 sequence access; and every Section 10 message, pointer, envelope and cache mapping.
+
+The no-collection ordinary matrix invokes each actual RTISA producer branch in Section 8.6. It
+proves the two reachable professional mappings, all four fully preempted outcomes, both the
+preempted and reachable subbranches of `RTISA_SOURCE_UNIVERSE_INVALID`, exact producer
+non-entry for each claimed preemption, rejection of non-singleton/unlisted no-collection blockers,
+preservation of all sorted source-level blockers in a valid collection, and technical-exception
+precedence. No source-text-only assertion satisfies a producer-path or preemption obligation.
 
 Risk-scoped mutations require unchanged ordinary PASS, reached production mutation, same oracle
 FAIL, guaranteed restoration, and same oracle PASS. Required groups are RTISA state mapping;
@@ -624,7 +671,16 @@ post-lock/global planning revalidation; nested transaction ownership; DTO discri
 serialization/preimage fields; named constraints/immutability; SQLSTATE/commit-dispatch classifier;
 no-retry; transport mapping; pension-null-persistence versus derived-OD-2 output; state-predicate
 mapping; canonical entry ordering; RTISA technical-fatal mapping; source-level portfolio
-non-readiness; forbidden pension inference; forbidden recurring inference.
+non-readiness; exact RTISA no-collection mapping and preemption; multiple-blocker determinism;
+forbidden pension inference; forbidden recurring inference.
+
+The new material mutation controls are mandatory: redirect the immutability trigger to a different
+table; combine an otherwise recognized named-constraint exception with connection invalidation and
+with class-08 SQLSTATE; independently delete or redirect each reachable no-collection mapping;
+independently remove each claimed prior-boundary guard and prove the formerly preempted RTISA branch
+is entered; and alter singleton/multiple-blocker handling. Each control must follow unchanged
+ordinary PASS, reached production mutation, the same ordinary oracle FAIL, guaranteed restoration,
+and the same ordinary oracle PASS.
 
 The trigger mutation group must prove immediate pre-mutation enforcement, structured normalized
 extraction of SQLSTATE `P7501`, intact-connection evidence, and exact `diag.constraint_name`, and
@@ -636,7 +692,9 @@ removes failure rollback, and suppresses invalidation after rollback failure; ea
 must fail and pass after restoration.
 
 Real isolated PostgreSQL must prove migration upgrade/downgrade and one head; all named objects;
-immediate trigger enforcement before every row UPDATE/DELETE; pension persisted price NULLs and
+the exact `retirement_target_date_income_source_basis_decisions` trigger target; immediate trigger
+enforcement before every row UPDATE/DELETE; invalidated/class-08 post-dispatch precedence over every
+named constraint; pension persisted price NULLs and
 stored-fingerprint NULL placeholders; result-only current-PTE OD-2 derivation; first
 insert/CAS/ceiling; concurrent version uniqueness; all three row locks;
 addressed-source and unrelated-Planning race orderings; `40001`/`40P01`; connection loss before and
@@ -658,10 +716,10 @@ actor and `decided_at` is the PostgreSQL transaction timestamp, not supplied val
 | DEF-003 | Sections 2–3 preserved | required | required | not required for mapping | CLOSED |
 | DEF-004 | Section 4 exact RTISA codes | complete | mapping group | persisted resolution | CLOSED |
 | DEF-005 | Section 6 serializable contract | complete | lock/isolation groups | required | CLOSED |
-| DEF-006 | Section 7 closed classifier | complete | phase/classifier groups | required | CLOSED |
+| DEF-006 | Sections 5 and 7 exact table/trigger and ordered classifier | complete | trigger/phase/classifier groups | required | CLOSED |
 | DEF-007 | Sections 8–9 exact contracts | complete | DTO/fingerprint groups | stored vectors | CLOSED |
-| DEF-008 | Section 10 exact RTDIR table | complete | transport groups | DB rows | CLOSED |
-| DEF-009 | Section 11 executable matrices | complete | complete | complete | CLOSED |
+| DEF-008 | Sections 8.5–8.6 and 10 exact no-collection/RTDIR contract | complete | transport/preemption groups | DB rows | CLOSED |
+| DEF-009 | Section 11 executable matrices including finite residuals | complete | complete | complete | CLOSED |
 
 No clause authorizes reinterpretation of raw delegation rows, inference forbidden by OD-1/OD-3,
 nested transaction ownership, automatic retry, or upstream writer changes. Stop rather than invent

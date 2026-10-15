@@ -9,6 +9,7 @@ import sys
 import pytest
 from pydantic import TypeAdapter
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.schemas.retirement_income_source_basis import CRTISBACommand
@@ -271,5 +272,48 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             finally:
                 event.remove(engine, "before_cursor_execute", capture_lock)
             assert any(table in statement and "for update" in statement for statement in observed), (addressed, observed)
+
+        # The database, rather than a fabricated exception object, emits both
+        # retry-class SQLSTATEs consumed by the closed CRTISBA classifier.
+        for sqlstate in ("40001", "40P01"):
+            with Session(engine) as db:
+                subject._begin(db, write=True)
+                with pytest.raises(DBAPIError) as aborted:
+                    db.execute(text(
+                        "DO $$ BEGIN RAISE EXCEPTION 'controlled abort' "
+                        f"USING ERRCODE='{sqlstate}'; END $$"
+                    ))
+                observed_state = aborted.value.orig.pgcode or aborted.value.orig.sqlstate
+                assert observed_state == sqlstate
+                assert subject._classify_integrity(aborted.value, "COMMIT_DISPATCHED").code == "CRTISBA_SERIALIZATION_FAILURE"
+                db.rollback()
+
+        # Real connection loss before dispatch is known-not-committed.  Once
+        # the owner has entered COMMIT_DISPATCHED, the same observable driver
+        # evidence is uncertain and must be reconciled by a fresh explicit GET.
+        for phase, expected in (
+            ("IN_TRANSACTION", "CRTISBA_DATABASE_FAILURE"),
+            ("COMMIT_DISPATCHED", "CRTISBA_COMMIT_OUTCOME_UNKNOWN"),
+        ):
+            db = Session(engine)
+            try:
+                subject._begin(db, write=True)
+                backend_pid = db.scalar(text("SELECT pg_backend_pid()"))
+                with engine.begin() as killer:
+                    assert killer.scalar(text("SELECT pg_terminate_backend(:pid)"), {"pid": backend_pid}) is True
+                with pytest.raises(DBAPIError) as disconnected:
+                    if phase == "COMMIT_DISPATCHED":
+                        db.commit()
+                    else:
+                        db.execute(text("SELECT 1"))
+                assert disconnected.value.connection_invalidated or str(
+                    disconnected.value.orig.pgcode or disconnected.value.orig.sqlstate or ""
+                ).startswith("08")
+                assert subject._classify_integrity(disconnected.value, phase).code == expected
+            finally:
+                db.close()
+            reconciled, reconciled_entry = _current(engine, source_id)
+            assert reconciled_entry["decision_version"] == 2
+            assert reconciled["schema_version"] == "CRTISBA_COLLECTION_RESULT_V1"
     finally:
         engine.dispose()

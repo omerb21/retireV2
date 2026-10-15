@@ -370,6 +370,10 @@ def _safe_basis(kind: str, entry: dict):
     return income, provenance, "UNKNOWN", None, "MISSING"
 
 
+def _sort_entries(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda item: item["source_id"])
+
+
 def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp: str,
            chain_valid: bool = True) -> dict:
     source_id = entry["source_id"]
@@ -444,7 +448,7 @@ def derive_in_snapshot(db: Session, client_id: int, operation: str = "READ", sou
     latest, invalid_chains = _latest_rows(db, client_id)
     result_entries = [_entry(item, snapshot["contexts"].get(item.get("source_id")), latest.get(item.get("source_id")), planning["planning_calculation_input_fingerprint"], item.get("source_id") not in invalid_chains)
                       for item in rtisa["source_entries"]]
-    result_entries.sort(key=lambda item: item["source_id"])
+    result_entries = _sort_entries(result_entries)
     partitions = {name: [] for name in PARTITION_STATES.values()}
     blockers: list[str] = []
     for item in result_entries:

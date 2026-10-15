@@ -365,6 +365,15 @@ def test_planning_preemptions_do_not_enter_rtisa(monkeypatch):
     assert entered == []
 
     monkeypatch.setattr(subject.planning_input_service, "derive", lambda *_: {
+        "client_id": 2, "planning_calculation_input_fingerprint": H,
+        "retirement_target": {"retirement_target_ready": True, "retirement_target_date": "2030-01-01"},
+        "pension_inputs": [],
+    })
+    with pytest.raises(subject.CRTISBAError) as invalid:
+        subject._planning(SimpleNamespace(), 1, "READ")
+    assert invalid.value.code == "PRODUCER_RESPONSE_INVALID" and entered == []
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", lambda *_: {
         "client_id": 1, "planning_calculation_input_fingerprint": H,
         "retirement_target": {"retirement_target_ready": False, "retirement_target_date": None},
         "pension_inputs": [],
@@ -372,6 +381,24 @@ def test_planning_preemptions_do_not_enter_rtisa(monkeypatch):
     result, blocked = subject._planning(SimpleNamespace(), 1, "READ")
     assert result is None and blocked["failure_detail_code"] == "CRTISBA_RETIREMENT_TARGET_NOT_READY"
     assert entered == []
+
+
+def test_stale_planning_cas_preempts_rtisa_after_source_lock(engine, monkeypatch):
+    global _CURRENT_PLANNING
+    _authority(engine)
+    initial = _read(engine)
+    _CURRENT_PLANNING = initial["planning_calculation_input_fingerprint"]
+    command = _command(initial["source_basis_entries"][0])
+    command.expected_planning_calculation_input_fingerprint = "b" * 64
+    entered = []
+    original = subject._derive_snapshot
+    monkeypatch.setattr(subject, "_derive_snapshot", lambda *_args, **_kwargs: entered.append(True))
+    with Session(engine) as db, pytest.raises(subject.CRTISBAError) as caught:
+        subject.write(db, 1, "income:1", command, "actor")
+    assert caught.value.code == "CRTISBA_PLANNING_IDENTITY_STALE"
+    assert caught.value.field_paths == ["/expected_planning_calculation_input_fingerprint"]
+    assert entered == []
+    monkeypatch.setattr(subject, "_derive_snapshot", original)
 
 
 def test_decision_preimage_mutation_is_detected_and_restored(monkeypatch):
@@ -422,3 +449,172 @@ def test_non_contiguous_append_only_version_chain_is_invalid(engine):
     observed = _read(engine)["source_basis_entries"][0]
     assert observed["decision_state"] == "INVALID"
     assert observed["decision_version"] is None and observed["decision_fingerprint"] is None
+
+
+class _TerminationConnection:
+    def __init__(self):
+        self.invalidated = 0
+
+    def invalidate(self):
+        self.invalidated += 1
+
+
+class _TerminationSession:
+    new = dirty = deleted = ()
+
+    def __init__(self, *, rollback_raises=False):
+        self.active = False
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = 0
+        self.rollback_raises = rollback_raises
+        self.conn = _TerminationConnection()
+
+    def in_transaction(self):
+        return self.active
+
+    def connection(self, **_):
+        self.active = True
+        return self.conn
+
+    def rollback(self):
+        self.rollbacks += 1
+        if self.rollback_raises:
+            raise RuntimeError("rollback failed")
+        self.active = False
+
+    def commit(self):
+        self.commits += 1
+        self.active = False
+
+    def close(self):
+        self.closed += 1
+
+
+def test_read_termination_success_mutation_and_restoration(monkeypatch):
+    original_rollback = subject._rollback
+    monkeypatch.setattr(subject, "_begin", lambda db, *, write: db.connection())
+    monkeypatch.setattr(subject, "derive_in_snapshot", lambda *_: {"ordinary": "result"})
+
+    def ordinary_oracle():
+        db = _TerminationSession()
+        assert subject.read(db, 1) == {"ordinary": "result"}
+        assert (db.rollbacks, db.commits, db.closed) == (1, 0, 0)
+
+    ordinary_oracle()
+    monkeypatch.setattr(subject, "_rollback", lambda db: db.commit())
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(subject, "_rollback", original_rollback)
+    ordinary_oracle()
+
+
+def test_read_failure_rollback_mutation_and_restoration(monkeypatch):
+    original_rollback = subject._rollback
+    monkeypatch.setattr(subject, "_begin", lambda db, *, write: db.connection())
+    monkeypatch.setattr(subject, "derive_in_snapshot", lambda *_: (_ for _ in ()).throw(RuntimeError("derive")))
+
+    def ordinary_oracle():
+        db = _TerminationSession()
+        with pytest.raises(subject.CRTISBAError) as caught:
+            subject.read(db, 1)
+        assert caught.value.code == "CRTISBA_DATABASE_FAILURE"
+        assert (db.rollbacks, db.commits, db.closed) == (1, 0, 0)
+
+    ordinary_oracle()
+    monkeypatch.setattr(subject, "_rollback", lambda db: None)
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(subject, "_rollback", original_rollback)
+    ordinary_oracle()
+
+
+def test_rollback_failure_invalidates_closes_and_is_not_reused(monkeypatch):
+    def ordinary_oracle():
+        db = _TerminationSession(rollback_raises=True)
+        db.active = True
+        with pytest.raises(subject.CRTISBAError) as caught:
+            subject._rollback(db)
+        assert caught.value.code == "CRTISBA_ROLLBACK_FAILED"
+        assert db.conn.invalidated == 1 and db.closed == 1 and db.rollbacks == 1
+
+    ordinary_oracle()
+    original = _TerminationConnection.invalidate
+    monkeypatch.setattr(_TerminationConnection, "invalidate", lambda self: None)
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(_TerminationConnection, "invalidate", original)
+    ordinary_oracle()
+
+
+def test_transaction_acquisition_failure_does_not_rollback_before_acquired(monkeypatch):
+    db = _TerminationSession()
+    monkeypatch.setattr(subject, "_begin", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("acquire")))
+    with pytest.raises(subject.CRTISBAError) as caught:
+        subject.read(db, 1)
+    assert caught.value.code == "CRTISBA_DATABASE_FAILURE"
+    assert db.rollbacks == 0 and db.conn.invalidated == 0 and db.closed == 0
+
+
+@pytest.mark.parametrize("kind,entry,context,expected", [
+    ("PENSION", {"source_id": "manual:1", "source_category": "PENSION_REPRESENTATION",
+                 "admission_state": "INCLUDED", "reason_codes": [],
+                 "upstream_identity": {"source_fingerprint": H}},
+     {"kind": "PENSION", "source_version": 1, "source_fingerprint": H, "amount": H},
+     ("UNKNOWN", "NOMINAL_AT_RETIREMENT_TARGET_DATE")),
+    ("RECURRING_INCOME", {"source_id": "income:1", "source_category": "GENERAL_INCOME",
+                          "admission_state": "INCLUDED", "reason_codes": [],
+                          "native_income_basis": "GROSS",
+                          "upstream_identity": {"source_fingerprint": H}},
+     {"kind": "RECURRING_INCOME", "source_version": H, "source_fingerprint": H, "amount": H},
+     ("GROSS", "UNKNOWN")),
+])
+def test_forbidden_od_inference_mutation_and_restoration(monkeypatch, kind, entry, context, expected):
+    def ordinary_oracle():
+        actual = subject._entry(entry, context, None, H)
+        assert (actual["income_basis"], actual["price_basis"]) == expected
+        assert actual["decision_state"] == "MISSING"
+
+    ordinary_oracle()
+    original = subject._safe_basis
+    monkeypatch.setattr(subject, "_safe_basis", lambda *_: (
+        "NET", "EXPLICIT_PROFESSIONAL", "REAL_AT_REFERENCE_DATE", "2020-01-01", "EXPLICIT_PROFESSIONAL"
+    ))
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(subject, "_safe_basis", original)
+    ordinary_oracle()
+
+
+def test_canonical_entry_order_mutation_and_restoration(monkeypatch):
+    entries = [{"source_id": "income:10"}, {"source_id": "income:2"}, {"source_id": "א"}]
+    def ordinary_oracle():
+        assert [item["source_id"] for item in subject._sort_entries(entries)] == ["income:10", "income:2", "א"]
+    ordinary_oracle()
+    original = subject._sort_entries
+    monkeypatch.setattr(subject, "_sort_entries", lambda value: list(reversed(value)))
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(subject, "_sort_entries", original)
+    ordinary_oracle()
+
+
+@pytest.mark.parametrize("invalidated,state", [(True, "23505"), (False, "08006")])
+def test_post_dispatch_uncertainty_precedence_mutation_and_restoration(monkeypatch, invalidated, state):
+    orig = RuntimeError("recognized constraint must lose to uncertainty")
+    orig.pgcode = state
+    orig.diag = SimpleNamespace(constraint_name="uq_crtisba_source_decision_version")
+    exc = DBAPIError.instance("statement", {}, orig, RuntimeError, connection_invalidated=invalidated)
+
+    def ordinary_oracle():
+        assert subject._classify_integrity(exc, "COMMIT_DISPATCHED").code == "CRTISBA_COMMIT_OUTCOME_UNKNOWN"
+
+    ordinary_oracle()
+    original = subject._classify_integrity
+    monkeypatch.setattr(subject, "_classify_integrity", lambda *_: subject.CRTISBAError(
+        "CRTISBA_DECISION_VERSION_CONFLICT", 409, ["/expected_decision_version"]
+    ))
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(subject, "_classify_integrity", original)
+    ordinary_oracle()

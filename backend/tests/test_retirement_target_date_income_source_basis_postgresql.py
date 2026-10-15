@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from decimal import Decimal
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +12,10 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.schemas.retirement_income_source_basis import CRTISBACommand
+from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
 from app.services import retirement_target_date_income_source_basis_service as subject
+from app.services.canonical_component_conversion_service import execute as execute_conversion
+from test_canonical_component_conversion import seeded as seeded_product, request as conversion_request
 from test_planning_input import choose, income, view
 from test_recovery_migration_postgresql import postgres_url
 from test_retirement_target import payload as target_payload, save as save_target
@@ -69,6 +73,8 @@ def _command(result, entry):
 def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(postgres_url):
     engine = _prepare(postgres_url)
     try:
+        with engine.connect() as connection:
+            assert 160000 <= int(connection.scalar(text("SHOW server_version_num"))) < 170000
         assert migrate(postgres_url, "heads").strip() == "c4e8a2f6b731 (head)"
         columns = {item["name"]: item for item in inspect(engine).get_columns(subject.Decision.__tablename__)}
         assert set(columns) == {
@@ -94,6 +100,22 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
         assert subject.Decision.__tablename__ not in inspect(engine).get_table_names()
         migrate(postgres_url, "upgrade", "c4e8a2f6b731")
         source_id = _source(engine)
+        # The public owners establish the accepted isolation before any
+        # authoritative service query.  Read cleanup ends the snapshot by
+        # rollback; write setup is SERIALIZABLE.
+        with Session(engine) as db:
+            subject._pristine(db)
+            subject._begin(db, write=False)
+            assert db.scalar(text("SHOW transaction_isolation")) == "repeatable read"
+            assert db.scalar(text("SHOW transaction_read_only")) == "on"
+            subject._rollback(db)
+            assert not db.in_transaction()
+        with Session(engine) as db:
+            subject._pristine(db)
+            subject._begin(db, write=True)
+            assert db.scalar(text("SHOW transaction_isolation")) == "serializable"
+            subject._rollback(db)
+            assert not db.in_transaction()
         before, entry = _current(engine, source_id)
         statements = []
         from sqlalchemy import event
@@ -123,12 +145,73 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
                     assert orig.diag.constraint_name == "trg_crtisba_decision_immutable"
                 finally:
                     transaction.rollback()
+            # Ordinary trigger oracle -> actual trigger-target mutation -> same
+            # oracle fails -> transactional restoration -> ordinary oracle.
+            transaction = connection.begin()
+            try:
+                connection.execute(text("CREATE TEMP TABLE crtisba_wrong_trigger_target(id integer)"))
+                connection.execute(text(
+                    f"DROP TRIGGER trg_crtisba_decision_immutable ON {subject.Decision.__tablename__}"
+                ))
+                connection.execute(text(
+                    "CREATE TRIGGER trg_crtisba_decision_immutable BEFORE UPDATE OR DELETE "
+                    "ON crtisba_wrong_trigger_target FOR EACH ROW EXECUTE FUNCTION "
+                    "reject_crtisba_decision_mutation()"
+                ))
+                # The unchanged immutability oracle is now killed by the mutation:
+                # UPDATE succeeds instead of producing P7501.
+                connection.execute(text(
+                    f"UPDATE {subject.Decision.__tablename__} SET decision_actor=decision_actor"
+                ))
+            finally:
+                transaction.rollback()
+            transaction = connection.begin()
+            try:
+                with pytest.raises(Exception) as restored:
+                    connection.execute(text(
+                        f"UPDATE {subject.Decision.__tablename__} SET decision_actor=decision_actor"
+                    ))
+                assert (restored.value.orig.pgcode or restored.value.orig.sqlstate) == "P7501"
+                assert restored.value.orig.diag.constraint_name == "trg_crtisba_decision_immutable"
+            finally:
+                transaction.rollback()
+
+            # A real check violation remains distinct from trigger immutability.
+            transaction = connection.begin()
+            try:
+                with pytest.raises(Exception) as checked:
+                    connection.execute(text(f"""
+                        INSERT INTO {subject.Decision.__tablename__} (
+                          client_id,source_id,source_kind,decision_version,
+                          planning_calculation_input_fingerprint,recurring_source_version_fingerprint,
+                          source_fingerprint,amount_authority_fingerprint,income_basis,
+                          income_basis_provenance,price_basis,price_basis_provenance,
+                          decision_actor,decision_fingerprint
+                        ) SELECT client_id,source_id,source_kind,0,
+                          planning_calculation_input_fingerprint,recurring_source_version_fingerprint,
+                          source_fingerprint,amount_authority_fingerprint,income_basis,
+                          income_basis_provenance,price_basis,price_basis_provenance,
+                          decision_actor,decision_fingerprint
+                        FROM {subject.Decision.__tablename__} LIMIT 1
+                    """))
+                assert (checked.value.orig.pgcode or checked.value.orig.sqlstate) == "23514"
+                assert checked.value.orig.diag.constraint_name == "ck_crtisba_decision_version_positive"
+            finally:
+                transaction.rollback()
             transaction = connection.begin()
             try:
                 connection.execute(text(f"SET LOCAL ROLE {ROLE}"))
                 assert connection.scalar(text(f"SELECT count(*) FROM {subject.Decision.__tablename__}")) == 1
-                with pytest.raises(Exception):
-                    connection.execute(text(f"UPDATE {subject.Decision.__tablename__} SET decision_actor='forbidden'"))
+                for forbidden in (
+                    f"UPDATE {subject.Decision.__tablename__} SET decision_actor='forbidden'",
+                    f"DELETE FROM {subject.Decision.__tablename__}",
+                    f"TRUNCATE TABLE {subject.Decision.__tablename__}",
+                ):
+                    with pytest.raises(Exception):
+                        connection.execute(text(forbidden))
+                    transaction.rollback()
+                    transaction = connection.begin()
+                    connection.execute(text(f"SET LOCAL ROLE {ROLE}"))
             finally:
                 transaction.rollback()
         current_result, current_entry = _current(engine, source_id)
@@ -146,5 +229,47 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
         assert any(item in {"CRTISBA_DECISION_VERSION_CONFLICT", "CRTISBA_SERIALIZATION_FAILURE"} for item in outcomes), outcomes
         with engine.connect() as connection:
             assert connection.scalar(text(f"SELECT count(*) FROM {subject.Decision.__tablename__}")) == 2
+
+        # All three polymorphic source-lock targets are exercised against real
+        # PostgreSQL and must emit FOR UPDATE on the addressed table.
+        with Session(engine) as db, db.begin():
+            db.add(CanonicalManualPensionSource(
+                manual_pension_source_id="manual-lock", client_id=1,
+                input_mode="entered", payer_name="payer", description="lock",
+                source_reference="test", monthly_amount=Decimal("10.00"),
+                balance=None, annuity_factor=None, pension_start_date=date(2030, 1, 1),
+                base_amount_effective_date=date(2026, 1, 1), tax_treatment="taxable",
+                indexation_method="none", fixed_indexation_rate=None,
+                temporal_authority_explicit=True, source_note=None,
+                lifecycle_status="current", version=1,
+            ))
+        product = seeded_product(engine)
+        with Session(engine) as db, db.begin():
+            converted = execute_conversion(
+                db, 1, conversion_request(product, destination="pension"), "trusted:professional"
+            )
+        destination_id = converted["conversions"][0]["destination_id"]
+        expected_targets = {
+            source_id: table for source_id, table in (
+                (source_id, "recurring_income"),
+                ("manual:manual-lock", "canonical_manual_pension_sources"),
+                (f"conversion:{destination_id}", "canonical_pension_destinations"),
+            )
+        }
+        from sqlalchemy import event
+        for addressed, table in expected_targets.items():
+            observed = []
+            def capture_lock(conn, cursor, statement, *args):
+                observed.append(statement.lower())
+            event.listen(engine, "before_cursor_execute", capture_lock)
+            try:
+                with Session(engine) as db, db.begin():
+                    subject._lock_source(
+                        db, 1, addressed,
+                        "RECURRING_INCOME" if addressed.startswith("income:") else "PENSION",
+                    )
+            finally:
+                event.remove(engine, "before_cursor_execute", capture_lock)
+            assert any(table in statement and "for update" in statement for statement in observed), (addressed, observed)
     finally:
         engine.dispose()

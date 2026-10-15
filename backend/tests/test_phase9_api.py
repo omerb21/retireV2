@@ -33,6 +33,7 @@ APPROVED_TABLES = {
 }
 
 ACCEPTED_ADDITIVE_TABLES = {
+    "retirement_target_date_income_source_basis_decisions",
     "rtdir_login_rate_limit_buckets",
     "retirement_monthly_income_target_elections",
     "canonical_manual_pension_sources",

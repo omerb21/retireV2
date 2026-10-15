@@ -2255,7 +2255,7 @@ def test_rtisa_scope_governance_and_single_schema_head():
     backend = Path(__file__).resolve().parents[1]
     config = Config(str(backend / "alembic.ini"))
     config.set_main_option("script_location", str(backend / "alembic"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["b3c9d6f2a410"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["c4e8a2f6b731"]
 
 
 def test_rtisa_affected_regression_evidence_inventory():

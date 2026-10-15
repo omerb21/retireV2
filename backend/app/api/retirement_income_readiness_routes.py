@@ -3,17 +3,19 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Body, Depends, Path, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.retirement_income_readiness import ComparisonBody, TargetConfirmationBody
-from app.security.transport import error
+from app.schemas.retirement_income_source_basis import CRTISBACommand
+from app.security.transport import NO_STORE, error
 from app.services import planning_input_service
 from app.services import retirement_monthly_income_target_service as target_service
 from app.services import retirement_target_date_income_comparison_basis_service as comparison_service
+from app.services import retirement_target_date_income_source_basis_service as source_basis_service
 from app.services.pension_product_service import PensionProductError
 from app.services.retirement_target_date_income_source_admission_service import RetirementTargetIncomeSourceAdmissionTechnicalError
 
@@ -235,4 +237,33 @@ def comparison(request: Request, payload: ComparisonBody, client_id: int = Path(
     except PensionProductError as exc:
         return _transport(request, exc)
     except comparison_service.RTICBFingerprintConstructionError:
+        return error(request, 500, "INTERNAL_ERROR")
+
+
+@router.get("/source-bases")
+def source_bases(request: Request, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
+    try:
+        return JSONResponse(content=source_basis_service.read(db, client_id), headers=NO_STORE)
+    except source_basis_service.CRTISBAError as exc:
+        return error(request, exc.status_code, exc.code, exc.field_paths)
+    except source_basis_service.CRTISBAFingerprintConstructionError:
+        return error(request, 500, "INTERNAL_ERROR")
+
+
+@router.put("/source-bases/{source_id}")
+def put_source_basis(
+    request: Request,
+    payload: CRTISBACommand = Body(...),
+    client_id: int = Path(gt=0),
+    source_id: str = Path(min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+):
+    try:
+        actor = getattr(request.state, "trusted_professional_actor", None)
+        if actor is None and not request.app.state.auth_config.production:
+            actor = "development-professional"
+        return JSONResponse(content=source_basis_service.write(db, client_id, source_id, payload, actor), headers=NO_STORE)
+    except source_basis_service.CRTISBAError as exc:
+        return error(request, exc.status_code, exc.code, exc.field_paths)
+    except source_basis_service.CRTISBAFingerprintConstructionError:
         return error(request, 500, "INTERNAL_ERROR")

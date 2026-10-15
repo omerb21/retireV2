@@ -391,3 +391,34 @@ def test_decision_preimage_mutation_is_detected_and_restored(monkeypatch):
     assert subject.decision_fingerprint(values) != expected
     monkeypatch.setattr(subject, "_decision_preimage", original)
     assert subject.decision_fingerprint(values) == expected
+
+
+def test_non_contiguous_append_only_version_chain_is_invalid(engine):
+    global _CURRENT_PLANNING
+    _authority(engine)
+    initial = _read(engine)
+    _CURRENT_PLANNING = initial["planning_calculation_input_fingerprint"]
+    entry = initial["source_basis_entries"][0]
+    with Session(engine) as db:
+        subject.write(db, 1, "income:1", _command(entry), "actor")
+    with Session(engine) as db, db.begin():
+        first = db.scalar(select(RetirementTargetDateIncomeSourceBasisDecision))
+        values = subject._row_values(first) | {"decision_version": 3}
+        db.add(RetirementTargetDateIncomeSourceBasisDecision(
+            client_id=first.client_id, source_id=first.source_id, source_kind=first.source_kind,
+            decision_version=3,
+            planning_calculation_input_fingerprint=first.planning_calculation_input_fingerprint,
+            pension_source_version=None,
+            recurring_source_version_fingerprint=first.recurring_source_version_fingerprint,
+            source_fingerprint=first.source_fingerprint,
+            amount_authority_fingerprint=first.amount_authority_fingerprint,
+            pension_source_execution_fingerprint=None, pension_source_result_fingerprint=None,
+            portfolio_source_entry_fingerprint=None, retirement_target_date=None,
+            income_basis=first.income_basis, income_basis_provenance=first.income_basis_provenance,
+            price_basis=first.price_basis, price_reference_date=first.price_reference_date,
+            price_basis_provenance=first.price_basis_provenance,
+            decision_actor="actor", decision_fingerprint=subject.decision_fingerprint(values),
+        ))
+    observed = _read(engine)["source_basis_entries"][0]
+    assert observed["decision_state"] == "INVALID"
+    assert observed["decision_version"] is None and observed["decision_fingerprint"] is None

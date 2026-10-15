@@ -308,13 +308,19 @@ def _derive_snapshot(db: Session, client_id: int, operation: str, source_id: str
                   "contexts": _amount_context(planning, portfolio, rtisa)}
 
 
-def _latest_rows(db: Session, client_id: int) -> dict[str, Decision]:
+def _latest_rows(db: Session, client_id: int) -> tuple[dict[str, Decision], set[str]]:
     rows = list(db.scalars(select(Decision).where(Decision.client_id == client_id)
                            .order_by(Decision.source_id, desc(Decision.decision_version))))
     latest: dict[str, Decision] = {}
+    versions: dict[str, list[int]] = {}
     for row in rows:
         latest.setdefault(row.source_id, row)
-    return latest
+        versions.setdefault(row.source_id, []).append(row.decision_version)
+    invalid = {
+        source_id for source_id, observed in versions.items()
+        if sorted(observed) != list(range(1, max(observed) + 1))
+    }
+    return latest, invalid
 
 
 def _row_values(row: Decision) -> dict:
@@ -364,7 +370,8 @@ def _safe_basis(kind: str, entry: dict):
     return income, provenance, "UNKNOWN", None, "MISSING"
 
 
-def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp: str) -> dict:
+def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp: str,
+           chain_valid: bool = True) -> dict:
     source_id = entry["source_id"]
     kind = context["kind"] if context else ("PENSION" if source_id.startswith(("manual:", "conversion:")) else "RECURRING_INCOME")
     reasons = sorted(set(entry.get("reason_codes") or []))
@@ -388,7 +395,7 @@ def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp:
     elif admission == "INCLUDED" and context is not None:
         if row is None:
             state, blockers = "MISSING", ["CRTISBA_DECISION_MISSING"]
-        elif not _valid_row(row):
+        elif not chain_valid or not _valid_row(row):
             state, blockers = "INVALID", ["CRTISBA_DECISION_INVALID"]
         elif not _current_matches(row, context, planning_fp):
             state, blockers = "STALE", ["CRTISBA_DECISION_STALE"]
@@ -434,8 +441,8 @@ def derive_in_snapshot(db: Session, client_id: int, operation: str = "READ", sou
     if blocked:
         return blocked
     planning, rtisa = snapshot["planning"], snapshot["rtisa"]
-    latest = _latest_rows(db, client_id)
-    result_entries = [_entry(item, snapshot["contexts"].get(item.get("source_id")), latest.get(item.get("source_id")), planning["planning_calculation_input_fingerprint"])
+    latest, invalid_chains = _latest_rows(db, client_id)
+    result_entries = [_entry(item, snapshot["contexts"].get(item.get("source_id")), latest.get(item.get("source_id")), planning["planning_calculation_input_fingerprint"], item.get("source_id") not in invalid_chains)
                       for item in rtisa["source_entries"]]
     result_entries.sort(key=lambda item: item["source_id"])
     partitions = {name: [] for name in PARTITION_STATES.values()}

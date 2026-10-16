@@ -316,6 +316,22 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             assert reconciled_entry["decision_version"] == 2
             assert reconciled["schema_version"] == "CRTISBA_COLLECTION_RESULT_V1"
 
+        # A rollback failure is exercised on a real PostgreSQL connection.  A
+        # terminated backend makes ROLLBACK fail; the public cleanup contract
+        # normalizes the failure and closes the Session so it cannot be reused.
+        failed_rollback = Session(engine)
+        subject._begin(failed_rollback, write=True)
+        failed_connection = failed_rollback.connection()
+        failed_pid = failed_rollback.scalar(text("SELECT pg_backend_pid()"))
+        with engine.begin() as killer:
+            assert killer.scalar(text("SELECT pg_terminate_backend(:pid)"), {"pid": failed_pid}) is True
+        with pytest.raises(subject.CRTISBAError) as rollback_failure:
+            subject._rollback(failed_rollback)
+        assert rollback_failure.value.code == "CRTISBA_ROLLBACK_FAILED"
+        assert failed_connection.invalidated or failed_connection.closed
+        assert not failed_rollback.in_transaction()
+        failed_rollback.close()
+
         # PostgreSQL serial orderings for the addressed source: an upstream
         # commit that wins first rejects the stale Planning CAS; when the
         # CRTISBA decision wins first, the later source commit makes that

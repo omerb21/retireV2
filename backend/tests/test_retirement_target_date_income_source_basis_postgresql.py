@@ -104,6 +104,26 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             "decision_actor", "decided_at", "decision_fingerprint",
         }
         with engine.connect() as connection:
+            constraints = set(connection.execute(text("""
+                SELECT conname, contype FROM pg_constraint
+                WHERE conrelid=to_regclass(:table_name)
+            """), {"table_name": subject.Decision.__tablename__}).all())
+            assert constraints == {
+                ("pk_crtisba_decisions", "p"),
+                ("uq_crtisba_source_decision_version", "u"),
+                ("fk_crtisba_decision_client", "f"),
+                *((name, "c") for name in subject.CHECK_CONSTRAINTS),
+            }
+            indexes = set(connection.execute(text("""
+                SELECT indexname FROM pg_indexes WHERE tablename=:table_name
+            """), {"table_name": subject.Decision.__tablename__}).scalars())
+            assert indexes == {
+                "pk_crtisba_decisions", "uq_crtisba_source_decision_version",
+                "ix_crtisba_source_latest_version",
+            }
+            assert connection.scalar(text("""
+                SELECT count(*) FROM pg_proc WHERE proname='reject_crtisba_decision_mutation'
+            """)) == 1
             trigger = connection.execute(text("""SELECT action_timing,event_manipulation,action_orientation
                 FROM information_schema.triggers WHERE trigger_name='trg_crtisba_decision_immutable'
                 ORDER BY event_manipulation""")).all()
@@ -113,6 +133,7 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             assert grants == {"SELECT", "INSERT"}
             sequence = connection.scalar(text("SELECT pg_get_serial_sequence(:table_name, 'decision_id')"), {"table_name": subject.Decision.__tablename__})
             assert connection.scalar(text("SELECT has_sequence_privilege(:role, :sequence, 'USAGE')"), {"role": ROLE, "sequence": sequence})
+            assert connection.scalar(text("SELECT has_sequence_privilege(:role, :sequence, 'SELECT')"), {"role": ROLE, "sequence": sequence})
         migrate(postgres_url, "downgrade", "b3c9d6f2a410")
         assert subject.Decision.__tablename__ not in inspect(engine).get_table_names()
         migrate(postgres_url, "upgrade", "c4e8a2f6b731")
@@ -150,6 +171,27 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             row = connection.execute(text(f"SELECT decision_actor, decided_at FROM {subject.Decision.__tablename__}" )).one()
             assert row.decision_actor == "trusted:professional" and row.decided_at is not None
             connection.rollback()
+            transaction = connection.begin()
+            try:
+                connection.execute(text(f"SET LOCAL ROLE {ROLE}"))
+                inserted_identity = connection.scalar(text(f"""
+                    INSERT INTO {subject.Decision.__tablename__} (
+                      client_id,source_id,source_kind,decision_version,
+                      planning_calculation_input_fingerprint,recurring_source_version_fingerprint,
+                      source_fingerprint,amount_authority_fingerprint,income_basis,
+                      income_basis_provenance,price_basis,price_reference_date,
+                      price_basis_provenance,decision_actor,decision_fingerprint
+                    ) SELECT client_id,'income:role-insert-proof',source_kind,1,
+                      planning_calculation_input_fingerprint,recurring_source_version_fingerprint,
+                      source_fingerprint,amount_authority_fingerprint,income_basis,
+                      income_basis_provenance,price_basis,price_reference_date,
+                      price_basis_provenance,decision_actor,decision_fingerprint
+                    FROM {subject.Decision.__tablename__}
+                    ORDER BY decision_id LIMIT 1 RETURNING decision_id
+                """))
+                assert isinstance(inserted_identity, int) and inserted_identity > 0
+            finally:
+                transaction.rollback()
             for verb in ("UPDATE", "DELETE"):
                 transaction = connection.begin()
                 try:

@@ -27,6 +27,8 @@ from app.services.professional_source_snapshot_service import record, serialize
 
 SHA = re.compile(r"^[0-9a-f]{64}$")
 SQLSTATE = re.compile(r"^[0-9A-Z]{5}$")
+CANONICAL_PENSION_ID = re.compile(r"^(?:manual|conversion):[^:]+$")
+CANONICAL_INCOME_ID = re.compile(r"^income:-?[1-9][0-9]*$")
 MAX_VERSION = 9223372036854775807
 DECISION_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_DECISION_JSON_V1"
 PENSION_AMOUNT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_PENSION_AMOUNT_AUTHORITY_JSON_V1"
@@ -230,7 +232,7 @@ def _planning_envelope_valid(result: Any, client_id: int) -> bool:
     identities: list[str] = []
     for source in result["pension_inputs"]:
         source_id = source.get("source_id")
-        if not isinstance(source_id, str) or not source_id.startswith(("manual:", "conversion:")) \
+        if not isinstance(source_id, str) or not CANONICAL_PENSION_ID.fullmatch(source_id) \
                 or not isinstance(source.get("version"), int) or isinstance(source.get("version"), bool) \
                 or source["version"] < 1 or not isinstance(source.get("source_fingerprint"), str) \
                 or not SHA.fullmatch(source["source_fingerprint"]):
@@ -239,7 +241,7 @@ def _planning_envelope_valid(result: Any, client_id: int) -> bool:
     for source in result["general_income_inputs"]:
         source_id = source.get("source_id")
         ratio = source.get("monthly_equivalent_ratio")
-        if not isinstance(source_id, str) or not source_id.startswith("income:") \
+        if not isinstance(source_id, str) or not CANONICAL_INCOME_ID.fullmatch(source_id) \
                 or not isinstance(source.get("source_fingerprint"), str) \
                 or not SHA.fullmatch(source["source_fingerprint"]) \
                 or source.get("amount") is None or source.get("amount_basis") not in {"gross", "net"} \
@@ -253,7 +255,7 @@ def _planning_envelope_valid(result: Any, client_id: int) -> bool:
         identities.append(source_id)
     for source in result["excluded_sources"]:
         source_id = source.get("source_id")
-        if not isinstance(source_id, str) or not source_id.startswith("income:") \
+        if not isinstance(source_id, str) or not CANONICAL_INCOME_ID.fullmatch(source_id) \
                 or not source_id.removeprefix("income:").isdigit() \
                 or int(source_id.removeprefix("income:")) <= 0 \
                 or not isinstance(source.get("source_fingerprint"), str) \
@@ -349,9 +351,48 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
         applicability = entry.get("applicability")
         price_evidence = entry.get("native_price_evidence")
         tax = entry.get("native_tax_characterization")
-        if (entry.get("source_authority") != expected_authority
+        native_amount = entry.get("native_amount")
+        monthly_equivalent = entry.get("monthly_equivalent")
+        resolution = upstream.get("resolution")
+        if (set(upstream) != {"source_fingerprint", "pension_source_result_fingerprint", "resolution"}
+                or (resolution is not None and (not isinstance(resolution, dict) or set(resolution) != {
+                    "decision_kind", "record_version", "income_fingerprint",
+                    "canonical_source_id", "canonical_fingerprint",
+                }))
+                or not isinstance(provenance, dict)
+                or set(provenance) != {"origin_kind", "source_status", "verification_state"}
+                or not isinstance(applicability, dict)
+                or set(applicability) != {"start_date", "end_date", "continuation_status", "at_target"}
+                or not isinstance(price_evidence, dict)
+                or set(price_evidence) != {
+                    "price_basis", "price_reference_date", "temporal_authority_kind",
+                    "temporal_origin_date", "annual_rate", "rate_basis",
+                }
+                or not isinstance(tax, dict) or set(tax) != {"kind", "value"}
+                or (native_amount is not None and (
+                    not isinstance(native_amount, dict) or set(native_amount) != {"amount", "currency", "frequency"}
+                ))
+                or (monthly_equivalent is not None and (
+                    not isinstance(monthly_equivalent, dict)
+                    or set(monthly_equivalent) != {"numerator", "denominator"}
+                ))):
+            return False
+        expected_resolution = _expected_rtisa_resolution(source_map[source_id].get("resolution"))
+        expected_category = (
+            "PENSION" if is_pension else
+            ("PENSION_REPRESENTATION" if source_map[source_id].get("income_category") == "pension"
+             or (isinstance(source_map[source_id].get("resolution"), dict)
+                 and source_map[source_id]["resolution"].get("decision_kind")
+                 not in {None, "MISCLASSIFIED_GENERAL_INCOME"})
+             else rtisa_service.SOURCE_CATEGORIES.get(source_map[source_id].get("income_category")))
+        )
+        if (entry.get("source_category") != expected_category
+                or entry.get("source_authority") != expected_authority
                 or not isinstance(provenance, dict)
                 or provenance.get("origin_kind") != expected_origin
+                or provenance.get("source_status") != (None if is_pension else source_map[source_id].get("source_status"))
+                or provenance.get("verification_state") != (None if is_pension else source_map[source_id].get("verification_state"))
+                or resolution != (None if is_pension else expected_resolution)
                 or not isinstance(applicability, dict)
                 or applicability.get("at_target") not in {
                     "ACTIVE", "FUTURE", "ENDED", "UNRESOLVED", "DELEGATED_TO_CANONICAL"
@@ -411,6 +452,32 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
         if (result["admission_readiness_state"] == "READY") != result["admission_ready"]:
             return False
     return True
+
+
+def _expected_rtisa_resolution(value: Any) -> dict | None:
+    """Project the accepted Planning resolution into RTISA's exact public identity shape."""
+    if not isinstance(value, dict):
+        return None
+    version = value.get("version")
+    fingerprint_value = value.get("income_fingerprint")
+    canonical_id = value.get("canonical_source_id")
+    canonical_fingerprint = value.get("canonical_fingerprint")
+    if (value.get("decision_kind") not in rtisa_service.DECISIONS
+            or isinstance(version, bool) or not isinstance(version, int) or version <= 0
+            or not isinstance(fingerprint_value, str) or not SHA.fullmatch(fingerprint_value)
+            or (canonical_id is None) != (canonical_fingerprint is None)
+            or (canonical_id is not None and (
+                not isinstance(canonical_id, str) or not canonical_id
+                or not isinstance(canonical_fingerprint, str) or not SHA.fullmatch(canonical_fingerprint)
+            ))):
+        return None
+    return {
+        "decision_kind": value["decision_kind"],
+        "record_version": version,
+        "income_fingerprint": fingerprint_value,
+        "canonical_source_id": canonical_id,
+        "canonical_fingerprint": canonical_fingerprint,
+    }
 
 
 def _amount_context(planning: dict, portfolio: dict, rtisa: dict) -> dict[str, dict]:

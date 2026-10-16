@@ -1271,10 +1271,203 @@ def test_rtisa_wrong_client_preserves_distinct_transport_precedence(engine, monk
 
 
 def test_independent_nonempty_collection_golden_fingerprint():
-    """TEST-001: fixed nonempty collection vector, with independent SHA-256 baseline."""
-    value = {'schema_version': 'CRTISBA_COLLECTION_RESULT_V1', 'client_id': 7, 'planning_calculation_input_fingerprint': '2222222222222222222222222222222222222222222222222222222222222222', 'retirement_target_date': '2035-06-30', 'rtisa_admission_result_fingerprint': '4444444444444444444444444444444444444444444444444444444444444444', 'source_basis_entries': [{'source_id': 'income:9', 'source_kind': 'RECURRING_INCOME', 'decision_version': 3, 'income_basis': 'GROSS', 'price_basis': 'REAL_AT_REFERENCE_DATE', 'price_reference_date': '2026-01-15', 'basis_state': 'CURRENT'}], 'partitions': {'current': ['income:9'], 'missing': [], 'unknown': [], 'stale': [], 'invalid': [], 'upstream_unresolved': [], 'not_applicable_delegated': [], 'not_applicable_not_admitted': [], 'delegation_unresolved': [], 'delegation_stale': []}, 'blockers': [], 'basis_readiness_state': 'READY', 'basis_ready': True}
-    expected = '6d90fdccfcb3d1a77383e5078d0b2b481a20a0ddd419c16580ff95a5fe3803d7'
+    """TEST-001: a COMPLETE CRTISBA entry/collection with external fixed canonical digest."""
+    entry = {
+        "schema_version": "CRTISBA_SOURCE_BASIS_ENTRY_V1",
+        "source_id": "income:9", "source_kind": "RECURRING_INCOME",
+        "source_category": "RENTAL", "admission_state": "INCLUDED",
+        "rtisa_reason_codes": [], "source_version": "1" * 64,
+        "source_fingerprint": "2" * 64, "amount_authority_fingerprint": "3" * 64,
+        "decision_version": 3, "decision_fingerprint": "4" * 64,
+        "decision_state": "CURRENT", "income_basis": "GROSS",
+        "income_basis_provenance": "UPSTREAM_RECURRING_AMOUNT_BASIS",
+        "price_basis": "REAL_AT_REFERENCE_DATE", "price_reference_date": "2026-01-15",
+        "price_basis_provenance": "EXPLICIT_PROFESSIONAL", "blockers": [],
+    }
+    assert set(entry) == {
+        "schema_version", "source_id", "source_kind", "source_category", "admission_state",
+        "rtisa_reason_codes", "source_version", "source_fingerprint",
+        "amount_authority_fingerprint", "decision_version", "decision_fingerprint",
+        "decision_state", "income_basis", "income_basis_provenance", "price_basis",
+        "price_reference_date", "price_basis_provenance", "blockers",
+    }
+    partitions = {name: [] for name in subject.PARTITION_STATES.values()}
+    partitions["current"] = ["income:9"]
+    value = {
+        "schema_version": "CRTISBA_COLLECTION_RESULT_V1", "client_id": 7,
+        "planning_calculation_input_fingerprint": "5" * 64,
+        "retirement_target_date": "2035-06-30",
+        "rtisa_admission_result_fingerprint": "6" * 64,
+        "source_basis_entries": [entry], "partitions": partitions, "blockers": [],
+        "basis_readiness_state": "READY", "basis_ready": True,
+    }
+    assert set(value) == {
+        "schema_version", "client_id", "planning_calculation_input_fingerprint",
+        "retirement_target_date", "rtisa_admission_result_fingerprint",
+        "source_basis_entries", "partitions", "blockers", "basis_readiness_state", "basis_ready",
+    }
+    expected = "ca7f8e242964b2a49ef58f48ee6b7275de426a65ab1035859f05772a8fa9d352"
     assert subject.fingerprint({
         "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_RESULT_JSON_V1",
         "result": value,
     }) == expected
+
+
+@pytest.mark.parametrize("tamper", [
+    "category", "delegation_category", "nested_origin", "nested_source_status",
+    "nested_verification_state", "resolution", "nested_extra",
+])
+def test_rehashed_rtisa_semantic_category_and_provenance_tampering(engine, monkeypatch, tamper):
+    """IMP-001: independent Planning authority dominates a rehashed RTISA response."""
+    _authority(engine)
+    original = subject.rtisa_service.read_in_snapshot
+
+    def corrupted(*args, **kwargs):
+        result = deepcopy(original(*args, **kwargs))
+        entry = result["source_entries"][0]
+        if tamper in {"category", "delegation_category"}:
+            entry["source_category"] = ("PENSION_REPRESENTATION" if tamper == "delegation_category" else "EMPLOYMENT")
+        elif tamper == "nested_origin":
+            entry["provenance"]["origin_kind"] = "conversion"
+        elif tamper == "nested_verification_state":
+            entry["provenance"]["verification_state"] = "collected - not yet reviewed"
+        elif tamper == "resolution":
+            entry["upstream_identity"]["resolution"] = {
+                "decision_kind": "MISCLASSIFIED_GENERAL_INCOME", "record_version": 1,
+                "income_fingerprint": "1" * 64, "canonical_source_id": None,
+                "canonical_fingerprint": None,
+            }
+        elif tamper == "nested_extra":
+            entry["provenance"]["unexpected"] = "self-consistent but forbidden"
+        else:
+            entry["provenance"]["source_status"] = "not recorded"
+        result["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {key: value for key, value in result.items() if key != "admission_result_fingerprint"}
+        )
+        return result
+
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", corrupted)
+    with pytest.raises(subject.CRTISBAError) as caught:
+        _read(engine)
+    assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+
+@pytest.mark.parametrize("source_id", ["income:banana", "income:", "income:0", "income:01"])
+def test_invalid_planning_recurring_canonical_identity_rejected(engine, monkeypatch, source_id):
+    """IMP-001: accepted Planning IDs must not be unchecked arbitrary prefixes."""
+    _authority(engine)
+    original = subject.planning_input_service.derive
+
+    def invalid(*args, **kwargs):
+        result = deepcopy(original(*args, **kwargs))
+        result["general_income_inputs"][0]["source_id"] = source_id
+        return result
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", invalid)
+    with pytest.raises(subject.CRTISBAError) as caught:
+        _read(engine)
+    assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+
+@pytest.mark.parametrize("source_id", [
+    "manual:", "manual:1:2", "manual", "conversion:", "conversion:1:2", "other:1",
+])
+def test_invalid_planning_pension_canonical_identity_rejected(engine, monkeypatch, source_id):
+    """IMP-001: pension source IDs are exact positive canonical row identities."""
+    with Session(engine) as db, db.begin():
+        canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1), tax_treatment="taxable",
+        ))
+        db.add(PlanningInputDecision(
+            client_id=1, version=1, planning_base_date=date(2026, 1, 1),
+            retirement_target_date=date(2030, 1, 1), retirement_target_decision_actor="planner:test",
+            retirement_target_reference_fingerprint=H, actor="planner:test",
+        ))
+    original = subject.planning_input_service.derive
+
+    def invalid(*args, **kwargs):
+        result = deepcopy(original(*args, **kwargs))
+        result["pension_inputs"][0]["source_id"] = source_id
+        return result
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", invalid)
+    with pytest.raises(subject.CRTISBAError) as caught:
+        _read(engine)
+    assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+
+@pytest.mark.parametrize("invalidity", ["empty_id", "duplicate_id", "invalid_fingerprint"])
+def test_pension_input_preemption_guard_removal_enters_real_rtisa_producer(
+    engine, monkeypatch, invalidity
+):
+    """TEST-002: every RTISA pension-identity branch is preempted and mutation-sensitive."""
+    with Session(engine) as db, db.begin():
+        canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1), tax_treatment="taxable",
+        ))
+        db.add(PlanningInputDecision(
+            client_id=1, version=1, planning_base_date=date(2026, 1, 1),
+            retirement_target_date=date(2030, 1, 1), retirement_target_decision_actor="planner:test",
+            retirement_target_reference_fingerprint=H, actor="planner:test",
+        ))
+    with Session(engine) as db:
+        valid_planning = subject.planning_input_service.derive(db, 1)
+        valid_portfolio = subject.portfolio_service.execute_from_planning_result(
+            valid_planning, 1, valid_planning["planning_calculation_input_fingerprint"]
+        )
+
+    invalid_planning = deepcopy(valid_planning)
+    if invalidity == "empty_id":
+        invalid_planning["pension_inputs"][0]["source_id"] = ""
+    elif invalidity == "duplicate_id":
+        invalid_planning["pension_inputs"].append(deepcopy(invalid_planning["pension_inputs"][0]))
+    else:
+        invalid_planning["pension_inputs"][0]["source_fingerprint"] = "invalid"
+
+    original_derive = subject.planning_input_service.derive
+    original_planning_guard = subject._planning
+    original_envelope_guard = subject._planning_envelope_valid
+    original_portfolio = subject.portfolio_service.execute_from_planning_result
+    original_portfolio_guard = subject.rtisa_service._portfolio_is_valid
+    original_rtisa = subject.rtisa_service.read_in_snapshot
+    entered = []
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", lambda *_args, **_kwargs: invalid_planning)
+
+    def observed_rtisa(*args, **kwargs):
+        result = original_rtisa(*args, **kwargs)
+        entered.append(list(result["blockers"]))
+        return result
+
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", observed_rtisa)
+
+    def ordinary_oracle():
+        entered.clear()
+        try:
+            _read(engine)
+        except subject.CRTISBAError as caught:
+            assert caught.code == "PRODUCER_RESPONSE_INVALID"
+        else:
+            raise AssertionError("invalid pension Planning input was not rejected")
+        assert entered == []
+
+    ordinary_oracle()
+    monkeypatch.setattr(subject, "_planning", lambda *_args, **_kwargs: (invalid_planning, None))
+    monkeypatch.setattr(subject, "_planning_envelope_valid", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        subject.portfolio_service, "execute_from_planning_result",
+        lambda *_args, **_kwargs: valid_portfolio,
+    )
+    monkeypatch.setattr(subject.rtisa_service, "_portfolio_is_valid", lambda *_args, **_kwargs: True)
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    assert entered and entered[-1] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
+
+    monkeypatch.setattr(subject, "_planning", original_planning_guard)
+    monkeypatch.setattr(subject, "_planning_envelope_valid", original_envelope_guard)
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", original_portfolio)
+    monkeypatch.setattr(subject.rtisa_service, "_portfolio_is_valid", original_portfolio_guard)
+    ordinary_oracle()
+    monkeypatch.setattr(subject.planning_input_service, "derive", original_derive)

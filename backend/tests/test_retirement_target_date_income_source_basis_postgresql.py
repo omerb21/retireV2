@@ -315,5 +315,52 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             reconciled, reconciled_entry = _current(engine, source_id)
             assert reconciled_entry["decision_version"] == 2
             assert reconciled["schema_version"] == "CRTISBA_COLLECTION_RESULT_V1"
+
+        # PostgreSQL serial orderings for the addressed source: an upstream
+        # commit that wins first rejects the stale Planning CAS; when the
+        # CRTISBA decision wins first, the later source commit makes that
+        # accepted decision STALE on the next read.
+        addressed_before, addressed_entry = _current(engine, source_id)
+        addressed_command = _command(addressed_before, addressed_entry)
+        source_pk = int(source_id.removeprefix("income:"))
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE recurring_income SET amount=amount+1 WHERE id=:source_pk"
+            ), {"source_pk": source_pk})
+        with Session(engine) as db, pytest.raises(subject.CRTISBAError) as addressed_lost:
+            subject.write(db, 1, source_id, addressed_command, "trusted:professional")
+        assert addressed_lost.value.code == "CRTISBA_PLANNING_IDENTITY_STALE"
+        addressed_current, addressed_entry = _current(engine, source_id)
+        with Session(engine) as db:
+            subject.write(db, 1, source_id, _command(addressed_current, addressed_entry), "trusted:professional")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE recurring_income SET amount=amount+1 WHERE id=:source_pk"
+            ), {"source_pk": source_pk})
+        _, addressed_stale = _current(engine, source_id)
+        assert addressed_stale["decision_state"] == "STALE"
+
+        # The same two serial orders apply to a different Planning contributor:
+        # it is not locked as the addressed source, but it is bound through the
+        # global Planning identity and therefore cannot be silently ignored.
+        refreshed, refreshed_entry = _current(engine, source_id)
+        with Session(engine) as db:
+            subject.write(db, 1, source_id, _command(refreshed, refreshed_entry), "trusted:professional")
+        unrelated_before, unrelated_entry = _current(engine, source_id)
+        unrelated_command = _command(unrelated_before, unrelated_entry)
+        unrelated_pk = income(engine, amount_basis="gross", frequency="monthly",
+                              source_status="planner entered", verification_state="reviewed")
+        with Session(engine) as db, pytest.raises(subject.CRTISBAError) as unrelated_lost:
+            subject.write(db, 1, source_id, unrelated_command, "trusted:professional")
+        assert unrelated_lost.value.code == "CRTISBA_PLANNING_IDENTITY_STALE"
+        unrelated_current, unrelated_entry = _current(engine, source_id)
+        with Session(engine) as db:
+            subject.write(db, 1, source_id, _command(unrelated_current, unrelated_entry), "trusted:professional")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE recurring_income SET amount=amount+1 WHERE id=:source_pk"
+            ), {"source_pk": unrelated_pk})
+        _, unrelated_stale = _current(engine, source_id)
+        assert unrelated_stale["decision_state"] == "STALE"
     finally:
         engine.dispose()

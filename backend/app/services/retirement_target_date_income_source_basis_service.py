@@ -289,7 +289,6 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
     target = planning["retirement_target"]["retirement_target_date"]
     if (
         result.get("schema_version") != rtisa_service.SCHEMA_VERSION
-        or result.get("client_id") != client_id
         or result.get("planning_calculation_input_fingerprint") != planning_fp
         or result.get("retirement_target_date") != target
     ):
@@ -297,6 +296,13 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
     stored = result.get("admission_result_fingerprint")
     payload = {key: deepcopy(value) for key, value in result.items() if key != "admission_result_fingerprint"}
     if not isinstance(stored, str) or not SHA.fullmatch(stored) or stored != rtisa_service._result_fingerprint(payload):
+        return False
+    # The admission envelope must describe the same portfolio that this
+    # transaction independently derived from its validated Planning snapshot.
+    if result.get("source_entries") or not result.get("blockers"):
+        if result.get("pension_portfolio_result_fingerprint") != portfolio.get("portfolio_result_fingerprint"):
+            return False
+    elif result.get("pension_portfolio_result_fingerprint") is not None:
         return False
     entries = result.get("source_entries")
     partitions = {
@@ -334,6 +340,33 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
         if source_id not in source_map or state not in partitions or not isinstance(upstream, dict) \
                 or not isinstance(reasons, list) or reasons != sorted(set(reasons)):
             return False
+        is_pension = source_id.startswith(("manual:", "conversion:"))
+        expected_authority = ("CANONICAL_PENSION_TARGET_DATE" if is_pension
+                              else "CANONICAL_PLANNING_RECURRING_INCOME")
+        expected_origin = ("conversion" if source_id.startswith("conversion:")
+                           else "manual" if is_pension else "recurring_income")
+        provenance = entry.get("provenance")
+        applicability = entry.get("applicability")
+        price_evidence = entry.get("native_price_evidence")
+        tax = entry.get("native_tax_characterization")
+        if (entry.get("source_authority") != expected_authority
+                or not isinstance(provenance, dict)
+                or provenance.get("origin_kind") != expected_origin
+                or not isinstance(applicability, dict)
+                or applicability.get("at_target") not in {
+                    "ACTIVE", "FUTURE", "ENDED", "UNRESOLVED", "DELEGATED_TO_CANONICAL"
+                }
+                or not isinstance(price_evidence, dict)
+                or not isinstance(tax, dict)
+                or entry.get("native_income_basis") not in {"GROSS", "NET", "UNKNOWN"}):
+            return False
+        if (state == "INCLUDED" and (reasons or applicability["at_target"] != "ACTIVE")):
+            return False
+        if (state == "EXCLUDED" and applicability["at_target"] not in {
+                "FUTURE", "ENDED", "DELEGATED_TO_CANONICAL"}):
+            return False
+        if (state == "UNRESOLVED" and not reasons):
+            return False
         source_fp = source_map[source_id].get("source_fingerprint")
         if not isinstance(source_fp, str) or not SHA.fullmatch(source_fp) \
                 or upstream.get("source_fingerprint") != source_fp:
@@ -345,6 +378,10 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
         observed_ids.append(source_id)
     if observed_ids != sorted(observed_ids) or len(observed_ids) != len(set(observed_ids)):
         return False
+    # Membership in Planning is not sufficient: a producer may omit an
+    # admitted source and rehash a superficially self-consistent envelope.
+    if (entries or not blockers) and set(observed_ids) != set(source_map):
+        return False
     if any(partitions[state] != [entry["source_id"] for entry in entries if entry["admission_state"] == state]
            for state in partitions):
         return False
@@ -352,6 +389,21 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
     if all_partitioned != sorted(observed_ids):
         return False
     if entries:
+        expected_partial = (portfolio.get("result_state") != "result_ready"
+                            or portfolio.get("total_completeness_state") != "complete"
+                            or bool(partitions["UNRESOLVED"]))
+        if result.get("universe_completeness_state") != ("PARTIAL" if expected_partial else "COMPLETE_EVIDENCED"):
+            return False
+        if result.get("admission_readiness_state") != ("NOT_READY" if expected_partial else "READY"):
+            return False
+        if result.get("admission_ready") is not (not expected_partial):
+            return False
+        expected_blockers = sorted(set(
+            reason for entry in entries if entry["admission_state"] == "UNRESOLVED"
+            for reason in entry["reason_codes"]
+        ) | ({"RTISA_SOURCE_UNIVERSE_INCOMPLETE"} if expected_partial else set()))
+        if blockers != expected_blockers:
+            return False
         if result.get("universe_completeness_state") not in {"COMPLETE_EVIDENCED", "PARTIAL"} \
                 or result.get("admission_readiness_state") not in {"READY", "NOT_READY"} \
                 or not isinstance(result.get("admission_ready"), bool):
@@ -445,10 +497,10 @@ def _derive_snapshot(db: Session, client_id: int, operation: str, source_id: str
         raise CRTISBAError("CRTISBA_UPSTREAM_TECHNICAL_FAILURE", 503) from exc
     if not isinstance(rtisa, dict):
         raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
-    if not _rtisa_envelope_valid(rtisa, client_id, planning, portfolio):
-        raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
     if rtisa.get("client_id") != client_id:
         raise CRTISBAError("RESPONSE_CLIENT_MISMATCH", 500)
+    if not _rtisa_envelope_valid(rtisa, client_id, planning, portfolio):
+        raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
     entries = rtisa.get("source_entries")
     blockers = rtisa.get("blockers")
     rtisa_fingerprint = rtisa.get("admission_result_fingerprint")
@@ -463,18 +515,29 @@ def _derive_snapshot(db: Session, client_id: int, operation: str, source_id: str
                 and rtisa.get("admission_readiness_state") == "READY"
                 and rtisa.get("admission_ready") is True):
             return None, {"planning": planning, "portfolio": portfolio, "rtisa": rtisa, "contexts": {}}
-        unique = sorted(set(blockers))
-        if (len(blockers) != 1 or blockers != unique or blockers[0] not in NO_COLLECTION
+        blocker = _single_no_collection_blocker(blockers)
+        if (blocker is None
                 or rtisa.get("included_source_ids") != [] or rtisa.get("excluded_source_ids") != []
                 or rtisa.get("unresolved_source_ids") != []
                 or rtisa.get("universe_completeness_state") != "UNAVAILABLE"
                 or rtisa.get("admission_readiness_state") != "NOT_READY"
                 or rtisa.get("admission_ready") is not False):
             raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
-        stage, code = NO_COLLECTION[blockers[0]]
+        stage, code = NO_COLLECTION[blocker]
         return _failure(client_id, source_id, operation, stage, code, observed={"planning": planning_fp}), None
     return None, {"planning": planning, "portfolio": portfolio, "rtisa": rtisa,
                   "contexts": _amount_context(planning, portfolio, rtisa)}
+
+
+def _single_no_collection_blocker(blockers: Any) -> str | None:
+    """Return the sole closed no-collection blocker, never collapse a set."""
+    if not isinstance(blockers, list) or len(blockers) != 1:
+        return None
+    unique = sorted(set(blockers))
+    blocker = blockers[0]
+    if blockers != unique or blocker not in NO_COLLECTION:
+        return None
+    return blocker
 
 
 def _latest_rows(db: Session, client_id: int) -> tuple[dict[str, Decision], set[str]]:
@@ -529,8 +592,12 @@ def _valid_row(row: Decision) -> bool:
         if not common:
             return False
         if row.source_kind == "PENSION":
+            if not ((row.income_basis in {"GROSS", "NET"} and row.income_basis_provenance == "EXPLICIT_PROFESSIONAL")
+                    or (row.income_basis == "UNKNOWN" and row.income_basis_provenance == "MISSING")):
+                return False
             return (
-                row.source_id.startswith(("manual:", "conversion:"))
+                ((row.source_id.startswith("manual:") and bool(row.source_id.removeprefix("manual:")))
+                 or (row.source_id.startswith("conversion:") and bool(row.source_id.removeprefix("conversion:"))))
                 and isinstance(row.pension_source_version, int) and not isinstance(row.pension_source_version, bool)
                 and row.pension_source_version > 0
                 and row.recurring_source_version_fingerprint is None
@@ -544,6 +611,14 @@ def _valid_row(row: Decision) -> bool:
             )
         return (
             row.source_id.startswith("income:")
+            and row.source_id.removeprefix("income:").isascii()
+            and row.source_id.removeprefix("income:").isdigit()
+            and int(row.source_id.removeprefix("income:")) > 0
+            and ((row.income_basis in {"GROSS", "NET"} and row.income_basis_provenance == "UPSTREAM_RECURRING_AMOUNT_BASIS")
+                 or (row.income_basis == "UNKNOWN" and row.income_basis_provenance == "MISSING"))
+            and ((row.price_basis in {"NOMINAL_AT_RETIREMENT_TARGET_DATE", "REAL_AT_REFERENCE_DATE"}
+                  and row.price_basis_provenance == "EXPLICIT_PROFESSIONAL")
+                 or (row.price_basis == "UNKNOWN" and row.price_basis_provenance == "MISSING"))
             and row.pension_source_version is None
             and isinstance(row.recurring_source_version_fingerprint, str)
             and bool(SHA.fullmatch(row.recurring_source_version_fingerprint))
@@ -789,6 +864,14 @@ def write(db: Session, client_id: int, source_id: str, command: _Command, actor:
         _begin(db, write=True); acquired, phase = True, "IN_TRANSACTION"
         if db.get(Client, client_id) is None:
             raise CRTISBAError("CLIENT_NOT_FOUND", 404, ["/path/client_id"])
+        # Definition 6.2: read the initial global Planning identity before
+        # taking the addressed source lock; rederive after both row locks.
+        initial_planning, initial_blocked = _planning(db, client_id, command.operation, source_id)
+        if initial_blocked:
+            _rollback(db)
+            return initial_blocked
+        if not _planning_envelope_valid(initial_planning, client_id):
+            raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
         _source_row, actual_kind = _lock_source(db, client_id, source_id)
         if actual_kind != command.source_kind:
             raise CRTISBAError("CRTISBA_SOURCE_KIND_MISMATCH", 409, ["/source_kind"])

@@ -423,7 +423,7 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
                 "admission_state", "reason_codes", "applicability",
             )):
                 return False
-        if not is_pension:
+        if not is_pension and expected_category != "PENSION_REPRESENTATION":
             # Authority and review reasons cannot be substituted for one
             # another merely because both are allowed unresolved codes.
             authority_reason = "RTISA_SOURCE_AUTHORITY_NOT_RECORDED"

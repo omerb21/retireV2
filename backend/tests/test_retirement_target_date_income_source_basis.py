@@ -1732,3 +1732,66 @@ def test_unresolved_recurring_rehashed_wrong_fact_reason_rejected(engine, monkey
         oracle()
     monkeypatch.setattr(subject, "_rtisa_envelope_valid", guard)
     oracle()
+
+@pytest.mark.parametrize("delegation", [
+    "SAME_CANONICAL_PENSION", "PENSION_NOT_YET_CANONICAL",
+    "UNRESOLVED", "STALE",
+])
+def test_pension_representation_early_return_keeps_rtisa_delegation(engine, delegation):
+    """Accepted RTISA delegation must not inherit ordinary recurring reason/basis requirements."""
+    from app.models.planning_input_decision import PensionIncomeResolution
+
+    with Session(engine) as db, db.begin():
+        canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1), tax_treatment="taxable",
+        ))
+        row = RecurringIncome(
+            client_id=1, income_category="pension", description="pension alias",
+            amount=Decimal("1200.00"), amount_basis="gross", frequency="monthly",
+            continuation_status="ongoing", lifecycle_status="current",
+            source_status="not recorded", verification_state="collected - not yet reviewed",
+            start_date=date(2025, 1, 1),
+        )
+        db.add(row)
+        db.flush()
+        income_id = row.id
+        db.add(PlanningInputDecision(
+            client_id=1, version=1, planning_base_date=date(2026, 1, 1),
+            retirement_target_date=date(2030, 1, 1),
+            retirement_target_decision_actor="planner:test",
+            retirement_target_reference_fingerprint=H, actor="planner:test",
+        ))
+    with Session(engine) as db:
+        planning = planning_input_service.read(db, 1)
+    pension = planning["pension_inputs"][0]
+    alias = next(x for x in planning["excluded_sources"] if x["source_id"] == f"income:{income_id}")
+    if delegation != "UNRESOLVED":
+        with Session(engine) as db, db.begin():
+            db.add(PensionIncomeResolution(
+                income_id=income_id, client_id=1, version=1,
+                decision_kind=("SAME_CANONICAL_PENSION" if delegation == "STALE" else delegation),
+                income_fingerprint=alias["source_fingerprint"],
+                canonical_source_id=pension["source_id"],
+                canonical_fingerprint=("f" * 64 if delegation == "STALE" else pension["source_fingerprint"]),
+                reference="delegation regression", actor="planner:test",
+            ))
+    with Session(engine) as db:
+        planning_current = planning_input_service.derive(db, 1)
+        expected_producer = subject.rtisa_service.read_in_snapshot(
+            db, 1, planning_current["planning_calculation_input_fingerprint"]
+        )
+    print("UPSTREAM", expected_producer)
+    # The production read must preserve the producer's accepted delegation classification.
+    upstream = next(e for e in expected_producer["source_entries"] if e["source_id"] == f"income:{income_id}")
+    expected_reasons = (["RTISA_SAME_CANONICAL_PENSION"] if delegation in {
+        "SAME_CANONICAL_PENSION", "PENSION_NOT_YET_CANONICAL"
+    } else ["RTISA_SOURCE_IDENTITY_UNRESOLVED"] if delegation == "UNRESOLVED"
+        else ["RTISA_SOURCE_IDENTITY_STALE"])
+    assert upstream["source_category"] == "PENSION_REPRESENTATION"
+    assert upstream["reason_codes"] == expected_reasons
+    assert "RTISA_SOURCE_AUTHORITY_NOT_RECORDED" not in upstream["reason_codes"]
+    assert "RTISA_SOURCE_REVIEW_INCOMPLETE" not in upstream["reason_codes"]
+    result = _read(engine)
+    matching = next(e for e in result["source_basis_entries"] if e["source_id"] == f"income:{income_id}")
+    assert matching["rtisa_reason_codes"] == expected_reasons

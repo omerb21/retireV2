@@ -773,6 +773,77 @@ def test_complete_upstream_envelopes_reject_semantic_tampering_with_matching_has
     assert rtisa_error.value.code == "PRODUCER_RESPONSE_INVALID"
 
 
+def test_complete_upstream_validation_mutation_and_restoration(engine, monkeypatch):
+    _authority(engine)
+
+    def rejection_oracle():
+        with Session(engine) as db:
+            try:
+                subject.read(db, 1)
+            except subject.CRTISBAError as caught:
+                assert caught.code == "PRODUCER_RESPONSE_INVALID"
+                return
+        raise AssertionError("malformed upstream envelope was accepted")
+
+    # Planning: corrupt a source-level contract field while retaining the
+    # accepted outer calculation fingerprint.  Only the production envelope
+    # guard is mutated; the unchanged public-read oracle must then die.
+    original_planning = subject.planning_input_service.derive
+    original_planning_guard = subject._planning_envelope_valid
+    def invalid_planning(*args, **kwargs):
+        result = deepcopy(original_planning(*args, **kwargs))
+        result["general_income_inputs"][0]["monthly_equivalent_ratio"]["denominator"] = 0
+        return result
+    monkeypatch.setattr(subject.planning_input_service, "derive", invalid_planning)
+    rejection_oracle()
+    monkeypatch.setattr(subject, "_planning_envelope_valid", lambda *_: True)
+    with pytest.raises(AssertionError):
+        rejection_oracle()
+    monkeypatch.setattr(subject, "_planning_envelope_valid", original_planning_guard)
+    rejection_oracle()
+    monkeypatch.setattr(subject.planning_input_service, "derive", original_planning)
+
+    # Portfolio: preserve a valid recalculated outer hash while rebinding the
+    # result to another client.  The actual accepted portfolio validator is the
+    # production mutation point.
+    original_portfolio = subject.portfolio_service.execute_from_planning_result
+    original_portfolio_guard = subject.rtisa_service._portfolio_is_valid
+    def invalid_portfolio(*args, **kwargs):
+        result = deepcopy(original_portfolio(*args, **kwargs))
+        result["client_id"] = 2
+        result["portfolio_result_fingerprint"] = subject.portfolio_service._result_fingerprint(
+            subject.portfolio_service._ready_result_payload(result)
+        )
+        return result
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", invalid_portfolio)
+    rejection_oracle()
+    monkeypatch.setattr(subject.rtisa_service, "_portfolio_is_valid", lambda *_: True)
+    with pytest.raises(AssertionError):
+        rejection_oracle()
+    monkeypatch.setattr(subject.rtisa_service, "_portfolio_is_valid", original_portfolio_guard)
+    rejection_oracle()
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", original_portfolio)
+
+    # RTISA: change a source binding and recompute the producer fingerprint.
+    # Mutating only the production CRTISBA envelope guard kills the same
+    # public-read rejection oracle; restoration makes it pass again.
+    original_rtisa = subject.rtisa_service.read_in_snapshot
+    original_rtisa_guard = subject._rtisa_envelope_valid
+    def invalid_rtisa(*args, **kwargs):
+        result = deepcopy(original_rtisa(*args, **kwargs))
+        result["source_entries"][0]["upstream_identity"]["source_fingerprint"] = "f" * 64
+        payload = {key: value for key, value in result.items() if key != "admission_result_fingerprint"}
+        result["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(payload)
+        return result
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", invalid_rtisa)
+    rejection_oracle()
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", lambda *_: True)
+    with pytest.raises(AssertionError):
+        rejection_oracle()
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", original_rtisa_guard)
+    rejection_oracle()
+
+
 def test_bigint_max_version_chain_is_bounded_and_invalid_without_range_allocation(engine):
     global _CURRENT_PLANNING
     _authority(engine)

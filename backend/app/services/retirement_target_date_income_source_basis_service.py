@@ -9,7 +9,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import Select, desc, select, text
+from sqlalchemy import Select, desc, func, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from app.services.pension_product_service import PensionProductError
 from app.services.professional_source_snapshot_service import record, serialize
 
 SHA = re.compile(r"^[0-9a-f]{64}$")
+SQLSTATE = re.compile(r"^[0-9A-Z]{5}$")
 MAX_VERSION = 9223372036854775807
 DECISION_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_DECISION_JSON_V1"
 PENSION_AMOUNT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_PENSION_AMOUNT_AUTHORITY_JSON_V1"
@@ -195,6 +196,171 @@ def _planning(db: Session, client_id: int, operation: str, source_id: str | None
     return result, None
 
 
+def _canonical_date(value: Any) -> bool:
+    try:
+        return isinstance(value, str) and date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _planning_envelope_valid(result: Any, client_id: int) -> bool:
+    if not isinstance(result, dict) or result.get("client_id") != client_id:
+        return False
+    required = {
+        "planning_calculation_input_fingerprint", "retirement_target", "pension_inputs",
+        "general_income_inputs", "excluded_sources", "blocking_facts", "planning_input_ready",
+    }
+    if not required <= set(result):
+        return False
+    if not isinstance(result["planning_input_ready"], bool) or not isinstance(result["blocking_facts"], list):
+        return False
+    target = result["retirement_target"]
+    if not isinstance(target, dict) or not {"retirement_target_ready", "retirement_target_date"} <= set(target):
+        return False
+    if not isinstance(target["retirement_target_ready"], bool):
+        return False
+    if target["retirement_target_date"] is not None and not _canonical_date(target["retirement_target_date"]):
+        return False
+    if not all(isinstance(result[name], list) for name in ("pension_inputs", "general_income_inputs", "excluded_sources")):
+        return False
+    if any(not isinstance(item, dict) for item in (
+        result["pension_inputs"] + result["general_income_inputs"] + result["excluded_sources"]
+    )):
+        return False
+    identities: list[str] = []
+    for source in result["pension_inputs"]:
+        source_id = source.get("source_id")
+        if not isinstance(source_id, str) or not source_id.startswith(("manual:", "conversion:")) \
+                or not isinstance(source.get("version"), int) or isinstance(source.get("version"), bool) \
+                or source["version"] < 1 or not isinstance(source.get("source_fingerprint"), str) \
+                or not SHA.fullmatch(source["source_fingerprint"]):
+            return False
+        identities.append(source_id)
+    for source in result["general_income_inputs"]:
+        source_id = source.get("source_id")
+        ratio = source.get("monthly_equivalent_ratio")
+        if not isinstance(source_id, str) or not source_id.startswith("income:") \
+                or not isinstance(source.get("source_fingerprint"), str) \
+                or not SHA.fullmatch(source["source_fingerprint"]) \
+                or source.get("amount") is None or source.get("amount_basis") not in {"gross", "net"} \
+                or not isinstance(source.get("frequency"), str) \
+                or (ratio is not None and (
+                    not isinstance(ratio, dict) or set(ratio) != {"numerator", "denominator"}
+                    or ratio.get("numerator") is None or isinstance(ratio.get("denominator"), bool)
+                    or not isinstance(ratio.get("denominator"), int) or ratio["denominator"] <= 0
+                )):
+            return False
+        identities.append(source_id)
+    for source in result["excluded_sources"]:
+        source_id = source.get("source_id")
+        if not isinstance(source_id, str) or not source_id.startswith("income:") \
+                or not source_id.removeprefix("income:").isdigit() \
+                or int(source_id.removeprefix("income:")) <= 0 \
+                or not isinstance(source.get("source_fingerprint"), str) \
+                or not SHA.fullmatch(source["source_fingerprint"]):
+            return False
+        identities.append(source_id)
+    if len(identities) != len(set(identities)):
+        return False
+    return isinstance(result["planning_calculation_input_fingerprint"], str) and bool(
+        SHA.fullmatch(result["planning_calculation_input_fingerprint"])
+    )
+
+
+RTISA_FIELDS = {
+    "schema_version", "client_id", "planning_calculation_input_fingerprint",
+    "retirement_target_date", "pension_portfolio_result_fingerprint", "source_entries",
+    "included_source_ids", "excluded_source_ids", "unresolved_source_ids",
+    "universe_completeness_state", "admission_readiness_state", "admission_ready",
+    "blockers", "admission_result_fingerprint",
+}
+RTISA_ENTRY_FIELDS = {
+    "source_id", "source_category", "source_authority", "admission_state",
+    "native_amount", "monthly_equivalent", "native_income_basis",
+    "native_tax_characterization", "native_price_evidence", "applicability",
+    "provenance", "upstream_identity", "reason_codes",
+}
+
+
+def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio: dict) -> bool:
+    if not isinstance(result, dict) or set(result) != RTISA_FIELDS:
+        return False
+    planning_fp = planning["planning_calculation_input_fingerprint"]
+    target = planning["retirement_target"]["retirement_target_date"]
+    if (
+        result.get("schema_version") != rtisa_service.SCHEMA_VERSION
+        or result.get("client_id") != client_id
+        or result.get("planning_calculation_input_fingerprint") != planning_fp
+        or result.get("retirement_target_date") != target
+    ):
+        return False
+    stored = result.get("admission_result_fingerprint")
+    payload = {key: deepcopy(value) for key, value in result.items() if key != "admission_result_fingerprint"}
+    if not isinstance(stored, str) or not SHA.fullmatch(stored) or stored != rtisa_service._result_fingerprint(payload):
+        return False
+    entries = result.get("source_entries")
+    partitions = {
+        "INCLUDED": result.get("included_source_ids"),
+        "EXCLUDED": result.get("excluded_source_ids"),
+        "UNRESOLVED": result.get("unresolved_source_ids"),
+    }
+    blockers = result.get("blockers")
+    if not isinstance(entries, list) or not all(isinstance(value, list) for value in partitions.values()) \
+            or not isinstance(blockers, list):
+        return False
+    if any(value != sorted(set(value)) or any(not isinstance(item, str) or not item for item in value)
+           for value in [*partitions.values(), blockers]):
+        return False
+    source_map: dict[str, dict] = {}
+    for name in ("pension_inputs", "general_income_inputs", "excluded_sources"):
+        for source in planning[name]:
+            source_id = source.get("source_id")
+            if isinstance(source_id, str) and source_id:
+                if source_id in source_map:
+                    return False
+                source_map[source_id] = source
+    pension_results = {
+        item.get("source_id"): item for item in portfolio.get("source_results", [])
+        if isinstance(item, dict) and isinstance(item.get("source_id"), str)
+    }
+    observed_ids: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != RTISA_ENTRY_FIELDS:
+            return False
+        source_id = entry.get("source_id")
+        state = entry.get("admission_state")
+        upstream = entry.get("upstream_identity")
+        reasons = entry.get("reason_codes")
+        if source_id not in source_map or state not in partitions or not isinstance(upstream, dict) \
+                or not isinstance(reasons, list) or reasons != sorted(set(reasons)):
+            return False
+        source_fp = source_map[source_id].get("source_fingerprint")
+        if not isinstance(source_fp, str) or not SHA.fullmatch(source_fp) \
+                or upstream.get("source_fingerprint") != source_fp:
+            return False
+        if source_id.startswith(("manual:", "conversion:")):
+            pte = pension_results.get(source_id)
+            if pte is not None and upstream.get("pension_source_result_fingerprint") != pte.get("source_result_fingerprint"):
+                return False
+        observed_ids.append(source_id)
+    if observed_ids != sorted(observed_ids) or len(observed_ids) != len(set(observed_ids)):
+        return False
+    if any(partitions[state] != [entry["source_id"] for entry in entries if entry["admission_state"] == state]
+           for state in partitions):
+        return False
+    all_partitioned = sorted(item for value in partitions.values() for item in value)
+    if all_partitioned != sorted(observed_ids):
+        return False
+    if entries:
+        if result.get("universe_completeness_state") not in {"COMPLETE_EVIDENCED", "PARTIAL"} \
+                or result.get("admission_readiness_state") not in {"READY", "NOT_READY"} \
+                or not isinstance(result.get("admission_ready"), bool):
+            return False
+        if (result["admission_readiness_state"] == "READY") != result["admission_ready"]:
+            return False
+    return True
+
+
 def _amount_context(planning: dict, portfolio: dict, rtisa: dict) -> dict[str, dict]:
     pension_inputs = {item["source_id"]: item for item in planning.get("pension_inputs", [])}
     recurring_inputs = {item["source_id"]: item for item in planning.get("general_income_inputs", [])
@@ -266,17 +432,20 @@ def _derive_snapshot(db: Session, client_id: int, operation: str, source_id: str
     planning, blocked = _planning(db, client_id, operation, source_id)
     if blocked:
         return blocked, None
+    if not _planning_envelope_valid(planning, client_id):
+        raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
     planning_fp = planning["planning_calculation_input_fingerprint"]
     portfolio = portfolio_service.execute_from_planning_result(planning, client_id, planning_fp)
+    target = planning["retirement_target"]["retirement_target_date"]
+    if not rtisa_service._portfolio_is_valid(portfolio, client_id, planning, target):
+        raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
     try:
         rtisa = rtisa_service.read_in_snapshot(db, client_id, planning_fp)
     except rtisa_service.RetirementTargetIncomeSourceAdmissionTechnicalError as exc:
         raise CRTISBAError("CRTISBA_UPSTREAM_TECHNICAL_FAILURE", 503) from exc
     if not isinstance(rtisa, dict):
         raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
-    supplied_rtisa_fingerprint = rtisa.get("admission_result_fingerprint")
-    rtisa_payload = {key: deepcopy(value) for key, value in rtisa.items() if key != "admission_result_fingerprint"}
-    if supplied_rtisa_fingerprint != rtisa_service._result_fingerprint(rtisa_payload):
+    if not _rtisa_envelope_valid(rtisa, client_id, planning, portfolio):
         raise CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)
     if rtisa.get("client_id") != client_id:
         raise CRTISBAError("RESPONSE_CLIENT_MISMATCH", 500)
@@ -312,13 +481,23 @@ def _latest_rows(db: Session, client_id: int) -> tuple[dict[str, Decision], set[
     rows = list(db.scalars(select(Decision).where(Decision.client_id == client_id)
                            .order_by(Decision.source_id, desc(Decision.decision_version))))
     latest: dict[str, Decision] = {}
-    versions: dict[str, list[int]] = {}
     for row in rows:
         latest.setdefault(row.source_id, row)
-        versions.setdefault(row.source_id, []).append(row.decision_version)
+    aggregates = db.execute(
+        select(
+            Decision.source_kind,
+            Decision.source_id,
+            func.count().label("row_count"),
+            func.count(func.distinct(Decision.decision_version)).label("distinct_count"),
+            func.min(Decision.decision_version).label("minimum_version"),
+            func.max(Decision.decision_version).label("maximum_version"),
+        )
+        .where(Decision.client_id == client_id)
+        .group_by(Decision.source_kind, Decision.source_id)
+    ).all()
     invalid = {
-        source_id for source_id, observed in versions.items()
-        if sorted(observed) != list(range(1, max(observed) + 1))
+        source_id for _kind, source_id, count, distinct_count, minimum, maximum in aggregates
+        if minimum != 1 or count != distinct_count or maximum != count
     }
     return latest, invalid
 
@@ -340,10 +519,42 @@ def _row_values(row: Decision) -> dict:
 def _valid_row(row: Decision) -> bool:
     try:
         values = _row_values(row)
-        return (row.decision_version > 0 and row.source_kind in {"PENSION", "RECURRING_INCOME"}
+        common = (row.decision_version > 0 and row.source_kind in {"PENSION", "RECURRING_INCOME"}
                 and all(isinstance(getattr(row, field), str) and SHA.fullmatch(getattr(row, field)) for field in (
                     "planning_calculation_input_fingerprint", "source_fingerprint", "amount_authority_fingerprint", "decision_fingerprint"))
+                and row.income_basis in {"GROSS", "NET", "UNKNOWN"}
+                and row.income_basis_provenance in {"EXPLICIT_PROFESSIONAL", "UPSTREAM_RECURRING_AMOUNT_BASIS", "MISSING"}
+                and isinstance(row.decision_actor, str) and 0 < len(row.decision_actor) <= 128
                 and decision_fingerprint(values) == row.decision_fingerprint)
+        if not common:
+            return False
+        if row.source_kind == "PENSION":
+            return (
+                row.source_id.startswith(("manual:", "conversion:"))
+                and isinstance(row.pension_source_version, int) and not isinstance(row.pension_source_version, bool)
+                and row.pension_source_version > 0
+                and row.recurring_source_version_fingerprint is None
+                and all(isinstance(getattr(row, field), str) and SHA.fullmatch(getattr(row, field)) for field in (
+                    "pension_source_execution_fingerprint", "pension_source_result_fingerprint",
+                    "portfolio_source_entry_fingerprint",
+                ))
+                and isinstance(row.retirement_target_date, date)
+                and row.price_basis is None and row.price_reference_date is None
+                and row.price_basis_provenance is None
+            )
+        return (
+            row.source_id.startswith("income:")
+            and row.pension_source_version is None
+            and isinstance(row.recurring_source_version_fingerprint, str)
+            and bool(SHA.fullmatch(row.recurring_source_version_fingerprint))
+            and row.pension_source_execution_fingerprint is None
+            and row.pension_source_result_fingerprint is None
+            and row.portfolio_source_entry_fingerprint is None
+            and row.retirement_target_date is None
+            and row.price_basis in {"NOMINAL_AT_RETIREMENT_TARGET_DATE", "REAL_AT_REFERENCE_DATE", "UNKNOWN"}
+            and row.price_basis_provenance in {"EXPLICIT_PROFESSIONAL", "MISSING"}
+            and ((row.price_basis == "REAL_AT_REFERENCE_DATE") == isinstance(row.price_reference_date, date))
+        )
     except Exception:
         return False
 
@@ -380,6 +591,10 @@ def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp:
     kind = context["kind"] if context else ("PENSION" if source_id.startswith(("manual:", "conversion:")) else "RECURRING_INCOME")
     reasons = sorted(set(entry.get("reason_codes") or []))
     admission = entry.get("admission_state")
+    row_valid = bool(row is not None and chain_valid and _valid_row(row))
+    row_current = bool(
+        row_valid and context is not None and _current_matches(row, context, planning_fp)
+    )
     state = None
     blockers: list[str] = []
     expose = False
@@ -416,13 +631,13 @@ def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp:
     amount_fp = context.get("amount") if context and state not in {"NOT_APPLICABLE_DELEGATED", "NOT_APPLICABLE_NOT_ADMITTED", "DELEGATION_UNRESOLVED", "DELEGATION_STALE"} else None
     if state == "INVALID":
         decision_version = decision_fp = None
-    elif row is not None and expose:
+    elif row_valid and expose and (state != "UPSTREAM_UNRESOLVED" or row_current):
         decision_version, decision_fp = row.decision_version, row.decision_fingerprint
     else:
         decision_version = decision_fp = None
     if state in {"NOT_APPLICABLE_DELEGATED", "NOT_APPLICABLE_NOT_ADMITTED", "DELEGATION_UNRESOLVED", "DELEGATION_STALE"} or (state == "UPSTREAM_UNRESOLVED" and not expose):
         basis = (None, None, None, None, None)
-    elif state == "CURRENT" or (state == "UPSTREAM_UNRESOLVED" and expose and row is not None and _valid_row(row) and _current_matches(row, context, planning_fp)):
+    elif state == "CURRENT" or (state == "UPSTREAM_UNRESOLVED" and expose and row_current):
         if kind == "PENSION":
             basis = (row.income_basis, row.income_basis_provenance, "NOMINAL_AT_RETIREMENT_TARGET_DATE", None, "OWNER_DECISION_OD2")
         else:
@@ -486,16 +701,25 @@ def read(db: Session, client_id: int) -> dict:
         raise CRTISBAError("CRTISBA_DATABASE_FAILURE", 503) from exc
 
 
-def _lock_source(db: Session, client_id: int, source_id: str, kind: str):
-    if kind == "RECURRING_INCOME":
+def _source_kind(source_id: str) -> str | None:
+    if source_id.startswith("income:"):
+        return "RECURRING_INCOME"
+    if source_id.startswith(("manual:", "conversion:")):
+        return "PENSION"
+    return None
+
+
+def _lock_source(db: Session, client_id: int, source_id: str, kind: str | None = None):
+    actual_kind = _source_kind(source_id)
+    if actual_kind == "RECURRING_INCOME":
         try: identity = int(source_id.removeprefix("income:"))
         except ValueError: raise CRTISBAError("CRTISBA_SOURCE_NOT_FOUND", 404, ["/path/source_id"])
         row = db.scalar(select(RecurringIncome).where(RecurringIncome.id == identity, RecurringIncome.client_id == client_id).with_for_update())
         current = row is not None and row.lifecycle_status == "current"
-    elif source_id.startswith("manual:"):
+    elif actual_kind == "PENSION" and source_id.startswith("manual:"):
         row = db.scalar(select(CanonicalManualPensionSource).where(CanonicalManualPensionSource.manual_pension_source_id == source_id.removeprefix("manual:"), CanonicalManualPensionSource.client_id == client_id).with_for_update())
         current = row is not None and row.lifecycle_status == "current"
-    elif source_id.startswith("conversion:"):
+    elif actual_kind == "PENSION" and source_id.startswith("conversion:"):
         row = db.execute(select(canonical_pension_destinations).where(canonical_pension_destinations.c.pension_destination_id == source_id.removeprefix("conversion:"), canonical_pension_destinations.c.client_id == client_id).with_for_update()).mappings().first()
         current = row is not None and row["status"] == "active"
     else:
@@ -504,12 +728,22 @@ def _lock_source(db: Session, client_id: int, source_id: str, kind: str):
         raise CRTISBAError("CRTISBA_SOURCE_NOT_FOUND", 404, ["/path/source_id"])
     if not current:
         raise CRTISBAError("CRTISBA_SOURCE_NOT_CURRENT", 409, ["/path/source_id"])
-    return row
+    return row, actual_kind
+
+
+def _normalized_sqlstate(exc: DBAPIError) -> str:
+    orig = getattr(exc, "orig", None)
+    for candidate in (getattr(orig, "pgcode", None), getattr(orig, "sqlstate", None)):
+        if isinstance(candidate, str):
+            normalized = candidate.upper()
+            if SQLSTATE.fullmatch(normalized):
+                return normalized
+    return ""
 
 
 def _classify_integrity(exc: DBAPIError, phase: str) -> CRTISBAError:
     orig = getattr(exc, "orig", None)
-    state = str(getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None) or "").upper()
+    state = _normalized_sqlstate(exc)
     diag = getattr(orig, "diag", None)
     constraint = getattr(diag, "constraint_name", None)
     invalid = bool(getattr(exc, "connection_invalidated", False))
@@ -550,27 +784,25 @@ def write(db: Session, client_id: int, source_id: str, command: _Command, actor:
     _pristine(db)
     if not isinstance(actor, str) or not actor or len(actor) > 128:
         raise CRTISBAError("INTERNAL_ERROR", 500)
-    acquired, phase = False, "BEFORE_TRANSACTION"
+    acquired, phase, commit_connection = False, "BEFORE_TRANSACTION", None
     try:
         _begin(db, write=True); acquired, phase = True, "IN_TRANSACTION"
         if db.get(Client, client_id) is None:
             raise CRTISBAError("CLIENT_NOT_FOUND", 404, ["/path/client_id"])
-        planning, blocked = _planning(db, client_id, command.operation, source_id)
-        if blocked:
-            _rollback(db)
-            return blocked
-        _lock_source(db, client_id, source_id, command.source_kind)
-        if command.expected_planning_calculation_input_fingerprint != planning["planning_calculation_input_fingerprint"]:
-            raise CRTISBAError(
-                "CRTISBA_PLANNING_IDENTITY_STALE", 409,
-                ["/expected_planning_calculation_input_fingerprint"],
-            )
-        latest = db.scalar(select(Decision).where(Decision.client_id == client_id, Decision.source_kind == command.source_kind, Decision.source_id == source_id).order_by(desc(Decision.decision_version)).limit(1).with_for_update())
+        _source_row, actual_kind = _lock_source(db, client_id, source_id)
+        if actual_kind != command.source_kind:
+            raise CRTISBAError("CRTISBA_SOURCE_KIND_MISMATCH", 409, ["/source_kind"])
+        latest = db.scalar(select(Decision).where(Decision.client_id == client_id, Decision.source_kind == actual_kind, Decision.source_id == source_id).order_by(desc(Decision.decision_version)).limit(1).with_for_update())
         blocked, snapshot = _derive_snapshot(db, client_id, command.operation, source_id)
         if blocked:
             _rollback(db)
             return blocked
         planning = snapshot["planning"]
+        if command.expected_planning_calculation_input_fingerprint != planning["planning_calculation_input_fingerprint"]:
+            raise CRTISBAError(
+                "CRTISBA_PLANNING_IDENTITY_STALE", 409,
+                ["/expected_planning_calculation_input_fingerprint"],
+            )
         context = snapshot["contexts"].get(source_id)
         rtisa_entry = next((item for item in snapshot["rtisa"]["source_entries"] if item.get("source_id") == source_id), None)
         if context is None or rtisa_entry is None:
@@ -642,6 +874,7 @@ def write(db: Session, client_id: int, source_id: str, command: _Command, actor:
                 price_reference_date=None,
                 price_basis_provenance="OWNER_DECISION_OD2",
             )
+        commit_connection = db.connection()
         phase = "COMMIT_DISPATCHED"; db.commit(); phase = "COMMITTED"
         return result
     except CRTISBAError:
@@ -650,7 +883,9 @@ def write(db: Session, client_id: int, source_id: str, command: _Command, actor:
     except DBAPIError as exc:
         classified = _classify_integrity(exc, phase)
         if classified.code == "CRTISBA_COMMIT_OUTCOME_UNKNOWN":
-            try: db.connection().invalidate()
+            try:
+                if commit_connection is not None:
+                    commit_connection.invalidate()
             except Exception: pass
             db.close()
         elif db.in_transaction():

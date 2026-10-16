@@ -62,18 +62,19 @@ def upgrade():
         op.execute("""CREATE FUNCTION reject_crtisba_decision_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='P7501', CONSTRAINT='trg_crtisba_decision_immutable', MESSAGE='CRTISBA_DECISION_IMMUTABLE'; END; $$""")
         op.execute(f"CREATE TRIGGER trg_crtisba_decision_immutable BEFORE UPDATE OR DELETE ON {TABLE} FOR EACH ROW EXECUTE FUNCTION reject_crtisba_decision_mutation()")
         role = os.environ.get("CRTISBA_APPLICATION_DB_ROLE")
-        if role:
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", role) is None:
-                raise RuntimeError("CRTISBA_APPLICATION_DB_ROLE is not a valid PostgreSQL identifier")
-            quoted = bind.dialect.identifier_preparer.quote_identifier(role)
-            sequence = bind.scalar(sa.text("SELECT pg_get_serial_sequence(:table_name, 'decision_id')"), {"table_name": TABLE})
-            if not sequence:
-                raise RuntimeError("CRTISBA identity sequence was not created")
-            quoted_sequence = ".".join(bind.dialect.identifier_preparer.quote_identifier(part) for part in sequence.split("."))
-            op.execute(f"REVOKE ALL PRIVILEGES ON TABLE {TABLE} FROM {quoted}")
-            op.execute(f"GRANT SELECT, INSERT ON TABLE {TABLE} TO {quoted}")
-            op.execute(f"REVOKE ALL PRIVILEGES ON SEQUENCE {quoted_sequence} FROM {quoted}")
-            op.execute(f"GRANT USAGE, SELECT ON SEQUENCE {quoted_sequence} TO {quoted}")
+        if not role:
+            raise RuntimeError("CRTISBA_APPLICATION_DB_ROLE is required for PostgreSQL")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", role) is None:
+            raise RuntimeError("CRTISBA_APPLICATION_DB_ROLE is not a valid PostgreSQL identifier")
+        quoted = bind.dialect.identifier_preparer.quote_identifier(role)
+        sequence = bind.scalar(sa.text("SELECT pg_get_serial_sequence(:table_name, 'decision_id')"), {"table_name": TABLE})
+        if not sequence:
+            raise RuntimeError("CRTISBA identity sequence was not created")
+        quoted_sequence = ".".join(bind.dialect.identifier_preparer.quote_identifier(part) for part in sequence.split("."))
+        op.execute(f"REVOKE ALL PRIVILEGES ON TABLE {TABLE} FROM {quoted}")
+        op.execute(f"GRANT SELECT, INSERT ON TABLE {TABLE} TO {quoted}")
+        op.execute(f"REVOKE ALL PRIVILEGES ON SEQUENCE {quoted_sequence} FROM {quoted}")
+        op.execute(f"GRANT USAGE, SELECT ON SEQUENCE {quoted_sequence} TO {quoted}")
 
 
 def downgrade():

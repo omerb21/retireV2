@@ -25,10 +25,18 @@ BACKEND = Path(__file__).resolve().parents[1]
 ROLE = "crtisba_test_app"
 
 
-def migrate(url, *args):
+def migrate_result(url, *args, role=ROLE):
+    env = {**os.environ, "DATABASE_URL": url, "PYTHONIOENCODING": "utf-8"}
+    env.pop("CRTISBA_APPLICATION_DB_ROLE", None)
+    if role is not None:
+        env["CRTISBA_APPLICATION_DB_ROLE"] = role
     result = subprocess.run([sys.executable, "-m", "alembic", *args], cwd=BACKEND,
-        env={**os.environ, "DATABASE_URL": url, "CRTISBA_APPLICATION_DB_ROLE": ROLE,
-             "PYTHONIOENCODING": "utf-8"}, capture_output=True, text=True, encoding="utf-8", timeout=180)
+        env=env, capture_output=True, text=True, encoding="utf-8", timeout=180)
+    return result
+
+
+def migrate(url, *args):
+    result = migrate_result(url, *args)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
@@ -39,6 +47,14 @@ def _prepare(url):
         connection.execute(text("CREATE ROLE crtisba_test_app NOLOGIN"))
     migrate(url, "upgrade", "b3c9d6f2a410")
     old = set(inspect(engine).get_table_names())
+    missing_role = migrate_result(url, "upgrade", "c4e8a2f6b731", role=None)
+    assert missing_role.returncode != 0
+    assert "CRTISBA_APPLICATION_DB_ROLE is required" in missing_role.stdout + missing_role.stderr
+    assert subject.Decision.__tablename__ not in inspect(engine).get_table_names()
+    invalid_role = migrate_result(url, "upgrade", "c4e8a2f6b731", role="invalid-role")
+    assert invalid_role.returncode != 0
+    assert "CRTISBA_APPLICATION_DB_ROLE is not a valid PostgreSQL identifier" in invalid_role.stdout + invalid_role.stderr
+    assert subject.Decision.__tablename__ not in inspect(engine).get_table_names()
     migrate(url, "upgrade", "c4e8a2f6b731")
     assert set(inspect(engine).get_table_names()) - old == {subject.Decision.__tablename__}
     return engine
@@ -71,7 +87,7 @@ def _command(result, entry):
     })
 
 
-def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(postgres_url):
+def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(postgres_url, monkeypatch):
     engine = _prepare(postgres_url)
     try:
         with engine.connect() as connection:
@@ -244,6 +260,31 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
                 temporal_authority_explicit=True, source_note=None,
                 lifecycle_status="current", version=1,
             ))
+        pension_result, pension_entry = _current(engine, "manual:manual-lock")
+        pension_command = TypeAdapter(CRTISBACommand).validate_python({
+            "schema_version": "CRTISBA_PENSION_CLASSIFY_COMMAND_V1",
+            "operation": "CLASSIFY", "source_kind": "PENSION",
+            "expected_decision_version": 0,
+            "expected_planning_calculation_input_fingerprint":
+                pension_result["planning_calculation_input_fingerprint"],
+            "expected_source_version": pension_entry["source_version"],
+            "expected_source_fingerprint": pension_entry["source_fingerprint"],
+            "expected_amount_authority_fingerprint": pension_entry["amount_authority_fingerprint"],
+            "income_basis": "NET",
+        })
+        with Session(engine) as db:
+            pension_written = subject.write(
+                db, 1, "manual:manual-lock", pension_command, "trusted:professional"
+            )
+        assert pension_written["price_basis"] == "NOMINAL_AT_RETIREMENT_TARGET_DATE"
+        assert pension_written["price_basis_provenance"] == "OWNER_DECISION_OD2"
+        with engine.connect() as connection:
+            pension_row = connection.execute(text(f"""
+                SELECT price_basis, price_reference_date, price_basis_provenance
+                FROM {subject.Decision.__tablename__}
+                WHERE source_id='manual:manual-lock'
+            """)).one()
+            assert pension_row == (None, None, None)
         product = seeded_product(engine)
         with Session(engine) as db, db.begin():
             converted = execute_conversion(
@@ -378,5 +419,79 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             ), {"source_pk": unrelated_pk})
         _, unrelated_stale = _current(engine, source_id)
         assert unrelated_stale["decision_state"] == "STALE"
+
+        # The public write owner captures the exact connection before commit.
+        # A real PostgreSQL disconnect during commit is classified as uncertain,
+        # invalidates that captured connection, closes the Session, and never
+        # asks the failed Session for a replacement connection or replays.
+        uncertainty_before, uncertainty_entry = _current(engine, source_id)
+        uncertainty_command = _command(uncertainty_before, uncertainty_entry)
+        uncertain_db = Session(engine)
+        original_connection = uncertain_db.connection
+        original_commit = uncertain_db.commit
+        observed = {"failed": False, "post_failure_connection_calls": 0,
+                    "captured": None, "commit_calls": 0}
+
+        def tracked_connection(*args, **kwargs):
+            if observed["failed"]:
+                observed["post_failure_connection_calls"] += 1
+                raise AssertionError("failed Session connection was reacquired")
+            connection = original_connection(*args, **kwargs)
+            observed["captured"] = connection
+            return connection
+
+        def disconnected_commit():
+            observed["commit_calls"] += 1
+            connection = observed["captured"]
+            pid = connection.connection.driver_connection.get_backend_pid()
+            with engine.begin() as killer:
+                assert killer.scalar(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid}) is True
+            try:
+                return original_commit()
+            finally:
+                observed["failed"] = True
+
+        monkeypatch.setattr(uncertain_db, "connection", tracked_connection)
+        monkeypatch.setattr(uncertain_db, "commit", disconnected_commit)
+        with pytest.raises(subject.CRTISBAError) as uncertain:
+            subject.write(
+                uncertain_db, 1, source_id, uncertainty_command, "trusted:professional"
+            )
+        assert uncertain.value.code == "CRTISBA_COMMIT_OUTCOME_UNKNOWN"
+        assert observed["commit_calls"] == 1
+        assert observed["post_failure_connection_calls"] == 0
+        assert observed["captured"].invalidated or observed["captured"].closed
+        assert not uncertain_db.in_transaction()
+        reconciled_after_uncertainty, _ = _current(engine, source_id)
+        assert reconciled_after_uncertainty["schema_version"] == "CRTISBA_COLLECTION_RESULT_V1"
+
+        # PostgreSQL BIGINT ceiling evidence: a sparse MAX value is bounded by
+        # aggregate count/min/max validation.  No Python range proportional to
+        # the persisted version is constructed and the chain fails closed.
+        with engine.begin() as connection:
+            connection.execute(text(f"""
+                INSERT INTO {subject.Decision.__tablename__} (
+                    client_id, source_id, source_kind, decision_version,
+                    planning_calculation_input_fingerprint,
+                    recurring_source_version_fingerprint, source_fingerprint,
+                    amount_authority_fingerprint, income_basis,
+                    income_basis_provenance, price_basis,
+                    price_reference_date, price_basis_provenance,
+                    decision_actor, decision_fingerprint
+                )
+                SELECT client_id, source_id, source_kind, :max_version,
+                    planning_calculation_input_fingerprint,
+                    recurring_source_version_fingerprint, source_fingerprint,
+                    amount_authority_fingerprint, income_basis,
+                    income_basis_provenance, price_basis,
+                    price_reference_date, price_basis_provenance,
+                    decision_actor, decision_fingerprint
+                FROM {subject.Decision.__tablename__}
+                WHERE source_id=:source_id
+                ORDER BY decision_version DESC LIMIT 1
+            """), {"max_version": subject.MAX_VERSION, "source_id": source_id})
+        _, ceiling_entry = _current(engine, source_id)
+        assert ceiling_entry["decision_state"] == "INVALID"
+        assert ceiling_entry["decision_version"] is None
     finally:
         engine.dispose()

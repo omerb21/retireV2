@@ -1,11 +1,12 @@
 from datetime import date
 from decimal import Decimal
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -310,12 +311,12 @@ def test_reachable_no_collection_mapping_and_mapping_mutation(monkeypatch, block
         "client_id": 1,
         "planning_calculation_input_fingerprint": H,
         "retirement_target": {"retirement_target_ready": True, "retirement_target_date": "2030-01-01"},
-        "pension_inputs": [], "general_income_inputs": [],
+        "pension_inputs": [], "general_income_inputs": [], "excluded_sources": [],
+        "blocking_facts": [], "planning_input_ready": True,
     }
     rtisa = subject.rtisa_service._empty_result(1, H, "2030-01-01", blocker)
     db = SimpleNamespace(get=lambda *_: object())
     monkeypatch.setattr(subject, "_planning", lambda *_: (planning, None))
-    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", lambda *_: {})
     monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", lambda *_: rtisa)
 
     before, _ = subject._derive_snapshot(db, 1, "READ")
@@ -337,11 +338,11 @@ def test_no_collection_rejects_multiple_unlisted_and_tampered_results(monkeypatc
     planning = {
         "client_id": 1, "planning_calculation_input_fingerprint": H,
         "retirement_target": {"retirement_target_ready": True, "retirement_target_date": "2030-01-01"},
-        "pension_inputs": [], "general_income_inputs": [],
+        "pension_inputs": [], "general_income_inputs": [], "excluded_sources": [],
+        "blocking_facts": [], "planning_input_ready": True,
     }
     db = SimpleNamespace(get=lambda *_: object())
     monkeypatch.setattr(subject, "_planning", lambda *_: (planning, None))
-    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", lambda *_: {})
     candidate = subject.rtisa_service._empty_result(1, H, "2030-01-01", "RTISA_SOURCE_UNIVERSE_INVALID")
     monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", lambda *_: candidate)
     for blockers in ([], ["UNKNOWN"], ["RTISA_SOURCE_UNIVERSE_INVALID", "RTISA_PENSION_RESULT_INVALID"]):
@@ -352,6 +353,68 @@ def test_no_collection_rejects_multiple_unlisted_and_tampered_results(monkeypatc
         with pytest.raises(subject.CRTISBAError) as caught:
             subject._derive_snapshot(db, 1, "READ")
         assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+
+def test_actual_rtisa_source_universe_no_collection_branch_is_consumed(engine, monkeypatch):
+    _authority(engine)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO recurring_income "
+            "(id,client_id,income_category,description,amount,amount_basis,frequency,"
+            "continuation_status,lifecycle_status,source_status,verification_state,start_date) "
+            "VALUES (-1,1,'rental','invalid identity',100,'gross','monthly','ongoing',"
+            "'current','planner entered','reviewed','2025-01-01')"
+        ))
+    original = subject.rtisa_service.read_in_snapshot
+    produced = []
+
+    def observed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        produced.append(result)
+        return result
+
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", observed)
+    result = _read(engine)
+    assert produced and produced[0]["blockers"] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
+    assert produced[0]["source_entries"] == []
+    assert (result["failure_stage"], result["failure_detail_code"]) == (
+        "source_universe", "CRTISBA_SOURCE_UNIVERSE_INVALID"
+    )
+
+
+def test_actual_rtisa_pension_result_no_collection_branch_is_consumed(engine, monkeypatch):
+    with Session(engine) as db, db.begin():
+        db.add(PlanningInputDecision(
+            client_id=1, version=1, planning_base_date=date(2026, 1, 1),
+            retirement_target_date=date(2030, 1, 1),
+            retirement_target_decision_actor="planner:test",
+            retirement_target_reference_fingerprint=H, actor="planner:test",
+        ))
+    original_portfolio = subject.portfolio_service.execute_from_planning_result
+    original_rtisa = subject.rtisa_service.read_in_snapshot
+    calls = []
+    produced = []
+
+    def portfolio_by_boundary(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            return original_portfolio(*args, **kwargs)
+        return {"schema_version": "malformed-actual-upstream-result"}
+
+    def observed(*args, **kwargs):
+        result = original_rtisa(*args, **kwargs)
+        produced.append(result)
+        return result
+
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", portfolio_by_boundary)
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", observed)
+    result = _read(engine)
+    assert len(calls) == 2 and produced
+    assert produced[0]["blockers"] == ["RTISA_PENSION_RESULT_INVALID"]
+    assert produced[0]["source_entries"] == []
+    assert (result["failure_stage"], result["failure_detail_code"]) == (
+        "pension_result", "CRTISBA_PENSION_RESULT_INVALID"
+    )
 
 
 def test_planning_preemptions_do_not_enter_rtisa(monkeypatch):
@@ -383,7 +446,7 @@ def test_planning_preemptions_do_not_enter_rtisa(monkeypatch):
     assert entered == []
 
 
-def test_stale_planning_cas_preempts_rtisa_after_source_lock(engine, monkeypatch):
+def test_stale_planning_cas_is_revalidated_after_source_and_decision_locks(engine, monkeypatch):
     global _CURRENT_PLANNING
     _authority(engine)
     initial = _read(engine)
@@ -391,14 +454,16 @@ def test_stale_planning_cas_preempts_rtisa_after_source_lock(engine, monkeypatch
     command = _command(initial["source_basis_entries"][0])
     command.expected_planning_calculation_input_fingerprint = "b" * 64
     entered = []
-    original = subject._derive_snapshot
-    monkeypatch.setattr(subject, "_derive_snapshot", lambda *_args, **_kwargs: entered.append(True))
+    original = subject.rtisa_service.read_in_snapshot
+    def observed_rtisa(*args, **kwargs):
+        entered.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", observed_rtisa)
     with Session(engine) as db, pytest.raises(subject.CRTISBAError) as caught:
         subject.write(db, 1, "income:1", command, "actor")
     assert caught.value.code == "CRTISBA_PLANNING_IDENTITY_STALE"
     assert caught.value.field_paths == ["/expected_planning_calculation_input_fingerprint"]
-    assert entered == []
-    monkeypatch.setattr(subject, "_derive_snapshot", original)
+    assert entered == [True]
 
 
 def test_decision_preimage_mutation_is_detected_and_restored(monkeypatch):
@@ -618,3 +683,164 @@ def test_post_dispatch_uncertainty_precedence_mutation_and_restoration(monkeypat
         ordinary_oracle()
     monkeypatch.setattr(subject, "_classify_integrity", original)
     ordinary_oracle()
+
+
+def test_fixed_independent_golden_fingerprints():
+    source_fp = "1" * 64
+    planning_fp = "2" * 64
+    amount_fp = "3" * 64
+    admission_fp = "4" * 64
+    amount_preimage = {
+        "contract": subject.RECURRING_AMOUNT_CONTRACT,
+        "client_id": 7, "source_id": "income:9", "source_fingerprint": source_fp,
+        "amount": "1234.50", "amount_basis": "gross", "frequency": "monthly",
+    }
+    assert subject.fingerprint(amount_preimage) == "27152ba73c864b4110a9ac9fc1e0d9baec965e5fe594d6d7a11aaf36a261256f"
+
+    decision = {
+        "client_id": 7, "source_id": "income:9", "source_kind": "RECURRING_INCOME",
+        "decision_version": 3, "planning_calculation_input_fingerprint": planning_fp,
+        "source_version": source_fp, "source_fingerprint": source_fp,
+        "amount_authority_fingerprint": amount_fp, "income_basis": "GROSS",
+        "income_basis_provenance": "UPSTREAM_RECURRING_AMOUNT_BASIS",
+        "price_basis": "REAL_AT_REFERENCE_DATE", "price_reference_date": date(2026, 1, 15),
+        "price_basis_provenance": "EXPLICIT_PROFESSIONAL",
+    }
+    assert subject.decision_fingerprint(decision) == "70ff8553393765b20541889b6f03f463a0a158d848f43dec0db1ad3e1bafe34b"
+
+    failure = subject._failure(7, "income:9", "CLASSIFY", "source_identity",
+        "CRTISBA_SOURCE_FINGERPRINT_STALE", ["/expected_source_fingerprint"], {
+            "planning": planning_fp, "source_version": source_fp,
+            "source_fingerprint": source_fp, "amount": amount_fp, "decision_version": 2,
+        })
+    assert failure["failure_fingerprint"] == "3111e947dc8278c7cd49563e2f32578946f17512e08e6569d0c1e52186b98582"
+
+    collection = {
+        "schema_version": "CRTISBA_COLLECTION_RESULT_V1", "client_id": 7,
+        "planning_calculation_input_fingerprint": planning_fp,
+        "retirement_target_date": "2035-06-30",
+        "rtisa_admission_result_fingerprint": admission_fp,
+        "source_basis_entries": [],
+        "partitions": {name: [] for name in subject.PARTITION_STATES.values()},
+        "blockers": [], "basis_readiness_state": "READY", "basis_ready": True,
+    }
+    assert subject.fingerprint({"contract": subject.RESULT_CONTRACT, "result": collection}) \
+        == "3107c133184b4b14df596ab2d68bcf4da89361e4af8e9d92ecabdcd4b673cd48"
+
+
+def test_complete_upstream_envelopes_reject_semantic_tampering_with_matching_hash(engine, monkeypatch):
+    _authority(engine)
+    original_planning = subject.planning_input_service.derive
+
+    def wrong_planning(*args, **kwargs):
+        result = deepcopy(original_planning(*args, **kwargs))
+        result["general_income_inputs"][0]["source_fingerprint"] = "not-a-sha"
+        # The accepted calculation fingerprint is intentionally left intact:
+        # a matching outer hash cannot bless a malformed source envelope.
+        return result
+
+    monkeypatch.setattr(subject.planning_input_service, "derive", wrong_planning)
+    with Session(engine) as db, pytest.raises(subject.CRTISBAError) as planning_error:
+        subject.read(db, 1)
+    assert planning_error.value.code == "PRODUCER_RESPONSE_INVALID"
+    monkeypatch.setattr(subject.planning_input_service, "derive", original_planning)
+
+    original_portfolio = subject.portfolio_service.execute_from_planning_result
+
+    def wrong_portfolio(*args, **kwargs):
+        result = deepcopy(original_portfolio(*args, **kwargs))
+        result["client_id"] = 2
+        payload = subject.portfolio_service._ready_result_payload(result)
+        result["portfolio_result_fingerprint"] = subject.portfolio_service._result_fingerprint(payload)
+        return result
+
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", wrong_portfolio)
+    with Session(engine) as db, pytest.raises(subject.CRTISBAError) as portfolio_error:
+        subject.read(db, 1)
+    assert portfolio_error.value.code == "PRODUCER_RESPONSE_INVALID"
+    monkeypatch.setattr(subject.portfolio_service, "execute_from_planning_result", original_portfolio)
+
+    original_rtisa = subject.rtisa_service.read_in_snapshot
+    def rebound_rtisa(*args, **kwargs):
+        result = deepcopy(original_rtisa(*args, **kwargs))
+        result["source_entries"][0]["upstream_identity"]["source_fingerprint"] = "f" * 64
+        payload = {key: value for key, value in result.items() if key != "admission_result_fingerprint"}
+        result["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(payload)
+        return result
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", rebound_rtisa)
+    with Session(engine) as db, pytest.raises(subject.CRTISBAError) as rtisa_error:
+        subject.read(db, 1)
+    assert rtisa_error.value.code == "PRODUCER_RESPONSE_INVALID"
+
+
+def test_bigint_max_version_chain_is_bounded_and_invalid_without_range_allocation(engine):
+    global _CURRENT_PLANNING
+    _authority(engine)
+    initial = _read(engine)
+    _CURRENT_PLANNING = initial["planning_calculation_input_fingerprint"]
+    entry = initial["source_basis_entries"][0]
+    with Session(engine) as db:
+        subject.write(db, 1, "income:1", _command(entry), "actor")
+    with Session(engine) as db, db.begin():
+        first = db.scalar(select(RetirementTargetDateIncomeSourceBasisDecision))
+        values = subject._row_values(first) | {"decision_version": subject.MAX_VERSION}
+        db.add(RetirementTargetDateIncomeSourceBasisDecision(
+            client_id=1, source_id="income:1", source_kind="RECURRING_INCOME",
+            decision_version=subject.MAX_VERSION,
+            planning_calculation_input_fingerprint=first.planning_calculation_input_fingerprint,
+            pension_source_version=None,
+            recurring_source_version_fingerprint=first.recurring_source_version_fingerprint,
+            source_fingerprint=first.source_fingerprint,
+            amount_authority_fingerprint=first.amount_authority_fingerprint,
+            pension_source_execution_fingerprint=None, pension_source_result_fingerprint=None,
+            portfolio_source_entry_fingerprint=None, retirement_target_date=None,
+            income_basis=first.income_basis, income_basis_provenance=first.income_basis_provenance,
+            price_basis=first.price_basis, price_reference_date=first.price_reference_date,
+            price_basis_provenance=first.price_basis_provenance,
+            decision_actor="actor", decision_fingerprint=subject.decision_fingerprint(values),
+        ))
+    observed = _read(engine)["source_basis_entries"][0]
+    assert observed["decision_state"] == "INVALID"
+    assert observed["decision_version"] is None and observed["decision_fingerprint"] is None
+
+
+def test_frequency_unsupported_never_exposes_stale_decision_identity(engine):
+    global _CURRENT_PLANNING
+    _authority(engine)
+    initial = _read(engine)
+    _CURRENT_PLANNING = initial["planning_calculation_input_fingerprint"]
+    with Session(engine) as db:
+        subject.write(db, 1, "income:1", _command(initial["source_basis_entries"][0]), "actor")
+    with Session(engine) as db, db.begin():
+        db.scalar(select(RecurringIncome).where(RecurringIncome.id == 1)).frequency = "other"
+    observed = _read(engine)["source_basis_entries"][0]
+    assert observed["decision_state"] == "UPSTREAM_UNRESOLVED"
+    assert observed["rtisa_reason_codes"] == ["RTISA_SOURCE_FREQUENCY_UNSUPPORTED"]
+    assert observed["decision_version"] is None and observed["decision_fingerprint"] is None
+    assert observed["price_basis"] == "UNKNOWN"
+
+
+def test_existing_source_wrong_kind_is_mismatch_not_not_found(engine):
+    _authority(engine)
+    initial = _read(engine)
+    entry = initial["source_basis_entries"][0]
+    command = TypeAdapter(CRTISBACommand).validate_python({
+        "schema_version": "CRTISBA_PENSION_CLASSIFY_COMMAND_V1", "operation": "CLASSIFY",
+        "source_kind": "PENSION", "expected_decision_version": 0,
+        "expected_planning_calculation_input_fingerprint": initial["planning_calculation_input_fingerprint"],
+        "expected_source_version": 1, "expected_source_fingerprint": entry["source_fingerprint"],
+        "expected_amount_authority_fingerprint": entry["amount_authority_fingerprint"],
+        "income_basis": "GROSS",
+    })
+    with Session(engine) as db, pytest.raises(subject.CRTISBAError) as caught:
+        subject.write(db, 1, "income:1", command, "actor")
+    assert caught.value.code == "CRTISBA_SOURCE_KIND_MISMATCH"
+
+
+def test_malformed_pgcode_falls_back_to_valid_sqlstate():
+    orig = RuntimeError("structured fields only")
+    orig.pgcode = "not-a-state"
+    orig.sqlstate = "23505"
+    orig.diag = SimpleNamespace(constraint_name="uq_crtisba_source_decision_version")
+    exc = DBAPIError.instance("statement", {}, orig, RuntimeError, connection_invalidated=False)
+    assert subject._classify_integrity(exc, "COMMIT_DISPATCHED").code == "CRTISBA_DECISION_VERSION_CONFLICT"

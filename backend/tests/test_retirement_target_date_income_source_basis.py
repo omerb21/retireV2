@@ -1277,13 +1277,34 @@ def test_independent_nonempty_collection_golden_fingerprint():
         "source_id": "income:9", "source_kind": "RECURRING_INCOME",
         "source_category": "RENTAL", "admission_state": "INCLUDED",
         "rtisa_reason_codes": [], "source_version": "1" * 64,
-        "source_fingerprint": "2" * 64, "amount_authority_fingerprint": "3" * 64,
-        "decision_version": 3, "decision_fingerprint": "4" * 64,
+        "source_fingerprint": "1" * 64, "amount_authority_fingerprint": "3" * 64,
+        "decision_version": 3, "decision_fingerprint": None,
         "decision_state": "CURRENT", "income_basis": "GROSS",
         "income_basis_provenance": "UPSTREAM_RECURRING_AMOUNT_BASIS",
         "price_basis": "REAL_AT_REFERENCE_DATE", "price_reference_date": "2026-01-15",
         "price_basis_provenance": "EXPLICIT_PROFESSIONAL", "blockers": [],
     }
+    # Independent canonical decision preimage: no opaque SHA-shaped placeholder.
+    import hashlib
+    import json
+    decision_preimage = {
+        "contract": subject.DECISION_CONTRACT, "client_id": 7,
+        "source_id": "income:9", "source_kind": "RECURRING_INCOME",
+        "decision_version": 3, "planning_calculation_input_fingerprint": "5" * 64,
+        "source_version": "1" * 64, "source_fingerprint": "1" * 64,
+        "amount_authority_fingerprint": "3" * 64, "income_basis": "GROSS",
+        "income_basis_provenance": "UPSTREAM_RECURRING_AMOUNT_BASIS",
+        "price_basis": "REAL_AT_REFERENCE_DATE", "price_reference_date": "2026-01-15",
+        "price_basis_provenance": "EXPLICIT_PROFESSIONAL",
+    }
+    independent_digest = lambda obj: hashlib.sha256(json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    entry["decision_fingerprint"] = independent_digest(decision_preimage)
+    assert entry["source_version"] == entry["source_fingerprint"]
+    assert entry["decision_fingerprint"] == subject.decision_fingerprint({
+        **decision_preimage, "price_reference_date": date(2026, 1, 15),
+    })
     assert set(entry) == {
         "schema_version", "source_id", "source_kind", "source_category", "admission_state",
         "rtisa_reason_codes", "source_version", "source_fingerprint",
@@ -1306,7 +1327,7 @@ def test_independent_nonempty_collection_golden_fingerprint():
         "retirement_target_date", "rtisa_admission_result_fingerprint",
         "source_basis_entries", "partitions", "blockers", "basis_readiness_state", "basis_ready",
     }
-    expected = "ca7f8e242964b2a49ef58f48ee6b7275de426a65ab1035859f05772a8fa9d352"
+    expected = "a40de6cf25715aa904ac7a664c698b523146964a59a73e57d41b1e1c2852d72e"
     assert subject.fingerprint({
         "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_RESULT_JSON_V1",
         "result": value,
@@ -1321,10 +1342,14 @@ def test_rehashed_rtisa_semantic_category_and_provenance_tampering(engine, monke
     """IMP-001: independent Planning authority dominates a rehashed RTISA response."""
     _authority(engine)
     original = subject.rtisa_service.read_in_snapshot
+    original_guard = subject._rtisa_envelope_valid
+    valid_entry = {}
 
     def corrupted(*args, **kwargs):
         result = deepcopy(original(*args, **kwargs))
         entry = result["source_entries"][0]
+        valid_entry.clear()
+        valid_entry.update(deepcopy(entry))
         if tamper in {"category", "delegation_category"}:
             entry["source_category"] = ("PENSION_REPRESENTATION" if tamper == "delegation_category" else "EMPLOYMENT")
         elif tamper == "nested_origin":
@@ -1347,9 +1372,39 @@ def test_rehashed_rtisa_semantic_category_and_provenance_tampering(engine, monke
         return result
 
     monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", corrupted)
-    with pytest.raises(subject.CRTISBAError) as caught:
-        _read(engine)
-    assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+    def oracle():
+        with pytest.raises(subject.CRTISBAError) as caught:
+            _read(engine)
+        assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+    oracle()
+
+    def mapping_deleted(result, *args):
+        normalized = deepcopy(result)
+        entry = normalized["source_entries"][0]
+        if tamper in {"category", "delegation_category"}:
+            entry["source_category"] = valid_entry["source_category"]
+        elif tamper == "nested_origin":
+            entry["provenance"]["origin_kind"] = valid_entry["provenance"]["origin_kind"]
+        elif tamper == "nested_verification_state":
+            entry["provenance"]["verification_state"] = valid_entry["provenance"]["verification_state"]
+        elif tamper == "resolution":
+            entry["upstream_identity"]["resolution"] = valid_entry["upstream_identity"]["resolution"]
+        elif tamper == "nested_extra":
+            entry["provenance"].pop("unexpected")
+        else:
+            entry["provenance"]["source_status"] = valid_entry["provenance"]["source_status"]
+        normalized["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {key: value for key, value in normalized.items() if key != "admission_result_fingerprint"}
+        )
+        return original_guard(normalized, *args)
+
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", mapping_deleted)
+    with pytest.raises(pytest.fail.Exception):
+        oracle()
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", original_guard)
+    oracle()
 
 
 @pytest.mark.parametrize("source_id", ["income:banana", "income:", "income:0", "income:01"])
@@ -1401,7 +1456,7 @@ def test_invalid_planning_pension_canonical_identity_rejected(engine, monkeypatc
 def test_pension_input_preemption_guard_removal_enters_real_rtisa_producer(
     engine, monkeypatch, invalidity
 ):
-    """TEST-002: every RTISA pension-identity branch is preempted and mutation-sensitive."""
+    """TEST-002: prove the exact redundant guard dependency without fabricating a kill."""
     with Session(engine) as db, db.begin():
         canonical_manual_pension_service.create(db, 1, facts(
             monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
@@ -1414,9 +1469,6 @@ def test_pension_input_preemption_guard_removal_enters_real_rtisa_producer(
         ))
     with Session(engine) as db:
         valid_planning = subject.planning_input_service.derive(db, 1)
-        valid_portfolio = subject.portfolio_service.execute_from_planning_result(
-            valid_planning, 1, valid_planning["planning_calculation_input_fingerprint"]
-        )
 
     invalid_planning = deepcopy(valid_planning)
     if invalidity == "empty_id":
@@ -1425,7 +1477,6 @@ def test_pension_input_preemption_guard_removal_enters_real_rtisa_producer(
         invalid_planning["pension_inputs"].append(deepcopy(invalid_planning["pension_inputs"][0]))
     else:
         invalid_planning["pension_inputs"][0]["source_fingerprint"] = "invalid"
-
     original_derive = subject.planning_input_service.derive
     original_planning_guard = subject._planning
     original_envelope_guard = subject._planning_envelope_valid
@@ -1454,16 +1505,56 @@ def test_pension_input_preemption_guard_removal_enters_real_rtisa_producer(
         assert entered == []
 
     ordinary_oracle()
-    monkeypatch.setattr(subject, "_planning", lambda *_args, **_kwargs: (invalid_planning, None))
-    monkeypatch.setattr(subject, "_planning_envelope_valid", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        subject.portfolio_service, "execute_from_planning_result",
-        lambda *_args, **_kwargs: valid_portfolio,
-    )
-    monkeypatch.setattr(subject.rtisa_service, "_portfolio_is_valid", lambda *_args, **_kwargs: True)
-    with pytest.raises(AssertionError):
+
+    # The early nonempty/duplicate guard is independently redundant with the
+    # exact envelope guard.  Removing it alone leaves every oracle alive.
+    with monkeypatch.context() as mutation:
+        mutation.setattr(subject.planning_input_service, "derive", lambda *_args, **_kwargs: invalid_planning)
+        mutation.setattr(subject, "_planning", lambda *_args, **_kwargs: (invalid_planning, None))
+        mutation.setattr(subject.rtisa_service, "read_in_snapshot", observed_rtisa)
         ordinary_oracle()
-    assert entered and entered[-1] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
+    with monkeypatch.context() as mutation:
+        mutation.setattr(subject.planning_input_service, "derive", lambda *_args, **_kwargs: invalid_planning)
+        mutation.setattr(subject, "_planning_envelope_valid", lambda *_args, **_kwargs: True)
+        mutation.setattr(subject.rtisa_service, "read_in_snapshot", observed_rtisa)
+        if invalidity == "invalid_fingerprint":
+            # Fingerprint shape is owned solely by the exact envelope guard;
+            # deleting that one guard reaches the actual RTISA producer.
+            with pytest.raises(AssertionError):
+                ordinary_oracle()
+            assert entered and entered[-1] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
+        else:
+            ordinary_oracle()
+
+    # Removing both redundant Planning guards exposes the actual next layer.
+    # Duplicate identity reaches the real RTISA producer immediately.  Empty
+    # identity and invalid fingerprint are still caught by the independent
+    # portfolio-result boundary.
+    with monkeypatch.context() as mutation:
+        mutation.setattr(subject.planning_input_service, "derive", lambda *_args, **_kwargs: invalid_planning)
+        mutation.setattr(subject, "_planning", lambda *_args, **_kwargs: (invalid_planning, None))
+        mutation.setattr(subject, "_planning_envelope_valid", lambda *_args, **_kwargs: True)
+        mutation.setattr(subject.rtisa_service, "read_in_snapshot", observed_rtisa)
+        if invalidity in {"duplicate_id", "invalid_fingerprint"}:
+            with pytest.raises(AssertionError):
+                ordinary_oracle()
+            assert entered and entered[-1] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
+        else:
+            ordinary_oracle()
+
+    if invalidity == "empty_id":
+        # With the two prerequisite Planning guards isolated, removing only
+        # the portfolio-result boundary reaches the real RTISA producer.  The
+        # real portfolio producer is deliberately not replaced.
+        with monkeypatch.context() as mutation:
+            mutation.setattr(subject.planning_input_service, "derive", lambda *_args, **_kwargs: invalid_planning)
+            mutation.setattr(subject, "_planning", lambda *_args, **_kwargs: (invalid_planning, None))
+            mutation.setattr(subject, "_planning_envelope_valid", lambda *_args, **_kwargs: True)
+            mutation.setattr(subject.rtisa_service, "_portfolio_is_valid", lambda *_args, **_kwargs: True)
+            mutation.setattr(subject.rtisa_service, "read_in_snapshot", observed_rtisa)
+            with pytest.raises(AssertionError):
+                ordinary_oracle()
+            assert entered and entered[-1] == ["RTISA_SOURCE_UNIVERSE_INVALID"]
 
     monkeypatch.setattr(subject, "_planning", original_planning_guard)
     monkeypatch.setattr(subject, "_planning_envelope_valid", original_envelope_guard)
@@ -1471,3 +1562,58 @@ def test_pension_input_preemption_guard_removal_enters_real_rtisa_producer(
     monkeypatch.setattr(subject.rtisa_service, "_portfolio_is_valid", original_portfolio_guard)
     ordinary_oracle()
     monkeypatch.setattr(subject.planning_input_service, "derive", original_derive)
+
+
+@pytest.mark.parametrize("tamper", ["rehashed_future", "rehashed_native_net"])
+def test_rehashed_rtisa_recurring_authority_tamper_rejected(engine, monkeypatch, tamper):
+    """IMP-001: signed producer claims cannot override independent Planning facts."""
+    _authority(engine)
+    original = subject.rtisa_service.read_in_snapshot
+    original_guard = subject._rtisa_envelope_valid
+    valid_result = {}
+    def malicious(*args, **kwargs):
+        result = deepcopy(original(*args, **kwargs))
+        valid_result.clear()
+        valid_result.update(deepcopy(result))
+        entry = result["source_entries"][0]
+        if tamper == "rehashed_future":
+            entry["admission_state"] = "EXCLUDED"
+            entry["applicability"]["at_target"] = "FUTURE"
+            entry["reason_codes"] = ["RTISA_FUTURE_SOURCE"]
+            result["included_source_ids"] = []
+            result["excluded_source_ids"] = [entry["source_id"]]
+        else:
+            entry["native_income_basis"] = "NET"
+        result["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {k: v for k, v in result.items() if k != "admission_result_fingerprint"}
+        )
+        return result
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", malicious)
+    def oracle():
+        with pytest.raises(subject.CRTISBAError) as caught:
+            _read(engine)
+        assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+    oracle()
+
+    def mapping_deleted(result, *args):
+        normalized = deepcopy(result)
+        entry = normalized["source_entries"][0]
+        valid_entry = valid_result["source_entries"][0]
+        if tamper == "rehashed_future":
+            entry["admission_state"] = valid_entry["admission_state"]
+            entry["applicability"]["at_target"] = valid_entry["applicability"]["at_target"]
+            entry["reason_codes"] = deepcopy(valid_entry["reason_codes"])
+            normalized["included_source_ids"] = deepcopy(valid_result["included_source_ids"])
+            normalized["excluded_source_ids"] = deepcopy(valid_result["excluded_source_ids"])
+        else:
+            entry["native_income_basis"] = valid_entry["native_income_basis"]
+        normalized["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {key: value for key, value in normalized.items() if key != "admission_result_fingerprint"}
+        )
+        return original_guard(normalized, *args)
+
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", mapping_deleted)
+    with pytest.raises(pytest.fail.Exception):
+        oracle()
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", original_guard)
+    oracle()

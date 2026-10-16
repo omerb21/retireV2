@@ -401,6 +401,43 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
                 or not isinstance(tax, dict)
                 or entry.get("native_income_basis") not in {"GROSS", "NET", "UNKNOWN"}):
             return False
+        # Reconcile producer claims with the independently validated Planning
+        # facts. A producer-side hash alone authenticates no semantics.
+        planning_source = source_map[source_id]
+        if not is_pension:
+            declared_basis = planning_source.get("amount_basis")
+            expected_basis = {"gross": "GROSS", "net": "NET", "unknown": "UNKNOWN"}.get(declared_basis)
+            if expected_basis is None or entry.get("native_income_basis") != expected_basis:
+                return False
+            if any(applicability.get(field) != planning_source.get(field)
+                   for field in ("start_date", "end_date", "continuation_status")):
+                return False
+            # For unambiguous, fully reviewed, ordinary recurring sources,
+            # source chronology determines admission without trusting RTISA.
+            if (source_id in {x.get("source_id") for x in planning["general_income_inputs"]}
+                    and planning_source.get("source_status") in rtisa_service.SOURCE_STATUSES
+                    and planning_source.get("source_status") != "not recorded"
+                    and planning_source.get("verification_state") in rtisa_service.VERIFICATION_STATES
+                    and planning_source.get("verification_state") != "collected - not yet reviewed"
+                    and declared_basis in {"gross", "net"}
+                    and planning_source.get("frequency") in rtisa_service.FREQUENCIES
+                    and planning_source.get("amount") is not None
+                    and planning_source.get("continuation_status") in {"ongoing", "known end date"}
+                    and (planning_source.get("continuation_status") != "known end date"
+                         or _canonical_date(planning_source.get("end_date")))
+                    and _canonical_date(planning_source.get("start_date"))):
+                start = date.fromisoformat(planning_source["start_date"])
+                end_text = planning_source.get("end_date")
+                end = date.fromisoformat(end_text) if _canonical_date(end_text) else None
+                if end is None or end >= start:
+                    target_date = date.fromisoformat(target)
+                    expected = (("EXCLUDED", "FUTURE", ["RTISA_FUTURE_SOURCE"])
+                                if start > target_date else
+                                ("EXCLUDED", "ENDED", ["RTISA_ENDED_SOURCE"])
+                                if end is not None and end < target_date else
+                                ("INCLUDED", "ACTIVE", []))
+                    if (state, applicability["at_target"], reasons) != expected:
+                        return False
         if (state == "INCLUDED" and (reasons or applicability["at_target"] != "ACTIVE")):
             return False
         if (state == "EXCLUDED" and applicability["at_target"] not in {

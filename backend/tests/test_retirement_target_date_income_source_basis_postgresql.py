@@ -91,7 +91,12 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
     engine = _prepare(postgres_url)
     try:
         with engine.connect() as connection:
-            assert 160000 <= int(connection.scalar(text("SHOW server_version_num"))) < 170000
+            server_version_num = int(connection.scalar(text("SHOW server_version_num")))
+            assert 160000 <= server_version_num < 170000
+            connection_identity = connection.execute(text(
+                "SELECT version(), current_database(), current_user, session_user"
+            )).one()
+            print("PG_EVIDENCE_SERVER", server_version_num, *connection_identity, sep="|")
         assert migrate(postgres_url, "heads").strip() == "c4e8a2f6b731 (head)"
         columns = {item["name"]: item for item in inspect(engine).get_columns(subject.Decision.__tablename__)}
         assert set(columns) == {
@@ -134,6 +139,11 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             sequence = connection.scalar(text("SELECT pg_get_serial_sequence(:table_name, 'decision_id')"), {"table_name": subject.Decision.__tablename__})
             assert connection.scalar(text("SELECT has_sequence_privilege(:role, :sequence, 'USAGE')"), {"role": ROLE, "sequence": sequence})
             assert connection.scalar(text("SELECT has_sequence_privilege(:role, :sequence, 'SELECT')"), {"role": ROLE, "sequence": sequence})
+            role_identity = connection.execute(text(
+                "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname=:role"
+            ), {"role": ROLE}).one()
+            print("PG_EVIDENCE_OBJECTS", sorted(constraints), sorted(indexes), trigger, sep="|")
+            print("PG_EVIDENCE_ROLE", *role_identity, sorted(grants), sequence, sep="|")
         migrate(postgres_url, "downgrade", "b3c9d6f2a410")
         assert subject.Decision.__tablename__ not in inspect(engine).get_table_names()
         migrate(postgres_url, "upgrade", "c4e8a2f6b731")
@@ -174,6 +184,8 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             transaction = connection.begin()
             try:
                 connection.execute(text(f"SET LOCAL ROLE {ROLE}"))
+                active_role = connection.execute(text("SELECT current_user, session_user")).one()
+                print("PG_EVIDENCE_ACTIVE_ROLE", *active_role, sep="|")
                 inserted_identity = connection.scalar(text(f"""
                     INSERT INTO {subject.Decision.__tablename__} (
                       client_id,source_id,source_kind,decision_version,
@@ -261,16 +273,21 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
             try:
                 connection.execute(text(f"SET LOCAL ROLE {ROLE}"))
                 assert connection.scalar(text(f"SELECT count(*) FROM {subject.Decision.__tablename__}")) == 1
+                rejected_privileges = []
                 for forbidden in (
                     f"UPDATE {subject.Decision.__tablename__} SET decision_actor='forbidden'",
                     f"DELETE FROM {subject.Decision.__tablename__}",
                     f"TRUNCATE TABLE {subject.Decision.__tablename__}",
                 ):
-                    with pytest.raises(Exception):
+                    with pytest.raises(Exception) as rejected:
                         connection.execute(text(forbidden))
+                    original = getattr(rejected.value, "orig", rejected.value)
+                    rejected_privileges.append((forbidden.split()[0], getattr(original, "pgcode", None)
+                                                or getattr(original, "sqlstate", None)))
                     transaction.rollback()
                     transaction = connection.begin()
                     connection.execute(text(f"SET LOCAL ROLE {ROLE}"))
+                print("PG_EVIDENCE_REJECTED_PRIVILEGES", rejected_privileges, sep="|")
             finally:
                 transaction.rollback()
         current_result, current_entry = _current(engine, source_id)

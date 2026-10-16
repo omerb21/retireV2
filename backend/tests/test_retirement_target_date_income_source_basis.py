@@ -1617,3 +1617,118 @@ def test_rehashed_rtisa_recurring_authority_tamper_rejected(engine, monkeypatch,
         oracle()
     monkeypatch.setattr(subject, "_rtisa_envelope_valid", original_guard)
     oracle()
+
+
+def test_payable_pension_rehashed_as_future_rejected_with_mapping_mutation(engine, monkeypatch):
+    """WORK IMP-001: a signed RTISA pension exclusion cannot override PTE."""
+    with Session(engine) as db, db.begin():
+        canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="5000.00", pension_start_date=date(2025, 1, 1),
+            base_amount_effective_date=date(2025, 1, 1), tax_treatment="taxable",
+        ))
+        db.add(PlanningInputDecision(
+            client_id=1, version=1, planning_base_date=date(2026, 1, 1),
+            retirement_target_date=date(2030, 1, 1), retirement_target_decision_actor="planner:test",
+            retirement_target_reference_fingerprint=H, actor="planner:test",
+        ))
+    producer = subject.rtisa_service.read_in_snapshot
+    guard = subject._rtisa_envelope_valid
+    original_entry = {}
+
+    def forged(*args, **kwargs):
+        result = deepcopy(producer(*args, **kwargs))
+        pension = next(e for e in result["source_entries"] if e["source_id"].startswith("manual:"))
+        original_entry.clear()
+        original_entry.update(deepcopy(pension))
+        assert pension["admission_state"] == "INCLUDED"
+        pension["admission_state"] = "EXCLUDED"
+        pension["applicability"]["at_target"] = "FUTURE"
+        pension["reason_codes"] = ["RTISA_FUTURE_SOURCE"]
+        result["included_source_ids"].remove(pension["source_id"])
+        result["excluded_source_ids"].append(pension["source_id"])
+        result["excluded_source_ids"].sort()
+        result["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {k: v for k, v in result.items() if k != "admission_result_fingerprint"})
+        return result
+
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", forged)
+
+    def oracle():
+        with pytest.raises(subject.CRTISBAError) as caught:
+            _read(engine)
+        assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+    oracle()
+
+    def mapping_removed(result, *args):
+        clean = deepcopy(result)
+        pension = next(e for e in clean["source_entries"] if e["source_id"].startswith("manual:"))
+        pension.update(deepcopy(original_entry))
+        clean["excluded_source_ids"].remove(pension["source_id"])
+        clean["included_source_ids"].append(pension["source_id"])
+        clean["included_source_ids"].sort()
+        clean["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {k: v for k, v in clean.items() if k != "admission_result_fingerprint"})
+        return guard(clean, *args)
+
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", mapping_removed)
+    with pytest.raises(pytest.fail.Exception):
+        oracle()
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", guard)
+    oracle()
+
+
+@pytest.mark.parametrize("wrong_reason", ["RTISA_SOURCE_REVIEW_INCOMPLETE"])
+def test_unresolved_recurring_rehashed_wrong_fact_reason_rejected(engine, monkeypatch, wrong_reason):
+    """WORK IMP-001: valid reason vocabulary does not authenticate provenance."""
+    _authority(engine)
+    with Session(engine) as db, db.begin():
+        item = db.scalar(select(RecurringIncome).where(RecurringIncome.client_id == 1))
+        item.source_status = "not recorded"
+    producer = subject.rtisa_service.read_in_snapshot
+    guard = subject._rtisa_envelope_valid
+    canonical_reason = {}
+
+    def forged(*args, **kwargs):
+        result = deepcopy(producer(*args, **kwargs))
+        recurring = next(e for e in result["source_entries"] if e["source_id"].startswith("income:"))
+        assert recurring["admission_state"] == "UNRESOLVED"
+        assert "RTISA_SOURCE_AUTHORITY_NOT_RECORDED" in recurring["reason_codes"]
+        canonical_reason["codes"] = deepcopy(recurring["reason_codes"])
+        recurring["reason_codes"] = [wrong_reason if code == "RTISA_SOURCE_AUTHORITY_NOT_RECORDED" else code
+                                      for code in recurring["reason_codes"]]
+        recurring["reason_codes"] = sorted(set(recurring["reason_codes"]))
+        result["blockers"] = sorted(set(
+            code for entry in result["source_entries"] if entry["admission_state"] == "UNRESOLVED"
+            for code in entry["reason_codes"]
+        ) | {"RTISA_SOURCE_UNIVERSE_INCOMPLETE"})
+        result["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {k: v for k, v in result.items() if k != "admission_result_fingerprint"})
+        return result
+
+    monkeypatch.setattr(subject.rtisa_service, "read_in_snapshot", forged)
+
+    def oracle():
+        with pytest.raises(subject.CRTISBAError) as caught:
+            _read(engine)
+        assert caught.value.code == "PRODUCER_RESPONSE_INVALID"
+
+    oracle()
+
+    def mapping_removed(result, *args):
+        clean = deepcopy(result)
+        recurring = next(e for e in clean["source_entries"] if e["source_id"].startswith("income:"))
+        recurring["reason_codes"] = deepcopy(canonical_reason["codes"])
+        clean["blockers"] = sorted(set(
+            code for entry in clean["source_entries"] if entry["admission_state"] == "UNRESOLVED"
+            for code in entry["reason_codes"]
+        ) | {"RTISA_SOURCE_UNIVERSE_INCOMPLETE"})
+        clean["admission_result_fingerprint"] = subject.rtisa_service._result_fingerprint(
+            {k: v for k, v in clean.items() if k != "admission_result_fingerprint"})
+        return guard(clean, *args)
+
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", mapping_removed)
+    with pytest.raises(pytest.fail.Exception):
+        oracle()
+    monkeypatch.setattr(subject, "_rtisa_envelope_valid", guard)
+    oracle()

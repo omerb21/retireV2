@@ -404,7 +404,36 @@ def _rtisa_envelope_valid(result: Any, client_id: int, planning: dict, portfolio
         # Reconcile producer claims with the independently validated Planning
         # facts. A producer-side hash alone authenticates no semantics.
         planning_source = source_map[source_id]
+        if is_pension:
+            pte = pension_results.get(source_id)
+            group_names = (
+                ("payable_current", "payable_current_source_ids"),
+                ("future_start", "future_start_source_ids"),
+                ("unresolved", "unresolved_source_ids"),
+                ("blocked", "blocked_source_ids"),
+            )
+            groups = [name for name, field in group_names if source_id in portfolio.get(field, [])]
+            if len(groups) > 1:
+                return False
+            group = groups[0] if groups else None
+            # The RTISA pension producer derives these fields exclusively
+            # from the validated PTE result and the portfolio grouping.
+            expected = rtisa_service._pension_entry(planning_source, pte, group)
+            if any(entry.get(field) != expected.get(field) for field in (
+                "admission_state", "reason_codes", "applicability",
+            )):
+                return False
         if not is_pension:
+            # Authority and review reasons cannot be substituted for one
+            # another merely because both are allowed unresolved codes.
+            authority_reason = "RTISA_SOURCE_AUTHORITY_NOT_RECORDED"
+            review_reason = "RTISA_SOURCE_REVIEW_INCOMPLETE"
+            if ((authority_reason in reasons) !=
+                    (planning_source.get("source_status") == "not recorded")):
+                return False
+            if ((review_reason in reasons) !=
+                    (planning_source.get("verification_state") == "collected - not yet reviewed")):
+                return False
             declared_basis = planning_source.get("amount_basis")
             expected_basis = {"gross": "GROSS", "net": "NET", "unknown": "UNKNOWN"}.get(declared_basis)
             if expected_basis is None or entry.get("native_income_basis") != expected_basis:

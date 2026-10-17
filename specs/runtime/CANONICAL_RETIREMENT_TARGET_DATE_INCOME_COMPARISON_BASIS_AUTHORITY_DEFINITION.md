@@ -1,1029 +1,193 @@
-# CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_AUTHORITY
+# CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_AUTHORITY (RTICB) - Corrected Definition
 
-## 1. Definition status and governance
+## 1. Identity, status and governance
+- Package: `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_AUTHORITY` (`RTICB`), Class A / Complex Class A.
+- Governance: `RETIREMENT_PLANNING_V2_GOVERNANCE_PROTOCOL v1.1`.
+- Canonical correction base: `b83c6f7259fa88fc96e335022608fda526cb3b97`.
+- Artifact status: `DEFINITION_CORRECTION_CANDIDATE`; no Definition Acceptance has occurred.
+- Owner decision `OWNER-DECISION-RTICB-001`: previously resolved; no new Owner Decision.
+- `IMPLEMENTATION=NOT_AUTHORIZED`; `DOWNSTREAM=NOT_AUTHORIZED`; `PRODUCTION_READINESS=NOT_CLAIMED`.
+- This document replaces the older RTISA-direct RTICB draft as a proposed Definition. It is not an acceptance manifest, source-code change or authority over upstream behavior.
 
-- Package ID: `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_AUTHORITY` (`RTICB`).
-- Package class: `CLASS A / COMPLEX CLASS A`.
-- Artifact status: `DEFINITION_DRAFT`.
-- Governing protocol: `RETIREMENT_PLANNING_V2_GOVERNANCE_PROTOCOL v1.1`.
-- Binding owner decision: `OWNER-DECISION-RTICB-001`.
-- Implementation: `NOT_AUTHORIZED`.
-- Downstream implementation: `NOT_AUTHORIZED`.
-- Production readiness: `NOT_CLAIMED`.
+## 2. Objective, direct authorities and exclusions
+RTICB is a read-only, deterministic *basis comparability* authority, not an amount normalizer or total calculator. It consumes **exactly** two current result authorities: (1) confirmed Retirement Monthly Income Target (RIT), and (2) the accepted `CRTISBA_COLLECTION_RESULT_V1` source-basis collection. **RTISA is not a third direct consumer input**: it is invoked transitively by CRTISBA in the same database snapshot. RTICB neither directly reads RTISA nor uses RTISA `native_income_basis` or `native_price_evidence` as comparison authority. CRTISBA `income_basis`, `price_basis`, `price_reference_date` and their provenance are the only source basis evidence.
 
-This Definition does not constitute Definition acceptance or implementation
-authorization. After Definition acceptance and before any implementation
-authorization, the protocol-required `PRE-IMPLEMENTATION CONTRACT ENUMERATION`
-must be completed and accepted.
+The complete source universe is the exact, ordered `source_basis_entries` of the current CRTISBA collection. Do not rediscover, insert, drop, deduplicate, or remap source identities. The target authority remains authoritative for target currency, current confirmation, `income_basis`, `price_basis` and `price_reference_date`.
 
-## 2. Objective and authority boundary
+RTICB never performs GROSS/NET conversion, tax calculation, CPI/indexation, nominal/real conversion, source amount recomputation, monthly equivalent computation, income totals, coverage, gap/surplus, funding, withdrawal, optimization, scenario execution, source admission or professional inference. CRTISBA, RTISA, PTE/Portfolio, Planning and RIT accepted semantics remain unmodified. No persistence, migration, public API, UI or write is created in this package.
 
-RTICB is a comparability authority only. It determines, deterministically and
-per admitted target-date income source, whether the source's already-authoritative
-native basis permits direct comparison with the confirmed retirement monthly
-income target.
+## 3. Binding owner decision and matching
+- `GROSS` matches `GROSS` and `NET` matches `NET` only. Unequal *known* income bases add `RTICB_INCOME_BASIS_MISMATCH`.
+- `NOMINAL_AT_RETIREMENT_TARGET_DATE` matches the same literal; `REAL_AT_REFERENCE_DATE` matches the same literal only when both valid authoritative dates match exactly.
+- Unequal known price basis adds `RTICB_PRICE_BASIS_MISMATCH`. Two REAL values with unequal valid dates add `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`.
+- `UNKNOWN` income or price evidence adds the corresponding `RTICB_INCOME_BASIS_UNKNOWN` or `RTICB_PRICE_BASIS_UNKNOWN`; a valid REAL/null reference for a comparison-eligible source adds `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING` only if such null is allowed by CRTISBA's exact state schema.
+- Both unresolved and mismatch reasons are retained; unresolved takes state precedence over normalization. No inference or repair.
 
-RTICB creates authority over:
+## 4. Producer and request admission
+The public operation `assess(db: Session, request)` accepts exactly `client_id` (positive integer, excluding bool), `expected_planning_calculation_input_fingerprint` (lowercase sha256) and `expected_retirement_target_date` (canonical ISO date). Requests with extra/missing keys, type or date/hash errors fail before touching the session.
 
-1. the exact input identity used for a comparison assessment;
-2. complete coverage of the current RTISA source universe;
-3. in every successful result, one deterministic comparison classification per
-   entry of the accepted ready RTISA source universe;
-4. ordered reasons supporting every non-direct classification;
-5. whether classification completed successfully; and
-6. whether the complete admitted source set is ready for a future *direct*
-   income-total/gap comparison without normalization.
+A successful target must have accepted exact RIT schema and fingerprints, matching client/planning/target date, confirmed CURRENT lifecycle, ready state, ILS currency and valid target basis (GROSS/NET, NOMINAL with null date or REAL with non-null canonical date). Do not infer target basis.
 
-RTICB does not create authority over normalized amounts, tax treatment,
-inflation, totals, gaps, coverage, eligibility, withdrawals, allocation,
-optimization, or scenarios. It does not change any upstream authority.
+CRTISBA must return a structurally valid `CRTISBA_COLLECTION_RESULT_V1` with complete source coverage, exact entry schemas, exact partitions and a recomputable collection result fingerprint. A valid collection with `basis_ready=false` or `basis_readiness_state=NOT_READY` **is still eligible for classification**; lack of professional decisions is not producer corruption. A valid `CRTISBA_BLOCK_NO_RESULT_V1` is a whole-authority fail-closed result. Exceptions are never transformed into blocked results.
 
-## 3. Binding owner decision
+Exactly match `client_id`, planning fingerprint and non-null retirement target date across request, target and CRTISBA. A CRTISBA collection with valid null retirement target date cannot be paired with a request specifying a target date and fails cross-authority identity, not comparison. Never silently select stale/preexisting collection evidence.
 
-`OWNER-DECISION-RTICB-001` is applied as follows:
+## 5. Closed collection vocabulary and partitions
+Accepted CRTISBA collection keys exactly: `schema_version`, `client_id`, `planning_calculation_input_fingerprint`, `retirement_target_date`, `rtisa_admission_result_fingerprint`, `source_basis_entries`, `partitions`, `blockers`, `basis_readiness_state`, `basis_ready`, `result_fingerprint`. `basis_ready` is precisely equivalent to `basis_readiness_state == READY`. Partitions are exactly `current`, `missing`, `unknown`, `stale`, `invalid`, `upstream_unresolved`, `not_applicable_delegated`, `not_applicable_not_admitted`, `delegation_unresolved`, `delegation_stale`; each contains canonical sorted unique source IDs, all disjoint, with union equal to all entry IDs and entry-to-partition equality. Entries are sorted by Python Unicode code point source_id order; no locale or Unicode normalization.
 
-- Direct income-basis compatibility is exact equality: `GROSS` with `GROSS`,
-  or `NET` with `NET`.
-- Direct price-basis compatibility is exact equality:
-  `NOMINAL_AT_RETIREMENT_TARGET_DATE` with the same basis, or
-  `REAL_AT_REFERENCE_DATE` with the same basis.
-- When both price bases are `REAL_AT_REFERENCE_DATE`, both authoritative
-  reference dates must be present and exactly equal.
-- `UNKNOWN`, missing, malformed, or unsupported basis evidence is not directly
-  comparable.
-- A mismatch is classified; it is never silently normalized.
-- RTICB may say that normalization is required, but it never calculates or
-  supplies a normalized value.
+Accepted entry keys exactly: `schema_version`, `source_id`, `source_kind`, `source_category`, `admission_state`, `rtisa_reason_codes`, `source_version`, `source_fingerprint`, `amount_authority_fingerprint`, `decision_version`, `decision_fingerprint`, `decision_state`, `income_basis`, `income_basis_provenance`, `price_basis`, `price_reference_date`, `price_basis_provenance`, `blockers`. Source kind is PENSION or RECURRING_INCOME; admission INCLUDED, EXCLUDED or UNRESOLVED. All exact shapes, states, amount/source/version/decision relationships, reason vocabularies and nullability follow the **accepted CRTISBA Definition Section 8.4**; acceptance does not authorize relaxing any Section 8.4 constraint. Collection readiness/blocker mapping is consumed from its accepted producer contract, not reconstructed by RTICB.
 
-## 4. Upstream authorities consumed
+## 6. Exact decision-state routing and nullability
+Every accepted CRTISBA entry produces one RTICB comparison entry, even for excluded or unresolved sources. Never demand non-null basis fields where Section 8.4 requires null. All state-specific source/amount/decision identity constraints are validated before classification. The following is a total routing table; `[]` denotes exact no added state reason; ordered reason sets are canonical sorted unique.
 
-RTICB consumes exactly two current result authorities:
+| CRTISBA decision_state | Admission | CRTISBA effective tuple allowed | RTICB state | RTICB reasons | Direct readiness |
+|---|---|---|---|---|---|
+| CURRENT | INCLUDED | Complete current pension OD-1 + derived OD-2, or recurring income + current OD-3; exact Section 8.4 | Compare known fields: DIRECTLY_COMPARABLE, NORMALIZATION_REQUIRED or BASIS_UNRESOLVED | Comparison reasons in Section 7 | Only DIRECTLY_COMPARABLE is ready |
+| MISSING | INCLUDED | Pension safe-missing UNKNOWN/MISSING income + valid OD-2; recurring current upstream income + UNKNOWN/null/MISSING price | BASIS_UNRESOLVED | `RTICB_CRTISBA_DECISION_MISSING` plus independently known mismatch reasons only | Blocks |
+| UNKNOWN | INCLUDED | Same safe-missing fields as MISSING; valid cleared decision identity | BASIS_UNRESOLVED | `RTICB_CRTISBA_DECISION_UNKNOWN` plus independently known mismatch reasons only | Blocks |
+| STALE | INCLUDED | Exact safe-missing fields; no stale choices | BASIS_UNRESOLVED | `RTICB_CRTISBA_DECISION_STALE` only | Blocks |
+| INVALID | INCLUDED | Exact safe-missing fields; no invalid decision identity | BASIS_UNRESOLVED | `RTICB_CRTISBA_DECISION_INVALID` only | Blocks |
+| UPSTREAM_UNRESOLVED | UNRESOLVED | Frequency-other sole blocker: current recurring income and current OD-3 if validated, otherwise UNKNOWN/null price. All other unresolved: entire basis/provenance/date tuple null | BASIS_UNRESOLVED | `RTICB_CRTISBA_UPSTREAM_UNRESOLVED` only | Blocks |
+| NOT_APPLICABLE_DELEGATED | EXCLUDED | All basis/provenance/date null | NOT_ADMITTED | `RTICB_SOURCE_NOT_ADMITTED` only | Neutral |
+| DELEGATION_UNRESOLVED | UNRESOLVED | All basis/provenance/date null | BASIS_UNRESOLVED | `RTICB_CRTISBA_DELEGATION_UNRESOLVED` only | Blocks |
+| DELEGATION_STALE | UNRESOLVED | All basis/provenance/date null | BASIS_UNRESOLVED | `RTICB_CRTISBA_DELEGATION_STALE` only | Blocks |
+| NOT_APPLICABLE_NOT_ADMITTED | EXCLUDED | All basis/provenance/date null | NOT_ADMITTED | `RTICB_SOURCE_NOT_ADMITTED` only | Neutral |
 
-1. `CANONICAL_RETIREMENT_MONTHLY_INCOME_TARGET_AUTHORITY`, including its
-   `target_result_fingerprint`, `target_semantic_fingerprint`, current/confirmed
-   authority state, and the authoritative target fields `income_basis`,
-   `price_basis`, and `price_reference_date`.
-2. `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_ADMISSION_AUTHORITY`
-   (`RTISA`), including its `admission_result_fingerprint`, readiness and
-   universe evidence, complete ordered source entries, admission states,
-   upstream identities, native income basis, and native price evidence.
+For `UPSTREAM_UNRESOLVED`, the frequency-other special-case is permitted **only** when CRTISBA Section 8.4's sole reason is `RTISA_SOURCE_FREQUENCY_UNSUPPORTED`; any other reason or combination takes the all-null tuple route. No basis comparison is performed for any unresolved admission. Delegation early-return reasons remain RTISA provenance; they do not add ordinary authority/review reasons. `NOT_APPLICABLE_DELEGATED` requires accepted delegation evidence and `NOT_APPLICABLE_NOT_ADMITTED` requires valid exclusion evidence exactly as CRTISBA provides. A valid unresolved admission does **not** invalidate the entire collection; it is represented by the state-specific unresolved route and blocks readiness. A source with admission `INCLUDED` is never reclassified as `NOT_ADMITTED` merely because its basis is UNKNOWN. Invalid state/admission/null/identity combinations fail closed, not normalize.
 
-Those authorities already bind, transitively, the canonical planning input,
-retirement target date, pension execution/portfolio, pension monthly amount
-basis, pension temporal/indexation basis, and target-date resource-state
-contracts. RTICB validates the supplied upstream identities; it does not
-reconstruct those authorities or independently discover income sources.
+## 7. Exact comparison algorithm and reason vocabulary
+Closed reason codes:
+`RTICB_SOURCE_NOT_ADMITTED`, `RTICB_INCOME_BASIS_UNKNOWN`, `RTICB_INCOME_BASIS_MISMATCH`, `RTICB_PRICE_BASIS_UNKNOWN`, `RTICB_PRICE_BASIS_MISMATCH`, `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`, `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`, `RTICB_CRTISBA_DECISION_MISSING`, `RTICB_CRTISBA_DECISION_UNKNOWN`, `RTICB_CRTISBA_DECISION_STALE`, `RTICB_CRTISBA_DECISION_INVALID`, `RTICB_CRTISBA_UPSTREAM_UNRESOLVED`, `RTICB_CRTISBA_DELEGATION_UNRESOLVED`, `RTICB_CRTISBA_DELEGATION_STALE`.
 
-## 5. Required upstream admissibility
+On CURRENT, compare income and price separately using Section 3. `UNKNOWN` yields unknown reason; unequal known yields mismatch; REAL source date null yields missing only if Section 8.4 permits it in that decision state, otherwise is fatal `RTICB_CRTISBA_STATE_BASIS_INVALID`. On MISSING/UNKNOWN, the state reason always makes BASIS_UNRESOLVED; include only mismatches independently decidable from the safe current non-null basis dimension(s), not unknown reasons for a dimension already explicitly represented by the state reason. On other unresolved states no comparison reasons may be added; excluded states receive exactly one NOT_ADMITTED reason. Known mismatches are retained alongside unresolved evidence only where the state-specific table authorizes comparing known fields. Reasons are sorted with Python Unicode code-point ordering, unique. Amount materiality, including zero, never changes the result.
 
-A ready comparison result requires all of the following:
+Classification completion is COMPLETE when both authorities are valid and every source is classified exactly once, regardless of CRTISBA `basis_ready`; it is not itself permission to sum. `classification_complete=true` is equivalent to COMPLETE. `direct_comparison_ready=true`/READY iff completion and **every INCLUDED entry** is DIRECTLY_COMPARABLE and **no UNRESOLVED admission entry exists**. An empty collection or wholly excluded collection can be direct-ready only when the accepted CRTISBA collection is valid and there is no unresolved admission. Readiness blockers are exactly the sorted union of `RTICB_NORMALIZATION_REQUIRED` if any included NORMALIZATION_REQUIRED, `RTICB_BASIS_UNRESOLVED` if any INCLUDED/UNRESOLVED BASIS_UNRESOLVED, with no blocker for excluded entries. No amount total is calculated.
 
-- both results belong to the requested positive integer `client_id`;
-- both bind the same valid `planning_calculation_input_fingerprint`;
-- both bind the same valid ISO `retirement_target_date`;
-- the target result fingerprint and semantic fingerprint are valid and
-  recompute exactly;
-- the target is `CURRENT`, confirmed, and `target_ready = true`;
-- the target currency is `ILS`;
-- the target basis tuple is structurally valid under its accepted authority;
-- the RTISA result fingerprint is valid and recomputes exactly;
-- RTISA reports `COMPLETE_EVIDENCED`, `READY`, and `admission_ready = true`;
-- RTISA source entries and included/excluded/unresolved ID partitions are
-  complete, unique, sorted, disjoint, and exactly cover the entries;
-- the ready RTISA result has an empty `unresolved_source_ids` partition and no
-  entry whose `admission_state` is `UNRESOLVED`; and
-- every preserved upstream source and pension-result identity satisfies the
-  exact structural and relationship checks permitted by the fingerprint
-  verification inventory in Section 12.6.
+## 8. Output contracts and exact owned fingerprint preimages
+RTICB owns four new V2 fingerprint namespaces. Canonical bytes are `json.dumps(object, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")`; SHA-256 lowercase hex. No V1 fingerprint is accepted as a V2-owned identity.
 
-If one of these conditions fails, RTICB fails closed. It must not repair,
-reinterpret, partially consume, or mix the two authorities.
+The successful result has exactly: `schema_version` (literal `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2`), `client_id`, `planning_calculation_input_fingerprint`, `retirement_target_date`, `target_result_fingerprint`, `target_semantic_fingerprint`, `crtisba_result_fingerprint`, `comparison_input_fingerprint`, `source_comparisons`, `classification_state`, `classification_complete`, `direct_comparison_state`, `direct_comparison_ready`, `blockers`, and `comparison_result_fingerprint`. The `source_comparisons` sequence has exactly one entry per CRTISBA source, in the same order.
 
-## 6. Source universe and coverage
+Every source comparison entry has exactly: `source_id`, `source_kind`, `source_category`, `admission_state`, `rtisa_reason_codes`, `decision_state`, `source_version`, `source_fingerprint`, `amount_authority_fingerprint`, `decision_version`, `decision_fingerprint`, `income_basis`, `income_basis_provenance`, `price_basis`, `price_reference_date`, `price_basis_provenance`, `target_income_basis`, `target_price_basis`, `target_price_reference_date`, `comparison_state`, `reason_codes`, and `source_comparison_fingerprint`. All source fields are verbatim projections of validated CRTISBA authority, including valid nulls; all target fields are verbatim from the accepted target result. No newly inferred value is present. `comparison_state` is exactly one of `DIRECTLY_COMPARABLE`, `NORMALIZATION_REQUIRED`, `BASIS_UNRESOLVED`, `NOT_ADMITTED`.
 
-The RTICB source universe is exactly the complete `source_entries` sequence in
-the current RTISA result. No source is added, removed, deduplicated, joined, or
-rediscovered by RTICB.
+**A: input**: SHA-256 of the following exact preimage keys: `contract` literal `CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V2`; `client_id`, `planning_calculation_input_fingerprint`, `retirement_target_date` from validated request; `target_result_fingerprint`, `target_semantic_fingerprint` from target; `crtisba_result_fingerprint` from CRTISBA. No RTISA direct fingerprint.
 
-For every entry of the accepted ready RTISA result, RTICB emits exactly one
-comparison entry with the same `source_id`. Source entries are ordered by
-ascending Unicode code-point order of
-`source_id`, matching the canonical RTISA ordering. A source ID must be a
-non-empty string equal to its own whitespace trim and contain no control
-character. Duplicate, missing, unexpected, whitespace-padded, non-string, or
-out-of-order source IDs invalidate the whole result.
+**A: entry**: SHA-256 of `{"contract":"CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V2","comparison_input_fingerprint":<input fingerprint>,"entry":<complete comparison entry excluding source_comparison_fingerprint>}`. The `entry` object has exactly the 22 non-hash entry keys enumerated above. Duplicate identity within an entry is deliberate provenance binding, not a second upstream decision.
 
-Only entries whose RTISA `admission_state` is `INCLUDED` are economically
-admitted comparison candidates. `EXCLUDED` entries remain in the result as
-explicit coverage evidence and cannot contribute to a future direct total.
-An RTISA `UNRESOLVED` entry makes RTISA `PARTIAL`, `NOT_READY`, and
-`admission_ready = false` under the accepted upstream contract, so it is
-rejected at the `rtisa_authority` stage and cannot appear in a successful RTICB
-result. RTICB never bypasses or upgrades RTISA admission state.
+**A: successful result**: SHA-256 of `{"contract":"CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V2","result":<complete successful result excluding comparison_result_fingerprint>}`. This includes all entry fingerprints, partitions implicit in their ordered state/identity projection, readiness fields and blockers. No independent RTISA collection is introduced.
 
-## 7. Authoritative basis projection
+**A: semantic failure**: an exact failure envelope with fields `schema_version` (V2), `client_id`, `supplied_planning_calculation_input_fingerprint`, `supplied_retirement_target_date`, `observed_target_planning_calculation_input_fingerprint`, `observed_target_retirement_target_date`, `observed_target_result_fingerprint`, `observed_crtisba_planning_calculation_input_fingerprint`, `observed_crtisba_retirement_target_date`, `observed_crtisba_result_fingerprint`, `result_state` literal `block_no_result`, `failure_stage`, `failure_detail_code`, and `result_fingerprint`. Observations are exact supplied or observed fields only when type-valid and canonical, else null; they never use a substitute RTISA field. SHA-256 is over `{"contract":"CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V2","failure":<complete failure envelope excluding result_fingerprint>}`. No raw rejected object, traceback, exception string or nondeterministic actor/time is embedded. Invalid request observations are independently canonicalized, never repaired.
 
-Each comparison entry preserves, without inference:
+## 9. Fingerprint verification inventory
+- **Category A**: all four RTICB V2 identities above, locally computed from complete explicit preimages. A serialization/hash/encoding failure is a technical exception.
+- **Category B**: target result and semantic fingerprints, and CRTISBA `result_fingerprint`; recompute from their *accepted complete supplied preimages*, requiring exact schema and hash matching. For CRTISBA result the preimage is `{"contract":"CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_RESULT_JSON_V1","result":<entire CRTISBA collection except result_fingerprint>}`. Use the accepted target authority's canonical result/semantic preimage contracts unchanged.
+- **Category C**: CRTISBA entry `decision_fingerprint`, `source_fingerprint`, `source_version`, `amount_authority_fingerprint`, `rtisa_admission_result_fingerprint`, and transitive Portfolio/PTE/Planning identities. Enforce their accepted structural, version and relationship contracts, and preserve them in collection verification; never independently recompute them without complete owned preimage. A changed decision/amount source that changes the CRTISBA result fingerprint necessarily changes RTICB input identity. Entry fingerprints independently bind these preserved identity fields to each compared entry. Never remove either binding or duplicate consumption of the upstream producer.
 
-- target `income_basis`, `price_basis`, and `price_reference_date`;
-- source `native_income_basis`;
-- source `native_price_evidence.price_basis`;
-- source `native_price_evidence.price_reference_date`;
-- RTISA `admission_state` and `reason_codes`;
-- RTISA upstream source identity; and
-- the relevant target and RTISA fingerprints.
+## 10. Ordered fail-closed contract
+Semantic validation and precedence, from first to last: (1) request schema/identity before DB, (2) target unavailable/schema/fingerprint/readiness, (3) CRTISBA collection unavailable or accepted blocked result/schema/fingerprint, (4) cross-authority identity, coverage/partitions/source relationships, (5) state-specific nullability and classification, (6) successful envelope/fingerprint construction. Technical exceptions from ANY stage propagate and supersede semantic translation; do not synthesize a `CONSTRUCTION_FAILED` code.
 
-Tax characterization, source category, description, origin, pension type,
-employment intent, or other professional knowledge must never be used to fill
-or infer a missing basis field. They may remain provenance only.
+Preserve all existing V1 request and target failure meanings under their existing `RTICB_*` codes (as defined in the prior draft Section 13) except that **RTISA-specific input failure codes are replaced** by the following distinct CRTISBA codes:
 
-## 8. Per-source classification taxonomy
-
-The smallest binding state taxonomy is:
-
-| State | Meaning |
-|---|---|
-| `DIRECTLY_COMPARABLE` | The source is admitted and every required basis dimension exactly matches the target. |
-| `NORMALIZATION_REQUIRED` | The source is admitted, its relevant basis evidence is authoritative and known, but one or more dimensions differ from the target. |
-| `BASIS_UNRESOLVED` | The source is admitted but required native basis evidence is authoritatively represented by RTISA as `UNKNOWN`, or an otherwise-valid real-price evidence object has a null reference date. |
-| `NOT_ADMITTED` | RTISA explicitly excluded the source; RTICB performs no basis comparison for it. |
-
-Reason codes are a sorted unique list. Their closed vocabulary is:
-
-- `RTICB_SOURCE_NOT_ADMITTED`
-- `RTICB_INCOME_BASIS_UNKNOWN`
-- `RTICB_INCOME_BASIS_MISMATCH`
-- `RTICB_PRICE_BASIS_UNKNOWN`
-- `RTICB_PRICE_BASIS_MISMATCH`
-- `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`
-- `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`
-
-The state/reason mapping is exact:
-
-- `DIRECTLY_COMPARABLE` has no reasons.
-- `NORMALIZATION_REQUIRED` has one or more mismatch reasons and no unknown or
-  not-admitted reason.
-- `BASIS_UNRESOLVED` has one or more unknown/missing reasons. If both unresolved
-  and mismatch conditions exist, `BASIS_UNRESOLVED` controls while every
-  independently determinable mismatch reason is still preserved.
-- `NOT_ADMITTED` has exactly `RTICB_SOURCE_NOT_ADMITTED`. No basis mismatch or
-  unknown reason is emitted for an RTISA-excluded source. An RTISA
-  `UNRESOLVED` entry cannot reach per-source classification because it fails
-  the ready-authority gate in Section 5.
-
-## 9. Classification algorithm
-
-For each RTISA entry, in canonical source order:
-
-1. Source-universe validation has already established that `admission_state` is
-   `INCLUDED` or `EXCLUDED`. `UNRESOLVED` deterministically selects
-   `RTICB_RTISA_AUTHORITY_NOT_READY` before this stage; any other admission-state
-   value selects `RTICB_SOURCE_UNIVERSE_INVALID`.
-2. For every entry, including `EXCLUDED`, validate `native_income_basis` as a
-   required non-null string in the exact closed vocabulary `GROSS`, `NET`, or
-   `UNKNOWN`. Missing, null, wrong-type, padded, or unsupported values select
-   `RTICB_SOURCE_BASIS_EVIDENCE_INVALID`. This step records no comparison reason.
-3. For every entry, including `EXCLUDED`, validate
-   `native_price_evidence.price_basis` as a required non-null string in the
-   exact closed vocabulary `NOMINAL_AT_RETIREMENT_TARGET_DATE`,
-   `REAL_AT_REFERENCE_DATE`, or `UNKNOWN`, and validate the paired reference
-   date shape. `NOMINAL_AT_RETIREMENT_TARGET_DATE` and `UNKNOWN` require null;
-   `REAL_AT_REFERENCE_DATE` permits either null or a canonical ISO date.
-   Missing keys, null/wrong-type/padded/unsupported enums, malformed non-null
-   dates, or forbidden enum/date combinations select
-   `RTICB_SOURCE_BASIS_EVIDENCE_INVALID`. This step records no comparison reason.
-4. If the structurally valid entry is `EXCLUDED`, preserve its validated basis
-   fields verbatim, emit `NOT_ADMITTED` with exactly
-   `[RTICB_SOURCE_NOT_ADMITTED]`, and stop professional comparison for that
-   entry. In particular, structurally valid `UNKNOWN` and structurally valid
-   `REAL_AT_REFERENCE_DATE`/null remain provenance and do not produce unknown,
-   missing, or mismatch reasons for an excluded source.
-5. For an `INCLUDED` entry, `UNKNOWN` native income basis produces
-   `RTICB_INCOME_BASIS_UNKNOWN`; otherwise inequality with the target produces
-   `RTICB_INCOME_BASIS_MISMATCH`.
-6. For an `INCLUDED` entry, `UNKNOWN` native price basis produces
-   `RTICB_PRICE_BASIS_UNKNOWN`.
-7. For an `INCLUDED` `REAL_AT_REFERENCE_DATE` source, a null source date
-   produces `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`. This source-local
-   evidence handling is independent of the target price basis.
-8. If an `INCLUDED` source price basis is known and differs from the target
-   price basis, emit `RTICB_PRICE_BASIS_MISMATCH`. This known mismatch is
-   preserved when Step 7 also produced unresolved source evidence.
-9. Only when both price bases are `REAL_AT_REFERENCE_DATE` and both dates are
-   valid, compare the dates for equality. The confirmed target authority already
-   guarantees its REAL target date is present and canonical. Unequal dates
-   produce `RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH`.
-10. Resolve the included-source state from the complete reason set using
-    Section 8. Any unknown or missing reason selects `BASIS_UNRESOLVED`;
-    otherwise any mismatch reason selects `NORMALIZATION_REQUIRED`; otherwise
-    select `DIRECTLY_COMPARABLE`.
-
-Comparison never reads or changes amount fields. An admitted source with zero
-amount is still classified because comparability is a basis property, not an
-amount-materiality shortcut.
-
-### 9.1 Binding admission and income-basis matrix
-
-Canonical basis shape is validated for every entry before admission routing.
-Admission is then resolved before any professional basis comparison:
-
-| RTISA admission state | RTICB route |
-|---|---|
-| `INCLUDED` with canonical basis shape | continue with income and price classification |
-| `EXCLUDED` with canonical basis shape, including permitted `UNKNOWN` or REAL/null evidence | preserve the basis fields; `NOT_ADMITTED` with exactly `[RTICB_SOURCE_NOT_ADMITTED]`; no target comparison |
-| `UNRESOLVED` | no successful result; `RTICB_RTISA_AUTHORITY_NOT_READY` |
-| any other/malformed value | no successful result; `RTICB_SOURCE_UNIVERSE_INVALID` |
-| `INCLUDED` or `EXCLUDED` with malformed/noncanonical basis evidence | no successful result; `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-
-The excluded-source boundary is exhaustive for the enumeration cases relevant
-to this Definition:
-
-| Excluded-source basis evidence | Exact outcome |
-|---|---|
-| valid `GROSS` or `NET` income and otherwise-valid price evidence | `NOT_ADMITTED`; `[RTICB_SOURCE_NOT_ADMITTED]` |
-| valid `UNKNOWN` income and/or valid `UNKNOWN` price with null date | `NOT_ADMITTED`; preserve `UNKNOWN`; `[RTICB_SOURCE_NOT_ADMITTED]` |
-| missing or null required income basis | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| unsupported or whitespace-padded income basis | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| missing, null, unsupported, padded, or wrong-type price basis | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| REAL price basis with malformed non-null reference date | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| nominal or `UNKNOWN` price basis with non-null reference date | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| REAL price basis with null reference date | `NOT_ADMITTED`; preserve null; `[RTICB_SOURCE_NOT_ADMITTED]` |
-
-No row in this table authorizes target comparison, missing-value inference, or
-normalization for an excluded source.
-
-For an `INCLUDED` source, after target and source structures are valid:
-
-| Target income basis | Source income basis | Income contribution |
+| Stage | Exact code | Condition |
 |---|---|---|
-| `GROSS` | `GROSS` | no reason |
-| `NET` | `NET` | no reason |
-| `GROSS` | `NET` | `RTICB_INCOME_BASIS_MISMATCH` |
-| `NET` | `GROSS` | `RTICB_INCOME_BASIS_MISMATCH` |
-| either accepted target basis | `UNKNOWN` | `RTICB_INCOME_BASIS_UNKNOWN` |
-| either accepted target basis | unsupported value, wrong type, missing key, or null | no successful result; `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-
-### 9.2 Binding price-basis matrix
-
-The following rows assume an `INCLUDED` source, matching resolved income bases,
-and otherwise-valid identities/structures. Reasons are shown in canonical
-Unicode code-point order.
-
-| Target price basis/date | Source price basis/date | Classification | Exact reasons |
-|---|---|---|---|
-| `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `DIRECTLY_COMPARABLE` | `[]` |
-| `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `REAL_AT_REFERENCE_DATE` / null | `BASIS_UNRESOLVED` | `[RTICB_PRICE_BASIS_MISMATCH, RTICB_REAL_PRICE_REFERENCE_DATE_MISSING]` |
-| `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `REAL_AT_REFERENCE_DATE` / valid date | `NORMALIZATION_REQUIRED` | `[RTICB_PRICE_BASIS_MISMATCH]` |
-| `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `UNKNOWN` / null | `BASIS_UNRESOLVED` | `[RTICB_PRICE_BASIS_UNKNOWN]` |
-| `REAL_AT_REFERENCE_DATE` / valid date | `UNKNOWN` / null | `BASIS_UNRESOLVED` | `[RTICB_PRICE_BASIS_UNKNOWN]` |
-| `REAL_AT_REFERENCE_DATE` / valid date | `REAL_AT_REFERENCE_DATE` / null | `BASIS_UNRESOLVED` | `[RTICB_REAL_PRICE_REFERENCE_DATE_MISSING]` |
-| `REAL_AT_REFERENCE_DATE` / date D | `REAL_AT_REFERENCE_DATE` / same date D | `DIRECTLY_COMPARABLE` | `[]` |
-| `REAL_AT_REFERENCE_DATE` / date D1 | `REAL_AT_REFERENCE_DATE` / different valid date D2 | `NORMALIZATION_REQUIRED` | `[RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH]` |
-| `REAL_AT_REFERENCE_DATE` / valid date | `NOMINAL_AT_RETIREMENT_TARGET_DATE` / null | `NORMALIZATION_REQUIRED` | `[RTICB_PRICE_BASIS_MISMATCH]` |
-
-A malformed non-null REAL source date is not a classification row: it is
-malformed canonical authority data and routes to
-`RTICB_SOURCE_BASIS_EVIDENCE_INVALID` under Section 13. A malformed target REAL
-date is rejected earlier by the accepted target-authority validation contract.
-An `UNKNOWN` source with a non-null date and a nominal source with a non-null
-date follow the same fatal basis-evidence route. Independent income reasons are
-combined with the price reason set; the state precedence in Section 8 then
-selects one result without discarding any independently determinable reason.
-
-## 10. Downstream readiness model
-
-RTICB separates two booleans and their states:
-
-### 10.1 Classification completion
-
-`classification_state = COMPLETE` and `classification_complete = true` only
-when both upstream authorities are valid/current, the RTISA universe is
-complete, and every RTISA source has exactly one valid RTICB entry.
-
-A complete result may contain `NORMALIZATION_REQUIRED`, `BASIS_UNRESOLVED`, or
-`NOT_ADMITTED` entries. Completion means the comparison question was answered;
-it does not mean a direct total is safe.
-
-### 10.2 Direct-comparison readiness
-
-`direct_comparison_state = READY` and `direct_comparison_ready = true` only
-when classification is complete and every RTISA `INCLUDED` source is
-`DIRECTLY_COMPARABLE`.
-
-An empty admitted source set is direct-comparison ready only when RTISA itself
-is complete and ready. This readiness says that a future complete direct total
-would omit no admitted source; it does not calculate or authorize that total.
-
-Otherwise the state is `NOT_READY`, and aggregate blockers are the sorted unique
-union of:
-
-- `RTICB_NORMALIZATION_REQUIRED` when any admitted source has that state;
-- `RTICB_BASIS_UNRESOLVED` when any admitted source has that state.
-
-An RTISA-unresolved source does not add an aggregate blocker because it cannot
-appear in a successful RTICB result; it selects the earlier
-`RTICB_RTISA_AUTHORITY_NOT_READY` failure envelope.
-
-Future total/gap logic must not omit an admitted source with
-`NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`. It must stop until a separately
-authorized authority resolves the basis or performs the required normalization.
-
-## 11. Request and result contracts
-
-### 11.1 Request contract
-
-The public RTICB request is an object with exactly these keys:
-
-- `client_id`: positive integer; booleans are not integers for this contract;
-- `expected_planning_calculation_input_fingerprint`: lowercase 64-character
-  hexadecimal SHA-256 string; and
-- `expected_retirement_target_date`: canonical ISO date string `YYYY-MM-DD`.
-
-Extra or missing keys are invalid. The expected planning fingerprint and date
-are caller-supplied snapshot admission guards. They are not reconstructed from
-the target or RTISA result.
-
-The result schema constant name is `SCHEMA_VERSION` and its exact value is
-`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1`.
-
-### 11.2 Successful result
-
-A successful result contains exactly:
-
-- `schema_version`
-- `client_id`
-- `planning_calculation_input_fingerprint`
-- `retirement_target_date`
-- `target_result_fingerprint`
-- `target_semantic_fingerprint`
-- `rtisa_admission_result_fingerprint`
-- `comparison_input_fingerprint`
-- `target_basis`
-- `source_comparisons`
-- `directly_comparable_source_ids`
-- `normalization_required_source_ids`
-- `basis_unresolved_source_ids`
-- `not_admitted_source_ids`
-- `classification_state`
-- `classification_complete`
-- `direct_comparison_state`
-- `direct_comparison_ready`
-- `blockers`
-- `comparison_result_fingerprint`
-
-Every listed key is required and non-null except the explicitly nullable
-`target_basis.price_reference_date` and source
-`source_price_reference_date`/nested upstream identity values. No additional
-key is permitted.
-
-`target_basis` contains exactly `income_basis`, `price_basis`, and
-`price_reference_date`. Each source comparison contains exactly:
-
-- `source_id`
-- `rtisa_admission_state`
-- `source_upstream_identity`
-- `source_income_basis`
-- `source_price_basis`
-- `source_price_reference_date`
-- `comparison_state`
-- `reason_codes`
-- `source_comparison_fingerprint`
-
-For every source comparison, including `NOT_ADMITTED`, `source_income_basis`
-is exactly `GROSS`, `NET`, or `UNKNOWN`; `source_price_basis` is exactly
-`NOMINAL_AT_RETIREMENT_TARGET_DATE`, `REAL_AT_REFERENCE_DATE`, or `UNKNOWN`;
-and `source_price_reference_date` is null unless the price basis is
-`REAL_AT_REFERENCE_DATE`, for which it is null or a canonical ISO date. These
-are representational requirements, not permission to compare an excluded
-source with the target. A successful result never contains missing, null,
-wrong-type, padded, unsupported, or otherwise noncanonical basis fields.
-
-No normalized or calculated amount is present.
-
-## 12. Determinism and exact fingerprint contracts
-
-All fingerprints are lowercase SHA-256 over UTF-8 canonical JSON with sorted
-object keys, compact separators, `ensure_ascii = false`, and non-finite values
-rejected. Arrays remain in their contractually defined canonical order.
-
-Null is serialized as JSON `null`; no nullable key is omitted. Reason and
-blocker arrays are sorted ascending by Unicode code point, contain unique
-strings, and are serialized even when empty. `source_comparisons` and every
-source-ID partition are sorted ascending by `source_id`. Object-key sorting by
-the canonical serializer does not replace these array-order rules.
-
-The four and only four RTICB fingerprint contracts are below.
-
-### 12.1 Input fingerprint
-
-Constant name:
-`INPUT_FINGERPRINT_CONTRACT`.
-
-Exact constant value:
-`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1`.
-
-`comparison_input_fingerprint` is SHA-256 of exactly this preimage (no wrapper
-or additional key):
-
-```json
-{
-  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1",
-  "client_id": 1,
-  "planning_calculation_input_fingerprint": "<sha256>",
-  "retirement_target_date": "YYYY-MM-DD",
-  "target_result_fingerprint": "<sha256>",
-  "target_semantic_fingerprint": "<sha256>",
-  "rtisa_admission_result_fingerprint": "<sha256>"
-}
-```
-
-All six identity values are required and non-null. The planning/date values are
-the common, validated observed values and must also equal their request guards.
-
-### 12.2 Per-entry fingerprint
-
-Constant name:
-`ENTRY_FINGERPRINT_CONTRACT`.
-
-Exact constant value:
-`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V1`.
-
-`source_comparison_fingerprint` is SHA-256 of exactly:
-
-```json
-{
-  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V1",
-  "comparison_input_fingerprint": "<sha256>",
-  "source_comparison": {
-    "source_id": "<non-empty string>",
-    "rtisa_admission_state": "INCLUDED|EXCLUDED",
-    "source_upstream_identity": {
-      "source_fingerprint": "<sha256>",
-      "pension_source_result_fingerprint": null,
-      "resolution": null
-    },
-    "source_income_basis": "GROSS|NET|UNKNOWN",
-    "source_price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE|REAL_AT_REFERENCE_DATE|UNKNOWN",
-    "source_price_reference_date": null,
-    "comparison_state": "DIRECTLY_COMPARABLE|NORMALIZATION_REQUIRED|BASIS_UNRESOLVED|NOT_ADMITTED",
-    "reason_codes": []
-  }
-}
-```
-
-The nested `source_comparison` contains every successful entry field except
-`source_comparison_fingerprint`, with exactly the key set shown. The displayed
-nulls are nullable positions, not fixed values:
-
-- `pension_source_result_fingerprint` is null or a valid SHA-256;
-- `source_price_reference_date` is null or a canonical ISO date; and
-- `resolution` is null or exactly
-  `{decision_kind, record_version, income_fingerprint, canonical_source_id,
-  canonical_fingerprint}` in canonical JSON key order. `record_version` is a
-  positive integer; `income_fingerprint` is a SHA-256; the two canonical fields
-  are either both null or respectively a non-empty string and SHA-256.
-
-The basis enums and reference-date nullability in this preimage are the exact
-Section 11.2 successful-entry contract for both `INCLUDED` and `EXCLUDED`
-entries. Basis shape is validated before this preimage is constructed. An
-excluded entry is fingerprinted with its validated basis fields verbatim and
-with `comparison_state = NOT_ADMITTED` and
-`reason_codes = [RTICB_SOURCE_NOT_ADMITTED]`; no target comparison result is
-derived from those fields.
-
-No other RTISA fields, amount, actor, or RTICB execution metadata enter the
-entry preimage. Distinct source identities therefore remain distinct even when
-their basis classifications are equal.
-
-### 12.3 Successful-result fingerprint
-
-Constant name:
-`RESULT_FINGERPRINT_CONTRACT`.
-
-Exact constant value:
-`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V1`.
-
-`comparison_result_fingerprint` is SHA-256 of exactly:
-
-```json
-{
-  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V1",
-  "result": {
-    "schema_version": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1",
-    "client_id": 1,
-    "planning_calculation_input_fingerprint": "<sha256>",
-    "retirement_target_date": "YYYY-MM-DD",
-    "target_result_fingerprint": "<sha256>",
-    "target_semantic_fingerprint": "<sha256>",
-    "rtisa_admission_result_fingerprint": "<sha256>",
-    "comparison_input_fingerprint": "<sha256>",
-    "target_basis": {
-      "income_basis": "GROSS|NET",
-      "price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE|REAL_AT_REFERENCE_DATE",
-      "price_reference_date": null
-    },
-    "source_comparisons": [],
-    "directly_comparable_source_ids": [],
-    "normalization_required_source_ids": [],
-    "basis_unresolved_source_ids": [],
-    "not_admitted_source_ids": [],
-    "classification_state": "COMPLETE",
-    "classification_complete": true,
-    "direct_comparison_state": "READY|NOT_READY",
-    "direct_comparison_ready": true,
-    "blockers": []
-  }
-}
-```
-
-The nested result is the exact Section 11 successful result excluding only
-`comparison_result_fingerprint`. Placeholder null/empty/boolean values take
-their actual validated values. `target_basis.price_reference_date` is null for
-nominal basis and a canonical ISO date for real basis.
-
-### 12.4 Failure fingerprint
-
-Constant name:
-`FAILURE_FINGERPRINT_CONTRACT`.
-
-Exact constant value:
-`CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V1`.
-
-`result_fingerprint` on `block_no_result` is SHA-256 of exactly:
-
-```json
-{
-  "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V1",
-  "failure": {
-    "schema_version": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1",
-    "client_id": null,
-    "supplied_planning_calculation_input_fingerprint": null,
-    "observed_target_planning_calculation_input_fingerprint": null,
-    "observed_rtisa_planning_calculation_input_fingerprint": null,
-    "supplied_retirement_target_date": null,
-    "observed_target_retirement_target_date": null,
-    "observed_rtisa_retirement_target_date": null,
-    "observed_target_result_fingerprint": null,
-    "observed_rtisa_admission_result_fingerprint": null,
-    "result_state": "block_no_result",
-    "failure_stage": "<closed stage>",
-    "failure_detail_code": "<closed code>"
-  }
-}
-```
-
-The nested failure is the exact Section 13 failure envelope excluding only
-`result_fingerprint`. Every nullable identity key is present. A supplied value
-is included only if it passes its own lexical/type validation; otherwise it is
-null. Each authority-specific observed value follows the extraction and stage
-rules in Section 13.1; no generic observed field or authority-precedence alias
-is permitted.
-
-### 12.5 Metadata sensitivity boundary
-
-RTICB must not independently add local actor, audit timestamp, execution time,
-request time, or observer metadata to any preimage. Such RTICB-local metadata is
-fingerprint-invariant.
-
-RTICB nevertheless binds accepted upstream fingerprints verbatim. The target
-result fingerprint transitively includes the upstream target authority's
-`confirmation_actor` and `confirmed_at`. If that upstream contract changes its
-result fingerprint because such metadata changed, the RTICB input, entry, and
-result identities must change accordingly. RTICB must not strip, reconstruct,
-reinterpret, or weaken that upstream sensitivity.
-
-### 12.6 Fingerprint ownership and verification inventory
-
-Fingerprint verification follows three closed categories. "Complete preimage"
-means the permitted target and RTISA result objects contain every canonical
-field required by the fingerprint owner's accepted contract. A projected
-object plus a fingerprint is not presumed to be a complete preimage.
-
-#### Category A — RTICB-owned fingerprints
-
-RTICB independently constructs and verifies every fingerprint it owns:
-
-| Exact field | Owner | Complete preimage available | RTICB recomputation required | Structural validation required | Transitively bound into RTICB identity |
-|---|---|---:|---:|---:|---:|
-| `comparison_input_fingerprint` | RTICB | YES | YES | YES | YES |
-| `source_comparison_fingerprint` | RTICB | YES | YES | YES | YES |
-| `comparison_result_fingerprint` | RTICB | YES | YES | YES | final identity |
-| failure `result_fingerprint` | RTICB | YES | YES | YES | final failure identity |
-
-Their only canonical preimages are Sections 12.1 through 12.4.
-
-#### Category B — consumed upstream fingerprints with complete preimage present
-
-| Exact field | Owner | Complete preimage available in permitted result | RTICB recomputation required | Structural validation required | Transitively bound into RTICB identity |
-|---|---|---:|---:|---:|---:|
-| target `target_result_fingerprint` | canonical retirement monthly income target authority | YES — the complete target result excluding this field is present | YES | YES | YES, in RTICB input and result |
-| target `target_semantic_fingerprint` | canonical retirement monthly income target authority | YES — the complete authoritative `target` object is present | YES | YES | YES, in RTICB input and result |
-| RTISA `admission_result_fingerprint` | RTISA | YES — the complete RTISA result excluding this field is present | YES | YES | YES, in RTICB input and result |
-
-These are the only consumed upstream fingerprints RTICB independently
-recomputes. Their preimages and contract namespace values come from the
-accepted owning authority, not an RTICB reconstruction.
-
-#### Category C — transitively bound upstream fingerprints without complete preimage
-
-| Exact field/location | Owner | Complete preimage available in permitted results | RTICB recomputation required | Structural validation required | Transitively bound into RTICB identity |
-|---|---|---:|---:|---:|---:|
-| target and RTISA `planning_calculation_input_fingerprint` | canonical planning input authority | NO | NO | YES; also require all supplied/observed relationships in this Definition | YES, directly in RTICB input/result |
-| RTISA `pension_portfolio_result_fingerprint` | canonical pension target-date portfolio authority | NO — portfolio result is not carried by RTISA | NO | YES | YES through the recomputed RTISA result fingerprint |
-| each entry `upstream_identity.source_fingerprint` | canonical planning/source snapshot authority for that source | NO — complete canonical source record is not carried | NO | YES | YES, directly in the RTICB entry and therefore result |
-| each entry `upstream_identity.pension_source_result_fingerprint` when non-null | pension target-date execution authority | NO — complete pension source result is not carried | NO | YES | YES, directly in the RTICB entry and therefore result |
-| each non-null resolution `income_fingerprint` | canonical planning recurring-income authority | NO — complete recurring-income source record is not carried | NO | YES | YES inside the entry resolution |
-| each non-null resolution `canonical_fingerprint` | canonical pension source authority | NO — complete canonical pension source record is not carried | NO | YES | YES inside the entry resolution |
-
-RTISA exposes no `source_entry_fingerprint` field. Consequently there is no
-RTISA per-entry fingerprint to recompute or bind beyond the exact nested fields
-listed above and the top-level RTISA result fingerprint.
-
-For every Category C field, RTICB must:
-
-1. validate required presence/nullability and canonical SHA-256 structure under
-   the consumed RTISA/target schema;
-2. validate relationships available from the supplied results, including
-   repeated planning identity equality and paired resolution nullability;
-3. preserve the fingerprint byte-for-byte;
-4. bind it at the exact RTICB preimage location specified above; and
-5. rely on the accepted upstream producer as owner of its computation.
-
-RTICB must not synthesize a preimage from projected fields, query raw recurring
-income or pension rows, reconstruct canonical source records, discover sources,
-bypass RTISA, open a second session/snapshot, or invoke a transaction-owning
-reader solely to recompute a Category C fingerprint. Absence of the complete
-preimage is not a fingerprint mismatch.
-
-If separately authorized upstream work later includes a complete preimage, a
-Category C fingerprint does not automatically become Category B. Reclassification
-requires an explicit Definition change.
-
-## 13. Failure and fail-closed contract
-
-Expected authority invalidity/unavailability is represented by one deterministic
-`block_no_result` envelope rather than a partial successful result. It has
-exactly these required keys and types:
-
-| Key | Type and null rule |
-|---|---|
-| `schema_version` | exact non-null `SCHEMA_VERSION` value |
-| `client_id` | positive integer when the request client is valid; otherwise null |
-| `supplied_planning_calculation_input_fingerprint` | valid SHA-256 string or null |
-| `observed_target_planning_calculation_input_fingerprint` | target authority's valid SHA-256 string or null |
-| `observed_rtisa_planning_calculation_input_fingerprint` | RTISA authority's valid SHA-256 string or null |
-| `supplied_retirement_target_date` | canonical ISO date or null |
-| `observed_target_retirement_target_date` | target authority's canonical ISO date or null |
-| `observed_rtisa_retirement_target_date` | RTISA authority's canonical ISO date or null |
-| `observed_target_result_fingerprint` | valid SHA-256 string or null |
-| `observed_rtisa_admission_result_fingerprint` | valid SHA-256 string or null |
-| `result_state` | exact literal `block_no_result` |
-| `failure_stage` | one closed stage below |
-| `failure_detail_code` | one code assigned to that stage below |
-| `result_fingerprint` | valid SHA-256 under Section 12.4 |
-
-No key may be absent and no additional key is permitted.
-
-Observed identity extraction is field-local and deterministic. For an authority
-that has been evaluated, an observed planning fingerprint/date is copied when
-the authority value is present and independently passes that field's primitive
-canonical validation (lowercase SHA-256 or canonical ISO date), even if another
-part of the authority object makes the whole authority structurally invalid.
-A missing, null, or locally invalid value is represented by null. No value is
-copied from the request or from the other authority.
-
-Authority evaluation and null rules by failure stage are exact:
-
-| Failure stage | Target observed fields | RTISA observed fields |
-|---|---|---|
-| `request_validation` | null; no authority is evaluated | null; no authority is evaluated |
-| `snapshot_admission` | null; no authority is evaluated | null; no authority is evaluated |
-| `target_authority` | field-local observations from the evaluated target result, otherwise null | null; RTISA is not evaluated after target-stage failure |
-| `rtisa_authority` | observations from the already validated target result | field-local observations from the evaluated RTISA result, otherwise null |
-| `cross_authority_identity` | observations from the validated target result | observations from the validated RTISA result |
-| `source_universe` | observations from the validated target result | observations from the validated RTISA result |
-| `classification` | observations from the validated target result | observations from the validated RTISA result |
-
-Thus, when request `A`, target `B`, and RTISA `C` disagree, the supplied field
-is `A`, the target-specific observed field is `B`, and the RTISA-specific
-observed field is `C`. Neither observed authority has precedence over or
-replaces the other, and there is exactly one failure envelope representation.
-
-### 13.1 Closed condition-to-code mapping and precedence
-
-Stages are evaluated in the table order. Codes inside a stage are evaluated in
-the displayed order. The first true condition is the sole authoritative
-failure; later conditions are not reported.
-
-| Stage | Ordered code | Exact condition |
-|---|---|---|
-| `request_validation` | `RTICB_REQUEST_SCHEMA_INVALID` | request is not an object or its key set is not exact |
-|  | `RTICB_CLIENT_ID_INVALID` | `client_id` is bool, non-integer, or not positive |
-|  | `RTICB_EXPECTED_PLANNING_FINGERPRINT_INVALID` | supplied planning fingerprint is not lowercase SHA-256 |
-|  | `RTICB_EXPECTED_RETIREMENT_TARGET_DATE_INVALID` | supplied target date is not canonical ISO date |
-| `snapshot_admission` | `RTICB_REQUIRES_FRESH_TRANSACTION` | supplied session already has transaction/new/dirty/deleted state |
-|  | `RTICB_UNSUPPORTED_DATABASE` | dialect is neither PostgreSQL nor the accepted SQLite test dialect |
-| `target_authority` | `RTICB_TARGET_AUTHORITY_SCHEMA_INVALID` | returned target object/key/type/enum/nullability structure is not its accepted schema |
-|  | `RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID` | structurally valid Category B target result or semantic fingerprint is not canonical or does not recompute from its complete supplied preimage |
-|  | `RTICB_TARGET_AUTHORITY_UNAVAILABLE` | a structurally and cryptographically valid target result has `authority_state = UNAVAILABLE` |
-|  | `RTICB_TARGET_AUTHORITY_NOT_READY` | a valid non-`UNAVAILABLE` target result is not simultaneously `CURRENT`, confirmed under its accepted contract, and `target_ready = true` |
-| `rtisa_authority` | `RTICB_RTISA_AUTHORITY_SCHEMA_INVALID` | returned RTISA top-level object/key/type/enum/nullability structure is not its accepted schema; this validates that source/partition fields are arrays but defers entry contents and partition relationships to `source_universe` |
-|  | `RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID` | structurally valid Category B `admission_result_fingerprint` is not canonical or does not recompute from the complete supplied RTISA result preimage |
-|  | `RTICB_RTISA_AUTHORITY_UNAVAILABLE` | a structurally and cryptographically valid RTISA result has `universe_completeness_state = UNAVAILABLE` |
-|  | `RTICB_RTISA_AUTHORITY_NOT_READY` | a valid non-`UNAVAILABLE` RTISA result is not simultaneously `COMPLETE_EVIDENCED`, `READY`, and `admission_ready = true` |
-| `cross_authority_identity` | `RTICB_CLIENT_ID_MISMATCH` | valid target/RTISA/request client IDs are not all equal |
-|  | `RTICB_PLANNING_IDENTITY_MISMATCH` | valid target/RTISA/supplied planning fingerprints are not all equal |
-|  | `RTICB_RETIREMENT_TARGET_DATE_MISMATCH` | valid target/RTISA/supplied retirement dates are not all equal |
-| `source_universe` | `RTICB_SOURCE_UNIVERSE_INVALID` | source ID/order/uniqueness, non-basis entry shape, or nested Category C identity structure/relationship is invalid |
-|  | `RTICB_SOURCE_COVERAGE_MISMATCH` | valid entry IDs and included/excluded/unresolved partitions are not exact, disjoint coverage, or a ready RTISA contains an unresolved ID/entry |
-| `classification` | `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` | any source entry, including `EXCLUDED`, uses an unsupported/padded basis enum, wrong basis-field type, missing/null required basis key, malformed non-null basis date, or illegal basis/date nullability combination |
-
-The table is the complete `failure_stage` and `failure_detail_code` vocabulary.
-The `classification` stage name includes the preliminary canonical
-basis-evidence validation for every projected entry; it does not imply that an
-excluded source undergoes professional comparison. Codes cannot move between
-stages. There is no `result_identity` failure stage,
-`RTICB_RESULT_IDENTITY_CONSTRUCTION_FAILED` code, or
-`RTICB_CLASSIFICATION_CONSTRUCTION_FAILED` code. After semantic validation,
-classification cardinality, result assembly, canonical JSON, and fingerprint
-construction are deterministic implementation obligations. Failure of their
-machinery is an internal technical exception, not a semantic input condition.
-
-### 13.2 Classification versus fatal authority data
-
-The route boundary is exact:
-
-- Structural/canonical validation of native income basis, native price basis,
-  and paired source reference date applies to every RTISA entry that would be
-  projected into a successful result, including `EXCLUDED`. It determines only
-  whether the evidence is representable; it does not compare excluded evidence
-  with the target.
-- For an `INCLUDED` source, valid `UNKNOWN` income, valid `UNKNOWN` price with
-  null date, and valid `REAL_AT_REFERENCE_DATE` with null date produce
-  `BASIS_UNRESOLVED`, never a fatal envelope. For an `EXCLUDED` source, the same
-  structurally valid values are preserved under `NOT_ADMITTED` and produce no
-  professional comparison reason.
-- For an `INCLUDED` REAL source, a null reference date contributes
-  `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING`; any simultaneously known
-  price-basis mismatch is also preserved. The unresolved reason controls the
-  state. An excluded REAL/null source is structurally valid but is not compared.
-- Known valid unequal bases/dates contribute mismatch reasons only for
-  `INCLUDED` sources and, only when no unknown/missing reason exists, produce
-  `NORMALIZATION_REQUIRED`; they never produce a fatal envelope. Excluded
-  sources never receive mismatch reasons.
-- Wrong types, missing required keys, unsupported enum strings, malformed
-  non-null dates, illegal enum/date nullability, malformed upstream identity,
-  a Category A/B recomputation mismatch, or a structurally invalid Category C
-  fingerprint are malformed canonical authority data. Top-level
-  object/fingerprint defects route at `target_authority` or `rtisa_authority`;
-  RTISA per-entry non-basis shape and nested Category C identity defects route
-  at `source_universe`; and source-basis defects route at `classification`.
-  Each produces the exact mapped `block_no_result` code. Failure to
-  independently recompute Category C is not a legal failure condition because
-  its complete preimage is not a permitted RTICB input.
-- Internal failures while producing a per-source classification, assembling a
-  successful result or failure envelope, canonicalizing JSON, encoding UTF-8,
-  or computing SHA-256 are not detectable semantic input conditions. They are
-  technical exceptions. This remains true when all semantic values were already
-  validated and when the exception occurs while constructing a failure
-  fingerprint; RTICB must not emit a partially built or substitute envelope.
-- Exceptions raised by SQLAlchemy/database/driver operations, transaction
-  setup/completion, upstream execution before a result object exists, rollback,
-  or non-domain runtime failures are technical. RTICB rolls back and re-raises
-  the original exception; it does not convert it to a failure envelope or a
-  professional classification. If rollback itself fails, the connection is
-  invalidated and that technical failure remains raised.
-
-Thus the same validated input cannot legally select more than one route.
-
-### 13.3 Binding malformed-boundary routing
-
-The following near-miss classes have one route and do not depend on catching a
-runtime exception:
-
-| Near miss | Exact route |
-|---|---|
-| request missing/extra key or wrong container | `request_validation` / `RTICB_REQUEST_SCHEMA_INVALID` |
-| request null, bool-as-int, malformed or whitespace-padded scalar | the first field-specific request code in Section 13.1 |
-| uppercase, wrong-length, or non-hex SHA-256 | the owning request/authority fingerprint-invalid code |
-| malformed date, datetime text in a date field, or whitespace-padded date | the owning request/authority schema code, except source basis dates which use `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| target/RTISA missing or extra top-level key, wrong top-level container/type (including a non-array source/partition field), or unsupported top-level enum | the owning authority schema-invalid code |
-| valid Category B structure with canonical stored fingerprint that does not recompute | the owning authority fingerprint-invalid code |
-| malformed Category C identity or invalid relationship visible in an RTISA entry | `source_universe` / `RTICB_SOURCE_UNIVERSE_INVALID` |
-| duplicate/empty/whitespace-padded/non-string/out-of-order source ID or malformed non-basis entry shape | `source_universe` / `RTICB_SOURCE_UNIVERSE_INVALID` |
-| source-universe omission/addition, partition overlap, state/partition mismatch, or unresolved source in a purported ready RTISA | `source_universe` / `RTICB_SOURCE_COVERAGE_MISMATCH` |
-| any source, including `EXCLUDED`, missing a basis key or using null/wrong-type/padded/unsupported basis enum, malformed non-null REAL date, or non-null date with `UNKNOWN`/nominal price basis | `classification` / `RTICB_SOURCE_BASIS_EVIDENCE_INVALID` |
-| `INCLUDED` REAL source with null date | valid `BASIS_UNRESOLVED` classification with `RTICB_REAL_PRICE_REFERENCE_DATE_MISSING` |
-| `EXCLUDED` REAL source with null date | valid `NOT_ADMITTED`; preserve null and emit only `RTICB_SOURCE_NOT_ADMITTED` |
-| unexpected serializer, JSON, SHA-256, assertion, programming, or other internal runtime failure | technical exception; rollback/re-raise, no semantic envelope |
-
-Primitive validation is lexical and type-strict: booleans are not integers;
-canonical SHA-256 is lowercase 64-character hexadecimal; canonical dates are
-exact `YYYY-MM-DD` dates rather than datetime strings; enum values and IDs are
-not trimmed; and exact-object contracts reject extra keys. Failure fingerprints
-use only the authority-specific observations permitted by Sections 12.4 and 13,
-never a substituted request or other-authority value.
-
-## 14. Transaction and execution boundary
-
-One public RTICB operation receives one caller-supplied SQLAlchemy `Session` and
-owns one transaction/snapshot for the complete target-plus-RTISA assessment.
-
-- PostgreSQL uses one repeatable-read, read-only transaction.
-- SQLite uses the repository's accepted equivalent test boundary.
-- The operation requires a fresh session transaction state.
-- All upstream reads used to produce the two consumed results occur within that
-  same snapshot and supplied session.
-- Public upstream endpoints/readers that open, commit, retry, or own another
-  transaction must not be nested.
-- No second session, commit, write, flush, autoflush, hidden retry, or
-  cross-snapshot result reuse is permitted.
-- After the full result or semantic failure envelope is assembled and
-  fingerprinted, the operation ends its read-only transaction exactly once by
-  rollback/release before returning the detached plain result. Success never
-  calls `commit()` merely to close a read-only transaction.
-- Any failure after RTICB starts its transaction rolls back the complete
-  operation; a failed rollback invalidates the connection according to
-  established repository discipline. `RTICB_REQUIRES_FRESH_TRANSACTION` is
-  detected before RTICB starts or owns a transaction and therefore does not
-  rollback, commit, or otherwise mutate the caller's pre-existing session
-  state. A request-validation failure likewise performs no transaction action.
-
-Implementation may expose/reuse non-public, non-owning upstream derivation
-boundaries solely to preserve this snapshot discipline. Such extraction must
-not change accepted upstream semantics.
-
-## 15. Persistence, API, and UI posture
-
-RTICB is a pure derived authority. No persistence requirement has been found.
-The expected implementation introduces no table, column, migration, stored
-decision, audit row, write command, or mutation endpoint.
-
-No API or frontend surface is required for this package. A future consumer may
-be authorized separately, but this Definition does not authorize exposure or
-workflow changes.
-
-## 16. Explicit exclusions
-
-RTICB must not own or perform:
-
-- tax calculation or tax characterization inference;
-- gross-to-net, net-to-gross, gross-up, or net-down conversion;
-- CPI calculation, price indexation, price normalization, reference-date
-  conversion, or future inflation projection;
-- income totals, income gaps, funding coverage, or resource eligibility;
-- withdrawals, capital conversion, annuitization, allocation, optimization, or
-  scenario execution;
-- source discovery, admission, deduplication, identity resolution, or
-  applicability decisions;
-- changes to target, pension, RTISA, planning-input, resource-state, M09/M10,
-  M11-M14, `02M`, or `M08E` semantics.
-
-## 17. Expected implementation surface
-
-Subject to later authorization, the expected minimum surface is:
-
-- one backend pure-derived comparison service;
-- focused unit/contract tests;
-- focused PostgreSQL snapshot/boundary tests;
-- governance inventory/traceability updates if required by current tests; and
-- at most narrow non-public extraction in the two upstream services when needed
-  to preserve the single-snapshot boundary without semantic change.
-
-Expected absent surfaces: models, migrations, persistence schemas, write APIs,
-frontend code, navigation, totals/gap engines, and normalization engines.
-
-## 18. Acceptance criteria
-
-- `AC-01`: package identity, class, governance version, and owner decision are explicit.
-- `AC-02`: only the current target authority and current RTISA result are direct inputs.
-- `AC-03`: target and RTISA client identity must match the request.
-- `AC-04`: target and RTISA planning fingerprints must match exactly.
-- `AC-05`: target and RTISA retirement target dates must match exactly.
-- `AC-06`: Category B target result and semantic fingerprints are independently recomputed from their complete supplied preimages.
-- `AC-07`: the Category B RTISA result fingerprint is independently recomputed from its complete supplied result preimage; nested Category C fingerprints follow Section 12.6 without reconstruction.
-- `AC-08`: stale, unavailable, malformed, or non-ready target authority fails closed.
-- `AC-09`: partial, unavailable, malformed, or non-ready RTISA fails closed.
-- `AC-10`: source universe equals RTISA source entries exactly.
-- `AC-11`: every entry of the accepted ready RTISA result has exactly one ordered comparison entry.
-- `AC-12`: every projected RTISA entry passes canonical basis-evidence validation, while only `INCLUDED` entries undergo professional basis comparison.
-- `AC-13`: a canonically valid excluded RTISA entry remains explicit `NOT_ADMITTED` coverage evidence with only `RTICB_SOURCE_NOT_ADMITTED`; malformed excluded basis evidence fails closed, and any unresolved RTISA entry makes the upstream authority not ready.
-- `AC-14`: `GROSS/GROSS` and `NET/NET` income bases match directly.
-- `AC-15`: known unequal income bases require normalization.
-- `AC-16`: for an included source the accepted income literal `UNKNOWN` is unresolved; for an excluded source it is preserved without comparison; unsupported or malformed income-basis authority is fatal for every entry.
-- `AC-17`: equal nominal-at-target price bases match directly.
-- `AC-18`: known unequal price bases always contribute the price-basis mismatch reason and require normalization when no unresolved source evidence takes precedence.
-- `AC-19`: for an included source the accepted price literal `UNKNOWN` with null date is unresolved; for an excluded source it is preserved without comparison; unsupported or malformed price-basis authority is fatal for every entry.
-- `AC-20`: equal real price bases require equal valid reference dates.
-- `AC-21`: every REAL source requires source-local reference-date shape validation regardless of admission or target basis; null is unresolved only for an included source and is preserved under `NOT_ADMITTED` for an excluded source, while a malformed non-null date is always fatal.
-- `AC-22`: unequal real reference dates require normalization.
-- `AC-23`: nominal authorities require null reference dates and malformed upstream data fails closed.
-- `AC-24`: classification reasons use only the closed vocabulary and canonical ordering.
-- `AC-25`: unresolved evidence takes state precedence over known mismatches without hiding either reason, including a REAL source with null date whose price basis also mismatches the target.
-- `AC-26`: zero-amount admitted sources are still classified.
-- `AC-27`: classification completion is independent from direct-comparison readiness.
-- `AC-28`: normalization-required sources permit a complete classification result but block direct comparison.
-- `AC-29`: unresolved-basis sources permit a complete classification result but block direct comparison.
-- `AC-30`: an empty admitted universe is ready only when RTISA is complete and ready.
-- `AC-31`: no admitted source may be silently omitted from future total/gap readiness.
-- `AC-32`: source ordering and every ID partition are deterministic.
-- `AC-33`: Category A input, entry, failure, and result fingerprints use the four exact, distinct, versioned namespaces and preimages defined in Section 12; failure identity uses the same authority-specific observations as its envelope.
-- `AC-34`: source identity remains bound independently of equal basis semantics; Category C identities are structurally validated, relationship-checked, preserved, and transitively bound without false recomputation.
-- `AC-35`: RTICB-local actor/time metadata is fingerprint-invariant, while metadata transitively bound by accepted upstream result fingerprints retains its upstream identity sensitivity.
-- `AC-36`: one supplied session and one snapshot cover all authoritative reads.
-- `AC-37`: no second session, nested public reader, commit, write, flush, or hidden retry occurs; the one read-only transaction is ended by rollback/release after result construction.
-- `AC-38`: every expected invalidity/unavailability condition uses the exact envelope, authority-specific observed-value/null rules, code mapping, and precedence in Section 13.
-- `AC-39`: SQLAlchemy/database/driver, transaction, upstream-execution, rollback, canonical serialization/JSON/UTF-8/SHA-256 machinery, assertion/programming, classification/result/failure-envelope construction, and other non-domain runtime failures rollback where possible and remain technical exceptions; no `*_CONSTRUCTION_FAILED` semantic code exists.
-- `AC-40`: no persistence, migration, API, frontend, total/gap, or normalization behavior is introduced.
-
-Acceptance range: `AC-01` through `AC-40` (40 criteria).
-
-## 19. Negative acceptance criteria
-
-- `NAC-01`: inferring gross/net from source category, tax labels, or pension type.
-- `NAC-02`: inferring nominal/real basis from source origin or general knowledge.
-- `NAC-03`: inventing a real-price reference date.
-- `NAC-04`: treating `UNKNOWN` as a match.
-- `NAC-05`: treating unequal known bases as directly comparable.
-- `NAC-06`: performing gross/net conversion or tax calculation.
-- `NAC-07`: performing CPI/indexation/reference-date conversion.
-- `NAC-08`: emitting a normalized source amount.
-- `NAC-09`: calculating income totals, gaps, coverage, or eligibility.
-- `NAC-10`: independently discovering or rebuilding the source universe.
-- `NAC-11`: bypassing RTISA admission state, or using `EXCLUDED` to bypass canonical basis-evidence validation required by the successful-entry contract.
-- `NAC-12`: dropping an admitted non-comparable source from readiness assessment.
-- `NAC-13`: upgrading an excluded source to admitted, or admitting/classifying an unresolved RTISA source instead of failing at upstream readiness.
-- `NAC-14`: accepting partial or non-ready RTISA as complete.
-- `NAC-15`: accepting a stale or unconfirmed target authority.
-- `NAC-16`: accepting mismatched client/planning/target identities.
-- `NAC-17`: accepting malformed upstream fingerprints or a non-recomputing Category B fingerprint, attempting to recompute Category C without its complete authoritative preimage, or converting an internal serialization/hash/construction exception into a semantic fingerprint mismatch or construction-failed envelope.
-- `NAC-18`: non-deterministic source, reason, blocker, or failure ordering, including a generic/alternate observed-authority representation in a failure envelope or preimage.
-- `NAC-19`: collapsing distinct source identities solely because their bases match.
-- `NAC-20`: independently adding RTICB-local actor/time metadata to fingerprint preimages, or stripping/weakening actor/time sensitivity already bound by an accepted upstream fingerprint.
-- `NAC-21`: opening a second session or cross-snapshot authority read.
-- `NAC-22`: nested public reader, any commit, write/autoflush, or hidden retry.
-- `NAC-23`: introducing persistence, schema, migration, API, or frontend scope.
-- `NAC-24`: changing accepted upstream semantics to simplify RTICB.
-- `NAC-25`: authorizing normalization, total/gap execution, or any downstream package.
-
-Negative-acceptance range: `NAC-01` through `NAC-25` (25 criteria).
-
-## 20. Stop conditions
-
-- `SC-01`: an accepted upstream contract cannot expose its result within one RTICB snapshot without semantic change.
-- `SC-02`: an admitted source requires a basis interpretation not already authoritative upstream.
-- `SC-03`: target and source basis vocabularies conflict beyond exact mapping stated here.
-- `SC-04`: an additional Owner/Product Decision is needed to classify a valid input combination.
-- `SC-05`: complete coverage would require independent source discovery or bypassing RTISA.
-- `SC-06`: correctness would require persistence, normalization, totals, gaps, tax, CPI, or scenario semantics.
-- `SC-07`: implementation would require reopening a closed authority rather than narrow non-semantic extraction.
-- `SC-08`: deterministic identity or single-snapshot behavior cannot be proven, a fingerprint classified as Category B lacks its complete canonical preimage in the permitted results, or implementation would independently recompute/reclassify Category C without an explicit Definition change.
-
-Stop-condition range: `SC-01` through `SC-08` (8 conditions). Encountering any
-condition stops Definition/implementation progression and requires explicit
-owner/governance resolution; no implementation workaround is implied.
-
-### 20.1 Fingerprint-boundary implementation stop rule
-
-If implementation finds that any Category B fingerprint lacks its complete
-canonical preimage inside the two permitted consumed result objects, it must
-stop and return for Definition clarification. It must not fetch hidden/raw
-evidence, reconstruct an upstream record, or add a reader as a workaround.
-
-Implementation likewise must stop rather than independently recompute or
-silently reclassify any Category C fingerprint. Moving a fingerprint between
-Categories B and C requires a separately authorized Definition change, even if
-an upstream producer later exposes additional evidence.
-
-## 21. Pre-implementation contract enumeration requirement
-
-After Definition acceptance, the mandatory enumeration must cover at least:
-
-- all upstream ready/unavailable/stale/malformed producer routes;
-- every admitted income-basis and price-basis combination;
-- nominal and real reference-date equality, mismatch, missing, and malformed cases;
-- admitted and excluded successful-entry states, plus the unresolved RTISA
-  whole-authority not-ready route;
-- valid and malformed excluded-source basis evidence, including `UNKNOWN`,
-  REAL/null, missing/null/padded/unsupported enums, malformed REAL dates, and
-  forbidden nominal/unknown non-null dates;
-- empty, singleton, and multi-source universes;
-- valid combinations and malformed near-misses;
-- deterministic failure envelopes and precedence, plus mutation controls proving
-  serializer/hash/programming failures remain technical exceptions;
-- fingerprint mutation controls for every Category A/B recomputable identity,
-  plus structural, relationship, preservation, and transitive-binding controls
-  for every Category C identity and relevant non-input;
-- source coverage/order mutations;
-- single-session/snapshot transaction mutations; and
-- reusable harnesses for later implementation acceptance.
-
-The enumeration is not performed or accepted by this Definition draft.
-
-## 22. Current decisions and unresolved matters
-
-`OWNER-DECISION-RTICB-001` fully resolves the professional ownership boundary
-needed for this draft. No additional Owner/Product Decision is unresolved.
-
-Implementation remains `NOT_AUTHORIZED`. Downstream authorization remains
-`NOT_AUTHORIZED`. Production readiness remains `NOT_CLAIMED`.
+| crtisba_authority | RTICB_CRTISBA_COLLECTION_UNAVAILABLE | no authoritative collection returned, absent as semantic unavailability |
+| crtisba_authority | RTICB_CRTISBA_BLOCKED | accepted `CRTISBA_BLOCK_NO_RESULT_V1` professional block |
+| crtisba_authority | RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID | malformed envelope, exact-key, entry or partition shape |
+| crtisba_authority | RTICB_CRTISBA_RESULT_FINGERPRINT_MISMATCH | otherwise canonical complete collection fails recomputation |
+| cross_authority | RTICB_CRTISBA_IDENTITY_MISMATCH | client/planning/date disagreement or valid collection null date |
+| cross_authority | RTICB_CRTISBA_SOURCE_UNIVERSE_MISMATCH | missing, duplicate, out-of-order source IDs or partition mismatch |
+| cross_authority | RTICB_CRTISBA_ENTRY_AUTHORITY_INVALID | malformed Category C source/amount/decision provenance, version and identity relationship |
+| classification | RTICB_CRTISBA_STATE_BASIS_INVALID | state/admission/basis/nullability/provenance pairing contradicts Section 8.4 |
+
+Within a stage, enforce the table order above; before the table, target authority errors use their existing deterministic order and code. Structural validation is separated into top-level envelope/schema checks, source-universe/partition consistency and deep identity/state relationship checks, and each defect has one unique routing code. A syntactically well-formed rehashed but factually tampered CRTISBA collection cannot be independently rediscovered from hidden producer facts: rely on accepted CRTISBA result authority plus the recomputable collection hash and Category C relationships. Technical DB, transaction, SQLAlchemy, upstream execution, rollback, encoding, SHA, JSON, programming, assertion and construction errors never become semantic failure envelopes.
+
+## 11. Transaction and in-snapshot read order
+One caller-supplied fresh SQLAlchemy `Session` owns one PostgreSQL REPEATABLE READ READ ONLY transaction. Reject caller-owned existing transaction without commit, rollback or alteration. Execute **target in-snapshot non-owning derivation first, CRTISBA `derive_in_snapshot(db, client_id, operation="READ")` second**, within the exact same session/snapshot. CRTISBA may transitively read RTISA and PTE/Portfolio using its accepted non-owning boundaries; RTICB never calls public RTISA, public CRTISBA GET/READ, or opens a second connection/session. No nested transaction owner, commit, flush, autoflush, write, hidden retry or snapshot reuse. Complete all validation, classification, result/failure fingerprints before exactly one terminal rollback/release. If rollback fails, invalidate as required and propagate a technical exception. The operation never returns a mutable linked ORM object. SQLite tests use the repository's accepted equivalent snapshot behavior. Technical exceptions after transaction acquisition require rollback/invalidation discipline.
+
+## 12. Expected implementation and gate
+This is Definition-only. Later implementation, **only if separately authorized after Definition acceptance, manifest, master closure and pre-implementation enumeration**, may adapt the existing pure derived RTICB backend service, focused tests, PostgreSQL snapshot tests, Golden fixtures and narrow non-public target/CRTISBA derivation interfaces. No new model, persistence, migration, API, UI or downstream total/gap engine. Existing RTICB service/tests in master do not imply implementation acceptance or grant authorization. Owner decision is not reopened.
+
+## 13. Acceptance criteria (40)
+- `AC-001`: Package identity, governance and unresolved authorization status explicit.
+- `AC-002`: Exactly Target and CRTISBA are directly consumed; RTISA only transitive.
+- `AC-003`: CRTISBA is exclusive effective source-basis authority.
+- `AC-004`: No RTISA native basis is compared.
+- `AC-005`: Accepted owner gross/net exact equality.
+- `AC-006`: Accepted nominal/real exact equality.
+- `AC-007`: Target current/confirmed and ILS validation.
+- `AC-008`: Request schema and pre-DB errors.
+- `AC-009`: Client/planning/target identity reconciliation.
+- `AC-010`: Target Category B semantic and result fingerprints recomputed.
+- `AC-011`: CRTISBA complete collection fingerprint recomputed.
+- `AC-012`: Valid CRTISBA NOT_READY collection classified, not rejected.
+- `AC-013`: CRTISBA professional BLOCK_NO_RESULT whole-authority fails.
+- `AC-014`: Source IDs exactly follow CRTISBA ordered universe.
+- `AC-015`: Collection partitions exact and disjoint.
+- `AC-016`: All entries classified once including EXCLUDED and UNRESOLVED.
+- `AC-017`: Pension CURRENT OD-1 and derived OD-2 projected.
+- `AC-018`: Recurring CURRENT OD-3 and upstream income projected.
+- `AC-019`: MISSING safe-missing and decision nulls.
+- `AC-020`: UNKNOWN cleared decision and safe-missing.
+- `AC-021`: STALE suppresses stale stored choices.
+- `AC-022`: INVALID suppresses malformed decision identity.
+- `AC-023`: UPSTREAM_UNRESOLVED frequency-other current decision variant.
+- `AC-024`: UPSTREAM_UNRESOLVED frequency-other missing decision variant.
+- `AC-025`: UPSTREAM_UNRESOLVED other all-null variant.
+- `AC-026`: NOT_APPLICABLE_DELEGATED exact null and not-admitted classification.
+- `AC-027`: DELEGATION_UNRESOLVED exact null and blocker.
+- `AC-028`: DELEGATION_STALE exact null and blocker.
+- `AC-029`: NOT_APPLICABLE_NOT_ADMITTED exact null and not-admitted classification.
+- `AC-030`: Decision-state admission and nullability relationship is exact.
+- `AC-031`: UNKNOWN/missing and mismatch reasons are deterministically ordered.
+- `AC-032`: Known basis and real-date mismatches deterministic.
+- `AC-033`: Classification completion separate from readiness.
+- `AC-034`: Unresolved admissions block direct readiness.
+- `AC-035`: Empty/all-excluded valid universe readiness.
+- `AC-036`: V2 input/entry/result/failure preimages exact.
+- `AC-037`: Category A/B/C inventory and no unauthorized recomputation.
+- `AC-038`: Stage-specific failure precedence and technical exception preservation.
+- `AC-039`: One supplied snapshot with Target then CRTISBA and rollback.
+- `AC-040`: No conversion, persistence, totals, gap or inference.
+
+## 14. Negative acceptance criteria (25)
+- `NAC-001`: Never directly consume RTISA basis.
+- `NAC-002`: Never bypass CRTISBA decisions with native UNKNOWN fallback.
+- `NAC-003`: Never treat CRTISBA NOT_READY as malformed.
+- `NAC-004`: Never reject valid nullable delegated/excluded fields.
+- `NAC-005`: Never treat unresolved admission as admitted.
+- `NAC-006`: Never drop excluded/unresolved source entries.
+- `NAC-007`: Never infer GROSS/NET from labels.
+- `NAC-008`: Never infer nominal/real from source origin.
+- `NAC-009`: Never invent real reference date.
+- `NAC-010`: Never treat UNKNOWN as matching.
+- `NAC-011`: Never normalize amounts or dates.
+- `NAC-012`: Never compute sums or gap.
+- `NAC-013`: Never replace authoritative source identity.
+- `NAC-014`: Never compute Category C from missing preimage.
+- `NAC-015`: Never omit CRTISBA result fingerprint from input hash.
+- `NAC-016`: Never use V1 comparison hash namespaces.
+- `NAC-017`: Never accept rehashed but structurally inconsistent collection.
+- `NAC-018`: Never ignore amount/decision fingerprint relationships.
+- `NAC-019`: Never treat technical failure as semantic block.
+- `NAC-020`: Never allow cross-client/planning/date result mixing.
+- `NAC-021`: Never duplicate/deduplicate source IDs.
+- `NAC-022`: Never wrong ordering/partition reconciliation.
+- `NAC-023`: Never open extra session or nested public reader.
+- `NAC-024`: Never commit/write/flush/retry.
+- `NAC-025`: Never authorize downstream/implementation without governance.
+
+## 15. Stop conditions (8)
+- `SC-01`: Cannot consume valid current CRTISBA collection in supplied snapshot; stop for Definition clarification, not workaround.
+- `SC-02`: Basis interpretation needed beyond accepted CRTISBA; stop for Definition clarification, not workaround.
+- `SC-03`: Unresolved source state cannot be mapped without new professional rule; stop for Definition clarification, not workaround.
+- `SC-04`: Category B canonical preimage unavailable to RTICB; stop for Definition clarification, not workaround.
+- `SC-05`: Category C must be independently reconstructed to prove correctness; stop for Definition clarification, not workaround.
+- `SC-06`: Authority reconciliation needs hidden direct RTISA second read; stop for Definition clarification, not workaround.
+- `SC-07`: Correctness requires normalization, tax, totals, gap or persistence; stop for Definition clarification, not workaround.
+- `SC-08`: Single transaction/fingerprint/failure determinism cannot be proved; stop for Definition clarification, not workaround.
+
+## 16. Required pre-implementation contract enumeration (after independent Definition acceptance)
+Enumerate the full cross-product of accepted CRTISBA ten states, pension vs recurring, exact Section 8.4 subtype/null/version/provenance constraints, included/excluded/unresolved, empty/single/multiple collections, all target income and price bases/dates, known mismatches and unresolved precedence, sorted partitions, validation stages, V2 golden entry/result/failure preimages, Category A/B recomputations and Category C transitive relationship mutations. Require real producer-path controls for CRTISBA `BLOCK_NO_RESULT` and not-ready collection, coherent tampering mutations for omission/change of result fingerprint and decision/amount identity, unchanged-oracle mutation kills for state route, admission, nullability and readiness; verify exact rollback, snapshot, pre-DB and technical-exception behavior. No implementation authorization until independent enumeration acceptance.
+
+## 17. Open governance decisions
+`OWNER-DECISION-RTICB-001` remains resolved. No new professional Owner Decision is required. Independent Definition Acceptance is still pending; `DEFINITION_AMENDMENT_REQUIRED=YES` relative to rejected V1 draft. `IMPLEMENTATION=NOT_AUTHORIZED`, `DOWNSTREAM=NOT_AUTHORIZED`, `PRODUCTION_READINESS=NOT_CLAIMED`.

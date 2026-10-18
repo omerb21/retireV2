@@ -480,7 +480,7 @@ def _entry_valid(e: Any) -> bool:
     if state in {"NOT_APPLICABLE_DELEGATED","NOT_APPLICABLE_NOT_ADMITTED","DELEGATION_UNRESOLVED","DELEGATION_STALE"}:
         if any(e[x] is not None for x in ("income_basis","income_basis_provenance","price_basis",
                                             "price_reference_date","price_basis_provenance")):return False
-    if state=="CURRENT" and (e["income_basis"] not in {"GROSS","NET"} or e["price_basis"] not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE"}):return False
+    if state=="CURRENT" and (e["income_basis"] not in {"GROSS","NET","UNKNOWN"} or e["price_basis"] not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE"}):return False
     if state=="MISSING" and e["decision_version"] is not None:return False
     if state=="INVALID" and e["decision_version"] is not None:return False
     return True

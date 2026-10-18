@@ -90,7 +90,7 @@ CSRF and request-schema preemption from the accepted parent RTDIR Definition rem
 | `CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)` | reachable from CRTISBA Planning/Portfolio/RTISA verification | 500 | `PRODUCER_RESPONSE_INVALID` | `[]` | no automatic retry |
 | `CRTISBAError("RESPONSE_CLIENT_MISMATCH", 500)` | reachable from foreign RTISA response during CRTISBA derivation | 500 | `RESPONSE_CLIENT_MISMATCH` | `[]` | no automatic retry |
 | `CRTISBAError("CLIENT_NOT_FOUND", 404)` | CRTISBA producer path reachable in isolation; ordinarily preempted by earlier RIT target path for a truly nonexistent client; preserve mapping if encountered | 404 | `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no |
-| `CRTISBAError("CRTISBA_DATABASE_FAILURE", 503)` | possible only if downstream wraps a DB failure through an accepted owner path; raw snapshot DBAPI is the normal in-snapshot route | 503 | `RTICB_DATABASE_FAILURE` | `[]` | manual after recovery |
+| `CRTISBAError("CRTISBA_DATABASE_FAILURE", 503)` | **not reachable** as an emitted wrapper from non-owning `derive_in_snapshot`; it is created by the public `read()` exception handler. Raw DBAPI failures from the RTICB-owned snapshot use the raw DBAPI row below | n/a | n/a | n/a | n/a |
 | Raw `DBAPIError`, `OperationalError`, `IntegrityError` from RTICB snapshot/CRTISBA transitive reads | reachable | 503 | `RTICB_DATABASE_FAILURE` | `[]` | manual after recovery |
 | `CRTISBAFingerprintConstructionError` | reachable from CRTISBA canonical JSON/hash construction | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
 | `RTICBFingerprintConstructionError` | reachable from RTICB-owned canonical JSON/hash construction | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
@@ -99,8 +99,10 @@ CSRF and request-schema preemption from the accepted parent RTDIR Definition rem
 | `CRTISBA_SOURCE_NOT_FOUND`, `CRTISBA_SOURCE_NOT_CURRENT`, `CRTISBA_SOURCE_KIND_MISMATCH`, `CRTISBA_SOURCE_DECISION_FORBIDDEN`, `CRTISBA_AMOUNT_AUTHORITY_UNAVAILABLE`, and CRTISBA decision/write/flush/commit/conflict/immutability codes | public write/clear/classify or persistence route only; **not reachable** through `derive_in_snapshot(...,operation="READ")` | n/a | n/a | n/a | n/a |
 
 The reachable `CRTISBAError` whitelist is therefore `CRTISBA_UPSTREAM_TECHNICAL_FAILURE`,
-`PRODUCER_RESPONSE_INVALID`, `RESPONSE_CLIENT_MISMATCH`, `CLIENT_NOT_FOUND` and the
-conditional database wrapper `CRTISBA_DATABASE_FAILURE`. An unexpected `CRTISBAError`
+`PRODUCER_RESPONSE_INVALID`, `RESPONSE_CLIENT_MISMATCH` and `CLIENT_NOT_FOUND`.
+`CRTISBA_DATABASE_FAILURE` is a public-reader wrapper and is not emitted by the
+non-owning producer route; unexpected injection of that code follows the unknown-code
+fail-closed rule below, not the raw DBAPI mapping. An unexpected `CRTISBAError`
 code or status on this in-snapshot path is **not** forwarded as an arbitrary public code;
 it fails closed as HTTP 500 `INTERNAL_ERROR`, `field_paths=[]`, with the same transport
 envelope and cache headers. This prevents accepted public-reader/write-only CRTISBA codes

@@ -30,22 +30,32 @@ CONTEXT_FIELDS = {
 }
 FAILURE_FIELDS = {
     "schema_version", "client_id", "supplied_planning_calculation_input_fingerprint",
-    "observed_target_planning_calculation_input_fingerprint",
-    "observed_rtisa_planning_calculation_input_fingerprint", "supplied_retirement_target_date",
-    "observed_target_retirement_target_date", "observed_rtisa_retirement_target_date",
-    "observed_target_result_fingerprint", "observed_rtisa_admission_result_fingerprint",
-    "result_state", "failure_stage", "failure_detail_code", "result_fingerprint",
+    "supplied_retirement_target_date", "observed_target_planning_calculation_input_fingerprint",
+    "observed_target_retirement_target_date", "observed_target_result_fingerprint",
+    "observed_crtisba_planning_calculation_input_fingerprint",
+    "observed_crtisba_retirement_target_date", "observed_crtisba_result_fingerprint",
+    "observed_crtisba_failure_fingerprint", "observed_crtisba_failure_stage",
+    "observed_crtisba_failure_detail_code", "result_state", "failure_stage",
+    "failure_detail_code", "result_fingerprint",
 }
 SUCCESS_FIELDS = {
     "schema_version", "client_id", "planning_calculation_input_fingerprint",
     "retirement_target_date", "target_result_fingerprint", "target_semantic_fingerprint",
-    "rtisa_admission_result_fingerprint", "comparison_input_fingerprint", "target_basis",
-    "source_comparisons", "directly_comparable_source_ids",
-    "normalization_required_source_ids", "basis_unresolved_source_ids",
-    "not_admitted_source_ids", "classification_state", "classification_complete",
-    "direct_comparison_state", "direct_comparison_ready", "blockers",
-    "comparison_result_fingerprint",
+    "crtisba_result_fingerprint", "comparison_input_fingerprint", "source_comparisons",
+    "classification_state", "classification_complete", "direct_comparison_state",
+    "direct_comparison_ready", "blockers", "comparison_result_fingerprint",
 }
+COMPARISON_ENTRY_FIELDS = {
+    "source_id", "source_kind", "source_category", "admission_state", "rtisa_reason_codes",
+    "decision_state", "source_version", "source_fingerprint", "amount_authority_fingerprint",
+    "decision_version", "decision_fingerprint", "income_basis", "income_basis_provenance",
+    "price_basis", "price_reference_date", "price_basis_provenance", "target_income_basis",
+    "target_price_basis", "target_price_reference_date", "comparison_state",
+    "reason_codes", "source_comparison_fingerprint",
+}
+V2_SCHEMA = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2"
+V2_RESULT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V2"
+V2_FAILURE_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V2"
 
 
 def _transport(request: Request, exc: PensionProductError, *, target_operation: str | None = None):
@@ -122,20 +132,36 @@ def _target_result_valid(result: object, client_id: int) -> bool:
 
 
 def _comparison_result_valid(result: object, client_id: int) -> bool:
+    """Fail closed at RTDIR's RTICB V2 boundary without repairing professional data."""
     if not isinstance(result, dict) or result.get("client_id") != client_id:
+        return False
+    if result.get("schema_version") != V2_SCHEMA:
         return False
     state = result.get("result_state")
     if state == "block_no_result":
-        if set(result) != FAILURE_FIELDS or result.get("schema_version") != comparison_service.SCHEMA_VERSION:
+        if set(result) != FAILURE_FIELDS or not isinstance(result.get("failure_stage"), str):
             return False
+        if not isinstance(result.get("failure_detail_code"), str):
+            return False
+        for field in ("supplied_planning_calculation_input_fingerprint",
+                      "observed_target_planning_calculation_input_fingerprint",
+                      "observed_target_result_fingerprint",
+                      "observed_crtisba_planning_calculation_input_fingerprint",
+                      "observed_crtisba_result_fingerprint",
+                      "observed_crtisba_failure_fingerprint"):
+            value = result[field]
+            if value is not None and (not isinstance(value, str) or SHA.fullmatch(value) is None):
+                return False
         stored = result.get("result_fingerprint")
+        if not isinstance(stored, str) or SHA.fullmatch(stored) is None:
+            return False
         payload = {key: deepcopy(value) for key, value in result.items() if key != "result_fingerprint"}
-        return isinstance(stored, str) and SHA.fullmatch(stored) is not None and stored == comparison_service._fingerprint({
-            "contract": comparison_service.FAILURE_FINGERPRINT_CONTRACT, "failure": payload,
+        return stored == comparison_service._fingerprint({
+            "contract": V2_FAILURE_CONTRACT, "failure": payload,
         })
-    if set(result) != SUCCESS_FIELDS or result.get("schema_version") != comparison_service.SCHEMA_VERSION:
+    if set(result) != SUCCESS_FIELDS or result.get("classification_state") != "COMPLETE":
         return False
-    if result.get("classification_state") != "COMPLETE" or result.get("classification_complete") is not True:
+    if result.get("classification_complete") is not True:
         return False
     if result.get("direct_comparison_state") not in {"READY", "NOT_READY"}:
         return False
@@ -143,26 +169,52 @@ def _comparison_result_valid(result: object, client_id: int) -> bool:
         return False
     for name in (
         "planning_calculation_input_fingerprint", "target_result_fingerprint",
-        "target_semantic_fingerprint", "rtisa_admission_result_fingerprint",
+        "target_semantic_fingerprint", "crtisba_result_fingerprint",
         "comparison_input_fingerprint", "comparison_result_fingerprint",
     ):
         if not isinstance(result.get(name), str) or SHA.fullmatch(result[name]) is None:
             return False
     comparisons = result.get("source_comparisons")
-    if not isinstance(comparisons, list) or any(
-        not isinstance(item, dict)
-        or item.get("comparison_state") not in {
+    if not isinstance(comparisons, list):
+        return False
+    ids = []
+    for item in comparisons:
+        if not isinstance(item, dict) or set(item) != COMPARISON_ENTRY_FIELDS:
+            return False
+        if not isinstance(item.get("source_id"), str) or not item["source_id"]:
+            return False
+        ids.append(item["source_id"])
+        if item.get("admission_state") not in {"INCLUDED", "EXCLUDED", "UNRESOLVED"}:
+            return False
+        if item.get("comparison_state") not in {
             "DIRECTLY_COMPARABLE", "NORMALIZATION_REQUIRED", "BASIS_UNRESOLVED", "NOT_ADMITTED"
-        }
-        or not isinstance(item.get("source_comparison_fingerprint"), str)
-        or SHA.fullmatch(item["source_comparison_fingerprint"]) is None
-        for item in comparisons
-    ):
+        }:
+            return False
+        if not isinstance(item.get("reason_codes"), list) or not all(
+            isinstance(x, str) for x in item["reason_codes"]
+        ) or item["reason_codes"] != sorted(set(item["reason_codes"])):
+            return False
+        stored = item.get("source_comparison_fingerprint")
+        if not isinstance(stored, str) or SHA.fullmatch(stored) is None:
+            return False
+        bare = {key: deepcopy(value) for key, value in item.items() if key != "source_comparison_fingerprint"}
+        if stored != comparison_service._fingerprint({
+            "contract": "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V2",
+            "comparison_input_fingerprint": result["comparison_input_fingerprint"],
+            "entry": bare,
+        }):
+            return False
+    if ids != sorted(set(ids)):
+        return False
+    blockers = result.get("blockers")
+    if not isinstance(blockers, list) or not all(isinstance(x, str) for x in blockers):
+        return False
+    if blockers != sorted(set(blockers)):
         return False
     stored = result["comparison_result_fingerprint"]
     payload = {key: deepcopy(value) for key, value in result.items() if key != "comparison_result_fingerprint"}
     return stored == comparison_service._fingerprint({
-        "contract": comparison_service.RESULT_FINGERPRINT_CONTRACT, "result": payload,
+        "contract": V2_RESULT_CONTRACT, "result": payload,
     })
 
 
@@ -230,8 +282,19 @@ def comparison(request: Request, payload: ComparisonBody, client_id: int = Path(
     try:
         result = comparison_service.assess(db, command)
         return result if _comparison_result_valid(result, client_id) else error(request, 500, "PRODUCER_RESPONSE_INVALID")
+    except source_basis_service.CRTISBAError as exc:
+        mapping = {
+            ("CRTISBA_UPSTREAM_TECHNICAL_FAILURE", 503): (503, "RTICB_UPSTREAM_TECHNICAL_FAILURE", []),
+            ("PRODUCER_RESPONSE_INVALID", 500): (500, "PRODUCER_RESPONSE_INVALID", []),
+            ("RESPONSE_CLIENT_MISMATCH", 500): (500, "RESPONSE_CLIENT_MISMATCH", []),
+            ("CLIENT_NOT_FOUND", 404): (404, "CLIENT_NOT_FOUND", ["/path/client_id"]),
+        }
+        status, code, fields = mapping.get((exc.code, exc.status_code), (500, "INTERNAL_ERROR", []))
+        return error(request, status, code, fields)
     except RetirementTargetIncomeSourceAdmissionTechnicalError:
         return error(request, 503, "RTICB_UPSTREAM_TECHNICAL_FAILURE")
+    except source_basis_service.CRTISBAFingerprintConstructionError:
+        return error(request, 500, "INTERNAL_ERROR")
     except (OperationalError, IntegrityError, DBAPIError):
         return error(request, 503, "RTICB_DATABASE_FAILURE")
     except PensionProductError as exc:

@@ -586,18 +586,22 @@ def test_public_validator_rejects_missing_visited_authority_observations(monkeyp
     ("blockers_unsorted", "RTICB_CRTISBA_COLLECTION_CONSISTENCY_INVALID"),
 ])
 def test_coherently_rehashed_order_and_uniqueness_route_to_semantic_failure(monkeypatch, variant, expected_code):
-    entries = [_entry(state="MISSING", source_id="income:1"),
-               _entry(state="MISSING", source_id="income:2")]
+    entries = [
+        _entry(state="MISSING", source_id="income:1"),
+        _entry(
+            state="MISSING" if variant.startswith("partition_") else "UNKNOWN",
+            source_id="income:2",
+        ),
+    ]
     collection = _collection(entries)
     if variant == "partition_duplicate":
         collection["partitions"]["missing"].append("income:2")
     elif variant == "partition_unsorted":
         collection["partitions"]["missing"].reverse()
     elif variant == "blockers_duplicate":
-        collection["blockers"].append("CRTISBA_DECISION_MISSING")
+        collection["blockers"].append("CRTISBA_DECISION_UNKNOWN")
     else:
-        # Add an independently accepted code, but in noncanonical order.
-        collection["blockers"] = ["ZZZ_EXTRA", "CRTISBA_DECISION_MISSING"]
+        collection["blockers"].reverse()
     result, _, _ = _run(monkeypatch, collection=_rehash_collection(collection))
     assert result["result_state"] == "block_no_result"
     assert (result["failure_stage"], result["failure_detail_code"]) == ("source_universe", expected_code)
@@ -638,4 +642,3 @@ def test_ac35_valid_empty_and_all_excluded_collections_produce_complete_readines
             "comparison_input_fingerprint": result["comparison_input_fingerprint"],
             "entry": preimage,
         })
-

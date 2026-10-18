@@ -12,14 +12,14 @@ from typing import Any, Mapping
 from sqlalchemy.orm import Session
 
 from app.services import retirement_monthly_income_target_service as target_service
-from app.services import retirement_target_date_income_source_admission_service as rtisa_service
+from app.services import retirement_target_date_income_source_basis_service as crtisba_service
 
 
-SCHEMA_VERSION = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V1"
-INPUT_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V1"
-ENTRY_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V1"
-RESULT_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V1"
-FAILURE_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V1"
+SCHEMA_VERSION = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2"
+INPUT_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_INPUT_JSON_V2"
+ENTRY_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V2"
+RESULT_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_JSON_V2"
+FAILURE_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_FAILURE_JSON_V2"
 
 REQUEST_FIELDS = frozenset({
     "client_id",
@@ -204,51 +204,27 @@ def _request_observations(request: Any) -> dict[str, Any]:
     }
 
 
-def _failure(
-    request: Any,
-    stage: str,
-    code: str,
-    *,
-    target: Any = None,
-    rtisa: Any = None,
-) -> dict:
+def _failure(request: Any, stage: str, code: str, *, target: Any = None, crtisba: Any = None) -> dict:
     supplied = _request_observations(request)
+    blocked = isinstance(crtisba, Mapping) and crtisba.get("schema_version") == "CRTISBA_BLOCK_NO_RESULT_V1" and _blocked_valid(crtisba, supplied["client_id"])
+    collection = isinstance(crtisba, Mapping) and not blocked
     failure = {
-        "schema_version": SCHEMA_VERSION,
-        "client_id": supplied["client_id"],
-        "supplied_planning_calculation_input_fingerprint": supplied[
-            "supplied_planning_calculation_input_fingerprint"
-        ],
-        "observed_target_planning_calculation_input_fingerprint": _field_observation(
-            target, "planning_calculation_input_fingerprint", _is_sha
-        ),
-        "observed_rtisa_planning_calculation_input_fingerprint": _field_observation(
-            rtisa, "planning_calculation_input_fingerprint", _is_sha
-        ),
+        "schema_version": SCHEMA_VERSION, "client_id": supplied["client_id"],
+        "supplied_planning_calculation_input_fingerprint": supplied["supplied_planning_calculation_input_fingerprint"],
         "supplied_retirement_target_date": supplied["supplied_retirement_target_date"],
-        "observed_target_retirement_target_date": _field_observation(
-            target, "retirement_target_date", _is_date
-        ),
-        "observed_rtisa_retirement_target_date": _field_observation(
-            rtisa, "retirement_target_date", _is_date
-        ),
-        "observed_target_result_fingerprint": _field_observation(
-            target, "target_result_fingerprint", _is_sha
-        ),
-        "observed_rtisa_admission_result_fingerprint": _field_observation(
-            rtisa, "admission_result_fingerprint", _is_sha
-        ),
-        "result_state": "block_no_result",
-        "failure_stage": stage,
-        "failure_detail_code": code,
+        "observed_target_planning_calculation_input_fingerprint": _field_observation(target, "planning_calculation_input_fingerprint", _is_sha),
+        "observed_target_retirement_target_date": _field_observation(target, "retirement_target_date", _is_date),
+        "observed_target_result_fingerprint": _field_observation(target, "target_result_fingerprint", _is_sha),
+        "observed_crtisba_planning_calculation_input_fingerprint": _field_observation(crtisba, "observed_planning_calculation_input_fingerprint" if blocked else "planning_calculation_input_fingerprint", _is_sha),
+        "observed_crtisba_retirement_target_date": _field_observation(crtisba, "retirement_target_date", _is_date) if collection else None,
+        "observed_crtisba_result_fingerprint": _field_observation(crtisba, "result_fingerprint", _is_sha) if collection else None,
+        "observed_crtisba_failure_fingerprint": crtisba["failure_fingerprint"] if blocked else None,
+        "observed_crtisba_failure_stage": crtisba["failure_stage"] if blocked else None,
+        "observed_crtisba_failure_detail_code": crtisba["failure_detail_code"] if blocked else None,
+        "result_state": "block_no_result", "failure_stage": stage, "failure_detail_code": code,
     }
-    return {
-        **failure,
-        "result_fingerprint": _fingerprint({
-            "contract": FAILURE_FINGERPRINT_CONTRACT,
-            "failure": failure,
-        }),
-    }
+    failure["result_fingerprint"] = _fingerprint({"contract": FAILURE_FINGERPRINT_CONTRACT, "failure": failure})
+    return failure
 
 
 def _request_error(request: Any) -> str | None:
@@ -413,458 +389,282 @@ def _target_fingerprints_valid(result: dict) -> bool:
     return stored_result == _fingerprint({"contract": target_service.RESULT_CONTRACT, **payload})
 
 
-def _rtisa_schema_valid(result: Any) -> bool:
-    return (
-        isinstance(result, dict)
-        and set(result) == RTISA_RESULT_FIELDS
-        and result["schema_version"] == rtisa_service.SCHEMA_VERSION
-        and _positive_int(result["client_id"])
-        and (result["planning_calculation_input_fingerprint"] is None
-             or _is_sha(result["planning_calculation_input_fingerprint"]))
-        and (result["retirement_target_date"] is None or _is_date(result["retirement_target_date"]))
-        and (result["pension_portfolio_result_fingerprint"] is None
-             or _is_sha(result["pension_portfolio_result_fingerprint"]))
-        and isinstance(result["source_entries"], list)
-        and isinstance(result["included_source_ids"], list)
-        and isinstance(result["excluded_source_ids"], list)
-        and isinstance(result["unresolved_source_ids"], list)
-        and isinstance(result["universe_completeness_state"], str)
-        and result["universe_completeness_state"] in {"UNAVAILABLE", "PARTIAL", "COMPLETE_EVIDENCED"}
-        and isinstance(result["admission_readiness_state"], str)
-        and result["admission_readiness_state"] in {"READY", "NOT_READY"}
-        and isinstance(result["admission_ready"], bool)
-        and _sorted_unique_strings(result["blockers"])
-        and isinstance(result["admission_result_fingerprint"], str)
-    )
 
+COLLECTION_FIELDS = frozenset(("schema_version", "client_id", "planning_calculation_input_fingerprint", "retirement_target_date",
+ "rtisa_admission_result_fingerprint", "source_basis_entries", "partitions", "blockers",
+ "basis_readiness_state", "basis_ready", "result_fingerprint"))
+ENTRY_FIELDS = frozenset(("schema_version", "source_id", "source_kind", "source_category", "admission_state",
+ "rtisa_reason_codes", "source_version", "source_fingerprint", "amount_authority_fingerprint",
+ "decision_version", "decision_fingerprint", "decision_state", "income_basis", "income_basis_provenance",
+ "price_basis", "price_reference_date", "price_basis_provenance", "blockers"))
+PARTITIONS = {"CURRENT":"current","MISSING":"missing","UNKNOWN":"unknown","STALE":"stale",
+ "INVALID":"invalid","UPSTREAM_UNRESOLVED":"upstream_unresolved","NOT_APPLICABLE_DELEGATED":"not_applicable_delegated",
+ "NOT_APPLICABLE_NOT_ADMITTED":"not_applicable_not_admitted","DELEGATION_UNRESOLVED":"delegation_unresolved","DELEGATION_STALE":"delegation_stale"}
+BLOCKED_FIELDS = frozenset(("schema_version","result_state","client_id","source_id","operation",
+ "failure_stage","failure_detail_code","field_paths","observed_planning_calculation_input_fingerprint",
+ "observed_source_version","observed_source_fingerprint","observed_amount_authority_fingerprint",
+ "observed_decision_version","failure_fingerprint"))
+BLOCKED_CODES = {
+ "planning_context":"CRTISBA_PLANNING_CONTEXT_UNAVAILABLE",
+ "retirement_target":"CRTISBA_RETIREMENT_TARGET_NOT_READY",
+ "source_universe":"CRTISBA_SOURCE_UNIVERSE_INVALID",
+ "pension_result":"CRTISBA_PENSION_RESULT_INVALID",
+}
+BLOCKED_RTICB = {
+ "planning_context":"RTICB_CRTISBA_BLOCKED_PLANNING_CONTEXT_UNAVAILABLE",
+ "retirement_target":"RTICB_CRTISBA_BLOCKED_RETIREMENT_TARGET_NOT_READY",
+ "source_universe":"RTICB_CRTISBA_BLOCKED_SOURCE_UNIVERSE_INVALID",
+ "pension_result":"RTICB_CRTISBA_BLOCKED_PENSION_RESULT_INVALID",
+}
+BLOCKERS = {
+ "MISSING":"RTICB_CRTISBA_DECISION_MISSING","UNKNOWN":"RTICB_CRTISBA_DECISION_UNKNOWN",
+ "STALE":"RTICB_CRTISBA_DECISION_STALE","INVALID":"RTICB_CRTISBA_DECISION_INVALID",
+ "UPSTREAM_UNRESOLVED":"RTICB_CRTISBA_UPSTREAM_UNRESOLVED",
+ "DELEGATION_UNRESOLVED":"RTICB_CRTISBA_DELEGATION_UNRESOLVED",
+ "DELEGATION_STALE":"RTICB_CRTISBA_DELEGATION_STALE",
+}
+ENTRY_FINGERPRINT_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_ENTRY_JSON_V2"
+COLLECTION_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_RESULT_JSON_V1"
+BLOCKED_CONTRACT = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_BASIS_FAILURE_JSON_V1"
 
-def _rtisa_fingerprint_valid(result: dict) -> bool:
-    stored = result["admission_result_fingerprint"]
-    if not _is_sha(stored):
+def _sorted_codes(values: Any) -> bool:
+    return (isinstance(values,list) and all(isinstance(v,str) and v and v==v.strip() for v in values)
+            and values==sorted(set(values)))
+
+def _blocked_valid(obj: Any, client_id: int|None) -> bool:
+    if not isinstance(obj,Mapping) or set(obj)!=BLOCKED_FIELDS:
         return False
-    payload = {key: deepcopy(value) for key, value in result.items() if key != "admission_result_fingerprint"}
-    return stored == _fingerprint({"contract": rtisa_service.RESULT_CONTRACT, **payload})
-
-
-def _resolution_valid(value: Any) -> bool:
-    if value is None:
-        return True
-    if not isinstance(value, dict) or set(value) != RESOLUTION_FIELDS:
+    stage=obj.get("failure_stage")
+    if (obj.get("schema_version")!="CRTISBA_BLOCK_NO_RESULT_V1" or obj.get("result_state")!="block_no_result"
+        or obj.get("client_id")!=client_id or not _positive_int(obj.get("client_id"))
+        or obj.get("operation")!="READ" or BLOCKED_CODES.get(stage)!=obj.get("failure_detail_code")
+        or not _sorted_codes(obj.get("field_paths"))):
         return False
-    canonical_id = value["canonical_source_id"]
-    canonical_fingerprint = value["canonical_fingerprint"]
-    decision = value["decision_kind"]
-    if not isinstance(decision, str) or decision not in RESOLUTION_DECISIONS:
+    if obj.get("source_id") is not None and not _canonical_source_id(obj["source_id"]):
         return False
-    canonical_pair_valid = (
-        canonical_id is None and canonical_fingerprint is None
-        if decision == "MISCLASSIFIED_GENERAL_INCOME"
-        else _canonical_string(canonical_id) and _is_sha(canonical_fingerprint)
-    )
-    return (
-        _positive_int(value["record_version"])
-        and _is_sha(value["income_fingerprint"])
-        and canonical_pair_valid
-    )
+    for k in ("observed_planning_calculation_input_fingerprint","observed_source_fingerprint","observed_amount_authority_fingerprint"):
+        if obj[k] is not None and not _is_sha(obj[k]):return False
+    if obj["observed_source_version"] is not None and not (
+        _positive_int(obj["observed_source_version"]) or _is_sha(obj["observed_source_version"])
+    ):return False
+    if obj["observed_decision_version"] is not None and (
+        type(obj["observed_decision_version"]) is not int or not 0<=obj["observed_decision_version"]<2**63
+    ):return False
+    if not _is_sha(obj.get("failure_fingerprint")):return False
+    pre={"contract":BLOCKED_CONTRACT,**{k:deepcopy(v) for k,v in obj.items()
+        if k not in {"schema_version","result_state","failure_fingerprint"}}}
+    return _fingerprint(pre)==obj["failure_fingerprint"]
 
+def _entry_valid(e: Any) -> bool:
+    if not isinstance(e,Mapping) or set(e)!=ENTRY_FIELDS:return False
+    if e["schema_version"]!="CRTISBA_SOURCE_BASIS_ENTRY_V1" or not _canonical_source_id(e["source_id"]):return False
+    if e["source_kind"] not in {"PENSION","RECURRING_INCOME"} or not isinstance(e["source_category"],str):return False
+    if e["decision_state"] not in PARTITIONS or e["admission_state"] not in {"INCLUDED","EXCLUDED","UNRESOLVED"}:return False
+    if not _sorted_codes(e["rtisa_reason_codes"]) or not _sorted_codes(e["blockers"]):return False
+    if not _is_sha(e["source_fingerprint"]):return False
+    if e["source_kind"]=="PENSION" and e["source_version"] is not None and not _positive_int(e["source_version"]):return False
+    if e["source_kind"]=="RECURRING_INCOME" and e["source_version"] is not None and e["source_version"]!=e["source_fingerprint"]:return False
+    if e["amount_authority_fingerprint"] is not None and not _is_sha(e["amount_authority_fingerprint"]):return False
+    if (e["decision_version"] is None)!=(e["decision_fingerprint"] is None):return False
+    if e["decision_version"] is not None and (not _positive_int(e["decision_version"]) or not _is_sha(e["decision_fingerprint"])):return False
+    for k,v in (("income_basis",{"GROSS","NET","UNKNOWN"}),("price_basis",{"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE","UNKNOWN"})):
+        if e[k] is not None and e[k] not in v:return False
+    for k,v in (("income_basis_provenance",{"EXPLICIT_PROFESSIONAL","UPSTREAM_RECURRING_AMOUNT_BASIS","MISSING"}),
+                ("price_basis_provenance",{"OWNER_DECISION_OD2","EXPLICIT_PROFESSIONAL","MISSING"})):
+        if e[k] is not None and e[k] not in v:return False
+    if e["price_reference_date"] is not None and not _is_date(e["price_reference_date"]):return False
+    state=e["decision_state"]
+    if state in {"CURRENT","MISSING","UNKNOWN","STALE","INVALID"} and e["admission_state"]!="INCLUDED":return False
+    if state in {"UPSTREAM_UNRESOLVED","DELEGATION_UNRESOLVED","DELEGATION_STALE"} and e["admission_state"]!="UNRESOLVED":return False
+    if state in {"NOT_APPLICABLE_DELEGATED","NOT_APPLICABLE_NOT_ADMITTED"} and e["admission_state"]!="EXCLUDED":return False
+    if state in {"NOT_APPLICABLE_DELEGATED","NOT_APPLICABLE_NOT_ADMITTED","DELEGATION_UNRESOLVED","DELEGATION_STALE"}:
+        if any(e[x] is not None for x in ("income_basis","income_basis_provenance","price_basis",
+                                            "price_reference_date","price_basis_provenance")):return False
+    if state=="CURRENT" and (e["income_basis"] not in {"GROSS","NET"} or e["price_basis"] not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE"}):return False
+    if state=="MISSING" and e["decision_version"] is not None:return False
+    if state=="INVALID" and e["decision_version"] is not None:return False
+    return True
 
-def _upstream_identity_valid(value: Any) -> bool:
-    return (
-        isinstance(value, dict)
-        and set(value) == UPSTREAM_IDENTITY_FIELDS
-        and _is_sha(value["source_fingerprint"])
-        and (value["pension_source_result_fingerprint"] is None
-             or _is_sha(value["pension_source_result_fingerprint"]))
-        and _resolution_valid(value["resolution"])
-    )
+def _collection_shape(value: Any) -> bool:
+    if not isinstance(value,Mapping) or set(value)!=COLLECTION_FIELDS:return False
+    if value["schema_version"]!="CRTISBA_COLLECTION_RESULT_V1" or not _positive_int(value["client_id"]):return False
+    if not _is_sha(value["planning_calculation_input_fingerprint"]):return False
+    if value["retirement_target_date"] is not None and not _is_date(value["retirement_target_date"]):return False
+    if not _is_sha(value["rtisa_admission_result_fingerprint"]):return False
+    if not isinstance(value["source_basis_entries"],list) or not isinstance(value["partitions"],dict):return False
+    if set(value["partitions"])!=set(PARTITIONS.values()):return False
+    if not all(_sorted_codes(x) for x in value["partitions"].values()):return False
+    if not _sorted_codes(value["blockers"]):return False
+    if value["basis_readiness_state"] not in {"READY","NOT_READY"} or type(value["basis_ready"]) is not bool:return False
+    return _is_sha(value["result_fingerprint"])
 
-
-def _exact_nullable_string_object(value: Any, fields: frozenset[str]) -> bool:
-    return (
-        isinstance(value, dict)
-        and set(value) == fields
-        and all(_nullable_canonical_string(item) for item in value.values())
-    )
-
-
-def _exact_string_object(value: Any, fields: frozenset[str]) -> bool:
-    return (
-        isinstance(value, dict)
-        and set(value) == fields
-        and all(_canonical_string(item) for item in value.values())
-    )
-
-
-def _entry_non_basis_valid(entry: Any) -> bool:
-    if not isinstance(entry, dict):
-        return False
-    keys = set(entry)
-    if not RTISA_NON_BASIS_ENTRY_FIELDS.issubset(keys) or not keys.issubset(RTISA_ENTRY_FIELDS):
-        return False
-    amount = entry["native_amount"]
-    monthly = entry["monthly_equivalent"]
-    tax = entry["native_tax_characterization"]
-    return (
-        _canonical_source_id(entry["source_id"])
-        and _canonical_string(entry["source_category"])
-        and _canonical_string(entry["source_authority"])
-        and isinstance(entry["admission_state"], str)
-        and entry["admission_state"] in ADMISSION_STATES
-        and (
-            amount is None
-            or _exact_string_object(amount, frozenset({"amount", "currency", "frequency"}))
-        )
-        and (
-            monthly is None
-            or _exact_string_object(monthly, frozenset({"numerator", "denominator"}))
-        )
-        and isinstance(tax, dict)
-        and set(tax) == {"kind", "value"}
-        and _canonical_string(tax["kind"])
-        and _nullable_canonical_string(tax["value"])
-        and isinstance(entry["applicability"], dict)
-        and set(entry["applicability"]) == {"start_date", "end_date", "continuation_status", "at_target"}
-        and _nullable_canonical_string(entry["applicability"]["start_date"])
-        and _nullable_canonical_string(entry["applicability"]["end_date"])
-        and _nullable_canonical_string(entry["applicability"]["continuation_status"])
-        and _canonical_string(entry["applicability"]["at_target"])
-        and isinstance(entry["provenance"], dict)
-        and set(entry["provenance"]) == {"origin_kind", "source_status", "verification_state"}
-        and _canonical_string(entry["provenance"]["origin_kind"])
-        and _nullable_canonical_string(entry["provenance"]["source_status"])
-        and _nullable_canonical_string(entry["provenance"]["verification_state"])
-        and _upstream_identity_valid(entry["upstream_identity"])
-        and _sorted_unique_strings(entry["reason_codes"])
-    )
-
-
-def _source_universe_valid(entries: list[Any]) -> bool:
-    if not all(_entry_non_basis_valid(entry) for entry in entries):
-        return False
-    ids = [entry["source_id"] for entry in entries]
-    return ids == sorted(ids) and len(ids) == len(set(ids))
-
-
-def _coverage_valid(result: dict) -> bool:
-    partitions = {
-        "INCLUDED": result["included_source_ids"],
-        "EXCLUDED": result["excluded_source_ids"],
-        "UNRESOLVED": result["unresolved_source_ids"],
-    }
-    if not all(_sorted_unique_source_ids(values) for values in partitions.values()):
-        return False
-    actual = {state: [] for state in partitions}
-    for entry in result["source_entries"]:
-        actual[entry["admission_state"]].append(entry["source_id"])
-    if any(partitions[state] != actual[state] for state in partitions):
-        return False
-    all_partition_ids = [source_id for values in partitions.values() for source_id in values]
-    entry_ids = [entry["source_id"] for entry in result["source_entries"]]
-    return (
-        len(all_partition_ids) == len(set(all_partition_ids))
-        and sorted(all_partition_ids) == entry_ids
-        and not partitions["UNRESOLVED"]
-    )
-
-
-def _basis_valid(entry: dict) -> bool:
-    if "native_income_basis" not in entry or "native_price_evidence" not in entry:
-        return False
-    income = entry["native_income_basis"]
-    price = entry["native_price_evidence"]
-    if not isinstance(price, dict) or set(price) != PRICE_EVIDENCE_FIELDS:
-        return False
-    if not all(_nullable_canonical_string(price[key]) for key in (
-        "temporal_authority_kind", "temporal_origin_date", "annual_rate", "rate_basis"
-    )):
-        return False
-    price_basis = price["price_basis"]
-    reference = price["price_reference_date"]
-    if not isinstance(income, str) or income not in INCOME_BASES:
-        return False
-    if not isinstance(price_basis, str) or price_basis not in PRICE_BASES:
-        return False
-    if price_basis in {"NOMINAL_AT_RETIREMENT_TARGET_DATE", "UNKNOWN"}:
-        return reference is None
-    return reference is None or _is_date(reference)
-
-
-def _input_fingerprint(request: Mapping[str, Any], target: dict, rtisa: dict) -> str:
-    return _fingerprint({
-        "contract": INPUT_FINGERPRINT_CONTRACT,
-        "client_id": request["client_id"],
-        "planning_calculation_input_fingerprint": request[
-            "expected_planning_calculation_input_fingerprint"
-        ],
-        "retirement_target_date": request["expected_retirement_target_date"],
-        "target_result_fingerprint": target["target_result_fingerprint"],
-        "target_semantic_fingerprint": target["target_semantic_fingerprint"],
-        "rtisa_admission_result_fingerprint": rtisa["admission_result_fingerprint"],
+def _collection_fingerprint_valid(value: dict) -> bool:
+    return value["result_fingerprint"]==_fingerprint({
+        "contract":COLLECTION_CONTRACT,
+        "result":{k:deepcopy(v) for k,v in value.items() if k!="result_fingerprint"},
     })
 
+def _universe_valid(value: dict) -> bool:
+    entries=value["source_basis_entries"]
+    ids=[e.get("source_id") if isinstance(e,Mapping) else None for e in entries]
+    if any(not _canonical_source_id(x) for x in ids) or ids!=sorted(set(ids)):return False
+    seen=[]
+    for state,part in PARTITIONS.items():
+        expected=[e["source_id"] for e in entries if e.get("decision_state")==state]
+        if value["partitions"][part]!=expected:return False
+        seen+=value["partitions"][part]
+    return sorted(seen)==ids
 
-def _comparison_entry(entry: dict, target_basis: dict, input_fingerprint: str) -> dict:
-    income = entry["native_income_basis"]
-    price = entry["native_price_evidence"]["price_basis"]
-    reference = entry["native_price_evidence"]["price_reference_date"]
-    reasons: list[str] = []
-    if entry["admission_state"] == "EXCLUDED":
-        state = "NOT_ADMITTED"
-        reasons = ["RTICB_SOURCE_NOT_ADMITTED"]
+def _consistent(value: dict) -> bool:
+    entries=value["source_basis_entries"]
+    if not all(isinstance(x,Mapping) and _sorted_codes(x.get("blockers")) for x in entries):return False
+    blockers=sorted({x for e in entries for x in e["blockers"]})
+    return (value["blockers"]==blockers and value["basis_readiness_state"]==("READY" if not blockers else "NOT_READY")
+            and value["basis_ready"] is (not blockers))
+
+def _basis_reasons(e: dict,target_basis:dict) -> list[str]:
+    reasons=[]
+    if e["income_basis"]=="UNKNOWN":reasons.append("RTICB_INCOME_BASIS_UNKNOWN")
+    elif e["income_basis"] not in (None,target_basis["income_basis"]):reasons.append("RTICB_INCOME_BASIS_MISMATCH")
+    if e["price_basis"]=="UNKNOWN":reasons.append("RTICB_PRICE_BASIS_UNKNOWN")
+    elif e["price_basis"] is not None:
+        if e["price_basis"]!=target_basis["price_basis"]:reasons.append("RTICB_PRICE_BASIS_MISMATCH")
+        if e["price_basis"]=="REAL_AT_REFERENCE_DATE":
+            if e["price_reference_date"] is None:reasons.append("RTICB_REAL_PRICE_REFERENCE_DATE_MISSING")
+            elif target_basis["price_basis"]=="REAL_AT_REFERENCE_DATE" and e["price_reference_date"]!=target_basis["price_reference_date"]:
+                reasons.append("RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH")
+    return reasons
+
+def _entry_comparison(e: dict,target_basis:dict,input_fp:str)->dict:
+    state=e["decision_state"]
+    reasons=[]
+    if e["admission_state"]=="EXCLUDED":
+        classification="NOT_ADMITTED"
+        reasons=["RTICB_SOURCE_NOT_ADMITTED"]
+    elif state=="CURRENT":
+        reasons=_basis_reasons(e,target_basis)
+        classification=("BASIS_UNRESOLVED" if any(x.endswith(("_UNKNOWN","_MISSING")) for x in reasons) else
+                        "NORMALIZATION_REQUIRED" if reasons else "DIRECTLY_COMPARABLE")
     else:
-        if income == "UNKNOWN":
-            reasons.append("RTICB_INCOME_BASIS_UNKNOWN")
-        elif income != target_basis["income_basis"]:
-            reasons.append("RTICB_INCOME_BASIS_MISMATCH")
-        if price == "UNKNOWN":
-            reasons.append("RTICB_PRICE_BASIS_UNKNOWN")
-        elif price == "REAL_AT_REFERENCE_DATE" and reference is None:
-            reasons.append("RTICB_REAL_PRICE_REFERENCE_DATE_MISSING")
-        if price != "UNKNOWN" and price != target_basis["price_basis"]:
-            reasons.append("RTICB_PRICE_BASIS_MISMATCH")
-        if (
-            price == target_basis["price_basis"] == "REAL_AT_REFERENCE_DATE"
-            and reference is not None
-            and reference != target_basis["price_reference_date"]
-        ):
-            reasons.append("RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH")
-        reasons = sorted(set(reasons))
-        unresolved = {
-            "RTICB_INCOME_BASIS_UNKNOWN",
-            "RTICB_PRICE_BASIS_UNKNOWN",
-            "RTICB_REAL_PRICE_REFERENCE_DATE_MISSING",
-        }
-        mismatch = {
-            "RTICB_INCOME_BASIS_MISMATCH",
-            "RTICB_PRICE_BASIS_MISMATCH",
-            "RTICB_REAL_PRICE_REFERENCE_DATE_MISMATCH",
-        }
-        if unresolved.intersection(reasons):
-            state = "BASIS_UNRESOLVED"
-        elif mismatch.intersection(reasons):
-            state = "NORMALIZATION_REQUIRED"
-        else:
-            state = "DIRECTLY_COMPARABLE"
-    comparison = {
-        "source_id": entry["source_id"],
-        "rtisa_admission_state": entry["admission_state"],
-        "source_upstream_identity": deepcopy(entry["upstream_identity"]),
-        "source_income_basis": income,
-        "source_price_basis": price,
-        "source_price_reference_date": reference,
-        "comparison_state": state,
-        "reason_codes": reasons,
-    }
-    comparison["source_comparison_fingerprint"] = _fingerprint({
-        "contract": ENTRY_FINGERPRINT_CONTRACT,
-        "comparison_input_fingerprint": input_fingerprint,
-        "source_comparison": comparison,
-    })
-    return comparison
+        reasons=[BLOCKERS[state]]
+        if state in {"MISSING","UNKNOWN"}:
+            reasons += [x for x in _basis_reasons(e,target_basis) if x.endswith("_MISMATCH")]
+        classification="BASIS_UNRESOLVED"
+    out={k:deepcopy(e[k]) for k in ENTRY_FIELDS if k not in {"schema_version","blockers"}}
+    out.update({"target_income_basis":target_basis["income_basis"],"target_price_basis":target_basis["price_basis"],
+                "target_price_reference_date":target_basis["price_reference_date"],
+                "comparison_state":classification,"reason_codes":sorted(set(reasons))})
+    out["source_comparison_fingerprint"]=_fingerprint({
+        "contract":ENTRY_FINGERPRINT_CONTRACT,"comparison_input_fingerprint":input_fp,
+        "entry":deepcopy(out)})
+    return out
 
+def _result(request:Mapping[str,Any],target:dict,collection:dict)->dict:
+    input_fp=_fingerprint({"contract":INPUT_FINGERPRINT_CONTRACT,"client_id":request["client_id"],
+        "planning_calculation_input_fingerprint":request["expected_planning_calculation_input_fingerprint"],
+        "retirement_target_date":request["expected_retirement_target_date"],
+        "target_result_fingerprint":target["target_result_fingerprint"],
+        "target_semantic_fingerprint":target["target_semantic_fingerprint"],
+        "crtisba_result_fingerprint":collection["result_fingerprint"]})
+    entries=[_entry_comparison(x,target["target"],input_fp) for x in collection["source_basis_entries"]]
+    direct=all(x["comparison_state"] in {"DIRECTLY_COMPARABLE","NOT_ADMITTED"} for x in entries)
+    blockers=sorted(set(
+        (["RTICB_NORMALIZATION_REQUIRED"] if any(e["comparison_state"]=="NORMALIZATION_REQUIRED" for e in entries) else [])
+        +(["RTICB_BASIS_UNRESOLVED"] if any(e["comparison_state"]=="BASIS_UNRESOLVED" for e in entries) else [])
+    ))
+    out={"schema_version":SCHEMA_VERSION,"client_id":request["client_id"],
+         "planning_calculation_input_fingerprint":request["expected_planning_calculation_input_fingerprint"],
+         "retirement_target_date":request["expected_retirement_target_date"],
+         "target_result_fingerprint":target["target_result_fingerprint"],
+         "target_semantic_fingerprint":target["target_semantic_fingerprint"],
+         "crtisba_result_fingerprint":collection["result_fingerprint"],
+         "comparison_input_fingerprint":input_fp,"source_comparisons":entries,
+         "classification_state":"COMPLETE","classification_complete":True,
+         "direct_comparison_state":"READY" if direct else "NOT_READY",
+         "direct_comparison_ready":direct,"blockers":blockers}
+    out["comparison_result_fingerprint"]=_fingerprint({"contract":RESULT_FINGERPRINT_CONTRACT,"result":deepcopy(out)})
+    return out
 
-def _success(request: Mapping[str, Any], target: dict, rtisa: dict) -> dict:
-    input_fingerprint = _input_fingerprint(request, target, rtisa)
-    target_basis = {
-        "income_basis": target["target"]["income_basis"],
-        "price_basis": target["target"]["price_basis"],
-        "price_reference_date": target["target"]["price_reference_date"],
-    }
-    comparisons = [
-        _comparison_entry(entry, target_basis, input_fingerprint)
-        for entry in rtisa["source_entries"]
-    ]
-    partitions = {
-        "DIRECTLY_COMPARABLE": [],
-        "NORMALIZATION_REQUIRED": [],
-        "BASIS_UNRESOLVED": [],
-        "NOT_ADMITTED": [],
-    }
-    for comparison in comparisons:
-        partitions[comparison["comparison_state"]].append(comparison["source_id"])
-    blockers = []
-    if partitions["NORMALIZATION_REQUIRED"]:
-        blockers.append("RTICB_NORMALIZATION_REQUIRED")
-    if partitions["BASIS_UNRESOLVED"]:
-        blockers.append("RTICB_BASIS_UNRESOLVED")
-    ready = not blockers
-    result = {
-        "schema_version": SCHEMA_VERSION,
-        "client_id": request["client_id"],
-        "planning_calculation_input_fingerprint": request[
-            "expected_planning_calculation_input_fingerprint"
-        ],
-        "retirement_target_date": request["expected_retirement_target_date"],
-        "target_result_fingerprint": target["target_result_fingerprint"],
-        "target_semantic_fingerprint": target["target_semantic_fingerprint"],
-        "rtisa_admission_result_fingerprint": rtisa["admission_result_fingerprint"],
-        "comparison_input_fingerprint": input_fingerprint,
-        "target_basis": target_basis,
-        "source_comparisons": comparisons,
-        "directly_comparable_source_ids": partitions["DIRECTLY_COMPARABLE"],
-        "normalization_required_source_ids": partitions["NORMALIZATION_REQUIRED"],
-        "basis_unresolved_source_ids": partitions["BASIS_UNRESOLVED"],
-        "not_admitted_source_ids": partitions["NOT_ADMITTED"],
-        "classification_state": "COMPLETE",
-        "classification_complete": True,
-        "direct_comparison_state": "READY" if ready else "NOT_READY",
-        "direct_comparison_ready": ready,
-        "blockers": sorted(blockers),
-    }
-    result["comparison_result_fingerprint"] = _fingerprint({
-        "contract": RESULT_FINGERPRINT_CONTRACT,
-        "result": result,
-    })
-    return result
-
-
-def _rollback_owned_transaction(db: Session) -> None:
-    connection = None
+def _rollback_owned_transaction(db:Session)->None:
+    connection=None
     try:
-        if db.in_transaction():
-            connection = db.connection()
-    except Exception:
-        connection = None
-    try:
-        db.rollback()
+        if db.in_transaction():connection=db.connection()
+    except Exception:pass
+    try:db.rollback()
     except BaseException:
         try:
-            if connection is not None:
-                connection.invalidate()
-        except BaseException:
-            pass
-        try:
-            db.close()
-        except BaseException:
-            pass
+            if connection is not None:connection.invalidate()
+        except BaseException:pass
+        try:db.close()
+        except BaseException:pass
         raise
 
-
-def _begin_snapshot(db: Session) -> None:
-    connection = db.connection()
-    dialect = connection.dialect.name
-    if dialect == "postgresql":
-        connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-    elif dialect == "sqlite":
-        connection.exec_driver_sql("BEGIN")
-    else:  # guarded before connection acquisition
-        raise AssertionError("unsupported dialect passed snapshot admission")
+def _begin_snapshot(db:Session)->None:
+    connection=db.connection()
+    dialect=connection.dialect.name
+    if dialect=="postgresql":connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    elif dialect=="sqlite":connection.exec_driver_sql("BEGIN")
+    else:raise AssertionError("unsupported dialect")
     db.expire_all()
 
-
-def assess(db: Session, request: Any) -> dict:
-    """Assess direct basis comparability in one caller-supplied read snapshot."""
-    request_error = _request_error(request)
-    if request_error is not None:
-        return _failure(request, "request_validation", request_error)
+def assess(db:Session,request:Any)->dict:
+    error=_request_error(request)
+    if error is not None:return _failure(request,"request_validation",error)
     if db.in_transaction() or db.new or db.dirty or db.deleted:
-        return _failure(request, "snapshot_admission", "RTICB_REQUIRES_FRESH_TRANSACTION")
-    dialect = db.get_bind().dialect.name
-    if dialect not in {"postgresql", "sqlite"}:
-        return _failure(request, "snapshot_admission", "RTICB_UNSUPPORTED_DATABASE")
-
-    target = rtisa = None
+        return _failure(request,"snapshot_admission","RTICB_REQUIRES_FRESH_TRANSACTION")
+    if db.get_bind().dialect.name not in {"postgresql","sqlite"}:
+        return _failure(request,"snapshot_admission","RTICB_UNSUPPORTED_DATABASE")
+    target=collection=None
     try:
         _begin_snapshot(db)
         with db.no_autoflush:
-            target = target_service.assess_in_snapshot(db, request["client_id"])
+            target=target_service.assess_in_snapshot(db,request["client_id"])
             if not _target_schema_valid(target):
-                result = _failure(
-                    request, "target_authority", "RTICB_TARGET_AUTHORITY_SCHEMA_INVALID", target=target
-                )
+                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_SCHEMA_INVALID",target=target)
             elif not _target_fingerprints_valid(target):
-                result = _failure(
-                    request, "target_authority", "RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID", target=target
-                )
-            elif target["authority_state"] == "UNAVAILABLE":
-                result = _failure(
-                    request, "target_authority", "RTICB_TARGET_AUTHORITY_UNAVAILABLE", target=target
-                )
-            elif not (
-                target["authority_state"] == "CURRENT"
-                and target["target_readiness_state"] == "READY"
-                and target["target_ready"] is True
-                and target["target"] is not None
-                and target["authority"] is not None
-                and target["authority"]["confirmation_state"] == "CONFIRMED"
-                and not target["blockers"]
-            ):
-                result = _failure(
-                    request, "target_authority", "RTICB_TARGET_AUTHORITY_NOT_READY", target=target
-                )
+                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID",target=target)
+            elif target["authority_state"]=="UNAVAILABLE":
+                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_UNAVAILABLE",target=target)
+            elif not (target["authority_state"]=="CURRENT" and target["target_readiness_state"]=="READY"
+                      and target["target_ready"] is True and target["target"] is not None
+                      and target["authority"] is not None
+                      and target["authority"]["confirmation_state"]=="CONFIRMED"
+                      and not target["blockers"]):
+                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_NOT_READY",target=target)
             else:
-                rtisa = rtisa_service.read_in_snapshot(
-                    db,
-                    request["client_id"],
-                    request["expected_planning_calculation_input_fingerprint"],
-                )
-                if not _rtisa_schema_valid(rtisa):
-                    result = _failure(
-                        request, "rtisa_authority", "RTICB_RTISA_AUTHORITY_SCHEMA_INVALID",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not _rtisa_fingerprint_valid(rtisa):
-                    result = _failure(
-                        request, "rtisa_authority", "RTICB_RTISA_AUTHORITY_FINGERPRINT_INVALID",
-                        target=target, rtisa=rtisa,
-                    )
-                elif rtisa["universe_completeness_state"] == "UNAVAILABLE":
-                    result = _failure(
-                        request, "rtisa_authority", "RTICB_RTISA_AUTHORITY_UNAVAILABLE",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not (
-                    rtisa["universe_completeness_state"] == "COMPLETE_EVIDENCED"
-                    and rtisa["admission_readiness_state"] == "READY"
-                    and rtisa["admission_ready"] is True
-                ):
-                    result = _failure(
-                        request, "rtisa_authority", "RTICB_RTISA_AUTHORITY_NOT_READY",
-                        target=target, rtisa=rtisa,
-                    )
-                elif target["client_id"] != request["client_id"] or rtisa["client_id"] != request["client_id"]:
-                    result = _failure(
-                        request, "cross_authority_identity", "RTICB_CLIENT_ID_MISMATCH",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not (
-                    target["planning_calculation_input_fingerprint"]
-                    == rtisa["planning_calculation_input_fingerprint"]
-                    == request["expected_planning_calculation_input_fingerprint"]
-                ):
-                    result = _failure(
-                        request, "cross_authority_identity", "RTICB_PLANNING_IDENTITY_MISMATCH",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not (
-                    target["retirement_target_date"]
-                    == rtisa["retirement_target_date"]
-                    == request["expected_retirement_target_date"]
-                ):
-                    result = _failure(
-                        request, "cross_authority_identity", "RTICB_RETIREMENT_TARGET_DATE_MISMATCH",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not _source_universe_valid(rtisa["source_entries"]):
-                    result = _failure(
-                        request, "source_universe", "RTICB_SOURCE_UNIVERSE_INVALID",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not _coverage_valid(rtisa):
-                    result = _failure(
-                        request, "source_universe", "RTICB_SOURCE_COVERAGE_MISMATCH",
-                        target=target, rtisa=rtisa,
-                    )
-                elif not all(_basis_valid(entry) for entry in rtisa["source_entries"]):
-                    result = _failure(
-                        request, "classification", "RTICB_SOURCE_BASIS_EVIDENCE_INVALID",
-                        target=target, rtisa=rtisa,
-                    )
+                collection=crtisba_service.derive_in_snapshot(db,request["client_id"],operation="READ")
+                if isinstance(collection,Mapping) and collection.get("schema_version")=="CRTISBA_BLOCK_NO_RESULT_V1":
+                    if _blocked_valid(collection,request["client_id"]):
+                        result=_failure(request,"crtisba_authority",BLOCKED_RTICB[collection["failure_stage"]],
+                                        target=target,crtisba=collection)
+                    else:
+                        result=_failure(request,"crtisba_authority","RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID",
+                                        target=target,crtisba=collection)
+                elif not _collection_shape(collection):
+                    result=_failure(request,"crtisba_authority","RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID",
+                                    target=target,crtisba=collection)
+                elif not _collection_fingerprint_valid(collection):
+                    result=_failure(request,"crtisba_authority","RTICB_CRTISBA_RESULT_FINGERPRINT_MISMATCH",
+                                    target=target,crtisba=collection)
+                elif target["client_id"]!=request["client_id"] or collection["client_id"]!=request["client_id"]:
+                    result=_failure(request,"cross_authority_identity","RTICB_CLIENT_ID_MISMATCH",target=target,crtisba=collection)
+                elif not (target["planning_calculation_input_fingerprint"]==
+                          collection["planning_calculation_input_fingerprint"]==
+                          request["expected_planning_calculation_input_fingerprint"]):
+                    result=_failure(request,"cross_authority_identity","RTICB_PLANNING_IDENTITY_MISMATCH",target=target,crtisba=collection)
+                elif not (target["retirement_target_date"]==collection["retirement_target_date"]==
+                          request["expected_retirement_target_date"]):
+                    result=_failure(request,"cross_authority_identity","RTICB_RETIREMENT_TARGET_DATE_MISMATCH",target=target,crtisba=collection)
+                elif not _universe_valid(collection):
+                    result=_failure(request,"source_universe","RTICB_CRTISBA_SOURCE_UNIVERSE_MISMATCH",target=target,crtisba=collection)
+                elif not _consistent(collection):
+                    result=_failure(request,"source_universe","RTICB_CRTISBA_COLLECTION_CONSISTENCY_INVALID",target=target,crtisba=collection)
+                elif not all(_entry_valid(e) for e in collection["source_basis_entries"]):
+                    result=_failure(request,"source_universe","RTICB_CRTISBA_ENTRY_AUTHORITY_INVALID",target=target,crtisba=collection)
                 else:
-                    result = _success(request, target, rtisa)
+                    result=_result(request,target,collection)
     except BaseException:
-        if db.in_transaction():
-            _rollback_owned_transaction(db)
+        if db.in_transaction():_rollback_owned_transaction(db)
         raise
     _rollback_owned_transaction(db)
     return result

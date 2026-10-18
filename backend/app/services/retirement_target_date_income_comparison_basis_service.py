@@ -480,9 +480,61 @@ def _entry_valid(e: Any) -> bool:
     if state in {"NOT_APPLICABLE_DELEGATED","NOT_APPLICABLE_NOT_ADMITTED","DELEGATION_UNRESOLVED","DELEGATION_STALE"}:
         if any(e[x] is not None for x in ("income_basis","income_basis_provenance","price_basis",
                                             "price_reference_date","price_basis_provenance")):return False
-    if state=="CURRENT" and (e["income_basis"] not in {"GROSS","NET","UNKNOWN"} or e["price_basis"] not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE"}):return False
-    if state=="MISSING" and e["decision_version"] is not None:return False
-    if state=="INVALID" and e["decision_version"] is not None:return False
+    safe_missing = (
+        (e["income_basis"] == "UNKNOWN" and e["income_basis_provenance"] == "MISSING"
+         and e["price_basis"] == "NOMINAL_AT_RETIREMENT_TARGET_DATE"
+         and e["price_reference_date"] is None and e["price_basis_provenance"] == "OWNER_DECISION_OD2")
+        if e["source_kind"] == "PENSION" else
+        (e["income_basis"] in {"GROSS", "NET", "UNKNOWN"}
+         and e["income_basis_provenance"] in {"UPSTREAM_RECURRING_AMOUNT_BASIS", "MISSING"}
+         and e["price_basis"] == "UNKNOWN" and e["price_reference_date"] is None
+         and e["price_basis_provenance"] == "MISSING")
+    )
+    if state in {"CURRENT","MISSING","UNKNOWN","STALE","INVALID"}:
+        if (e["source_version"] is None or e["amount_authority_fingerprint"] is None):return False
+        expected_blockers = [] if state=="CURRENT" else ["CRTISBA_DECISION_"+state]
+        if e["blockers"] != expected_blockers:return False
+        if state in {"CURRENT","UNKNOWN","STALE"} and e["decision_version"] is None:return False
+        if state in {"MISSING","INVALID"} and e["decision_version"] is not None:return False
+        if state in {"MISSING","UNKNOWN","STALE","INVALID"} and not safe_missing:return False
+        if state=="CURRENT":
+            if e["source_kind"]=="PENSION":
+                if (e["income_basis"] not in {"GROSS","NET"}
+                    or e["income_basis_provenance"]!="EXPLICIT_PROFESSIONAL"
+                    or e["price_basis"]!="NOMINAL_AT_RETIREMENT_TARGET_DATE"
+                    or e["price_reference_date"] is not None
+                    or e["price_basis_provenance"]!="OWNER_DECISION_OD2"):return False
+            else:
+                if (e["income_basis"] not in {"GROSS","NET","UNKNOWN"}
+                    or e["income_basis_provenance"] != ("MISSING" if e["income_basis"]=="UNKNOWN" else "UPSTREAM_RECURRING_AMOUNT_BASIS")
+                    or e["price_basis"] not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE"}
+                    or e["price_basis_provenance"]!="EXPLICIT_PROFESSIONAL"
+                    or (e["price_basis"]=="REAL_AT_REFERENCE_DATE")!=(e["price_reference_date"] is not None)):return False
+    elif state in {"NOT_APPLICABLE_DELEGATED","NOT_APPLICABLE_NOT_ADMITTED","DELEGATION_UNRESOLVED","DELEGATION_STALE"}:
+        if e["amount_authority_fingerprint"] is not None or e["decision_version"] is not None:return False
+        if state!="NOT_APPLICABLE_NOT_ADMITTED" and e["source_kind"]!="RECURRING_INCOME":return False
+        expected = {
+            "NOT_APPLICABLE_DELEGATED":[],
+            "NOT_APPLICABLE_NOT_ADMITTED":[],
+            "DELEGATION_UNRESOLVED":["RTISA_SOURCE_IDENTITY_UNRESOLVED"],
+            "DELEGATION_STALE":["RTISA_SOURCE_IDENTITY_STALE"],
+        }[state]
+        if e["blockers"]!=expected:return False
+    elif state=="UPSTREAM_UNRESOLVED":
+        if not e["rtisa_reason_codes"] or e["blockers"]!=e["rtisa_reason_codes"]:return False
+        freq = e["rtisa_reason_codes"]==["RTISA_SOURCE_FREQUENCY_UNSUPPORTED"]
+        if freq:
+            if (e["source_kind"]!="RECURRING_INCOME" or e["amount_authority_fingerprint"] is None
+                or e["source_version"] is None):return False
+            if e["decision_version"] is not None:
+                if (e["price_basis"] not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE"}
+                    or e["price_basis_provenance"]!="EXPLICIT_PROFESSIONAL"
+                    or (e["price_basis"]=="REAL_AT_REFERENCE_DATE")!=(e["price_reference_date"] is not None)):return False
+            elif not safe_missing:return False
+        else:
+            if e["amount_authority_fingerprint"] is not None or e["decision_version"] is not None:return False
+            if any(e[k] is not None for k in ("income_basis","income_basis_provenance","price_basis",
+                                               "price_reference_date","price_basis_provenance")):return False
     return True
 
 def _collection_shape(value: Any) -> bool:

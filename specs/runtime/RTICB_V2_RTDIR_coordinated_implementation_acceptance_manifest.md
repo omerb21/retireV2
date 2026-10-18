@@ -16,7 +16,7 @@
 - Independent initial implementation decision: `IMPLEMENTATION_ACCEPTANCE = FAIL` on `e9a825c05d8b2ab564e2458b4885b69ad4200abc`
 - Independent focused delta decision: `DELTA_ACCEPTANCE = PASS`; `IMPLEMENTATION_ACCEPTANCE = PASS`
 - Finding: `RTICB-IMP-BLOCK-001 = CLOSED`; `RTICB-IMP-BLOCK-002 = CLOSED`; `RTICB-TEST-BLOCK-001 = CLOSED`; remaining blockers `NONE`
-- Finding token: `NO_NEW_FINDING` in focused delta acceptance; prior findings retained in history
+- Focused delta report: `Remaining blockers = NONE`; no separate finding token was issued; prior findings retained in history
 - Professional decision: `OWNER_DECISION_REQUIRED = NO`; separate Owner implementation authorization already granted
 - Acceptance criteria: `AC-01..AC-40`; count `40`; implementation accepted
 - Negative acceptance criteria: `NAC-01..NAC-25`; count `25`; implementation accepted
@@ -40,7 +40,7 @@
 - RTICB focused Backend suite: `95 passed`
 - Frontend readiness focused suite: `22 passed`
 - Earlier full Frontend suite: `224 passed`; unchanged evidence reused
-- PostgreSQL 16.2 transaction suite: `11 passed`; unaffected evidence reused
+- PostgreSQL transaction suite: `11 passed`; unaffected evidence reused
 - Independent delta Backend oracles: `6 passed`
 - Independent delta Frontend oracles: `2 passed`
 - TypeScript/Vite build: `PASS` independently on accepted implementation

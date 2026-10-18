@@ -435,6 +435,7 @@ def _blocked_valid(obj: Any, client_id: int|None) -> bool:
     if not isinstance(obj,Mapping) or set(obj)!=BLOCKED_FIELDS:
         return False
     stage=obj.get("failure_stage")
+    if not isinstance(stage,str):return False
     if (obj.get("schema_version")!="CRTISBA_BLOCK_NO_RESULT_V1" or obj.get("result_state")!="block_no_result"
         or obj.get("client_id")!=client_id or not _positive_int(obj.get("client_id"))
         or obj.get("operation")!="READ" or BLOCKED_CODES.get(stage)!=obj.get("failure_detail_code")
@@ -458,8 +459,8 @@ def _blocked_valid(obj: Any, client_id: int|None) -> bool:
 def _entry_valid(e: Any) -> bool:
     if not isinstance(e,Mapping) or set(e)!=ENTRY_FIELDS:return False
     if e["schema_version"]!="CRTISBA_SOURCE_BASIS_ENTRY_V1" or not _canonical_source_id(e["source_id"]):return False
-    if e["source_kind"] not in {"PENSION","RECURRING_INCOME"} or not isinstance(e["source_category"],str):return False
-    if e["decision_state"] not in PARTITIONS or e["admission_state"] not in {"INCLUDED","EXCLUDED","UNRESOLVED"}:return False
+    if not isinstance(e["source_kind"],str) or e["source_kind"] not in {"PENSION","RECURRING_INCOME"} or not isinstance(e["source_category"],str):return False
+    if not isinstance(e["decision_state"],str) or e["decision_state"] not in PARTITIONS or not isinstance(e["admission_state"],str) or e["admission_state"] not in {"INCLUDED","EXCLUDED","UNRESOLVED"}:return False
     if not _sorted_codes(e["rtisa_reason_codes"]) or not _sorted_codes(e["blockers"]):return False
     if not _is_sha(e["source_fingerprint"]):return False
     if e["source_kind"]=="PENSION" and e["source_version"] is not None and not _positive_int(e["source_version"]):return False
@@ -468,7 +469,7 @@ def _entry_valid(e: Any) -> bool:
     if (e["decision_version"] is None)!=(e["decision_fingerprint"] is None):return False
     if e["decision_version"] is not None and (not _positive_int(e["decision_version"]) or not _is_sha(e["decision_fingerprint"])):return False
     for k,v in (("income_basis",{"GROSS","NET","UNKNOWN"}),("price_basis",{"NOMINAL_AT_RETIREMENT_TARGET_DATE","REAL_AT_REFERENCE_DATE","UNKNOWN"})):
-        if e[k] is not None and e[k] not in v:return False
+        if e[k] is not None and (not isinstance(e[k],str) or e[k] not in v):return False
     for k,v in (("income_basis_provenance",{"EXPLICIT_PROFESSIONAL","UPSTREAM_RECURRING_AMOUNT_BASIS","MISSING"}),
                 ("price_basis_provenance",{"OWNER_DECISION_OD2","EXPLICIT_PROFESSIONAL","MISSING"})):
         if e[k] is not None and e[k] not in v:return False

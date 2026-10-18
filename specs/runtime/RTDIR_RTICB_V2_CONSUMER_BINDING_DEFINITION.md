@@ -70,23 +70,68 @@ failure identity follow RTICB Definition Sections 8–10 verbatim. Reject extra 
 keys. The RTDIR route never substitutes path identity for a non-null foreign producer client,
 and never treats an unvalidated CRTISBA professional block as a valid RTICB result.
 
-## 6. Transport and producer failure boundary
-- Exact valid professional success or blocked result: return HTTP 200, original JSON unchanged.
-- Malformed/missing producer shape or invalid schema/version/identity: preserve the existing
-  RTDIR `PRODUCER_RESPONSE_INVALID` / `RESPONSE_CLIENT_MISMATCH` transport taxonomy and
-  binding precedence from the parent Definition; no API-side repair, downgrade or V1 fallback.
-- RTICB documented domain failures are professional results, not newly invented HTTP errors.
-- Existing RTICB database/transaction technical failures preserve the established RTDIR 503
-  `RTICB_DATABASE_FAILURE` handling.
-- A technical failure arising transitively from CRTISBA must follow the *actual accepted*
-  CRTISBA exception class/code, mapped to an existing appropriate RTDIR 503 infrastructure
-  response without converting it into `block_no_result`, inventing professional blocker codes,
-  or claiming RTICB performs retries. A non-database construction/programming/hash exception
-  remains HTTP 500 `INTERNAL_ERROR` under the accepted RTDIR transport envelope.
-- Exact routing for each declared CRTISBA exception family must be enumerated and independently
-  tested before RTDIR implementation authorization; any contradiction with accepted transport
-  precedence is a Definition stop condition, not permission to invent a new status code.
+## 6. Exhaustive RTICB / CRTISBA technical-to-transport contract
+The existing RTDIR transport envelope is exactly `RTDIR_TRANSPORT_ERROR_V1` with keys
+`schema_version`, `code`, `message`, `field_paths`, `request_id`. All transport rows
+below use the existing `error(request, status, code, fields)` construction, returning
+`Cache-Control: no-store, private` and `Pragma: no-cache`; `field_paths=[]` unless
+explicitly stated. They never enter the HTTP 200 professional `block_no_result` flow.
+There is no automatic retry for any row; a user-initiated retry is possible after
+infrastructure recovery for 503 and is not automatically appropriate for 404/500.
+The first matching exception family/code in the table wins. Transport authentication,
+CSRF and request-schema preemption from the accepted parent RTDIR Definition remains prior.
 
+| Producer result or exception | Reachability in RTICB V2 path | HTTP | Exact public machine code | field_paths | Retry |
+|---|---|---:|---|---|---|
+| Canonical RTICB V2 success or professional blocked envelope | ordinary result | 200 | none: original complete professional DTO | n/a | not automatic |
+| RTICB returned malformed, missing, unrecognized, mixed-V1/V2 DTO or invalid fingerprint | reachable consumer guard | 500 | `PRODUCER_RESPONSE_INVALID` | `[]` | no automatic retry |
+| RTICB returned structurally canonical non-null foreign `client_id` | reachable, identity guard precedes field-shape check | 500 | `RESPONSE_CLIENT_MISMATCH` | `[]` | no automatic retry |
+| `CRTISBAError("CRTISBA_UPSTREAM_TECHNICAL_FAILURE", 503)` | reachable from `derive_in_snapshot` transitive RTISA technical exception | 503 | `RTICB_UPSTREAM_TECHNICAL_FAILURE` | `[]` | manual after recovery |
+| `CRTISBAError("PRODUCER_RESPONSE_INVALID", 500)` | reachable from CRTISBA Planning/Portfolio/RTISA verification | 500 | `PRODUCER_RESPONSE_INVALID` | `[]` | no automatic retry |
+| `CRTISBAError("RESPONSE_CLIENT_MISMATCH", 500)` | reachable from foreign RTISA response during CRTISBA derivation | 500 | `RESPONSE_CLIENT_MISMATCH` | `[]` | no automatic retry |
+| `CRTISBAError("CLIENT_NOT_FOUND", 404)` | CRTISBA producer path reachable in isolation; ordinarily preempted by earlier RIT target path for a truly nonexistent client; preserve mapping if encountered | 404 | `CLIENT_NOT_FOUND` | `["/path/client_id"]` | no |
+| `CRTISBAError("CRTISBA_DATABASE_FAILURE", 503)` | possible only if downstream wraps a DB failure through an accepted owner path; raw snapshot DBAPI is the normal in-snapshot route | 503 | `RTICB_DATABASE_FAILURE` | `[]` | manual after recovery |
+| Raw `DBAPIError`, `OperationalError`, `IntegrityError` from RTICB snapshot/CRTISBA transitive reads | reachable | 503 | `RTICB_DATABASE_FAILURE` | `[]` | manual after recovery |
+| `CRTISBAFingerprintConstructionError` | reachable from CRTISBA canonical JSON/hash construction | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
+| `RTICBFingerprintConstructionError` | reachable from RTICB-owned canonical JSON/hash construction | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
+| Unexpected programming, serialization, framework exception | reachable | 500 | `INTERNAL_ERROR` | `[]` | no automatic retry |
+| `CRTISBAError("CRTISBA_REQUIRES_FRESH_TRANSACTION", 503)`, `CRTISBA_UNSUPPORTED_DATABASE`, `CRTISBA_ROLLBACK_FAILED` | public CRTISBA `read()/write()` transaction owner only; **not reachable** through non-owning `derive_in_snapshot`; RTICB owns freshness/transaction/rollback | n/a | n/a | n/a | n/a |
+| `CRTISBA_SOURCE_NOT_FOUND`, `CRTISBA_SOURCE_NOT_CURRENT`, `CRTISBA_SOURCE_KIND_MISMATCH`, `CRTISBA_SOURCE_DECISION_FORBIDDEN`, `CRTISBA_AMOUNT_AUTHORITY_UNAVAILABLE`, and CRTISBA decision/write/flush/commit/conflict/immutability codes | public write/clear/classify or persistence route only; **not reachable** through `derive_in_snapshot(...,operation="READ")` | n/a | n/a | n/a | n/a |
+
+The reachable `CRTISBAError` whitelist is therefore `CRTISBA_UPSTREAM_TECHNICAL_FAILURE`,
+`PRODUCER_RESPONSE_INVALID`, `RESPONSE_CLIENT_MISMATCH`, `CLIENT_NOT_FOUND` and the
+conditional database wrapper `CRTISBA_DATABASE_FAILURE`. An unexpected `CRTISBAError`
+code or status on this in-snapshot path is **not** forwarded as an arbitrary public code;
+it fails closed as HTTP 500 `INTERNAL_ERROR`, `field_paths=[]`, with the same transport
+envelope and cache headers. This prevents accepted public-reader/write-only CRTISBA codes
+from leaking through the consumer. No `CRTISBAError` is remapped to a professional result.
+
+The specific catch ordering for the future RTDIR adapter is: the accepted RTDIR
+authentication/request preemption; one RTICB producer call; returned result validation
+with non-null foreign-client check before malformed-shape check; CRTISBA upstream-specific
+errors by exact class/code/status whitelist; raw DBAPI family; RTICB-owned typed technical
+errors; unexpected failures. The existing broad `PensionProductError` transport fallback
+must not precede this classification for CRTISBA errors. Any RTICB domain exception
+authorized by the accepted parent RTDIR mapping stays under that original mapping,
+except where it would conflict with an explicitly listed CRTISBA row.
+
+An HTTP 200 accepted RTICB result is forwarded verbatim. The adapter never repairs
+source IDs, decision state, admission, reasons, fingerprints, nulls or ordering.
+A valid CRTISBA professional blocked result is consumed by RTICB and appears only
+inside RTICB's own accepted professional failure envelope. Invalid CRTISBA producer
+objects must be classified by RTICB according to its accepted Definition; RTDIR
+does not invent an additional producer authority.
+
+Executable obligation: parameterize one real RTDIR comparison-route invocation for
+each reachable class/code/status row and at least one synthetic injected forbidden
+public/write-only CRTISBA error, asserting exact HTTP status, `RTDIR_TRANSPORT_ERROR_V1`
+fields, `field_paths`, both cache headers, no automatic retry and a single RTICB
+call. Prove that the forbidden code does not leak as its original public machine code.
+Cover ordinary success and `block_no_result` as 200 controls and preemption for a
+nonexistent client as a production-path test where a genuine target preemption exists.
+Tests may inject typed exception values at the transport seam; producer reachability
+claims must be confirmed against actual CRTISBA and RTICB entry points.
+ 
 ## 7. Frontend projection
 The existing Hebrew RTL readiness screen consumes server V2 result DTOs. It shows, in server order:
 - Success: `direct_comparison_state`, `direct_comparison_ready`, ordered `blockers`.
@@ -110,7 +155,7 @@ refresh, caching, session expiry/logout, RTL, and error-state handling are prese
 - `AC-03` V2 17-field professional failure shape and permitted observation fields.
 - `AC-04` Exact response client/path equality without rewriting producer output.
 - `AC-05` Correct 200 professional success/blocked vs existing 500/503 transport split.
-- `AC-06` Accepted CRTISBA technical exception family routed under existing RTDIR contract.
+- `AC-06` Every reachable and preempted CRTISBA/RTICB technical exception is classified by the exhaustive Section 6 table, with exact HTTP/code/field_paths/transport envelope/cache headers/retry policy and ordinary plus negative test controls.
 - `AC-07` Exactly one pristine-session RTICB invocation; no independent RTISA/CRTISBA read.
 - `AC-08` UI binds V2 fields, state reasons, nulls and ordered blockers verbatim.
 - `AC-09` No regression to authentication, CSRF, proxy security, generation isolation or RTL.
@@ -124,7 +169,7 @@ refresh, caching, session expiry/logout, RTL, and error-state handling are prese
 - `NAC-05` Never have frontend derive amounts, basis conversions or comparison readiness.
 - `NAC-06` Never accept a V1 DTO merely because its client identity matches.
 - `SC-01` If any accepted RTICB V2 DTO cannot be represented under the existing route/UI without professional inference, stop and return for Definition correction.
-- `SC-02` If CRTISBA technical exception handling cannot be mapped to accepted RTDIR transport behavior without invented status/code semantics, stop.
+- `SC-02` If a real CRTISBA/RTICB producer exception is neither mapped nor demonstrably preempted by Section 6, or its mapping contradicts accepted RTDIR transport precedence, stop before implementation.
 - `SC-03` If implementation requires modifying accepted RTICB, CRTISBA, session, authorization or transaction authority, stop.
 - `SC-04` If full nullable/source-identity coverage or deterministic malformed-output detection cannot be tested, stop.
 

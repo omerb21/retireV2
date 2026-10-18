@@ -20,14 +20,14 @@ export type SourceBasisDecisionState =
   | "MISSING"
   | "INVALID"
   | "STALE"
-  | "CLEARED"
+  | "UNKNOWN"
   | "UPSTREAM_UNRESOLVED"
   | "DELEGATION_UNRESOLVED"
   | "DELEGATION_STALE";
 export type SourceIncomeBasis = "GROSS" | "NET" | "UNKNOWN";
 export type SourcePriceBasis = "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE" | "UNKNOWN";
-export type IncomeBasisProvenance = "EXPLICIT_PROFESSIONAL" | "UPSTREAM_RECURRING_AMOUNT_BASIS";
-export type PriceBasisProvenance = "DERIVED_ACCEPTED_PENSION_TARGET_AMOUNT" | "EXPLICIT_PROFESSIONAL";
+export type IncomeBasisProvenance = "EXPLICIT_PROFESSIONAL" | "UPSTREAM_RECURRING_AMOUNT_BASIS" | "MISSING";
+export type PriceBasisProvenance = "OWNER_DECISION_OD2" | "EXPLICIT_PROFESSIONAL" | "MISSING";
 export interface ComparisonEntryV2 {
   source_id: string;
   source_kind: "PENSION" | "RECURRING_INCOME";

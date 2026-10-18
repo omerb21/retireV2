@@ -383,3 +383,58 @@ test("ordinary comparison presentation oracle kills and restores ordering and vi
   expect(killed).toBe(true);
   await ordinary();
 });
+
+
+test("projects accepted UNKNOWN decision and missing income/price provenance without inference", async () => {
+  const entry = comparisonEntry({
+    decision_state: "UNKNOWN", income_basis: "UNKNOWN",
+    income_basis_provenance: "MISSING", price_basis: "UNKNOWN",
+    price_basis_provenance: "MISSING", price_reference_date: null,
+    comparison_state: "BASIS_UNRESOLVED", reason_codes: ["RTICB_CRTISBA_DECISION_UNKNOWN"],
+  });
+  const fetcher = vi.fn()
+    .mockImplementationOnce(() => response(context))
+    .mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response(comparisonSuccess([entry], {
+      direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
+      blockers: ["RTICB_BASIS_UNRESOLVED"],
+    })));
+  vi.stubGlobal("fetch", fetcher);
+  renderScreen();
+  await screen.findByText("קלט התכנון מוכן");
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  expect(await screen.findByText(/RTICB_CRTISBA_DECISION_UNKNOWN/)).toBeInTheDocument();
+  expect(screen.getByText(/בסיס ההשוואה אינו מוכן/)).toBeInTheDocument();
+  expect(screen.getByText(/בסיס הכנסה:/)).toHaveTextContent("UNKNOWN");
+  expect(screen.getByText(/בסיס מחירים:/)).toHaveTextContent("MISSING");
+});
+
+test("renders accepted pension OWNER_DECISION_OD2 and empty missing provenance", async () => {
+  const pension = comparisonEntry({
+    source_id: "manual:1", source_kind: "PENSION",
+    income_basis: "GROSS", income_basis_provenance: "EXPLICIT_PROFESSIONAL",
+    price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE",
+    price_basis_provenance: "OWNER_DECISION_OD2",
+    decision_state: "CURRENT",
+  });
+  const missing = comparisonEntry({
+    source_id: "income:2", decision_state: "MISSING",
+    income_basis: "UNKNOWN", income_basis_provenance: "MISSING",
+    price_basis: "UNKNOWN", price_basis_provenance: "MISSING",
+    comparison_state: "BASIS_UNRESOLVED", reason_codes: ["RTICB_CRTISBA_DECISION_MISSING"],
+  });
+  const fetcher = vi.fn()
+    .mockImplementationOnce(() => response(context))
+    .mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response(comparisonSuccess([pension, missing], {
+      direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
+      blockers: ["RTICB_BASIS_UNRESOLVED"],
+    })));
+  vi.stubGlobal("fetch", fetcher);
+  renderScreen();
+  await screen.findByText("קלט התכנון מוכן");
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  expect(await screen.findByText(/RTICB_CRTISBA_DECISION_MISSING/)).toBeInTheDocument();
+  expect(screen.getByText(/OWNER_DECISION_OD2/)).toBeInTheDocument();
+  expect(screen.getByText(/בסיס ההשוואה אינו מוכן/)).toBeInTheDocument();
+});

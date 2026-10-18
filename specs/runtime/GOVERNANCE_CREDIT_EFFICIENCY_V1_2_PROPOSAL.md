@@ -1,6 +1,6 @@
 # Governance v1.2 — Credit-Efficient Lifecycle Amendment Proposal
 
-Status: **PROPOSAL ONLY — NOT ACCEPTED, NOT OPERATIVE**  
+Status: **CLOSED — NOT ADOPTED / REDUNDANT WITH GOVERNANCE v1.1**  
 Base master: `0f9db6656c9dbbb2aea6f4dc49c367a5dde3245f`  
 Supersession target: `RETIREMENT_PLANNING_V2_GOVERNANCE_PROTOCOL v1.1`  
 Authority: process only; no business, financial, calculation, security or production authority.
@@ -78,3 +78,13 @@ v1.1 sections 3, 4, 5, 9–13 and 17 remain controlling unless and until an expl
 4. Until then, follow v1.1 without exception.
 
 PROPOSAL_ONLY_NOT_AUTHORIZED
+
+## Disposition — no protocol amendment required
+
+Review of the existing operative v1.1 clauses 23–30 confirms that risk-classification, complex-contract enumeration, evidence reuse and delta invalidation, root-cause remediation, mutation sensitivity, reusable harnesses, validation economy and effort discipline are already explicitly required. The proposed v1.2 process changes are therefore largely redundant, and pursuing a new governance version would introduce the very additional independent audit gates this effort sought to avoid.
+
+**Decision:** do not adopt v1.2; do not merge this proposal; keep the existing v1.1 protocol unchanged. Resume authorized product work under the current rules. Apply strict artifact preflight (source-backed SHA/tokens, exact diff/changed paths, admissible evidence quotes, local focused tests) as operational execution discipline, not a new governance requirement. Avoid unsupported version numbers or invented finding tokens.
+
+**Scope:** advisory archival only. No new implementation authorization, production authority or change in mandatory audit gates.
+
+CLOSED_AS_REDUNDANT_WITH_V1_1

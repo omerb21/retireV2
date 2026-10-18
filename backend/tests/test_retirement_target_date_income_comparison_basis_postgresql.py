@@ -13,18 +13,24 @@ from app.models.retirement_facts import RecurringIncome
 from app.services import planning_input_service
 from app.services import retirement_monthly_income_target_service as target_service
 from app.services import retirement_target_date_income_comparison_basis_service as subject
+from app.services import retirement_target_date_income_source_basis_service as crtisba_service
 from app.services import retirement_target_date_income_source_admission_service as rtisa_service
-from test_canonical_conversion_migration import migrate
 from test_planning_input import choose, view
 from test_recovery_migration_postgresql import postgres_url
 from test_retirement_target import payload as target_payload, save as save_target
 from test_retirement_monthly_income_target_postgresql import command, confirm
+from test_retirement_target_date_income_source_basis_postgresql import (
+    ROLE as CRTISBA_APPLICATION_ROLE,
+    migrate as migrate_with_crtisba_role,
+)
 
 
 @pytest.fixture
 def pg_engine(postgres_url):
-    migrate(postgres_url, "upgrade", "a2b8c5e1f309")
     engine = create_engine(postgres_url, pool_size=5)
+    with engine.begin() as connection:
+        connection.execute(text(f"CREATE ROLE {CRTISBA_APPLICATION_ROLE} NOLOGIN"))
+    migrate_with_crtisba_role(postgres_url, "upgrade", "c4e8a2f6b731")
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO clients(client_id,display_name,id_number) VALUES(1,'test','123')"))
     with Session(engine) as db, db.begin():
@@ -71,6 +77,7 @@ def test_postgresql_read_only_repeatable_read_one_session_and_cleanup(pg_engine,
         statements.append(statement.strip().upper())
     event.listen(pg_engine, "before_cursor_execute", capture)
     monkeypatch.setattr(target_service, "assess", lambda *_: (_ for _ in ()).throw(AssertionError("nested target owner")))
+    monkeypatch.setattr(crtisba_service, "read", lambda *_: (_ for _ in ()).throw(AssertionError("nested CRTISBA owner")))
     monkeypatch.setattr(rtisa_service, "read", lambda *_: (_ for _ in ()).throw(AssertionError("nested RTISA owner")))
     try:
         with Session(pg_engine) as db:
@@ -87,9 +94,7 @@ def test_postgresql_read_only_repeatable_read_one_session_and_cleanup(pg_engine,
 def test_postgresql_concurrent_writer_cannot_mix_target_and_rtisa_snapshots(pg_engine):
     request = _request(pg_engine)
     with Session(pg_engine) as verification_db:
-        before = rtisa_service.read(
-            verification_db, 1, request["expected_planning_calculation_input_fingerprint"]
-        )
+        before = crtisba_service.read(verification_db, 1)
     paused, resume = Event(), Event()
     reader_connection = [None]
 
@@ -119,7 +124,7 @@ def test_postgresql_concurrent_writer_cannot_mix_target_and_rtisa_snapshots(pg_e
         resume.set()
         event.remove(pg_engine, "after_cursor_execute", intercept)
     assert old["classification_complete"] is True, old
-    assert old["rtisa_admission_result_fingerprint"] == before["admission_result_fingerprint"]
+    assert old["crtisba_result_fingerprint"] == before["result_fingerprint"]
     with Session(pg_engine) as db:
         fresh = subject.assess(db, _request(pg_engine))
     assert fresh["result_state"] == "block_no_result"
@@ -299,20 +304,20 @@ def test_mutation_oracle_detects_nested_target_public_owner(pg_engine, monkeypat
     _assert_ordinary_success(pg_engine, request)
 
 
-def test_mutation_oracle_detects_nested_rtisa_public_owner(pg_engine, monkeypatch):
+def test_mutation_oracle_detects_nested_crtisba_public_owner(pg_engine, monkeypatch):
     request = _request(pg_engine)
-    original_reader = rtisa_service.read_in_snapshot
+    original_reader = crtisba_service.derive_in_snapshot
     reached = []
 
-    def mutated(db, client_id, expected):
-        reached.append("rtisa_public_read")
-        return rtisa_service.read(db, client_id, expected)
+    def mutated(db, client_id, operation="READ"):
+        reached.append("crtisba_public_read")
+        return crtisba_service.read(db, client_id)
 
-    monkeypatch.setattr(rtisa_service, "read_in_snapshot", mutated)
+    monkeypatch.setattr(crtisba_service, "derive_in_snapshot", mutated)
     with Session(pg_engine) as db:
-        with pytest.raises(rtisa_service.RetirementTargetIncomeSourceAdmissionError):
+        with pytest.raises(crtisba_service.CRTISBAError):
             subject.assess(db, request)
         assert not db.in_transaction()
-    assert reached == ["rtisa_public_read"]
-    monkeypatch.setattr(rtisa_service, "read_in_snapshot", original_reader)
+    assert reached == ["crtisba_public_read"]
+    monkeypatch.setattr(crtisba_service, "derive_in_snapshot", original_reader)
     _assert_ordinary_success(pg_engine, request)

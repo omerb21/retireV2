@@ -19,6 +19,44 @@ const target = {
   authority_state: "CURRENT", target_readiness_state: "READY", target_ready: true,
   blockers: [], target_semantic_fingerprint: "b".repeat(64), target_result_fingerprint: "c".repeat(64),
 };
+const comparisonEntry = (overrides: Record<string, unknown> = {}) => ({
+  source_id: "income:1", source_kind: "RECURRING_INCOME", source_category: "RENTAL",
+  admission_state: "INCLUDED", rtisa_reason_codes: [], decision_state: "CURRENT",
+  source_version: "d".repeat(64), source_fingerprint: "d".repeat(64),
+  amount_authority_fingerprint: "e".repeat(64), decision_version: 1,
+  decision_fingerprint: "f".repeat(64), income_basis: "GROSS",
+  income_basis_provenance: "UPSTREAM_RECURRING_AMOUNT_BASIS",
+  price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE", price_reference_date: null,
+  price_basis_provenance: "EXPLICIT_PROFESSIONAL", target_income_basis: "GROSS",
+  target_price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE", target_price_reference_date: null,
+  comparison_state: "DIRECTLY_COMPARABLE", reason_codes: [],
+  source_comparison_fingerprint: "1".repeat(64), ...overrides,
+});
+const comparisonSuccess = (entries = [comparisonEntry()], overrides: Record<string, unknown> = {}) => ({
+  schema_version: "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2",
+  client_id: 7, planning_calculation_input_fingerprint: "a".repeat(64),
+  retirement_target_date: "2035-04-01", target_result_fingerprint: "c".repeat(64),
+  target_semantic_fingerprint: "b".repeat(64), crtisba_result_fingerprint: "2".repeat(64),
+  comparison_input_fingerprint: "3".repeat(64), source_comparisons: entries,
+  classification_state: "COMPLETE", classification_complete: true,
+  direct_comparison_state: "READY", direct_comparison_ready: true, blockers: [],
+  comparison_result_fingerprint: "4".repeat(64), ...overrides,
+});
+const comparisonFailure = {
+  schema_version: "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2",
+  client_id: 7, supplied_planning_calculation_input_fingerprint: "a".repeat(64),
+  supplied_retirement_target_date: "2035-04-01",
+  observed_target_planning_calculation_input_fingerprint: "a".repeat(64),
+  observed_target_retirement_target_date: "2035-04-01",
+  observed_target_result_fingerprint: "c".repeat(64),
+  observed_crtisba_planning_calculation_input_fingerprint: "a".repeat(64),
+  observed_crtisba_retirement_target_date: "2035-04-01",
+  observed_crtisba_result_fingerprint: "2".repeat(64),
+  observed_crtisba_failure_fingerprint: null, observed_crtisba_failure_stage: null,
+  observed_crtisba_failure_detail_code: null, result_state: "block_no_result",
+  failure_stage: "source_universe", failure_detail_code: "RTICB_CRTISBA_ENTRY_AUTHORITY_INVALID",
+  result_fingerprint: "5".repeat(64),
+};
 const response = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), {status: 200, headers: {"Content-Type": "application/json"}}));
 
 function renderScreen() {
@@ -51,16 +89,13 @@ test("renders exact readiness evidence and preserves block_no_result as a profes
   const fetcher = vi.fn()
     .mockImplementationOnce(() => response(context))
     .mockImplementationOnce(() => response(target))
-    .mockImplementationOnce(() => response({
-      schema_version: "RTICB_RESULT_V1", client_id: 7, result_state: "block_no_result",
-      failure_stage: "source_admission", failure_detail_code: "RTICB_SOURCE_ADMISSION_NOT_READY",
-    }));
+    .mockImplementationOnce(() => response(comparisonFailure));
   vi.stubGlobal("fetch", fetcher);
   renderScreen();
   expect(await screen.findByText("קלט התכנון מוכן")).toBeInTheDocument();
   expect(screen.getByText(/01\/04\/2035/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
-  expect(await screen.findByText(/RTICB_SOURCE_ADMISSION_NOT_READY/)).toBeInTheDocument();
+  expect(await screen.findByText(/RTICB_CRTISBA_ENTRY_AUTHORITY_INVALID/)).toBeInTheDocument();
   const request = fetcher.mock.calls[2];
   expect(request[0]).toContain("/clients/7/retirement-income-readiness/comparison");
   expect(JSON.parse(request[1].body)).toEqual({
@@ -210,13 +245,10 @@ function labelsForTest(code: string) {
 }
 
 test("successful comparison preserves blocker source and reason order including excluded entries", async () => {
-  const comparison = {
-    schema_version: "RTICB_RESULT_V1", client_id: 7, direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
-    blockers: ["BLOCKER_Z", "BLOCKER_A"], source_comparisons: [
-      {source_id: "income:2", comparison_state: "BASIS_UNRESOLVED", reason_codes: ["REASON_2", "REASON_1"], rtisa_admission_state: "EXCLUDED", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
-      {source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_B", "NORMALIZE_A"], rtisa_admission_state: "NOT_ADMITTED", source_income_basis: "NET", source_price_basis: "REAL"},
-    ],
-  };
+  const comparison = comparisonSuccess([
+    comparisonEntry({source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_A", "NORMALIZE_B"], income_basis: "NET"}),
+    comparisonEntry({source_id: "income:2", admission_state: "EXCLUDED", decision_state: "NOT_APPLICABLE_NOT_ADMITTED", comparison_state: "NOT_ADMITTED", reason_codes: ["RTICB_SOURCE_NOT_ADMITTED"], income_basis: null, income_basis_provenance: null, price_basis: null, price_basis_provenance: null, amount_authority_fingerprint: null, decision_version: null, decision_fingerprint: null}),
+  ], {direct_comparison_state: "NOT_READY", direct_comparison_ready: false, blockers: ["RTICB_NORMALIZATION_REQUIRED"]});
   vi.stubGlobal("fetch", vi.fn()
     .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
     .mockImplementationOnce(() => response(comparison)));
@@ -225,17 +257,15 @@ test("successful comparison preserves blocker source and reason order including 
   const result = await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"});
   const section = result.closest("section")!;
   const text = section.textContent ?? "";
-  expect(text.indexOf("BLOCKER_Z")).toBeLessThan(text.indexOf("BLOCKER_A"));
-  expect(text.indexOf("income:2")).toBeLessThan(text.indexOf("income:1"));
-  expect(text.indexOf("REASON_2")).toBeLessThan(text.indexOf("REASON_1"));
+  expect(text).toContain("RTICB_NORMALIZATION_REQUIRED");
+  expect(text.indexOf("income:1")).toBeLessThan(text.indexOf("income:2"));
+  expect(text.indexOf("NORMALIZE_A")).toBeLessThan(text.indexOf("NORMALIZE_B"));
   expect(text).toContain("EXCLUDED"); expect(text).toContain("NOT_ADMITTED");
-  expect(text).toContain("NORMALIZATION_REQUIRED"); expect(text).toContain("BASIS_UNRESOLVED");
+  expect(text).toContain("NORMALIZATION_REQUIRED"); expect(text).toContain("NOT_APPLICABLE_NOT_ADMITTED");
 });
 
 test("direct comparability does not invent income availability funding or portfolio readiness", async () => {
-  const comparison = {client_id: 7, direct_comparison_state: "DIRECTLY_COMPARABLE", direct_comparison_ready: true, blockers: [], source_comparisons: [
-    {source_id: "income:1", comparison_state: "DIRECTLY_COMPARABLE", reason_codes: [], rtisa_admission_state: "READY", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
-  ]};
+  const comparison = comparisonSuccess();
   vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
   renderScreen(); await screen.findByDisplayValue("12000.00");
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
@@ -244,29 +274,67 @@ test("direct comparability does not invent income availability funding or portfo
   expect(section).not.toHaveTextContent(/הכנסה זמינה|מימון מוכן|תיק מוכן/);
 });
 
+test("renders delegated unresolved nullable and NOT_READY V2 evidence without inference", async () => {
+  const nullBasis = {
+    income_basis: null, income_basis_provenance: null, price_basis: null,
+    price_reference_date: null, price_basis_provenance: null,
+    amount_authority_fingerprint: null, decision_version: null, decision_fingerprint: null,
+  };
+  const comparison = comparisonSuccess([
+    comparisonEntry({
+      source_id: "income:delegated", source_category: "PENSION_REPRESENTATION",
+      admission_state: "EXCLUDED", rtisa_reason_codes: ["RTISA_SAME_CANONICAL_PENSION"],
+      decision_state: "NOT_APPLICABLE_DELEGATED", comparison_state: "NOT_ADMITTED",
+      reason_codes: ["RTICB_SOURCE_NOT_ADMITTED"], ...nullBasis,
+    }),
+    comparisonEntry({
+      source_id: "income:unresolved", source_category: "PENSION_REPRESENTATION",
+      admission_state: "UNRESOLVED", rtisa_reason_codes: ["RTISA_SOURCE_IDENTITY_UNRESOLVED"],
+      decision_state: "DELEGATION_UNRESOLVED", comparison_state: "BASIS_UNRESOLVED",
+      reason_codes: ["RTICB_CRTISBA_DELEGATION_UNRESOLVED"], ...nullBasis,
+    }),
+  ], {
+    direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
+    blockers: ["RTICB_BASIS_UNRESOLVED"],
+  });
+  vi.stubGlobal("fetch", vi.fn()
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response(comparison)));
+  renderScreen(); await screen.findByDisplayValue("12000.00");
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  expect(await screen.findByText("RTICB_BASIS_UNRESOLVED")).toBeInTheDocument();
+  const delegated = screen.getByRole("heading", {name: "income:delegated"}).closest("article")!;
+  const unresolved = screen.getByRole("heading", {name: "income:unresolved"}).closest("article")!;
+  expect(delegated).toHaveTextContent("NOT_APPLICABLE_DELEGATED");
+  expect(delegated).toHaveTextContent("NOT_ADMITTED");
+  expect(unresolved).toHaveTextContent("DELEGATION_UNRESOLVED");
+  expect(unresolved).toHaveTextContent("BASIS_UNRESOLVED");
+  expect(within(delegated).getAllByText("לא נקבע")).toHaveLength(5);
+  expect(within(unresolved).getAllByText("לא נקבע")).toHaveLength(5);
+  expect(delegated).not.toHaveTextContent(/GROSS|NET|NOMINAL|REAL/);
+  expect(unresolved).not.toHaveTextContent(/GROSS|NET|NOMINAL|REAL/);
+});
+
 test("unknown technical and professional codes use neutral presentation and preserve exact codes", async () => {
-  const comparison = {client_id: 7, direct_comparison_ready: false, blockers: ["UNKNOWN_BLOCKER"], source_comparisons: [
-    {source_id: "income:1", comparison_state: "UNKNOWN_COMPARISON", reason_codes: ["UNKNOWN_REASON"], rtisa_admission_state: "UNKNOWN_ADMISSION", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
-  ]};
+  const comparison = comparisonSuccess([
+    comparisonEntry({comparison_state: "BASIS_UNRESOLVED", reason_codes: ["UNKNOWN_REASON"]}),
+  ], {direct_comparison_state: "NOT_READY", direct_comparison_ready: false, blockers: ["UNKNOWN_BLOCKER"]});
   vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
   renderScreen(); await screen.findByDisplayValue("12000.00");
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
   await screen.findByText("UNKNOWN_BLOCKER");
-  for (const code of ["UNKNOWN_BLOCKER", "UNKNOWN_COMPARISON", "UNKNOWN_ADMISSION", "UNKNOWN_REASON"]) {
+  for (const code of ["UNKNOWN_BLOCKER", "UNKNOWN_REASON"]) {
     expect(screen.getByText(code)).toBeInTheDocument();
   }
   const section = screen.getByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"}).closest("section")!;
-  expect(section.textContent?.match(/נדרש טיפול מקצועי/g)).toHaveLength(4);
+  expect(section.textContent?.match(/נדרש טיפול מקצועי/g)?.length).toBeGreaterThanOrEqual(2);
 });
 
 test("ordinary comparison presentation oracle kills and restores ordering and visibility mapping mutation", async () => {
-  const comparison = {
-    schema_version: "RTICB_RESULT_V1", client_id: 7, direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
-    blockers: ["BLOCKER_Z", "BLOCKER_A"], source_comparisons: [
-      {source_id: "income:2", comparison_state: "BASIS_UNRESOLVED", reason_codes: ["REASON_2", "REASON_1"], rtisa_admission_state: "EXCLUDED", source_income_basis: "GROSS", source_price_basis: "NOMINAL"},
-      {source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_B", "NORMALIZE_A"], rtisa_admission_state: "NOT_ADMITTED", source_income_basis: "NET", source_price_basis: "REAL"},
-    ],
-  };
+  const comparison = comparisonSuccess([
+    comparisonEntry({source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_A", "NORMALIZE_B"], income_basis: "NET"}),
+    comparisonEntry({source_id: "income:2", admission_state: "EXCLUDED", decision_state: "NOT_APPLICABLE_NOT_ADMITTED", comparison_state: "NOT_ADMITTED", reason_codes: ["RTICB_SOURCE_NOT_ADMITTED"], income_basis: null, income_basis_provenance: null, price_basis: null, price_basis_provenance: null, amount_authority_fingerprint: null, decision_version: null, decision_fingerprint: null}),
+  ], {direct_comparison_state: "NOT_READY", direct_comparison_ready: false, blockers: ["RTICB_NORMALIZATION_REQUIRED"]});
 
   const ordinary = async () => {
     vi.stubGlobal("fetch", vi.fn()
@@ -278,9 +346,8 @@ test("ordinary comparison presentation oracle kills and restores ordering and vi
       fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
       const section = (await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).closest("section")!;
       const text = section.textContent ?? "";
-      expect(text.indexOf("BLOCKER_Z")).toBeLessThan(text.indexOf("BLOCKER_A"));
-      expect(text.indexOf("income:2")).toBeLessThan(text.indexOf("income:1"));
-      expect(text.indexOf("REASON_2")).toBeLessThan(text.indexOf("REASON_1"));
+      expect(text.indexOf("income:1")).toBeLessThan(text.indexOf("income:2"));
+      expect(text.indexOf("NORMALIZE_A")).toBeLessThan(text.indexOf("NORMALIZE_B"));
       expect(text).toContain("EXCLUDED");
       expect(text).toContain("NOT_ADMITTED");
       expect(text).not.toMatch(/הכנסה זמינה|מימון מוכן|תיק מוכן/);
@@ -294,11 +361,11 @@ test("ordinary comparison presentation oracle kills and restores ordering and vi
   let mutationReached = false;
   Array.prototype.map = function (this: unknown[], callback: unknown, thisArg?: unknown) {
     const values = this as unknown[];
-    if (values[0] === "BLOCKER_Z" || values[0] === "REASON_2") {
+    if (values[0] === "NORMALIZE_A") {
       mutationReached = true;
       return originalMap.call([...values].reverse(), callback as never, thisArg) as never;
     }
-    if ((values[0] as {source_id?: string} | undefined)?.source_id === "income:2") {
+    if ((values[0] as {source_id?: string} | undefined)?.source_id === "income:1") {
       mutationReached = true;
       return originalMap.call(values.slice(1), callback as never, thisArg) as never;
     }

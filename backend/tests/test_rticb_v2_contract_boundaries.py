@@ -62,6 +62,7 @@ def test_current_direct_and_mismatch_golden_construction():
 
 def test_excluded_source_does_not_infer_basis():
     e = entry(state="NOT_APPLICABLE_NOT_ADMITTED", admitted="EXCLUDED")
+    e["rtisa_reason_codes"] = ["RTISA_FUTURE_SOURCE"]
     for key in ("income_basis", "income_basis_provenance", "price_basis", "price_reference_date", "price_basis_provenance"):
         e[key] = None
     e["decision_version"] = e["decision_fingerprint"] = e["amount_authority_fingerprint"] = None

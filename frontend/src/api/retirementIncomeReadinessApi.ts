@@ -13,23 +13,38 @@ export interface TargetResult {
   authority_state: string; target_readiness_state: string; target_ready: boolean; blockers: string[];
   target_semantic_fingerprint: string | null; target_result_fingerprint: string;
 }
+export type SourceBasisDecisionState =
+  | "CURRENT"
+  | "NOT_APPLICABLE_NOT_ADMITTED"
+  | "NOT_APPLICABLE_DELEGATED"
+  | "MISSING"
+  | "INVALID"
+  | "STALE"
+  | "CLEARED"
+  | "UPSTREAM_UNRESOLVED"
+  | "DELEGATION_UNRESOLVED"
+  | "DELEGATION_STALE";
+export type SourceIncomeBasis = "GROSS" | "NET" | "UNKNOWN";
+export type SourcePriceBasis = "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE" | "UNKNOWN";
+export type IncomeBasisProvenance = "EXPLICIT_PROFESSIONAL" | "UPSTREAM_RECURRING_AMOUNT_BASIS";
+export type PriceBasisProvenance = "DERIVED_ACCEPTED_PENSION_TARGET_AMOUNT" | "EXPLICIT_PROFESSIONAL";
 export interface ComparisonEntryV2 {
   source_id: string;
   source_kind: "PENSION" | "RECURRING_INCOME";
   source_category: string;
   admission_state: "INCLUDED" | "EXCLUDED" | "UNRESOLVED";
   rtisa_reason_codes: string[];
-  decision_state: string;
+  decision_state: SourceBasisDecisionState;
   source_version: number | string | null;
   source_fingerprint: string;
   amount_authority_fingerprint: string | null;
   decision_version: number | null;
   decision_fingerprint: string | null;
-  income_basis: "GROSS" | "NET" | "UNKNOWN" | null;
-  income_basis_provenance: string | null;
-  price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE" | "UNKNOWN" | null;
+  income_basis: SourceIncomeBasis | null;
+  income_basis_provenance: IncomeBasisProvenance | null;
+  price_basis: SourcePriceBasis | null;
   price_reference_date: string | null;
-  price_basis_provenance: string | null;
+  price_basis_provenance: PriceBasisProvenance | null;
   target_income_basis: "GROSS" | "NET";
   target_price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE";
   target_price_reference_date: string | null;

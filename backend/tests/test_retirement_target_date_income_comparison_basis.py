@@ -577,3 +577,65 @@ def test_public_validator_rejects_missing_visited_authority_observations(monkeyp
         "failure": result_without_fingerprint,
     })
     assert not subject.public_result_valid(result, 1, PLANNING, TARGET_DATE)
+
+
+@pytest.mark.parametrize("variant,expected_code", [
+    ("partition_duplicate", "RTICB_CRTISBA_SOURCE_UNIVERSE_MISMATCH"),
+    ("partition_unsorted", "RTICB_CRTISBA_SOURCE_UNIVERSE_MISMATCH"),
+    ("blockers_duplicate", "RTICB_CRTISBA_COLLECTION_CONSISTENCY_INVALID"),
+    ("blockers_unsorted", "RTICB_CRTISBA_COLLECTION_CONSISTENCY_INVALID"),
+])
+def test_coherently_rehashed_order_and_uniqueness_route_to_semantic_failure(monkeypatch, variant, expected_code):
+    entries = [_entry(state="MISSING", source_id="income:1"),
+               _entry(state="MISSING", source_id="income:2")]
+    collection = _collection(entries)
+    if variant == "partition_duplicate":
+        collection["partitions"]["missing"].append("income:2")
+    elif variant == "partition_unsorted":
+        collection["partitions"]["missing"].reverse()
+    elif variant == "blockers_duplicate":
+        collection["blockers"].append("CRTISBA_DECISION_MISSING")
+    else:
+        # Add an independently accepted code, but in noncanonical order.
+        collection["blockers"] = ["ZZZ_EXTRA", "CRTISBA_DECISION_MISSING"]
+    result, _, _ = _run(monkeypatch, collection=_rehash_collection(collection))
+    assert result["result_state"] == "block_no_result"
+    assert (result["failure_stage"], result["failure_detail_code"]) == ("source_universe", expected_code)
+
+
+@pytest.mark.parametrize("kind", ["empty", "excluded"])
+def test_ac35_valid_empty_and_all_excluded_collections_produce_complete_readiness(monkeypatch, kind):
+    entries = [] if kind == "empty" else [
+        _entry("NOT_APPLICABLE_NOT_ADMITTED", source_id="income:1"),
+        _entry("NOT_APPLICABLE_NOT_ADMITTED", source_id="income:2"),
+    ]
+    collection = _collection(entries)
+    result, db, reached = _run(monkeypatch, collection=collection)
+    assert reached == ["target", "crtisba"]
+    assert db.rollback_count == 1
+    assert result["schema_version"] == subject.SCHEMA_VERSION
+    assert result["classification_state"] == "COMPLETE"
+    assert result["classification_complete"] is True
+    assert result["direct_comparison_state"] == "READY"
+    assert result["direct_comparison_ready"] is True
+    assert result["blockers"] == []
+    assert [item["source_id"] for item in result["source_comparisons"]] == [
+        item["source_id"] for item in entries
+    ]
+    if kind == "excluded":
+        assert all(item["comparison_state"] == "NOT_ADMITTED" for item in result["source_comparisons"])
+        assert all(item["reason_codes"] == ["RTICB_SOURCE_NOT_ADMITTED"] for item in result["source_comparisons"])
+    else:
+        assert result["source_comparisons"] == []
+    expected_result = {key: deepcopy(value) for key, value in result.items() if key != "comparison_result_fingerprint"}
+    assert result["comparison_result_fingerprint"] == _digest({
+        "contract": subject.RESULT_FINGERPRINT_CONTRACT, "result": expected_result,
+    })
+    for item in result["source_comparisons"]:
+        preimage = {key: deepcopy(value) for key, value in item.items() if key != "source_comparison_fingerprint"}
+        assert item["source_comparison_fingerprint"] == _digest({
+            "contract": subject.ENTRY_FINGERPRINT_CONTRACT,
+            "comparison_input_fingerprint": result["comparison_input_fingerprint"],
+            "entry": preimage,
+        })
+

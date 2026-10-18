@@ -13,11 +13,68 @@ export interface TargetResult {
   authority_state: string; target_readiness_state: string; target_ready: boolean; blockers: string[];
   target_semantic_fingerprint: string | null; target_result_fingerprint: string;
 }
-export interface ComparisonResult {
-  result_state?: "block_no_result"; failure_stage?: string; failure_detail_code?: string;
-  client_id: number | null; direct_comparison_state?: string; direct_comparison_ready?: boolean;
-  blockers?: string[]; source_comparisons?: Array<{source_id: string; comparison_state: string; reason_codes: string[]; rtisa_admission_state: string; source_income_basis: string; source_price_basis: string}>;
+export interface ComparisonEntryV2 {
+  source_id: string;
+  source_kind: "PENSION" | "RECURRING_INCOME";
+  source_category: string;
+  admission_state: "INCLUDED" | "EXCLUDED" | "UNRESOLVED";
+  rtisa_reason_codes: string[];
+  decision_state: string;
+  source_version: number | string | null;
+  source_fingerprint: string;
+  amount_authority_fingerprint: string | null;
+  decision_version: number | null;
+  decision_fingerprint: string | null;
+  income_basis: "GROSS" | "NET" | "UNKNOWN" | null;
+  income_basis_provenance: string | null;
+  price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE" | "UNKNOWN" | null;
+  price_reference_date: string | null;
+  price_basis_provenance: string | null;
+  target_income_basis: "GROSS" | "NET";
+  target_price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE";
+  target_price_reference_date: string | null;
+  comparison_state: "DIRECTLY_COMPARABLE" | "NORMALIZATION_REQUIRED" | "BASIS_UNRESOLVED" | "NOT_ADMITTED";
+  reason_codes: string[];
+  source_comparison_fingerprint: string;
 }
+export interface ComparisonSuccessV2 {
+  schema_version: "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2";
+  client_id: number;
+  planning_calculation_input_fingerprint: string;
+  retirement_target_date: string;
+  target_result_fingerprint: string;
+  target_semantic_fingerprint: string;
+  crtisba_result_fingerprint: string;
+  comparison_input_fingerprint: string;
+  source_comparisons: ComparisonEntryV2[];
+  classification_state: "COMPLETE";
+  classification_complete: true;
+  direct_comparison_state: "READY" | "NOT_READY";
+  direct_comparison_ready: boolean;
+  blockers: string[];
+  comparison_result_fingerprint: string;
+  result_state?: never;
+}
+export interface ComparisonFailureV2 {
+  schema_version: "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_COMPARISON_BASIS_RESULT_V2";
+  client_id: number | null;
+  supplied_planning_calculation_input_fingerprint: string | null;
+  supplied_retirement_target_date: string | null;
+  observed_target_planning_calculation_input_fingerprint: string | null;
+  observed_target_retirement_target_date: string | null;
+  observed_target_result_fingerprint: string | null;
+  observed_crtisba_planning_calculation_input_fingerprint: string | null;
+  observed_crtisba_retirement_target_date: string | null;
+  observed_crtisba_result_fingerprint: string | null;
+  observed_crtisba_failure_fingerprint: string | null;
+  observed_crtisba_failure_stage: string | null;
+  observed_crtisba_failure_detail_code: string | null;
+  result_state: "block_no_result";
+  failure_stage: string;
+  failure_detail_code: string;
+  result_fingerprint: string;
+}
+export type ComparisonResult = ComparisonSuccessV2 | ComparisonFailureV2;
 
 async function call<T>(clientId: number, path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(buildApiUrl(`/clients/${clientId}/retirement-income-readiness${path}`), init);

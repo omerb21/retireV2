@@ -579,8 +579,8 @@ def _collection_shape(value: Any) -> bool:
     if not _is_sha(value["rtisa_admission_result_fingerprint"]):return False
     if not isinstance(value["source_basis_entries"],list) or not isinstance(value["partitions"],dict):return False
     if set(value["partitions"])!=set(PARTITIONS.values()):return False
-    if not all(_sorted_codes(x) for x in value["partitions"].values()):return False
-    if not _sorted_codes(value["blockers"]):return False
+    if not all(isinstance(x,list) and all(isinstance(v,str) for v in x) for x in value["partitions"].values()):return False
+    if not isinstance(value["blockers"],list) or not all(isinstance(v,str) for v in value["blockers"]):return False
     if value["basis_readiness_state"] not in {"READY","NOT_READY"} or type(value["basis_ready"]) is not bool:return False
     return _is_sha(value["result_fingerprint"])
 
@@ -594,6 +594,7 @@ def _universe_valid(value: dict) -> bool:
     entries=value["source_basis_entries"]
     ids=[e.get("source_id") if isinstance(e,Mapping) else None for e in entries]
     if any(not _canonical_source_id(x) for x in ids) or ids!=sorted(set(ids)):return False
+    if not all(_sorted_codes(x) for x in value["partitions"].values()):return False
     seen=[]
     for state,part in PARTITIONS.items():
         expected=[e["source_id"] for e in entries if e.get("decision_state")==state]
@@ -605,7 +606,7 @@ def _consistent(value: dict) -> bool:
     entries=value["source_basis_entries"]
     if not all(isinstance(x,Mapping) and _sorted_codes(x.get("blockers")) for x in entries):return False
     blockers=sorted({x for e in entries for x in e["blockers"]})
-    return (value["blockers"]==blockers and value["basis_readiness_state"]==("READY" if not blockers else "NOT_READY")
+    return (_sorted_codes(value["blockers"]) and value["blockers"]==blockers and value["basis_readiness_state"]==("READY" if not blockers else "NOT_READY")
             and value["basis_ready"] is (not blockers))
 
 def _basis_reasons(e: dict,target_basis:dict) -> list[str]:

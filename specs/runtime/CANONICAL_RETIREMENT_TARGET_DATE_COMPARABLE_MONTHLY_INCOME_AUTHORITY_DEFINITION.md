@@ -1,282 +1,159 @@
-# Canonical Retirement Target-Date Comparable Monthly Income Authority
+# Canonical Retirement Target-Date Comparable Monthly Income Authority (CMIA) — Definition Candidate
 
-- Package: CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_AUTHORITY
-- Classification: CLASS A / COMPLEX CLASS A
-- Governance: RETIREMENT_PLANNING_V2_GOVERNANCE_PROTOCOL v1.1
-- Baseline master: 0f9db6656c9dbbb2aea6f4dc49c367a5dde3245f
-- Status: DEFINITION_DRAFT_ONLY
-- Implementation: NOT_AUTHORIZED
-- Downstream: NOT_AUTHORIZED
-- Production readiness: NOT_CLAIMED
+## 1. Identity and lifecycle
+- Package: `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_AUTHORITY` (`CMIA`).
+- Classification: `CLASS A / COMPLEX CLASS A`.
+- Governance: `RETIREMENT_PLANNING_V2_GOVERNANCE_PROTOCOL v1.1`.
+- Base master: `0f9db6656c9dbbb2aea6f4dc49c367a5dde3245f`.
+- Status: `DEFINITION_CANDIDATE_PENDING_INDEPENDENT_ACCEPTANCE`.
+- Implementation: `NOT_AUTHORIZED`; downstream: `NOT_AUTHORIZED`; production readiness: `NOT_CLAIMED`.
 
-## Objective
-Specify one authoritative, deterministic, read-only monthly income total built solely from source amounts whose RTICB V2 classification is DIRECTLY_COMPARABLE. This draft is not implementation authorization.
+This consolidated text supersedes all earlier draft paragraphs on this branch. It does not change upstream accepted authority or implement a runtime service.
 
-## Upstream authority
-Consume accepted RIT, RTISA, CRTISBA, and RTICB outputs in one consistent read snapshot. RIT owns target and comparison basis. RTISA owns source admission and precise monthly equivalent amounts. CRTISBA owns amount authority and source-basis identities. RTICB owns the classification, source universe, blockers and comparison fingerprints.
+## 2. Purpose, exact meaning and exclusions
+CMIA calculates **one complete comparable monthly-income total at the confirmed retirement target date**, denominated in ILS/month, summing each accepted RTICB V2 `DIRECTLY_COMPARABLE` entry once, using the exact RTISA source amount authority under the **same database read snapshot**. Sources marked `NOT_ADMITTED` contribute nothing. If *any* entry is `BASIS_UNRESOLVED` or `NORMALIZATION_REQUIRED`, CMIA returns no total and a professional `BLOCK_NO_TOTAL` result; never expose a partial comparable subtotal as the complete total.
 
-## Proposed invariants
-- Every valid admitted DIRECTLY_COMPARABLE source contributes exactly once, by canonical source ID.
-- NOT_ADMITTED, NORMALIZATION_REQUIRED and BASIS_UNRESOLVED never contribute.
-- A missing or invalid authoritative amount cannot silently become zero.
-- Identity, source version, admission, RTICB entry and result fingerprint, and CRTISBA amount authority must validate before contribution.
-- Never perform tax, currency, GROSS/NET or price-basis conversion, funding, gap/surplus, scenarios or recommendations.
-- Never use UI-rounded amounts for arithmetic.
-- Compute exact rational or Decimal sum using one specified canonical arithmetic format.
-- A legitimately empty or fully excluded collection produces zero comparable subtotal, not a professional conclusion that target income is met.
-- Any partial comparable subtotal must be explicitly distinguished from a complete all-sources income total.
-- Preserve complete source-universe coverage, determinism, immutable fingerprints, and read-only transaction ownership.
+An empty accepted source universe or an entirely `NOT_ADMITTED` universe may yield exact zero when RTICB is `COMPLETE` and direct-ready. Zero does not establish sufficiency relative to RIT. CMIA performs no GROSS/NET or nominal/real conversion, CPI, tax, benefit calculations, gap/surplus, funding, withdrawal, projection, scenario, client output or recommendation. It changes neither input facts nor authority over existing amounts.
 
-## Original contract gaps and their resolution status
-1. RTISA numeric payload and CRTISBA binding are now identified in executable code; the new one-snapshot evidence-carrying internal API still requires detailed contract acceptance.
-2. Request and COMPLETE/BLOCK_NO_TOTAL output schemas are proposed below; corruption/error stage precedence remains acceptance-critical.
-3. Exact rational reduction/serialization is proposed below; approved source-derived numeric resource limits still require proof.
-4. Fingerprint namespaces and preimages are proposed below, subject to golden-vector independent validation.
-5. Proposed complete-only output and non-ready block are defined below; no partial amount is public.
-6. Transaction invariant and negative acceptance controls are proposed below; implementation-route mutation evidence remains future work.
+## 3. Sole upstream owners and exact binding
+- **RIT**: confirmed target, client, planning and target-date identity; currency, income basis, price basis and reference date; target semantic/result fingerprints.
+- **RTISA**: admission, complete source universe, authoritative unrounded pension monthly equivalent and canonical recurring monthly-equivalent numerator/denominator, RTISA admission result fingerprint. Recurring `monthly_equivalent` numerator is the validated native 2-decimal amount and denominator is `"1"`, `"3"` or `"12"` for monthly/quarterly/annual. Pension numerator is the unquantized target-date amount, denominator `"1"`; rounded `native_amount` is forbidden as input.
+- **CRTISBA**: canonical source/version/source-fingerprint/amount-authority binding; collection fingerprint and its RTISA admission fingerprint; the exact pension/recurring amount-authority preimages. Its public collection does **not** carry full numeric RTISA amounts.
+- **RTICB V2**: full source-comparison universe, comparison states, source entry fingerprints, classification completeness, direct readiness, target and CRTISBA identities, comparison result/input fingerprints.
 
-The verified producer findings and proposed V1 execution contract below resolve the direction of these items but do not supersede acceptance of the exact internal producer composition API, error precedence, or source-bound precision limits. No implementation permission follows from this draft.
+Do not invert a hash to infer a numeric amount; do not re-run a source under a different owner or snapshot. Source sets from the accepted RTICB result, CRTISBA collection and RTISA result must correspond exactly by sorted canonical ID, kind, admitted state, version and source fingerprint.
 
-## Candidate acceptance criteria
-AC-01: exact allowed source set and no double-counting.
-AC-02: one validated authoritative amount per included source.
-AC-03: exact arithmetic and deterministic amount representation.
-AC-04: legitimate zero-source behavior without misleading completeness.
-AC-05: sorted canonical contribution and noncontribution identities.
-AC-06: independently reconstructable result and error fingerprints.
-AC-07: strict classification and amount fingerprint validation.
-AC-08: single-snapshot, read-only, no new DB session, commit or write.
-AC-09: distinct domain blocked versus technical exception boundaries.
-AC-10: mutation-sensitive tests detect tampering, duplicate counts and substitution of rounded amounts.
+## 4. Execution and internal producer composition
+Proposed Python entrypoint: `assess(db: Session, request: Mapping[str, Any]) -> dict`. Exact request keys: `client_id` (strict positive integer excluding bool), `expected_planning_calculation_input_fingerprint` (64 lowercase hex SHA-256), `expected_retirement_target_date` (canonical ISO calendar date). Reject invalid requests before touching the session.
 
-## Stop conditions
-SC-01: accepted upstream contracts cannot supply or prove exact amount binding.
-SC-02: required arithmetic, fingerprint or failure contracts remain ambiguous.
-SC-03: a partial subtotal could be presented as complete expected income.
-SC-04: any new source interpretation, normalization or professional rule is required.
-SC-05: producer snapshot or fingerprint invariants cannot be preserved.
+The CMIA entrypoint owns a **single pristine read-only transaction**: no pre-existing transaction, dirty/new/deleted ORM state, new Session, autoflush, write, commit, retry, independently timed upstream reader or nested public reader. PostgreSQL uses REPEATABLE READ READ ONLY; SQLite testing follows the established RTICB snapshot semantics. Roll back the owned read transaction on result and exception, retaining the original exception class for technical failures.
 
-## Next action
-Read-only targeted contract resolution from accepted upstream service code and definitions; expand this same file to a complete executable Definition candidate, then request ONE consolidated independent Definition Acceptance. Do not implement or merge this unaccepted draft.
+The implementation must provide a **bounded internal evidence-carrying producer composition** under that same transaction, with logical return members `comparison`, `target`, `crtisba_collection`, `rtisa`, `amount_contexts`. These are *internal evidence*, not a new public RTICB or CRTISBA schema. Reuse/refactor existing pure producer functions so the result of current public `RTICB.assess` remains byte-for-byte and fingerprint-identical. `CRTISBA._derive_snapshot` currently holds validated `rtisa` and `contexts`, while `derive_in_snapshot` discards them for its public collection; expose the evidence through a properly bounded internal interface, **not** by independently calling RTICB.assess then RTISA.read or by permanently binding CMIA to a private implementation function.
 
+Prove:
+1. `comparison.crtisba_result_fingerprint == crtisba_collection.result_fingerprint`.
+2. `crtisba_collection.rtisa_admission_result_fingerprint == rtisa.admission_result_fingerprint`.
+3. RIT/client/planning/target-date identities match all outputs and request.
+4. Every RTICB comparison source maps one-to-one to exactly one RTISA source and CRTISBA source-basis entry with identical source version, fingerprint and admission.
+5. For each contributing source, the accepted CRTISBA amount-authority canonical preimage reconstructed from the producer's evidence equals the CRTISBA/RTICB published `amount_authority_fingerprint`. Do not treat matching arbitrary hashes or synthetic fixtures as authoritative proof.
+6. Current accepted upstream result schemas, integrity rules, source ownership, failure modes and fingerprint constructions are unchanged.
 
-## Verified producer-path findings (repository master)
+If a bounded integration cannot preserve these invariants, stop before implementation and correct the Definition.
 
-These are inspected executable facts, not assumed new authority:
+## 5. Contributor selection, completeness and evaluation order
+The only accepted `COMPLETE` path is RTICB `classification_state=COMPLETE`, `classification_complete=true`, `direct_comparison_state=READY`, `direct_comparison_ready=true`, combined with fully validated producer identities and amounts.
 
-1. `retirement_target_date_income_comparison_basis_service.assess` currently starts a fresh PostgreSQL REPEATABLE READ READ ONLY / SQLite snapshot, calls RIT `assess_in_snapshot`, then CRTISBA `derive_in_snapshot`, validates producer envelopes, and returns only the classification. The comparison result exposes `source_comparisons`, `comparison_input_fingerprint`, `comparison_result_fingerprint`, `crtisba_result_fingerprint`, `target_result_fingerprint` and `target_semantic_fingerprint`, **not monthly amount values**.
-2. `retirement_target_date_income_source_basis_service.derive_in_snapshot` obtains an RTISA output by its internal `_derive_snapshot` flow and calls RTISA `read_in_snapshot`, then constructs `CRTISBA_COLLECTION_RESULT_V1`. The CRTISBA public collection carries `rtisa_admission_result_fingerprint` and entries with `amount_authority_fingerprint`, but does **not** expose the complete RTISA amount payload.
-3. RTISA `_pension_entry` provides `monthly_equivalent = {numerator: unquantized_target_monthly_amount, denominator: "1"}`; `native_amount` carries a different final/display pension amount. The unquantized amount must be the only aggregation input.
-4. RTISA `_recurring_entry` provides `monthly_equivalent = {numerator: canonical native amount, denominator: "1" | "3" | "12"}` as determined by its own frequency table. This is a rational monthly amount, and the downstream authority must not replace it with display-rounded decimal arithmetic.
-5. The existing RTICB result uses `direct_comparison_ready` only when every comparison entry is `DIRECTLY_COMPARABLE` or `NOT_ADMITTED`. A `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED` source means direct total readiness is false. Exactly this predicate is a defensible gate for an **all-sources comparable total**, not a license to report a partial sum as complete.
+All entries `DIRECTLY_COMPARABLE` must have RTISA admission `INCLUDED` and validated exact monthly equivalents, and must contribute **once** by canonical source ID. All `NOT_ADMITTED` entries, including delegated pension aliases, are noncontributing and listed separately. `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED` makes the complete total `BLOCK_NO_TOTAL` even when some other sources are comparable; neither a partial subtotal nor a fabricated zero is returned.
 
-### Exact interface gap to solve before acceptance
+Validate a successfully classified RTICB output, its source universe, target and fingerprints **before** concluding comparability readiness. For valid `NOT_READY`, do not require a missing monthly amount from an unresolved/noncontributing source and do not misreport a missing amount as corruption. For `READY`, validate all contributing amounts and bindings before summing. A validated **upstream RTICB failure** produces a separate CMIA `BLOCK_NO_TOTAL` envelope preserving the upstream failure identity. An invalid RTICB failure, inconsistent producer schema or amount-fingerprint mismatch does not become a professional block; it is a fail-closed integrity error. Unexpected database and producer exceptions remain technical exceptions.
 
-A downstream aggregate cannot safely take only public RTICB + CRTISBA responses and calculate a verified amount: neither exposes the numeric RTISA monthly equivalent; an amount-authority fingerprint is non-invertible. The eventual implementation must define a **single-snapshot internal producer composition** which returns both the validated RTICB classification and the exact RTISA entry payload bound to the same CRTISBA fingerprint, without invoking separate public readers/sessions or changing source owner authority. The contract must name that internal composition interface and prove no producer is recomputed in a different snapshot. Invoking `RTICB.assess` and then `RTISA.read` separately is forbidden.
+## 6. Exact arithmetic
+Use rational integer arithmetic, **never binary float or intermediate rounding**. Parse only upstream-owner validated finite nonnegative decimal numerator text with the source-owner's formatting/precision rules and its exact valid positive denominator string; convert each decimal coefficient and scale into a reduced integer numerator/positive denominator. Add by exact cross multiplication and gcd reduction in sorted canonical source-ID order. Serialize rational results as `{"numerator":"N","denominator":"D","currency":"ILS","frequency":"MONTHLY"}` with ASCII canonical integers, no leading zeros, positive denominator, gcd(N,D)=1, zero as `0/1`.
 
-### Safe proposed completion semantics
+Portfolio PTE currently bounds source decimal coefficient to at most 100 digits and scale at most 100, while RTISA recurring `_money` accepts up to 12 whole digits and two fractional digits. Existing PTE pension aggregate's 97-integer-digit bound is **not** an all-source CMIA total limit. Reject malformed or resource-exhausting operands fail-closed, but do not impose an invented smaller valid-value range or silently round/cap. The implementation must prove a bounded resource strategy over the accepted finite source universe. If valid accepted inputs cannot be calculated under a justified bound, stop for a technical contract correction rather than misstate a result.
 
-A canonical **complete total** is available only when RTICB reports `classification_complete = true` and `direct_comparison_ready = true`, all accepted RTISA identities/amount bindings validate, and every `DIRECTLY_COMPARABLE` source contributes once. When any source is normalization-required or unresolved, return a blocked/not-ready outcome for the authoritative complete total. A diagnostic subtotal may be considered separately but cannot be surfaced or fingerprinted as the complete total without a distinct approved contract. No new professional choice is required for the fail-closed complete-total policy.
+## 7. Success result: exact closed field inventory
+Schema `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_RESULT_V1`. Exact top-level fields:
 
-### Deterministic arithmetic proposal for independent review
-
-Parse RTISA numerator and denominator from their **existing exact string representation** using decimal/integer arithmetic. For each admitted directly comparable source, treat `numerator / denominator` as an exact rational, sum over source IDs in canonical sorted order with integer numerator/positive denominator arithmetic, then reduce by integer gcd and require a positive denominator. Do not quantize recurring thirds or convert through binary float. Canonical serialization proposal: numerator and denominator are ASCII signed/unsigned base-10 integer strings without leading zeros, with zero encoded as `{"numerator":"0","denominator":"1"}`. This is a new total-output proposal, not a claim that upstream currently exports reduced integer numerator strings. If an upstream decimal cannot be parsed exactly within approved limits, stop rather than round.
-
-### Acceptance-critical unresolved engineering proof
-
-The precise allowed internal composition entrypoint, full closed result/failure schemas and canonical JSON preimages are still to be locked. An independent reviewer must not accept this draft as a final executable contract until those are complete. The immutable upstream acceptance identities must be preserved.
-
-
-## Exact proposed CMIA V1 execution contract
-
-This section is a normative candidate for independent acceptance. It does not alter accepted upstream contracts.
-
-### Request and execution entrypoint
-
-`assess(db: Session, request: Mapping[str, Any]) -> dict` accepts precisely:
-`client_id` (strict positive integer, not bool),
-`expected_planning_calculation_input_fingerprint` (64 lowercase hex SHA-256),
-`expected_retirement_target_date` (canonical YYYY-MM-DD calendar date).
-Reject extraneous/missing fields before any DB operation. New public route/UI are outside this Definition package.
-
-The service owns one fresh, pristine, read-only snapshot: PostgreSQL REPEATABLE READ READ ONLY, or project-supported SQLite BEGIN; prohibit preexisting transaction, pending state, fresh Session creation, writes, flush, commit or retry. It rolls back its owned snapshot on both successful read and failure.
-
-A new **internal evidence-carrying composition**, used only inside the owner snapshot, must produce:
-- the validated RTICB V2 result (exact unchanged public result schema),
-- the CRTISBA collection identity whose fingerprint appears in that result,
-- the same RTISA result/entries that CRTISBA consumed to generate that collection,
-- the authoritative source/provenance context required to independently prove CRTISBA's amount-authority fingerprint.
-
-The composition must execute producer logic once per owner-specific operation, share the one snapshot, and preserve current public `assess` and `derive_in_snapshot` result semantics. Specifically, it is forbidden to call `RTICB.assess(db,...)` and then `RTISA.read(db,...)`: those are independent public readers with independent transaction ownership. It is also forbidden to infer an RTISA amount from the CRTISBA amount hash. Existing `CRTISBA._derive_snapshot` currently includes `rtisa` in its internal snapshot object, while existing `CRTISBA.derive_in_snapshot` discards it from the public collection: this is the concrete integration seam to expose through a new bounded internal API, not a reason to change CRTISBA public response fields.
-
-### CMIA output vocabulary and completeness
-
-- `COMPLETE`: the RTICB validated classification is `COMPLETE`, `classification_complete=true`, `direct_comparison_state=READY`, `direct_comparison_ready=true`; the exact source universe and RTISA/CRTISBA amount identities have been reconciled and all directly comparable sources have validated exact amounts. Only this state returns `total_monthly_equivalent`.
-- `BLOCK_NO_TOTAL`: upstream results are otherwise valid but the RTICB direct comparison result is `NOT_READY` due to `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`. Do not expose a numeric subtotal as a canonical total. Record the unchanged upstream blockers and source states in the failure identity.
-- A structurally/fingerprint/identity-invalid upstream output, a missing amount for a supposedly directly comparable source, or a failed amount-authority reconciliation is a deterministic fail-closed error, **not** a valid zero/partial total.
-- A raised producer/DB/serialization exception is a technical exception with rollback; it must not be converted to `BLOCK_NO_TOTAL`.
-
-An empty RTICB source universe, or one containing exclusively valid `NOT_ADMITTED` entries, satisfies `COMPLETE` only if upstream genuinely reports complete/direct-ready classification. The exact total is zero and the contributor list is empty.
-
-### Exact CMIA success wire shape
-
-Schema: `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_RESULT_V1`.
-
-Closed top-level keys:
 `schema_version`, `result_state`, `client_id`, `planning_calculation_input_fingerprint`, `retirement_target_date`, `target_result_fingerprint`, `target_semantic_fingerprint`, `comparison_input_fingerprint`, `comparison_result_fingerprint`, `crtisba_result_fingerprint`, `rtisa_admission_result_fingerprint`, `target_income_basis`, `target_price_basis`, `target_price_reference_date`, `included_contributions`, `excluded_source_ids`, `total_monthly_equivalent`, `source_count`, `result_fingerprint`.
 
-`result_state` is exactly `COMPLETE`; currency is ILS and time unit MONTHLY, represented in the nested total object and not inferred from UI labels. `included_contributions` is a list sorted strictly by source_id, with closed entry keys:
+`result_state="COMPLETE"`. `source_count` is an integer equal to length of `included_contributions`. `excluded_source_ids` is a sorted unique list of exactly `NOT_ADMITTED` source IDs. Contributions are sorted strictly by source ID, with exact fields:
+
 `source_id`, `source_kind`, `source_version`, `source_fingerprint`, `amount_authority_fingerprint`, `source_comparison_fingerprint`, `monthly_equivalent`, `contribution_fingerprint`.
 
-Each entry `monthly_equivalent` is the exact canonical reduced rational `{ "numerator": "<signed base-10 integer>", "denominator": "<positive base-10 integer>", "currency": "ILS", "frequency": "MONTHLY" }`. No floats. `source_count` is the strict integer length of `included_contributions`. `excluded_source_ids` is sorted unique and exactly comprises RTICB `NOT_ADMITTED` IDs, including delegated aliases; excluded sources never get amount entries.
+Each `monthly_equivalent` and `total_monthly_equivalent` contains exactly `numerator`, `denominator`, `currency`, `frequency`, in canonical rational form above. No timestamps, display-rounded fields, inferred price adjustments or client-supplied amounts.
 
-`total_monthly_equivalent` has exactly the same 4-key rational object, adding all included contributions; for the empty contributor set it is `{"numerator":"0","denominator":"1","currency":"ILS","frequency":"MONTHLY"}`.
+## 8. Blocked result: exact closed field inventory
+Schema `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_BLOCK_NO_TOTAL_V1`. Exact fields:
 
-### Exact rational arithmetic and canonicalization
-
-For an upstream RTISA numerator string parse the exact finite decimal `n`, and for denominator parse exact positive decimal/integer `d`. Convert `n/d` to an integer fraction without rounding using the decimal coefficient and power-of-ten exponent, multiply rational numerator/denominator, reduce with gcd, make denominator positive, canonicalize negative zero to zero. Nonnegative RTISA values remain nonnegative; the CMIA total does not invent negative source income. The accepted source owner's finite amount limits and validity rules apply. Downstream implementation must also enforce a documented bounded integer/rational size limit derived from validated upstream values, preventing unbounded CPU/memory; any newly introduced narrower limit than upstream requires explicit Definition correction and independent evidence before acceptance.
-
-For each source_id in strict sorted canonical order, add numerator and denominator by exact cross multiplication, reduce after each step, never round. Equivalent rational sources yield identical canonical contribution value and aggregate regardless of source iteration order.
-
-### Fingerprints
-
-Use exact canonical JSON serialization: `json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",",":"), allow_nan=False).encode("utf-8")`, then lowercase SHA-256.
-
-- Contribution namespace `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_CONTRIBUTION_JSON_V1`; preimage `{"contract": <namespace>, "contribution": <the closed contribution object excluding contribution_fingerprint>}`.
-- Result namespace `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_RESULT_JSON_V1`; preimage `{"contract": <namespace>, "result": <the closed top-level result excluding result_fingerprint>}`.
-- Block namespace `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_BLOCK_JSON_V1`; preimage `{"contract": <namespace>, "result": <the closed block envelope excluding result_fingerprint>}`.
-
-Exactly one fingerprint level for each; forbid timestamps, floats, arbitrary metadata, implicit stringification, display rounding or mutation after fingerprint construction.
-
-### Blocked-result shape
-
-Schema `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_BLOCK_NO_TOTAL_V1`.
-
-Closed top-level keys:
 `schema_version`, `result_state`, `client_id`, `supplied_planning_calculation_input_fingerprint`, `supplied_retirement_target_date`, `observed_comparison_result_fingerprint`, `observed_crtisba_result_fingerprint`, `observed_rtisa_admission_result_fingerprint`, `observed_upstream_failure_stage`, `observed_upstream_failure_detail_code`, `observed_upstream_failure_fingerprint`, `failure_stage`, `failure_detail_code`, `blocked_source_ids`, `result_fingerprint`.
 
-`result_state=BLOCK_NO_TOTAL`. For a validated, complete RTICB classification that is not direct-ready: `failure_stage=comparability`, `failure_detail_code=CMIA_DIRECT_COMPARISON_NOT_READY`, `blocked_source_ids` equals sorted unique RTICB source IDs in `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`, and the three `observed_upstream_failure_*` fields are null. For a validated upstream RTICB blocked result: `failure_stage=upstream_authority`, `failure_detail_code=CMIA_UPSTREAM_COMPARISON_BLOCKED`, `blocked_source_ids=[]`, and the three `observed_upstream_failure_*` values reproduce the accepted upstream stage, detail and fingerprint exactly. None of these forms contains a total or subtotal. The three `observed_*` hashes are the accepted SHA-256 identities of the same validated snapshot.
+`result_state="BLOCK_NO_TOTAL"`. Exactly two admitted cases:
+- Valid RTICB classification `NOT_READY`: `failure_stage="comparability"`, `failure_detail_code="CMIA_DIRECT_COMPARISON_NOT_READY"`, blocked IDs are sorted unique IDs with `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`; three upstream failure fields are null.
+- Valid RTICB blocked result: `failure_stage="upstream_authority"`, `failure_detail_code="CMIA_UPSTREAM_COMPARISON_BLOCKED"`, `blocked_source_ids=[]`; observed upstream failure stage/code/fingerprint reproduce accepted RTICB failure exactly.
 
-Malformed requests and upstream corruption shall NOT reuse this professional block code. Their precise internal exception and stage/code taxonomy remains an independent acceptance blocker if not specified; technical failures must not be serialized as professional blocks.
+A valid blocked result never contains a total or a subtotal. When an upstream result does not possess a given observed success fingerprint, the corresponding observed fingerprint field is null. All observed hash values are either canonical 64 lowercase hex or null, never a fabricated placeholder.
 
-### Non-negotiable negative criteria
+## 9. Canonical fingerprints
+Canonical serialization: UTF-8 JSON with `ensure_ascii=False`, `sort_keys=True`, `separators=(",",":")`, `allow_nan=False`, lowercase SHA-256. Closed namespaces/preimages:
+- Contribution: `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_CONTRIBUTION_JSON_V1`; `{"contract": namespace, "contribution": contribution without contribution_fingerprint}`.
+- Success: `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_RESULT_JSON_V1`; `{"contract": namespace, "result": success without result_fingerprint}`.
+- Block: `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_BLOCK_JSON_V1`; `{"contract": namespace, "result": block without result_fingerprint}`.
 
-NAC-01 no sum based only on classification without validated RTISA amount.
-NAC-02 no second transaction for amount acquisition.
-NAC-03 no double-count of delegated pension aliases.
-NAC-04 no rounded native/display pension amount as contribution.
-NAC-05 no normalization, tax or conversion.
-NAC-06 no COMPLETE on any normalization-required or unresolved comparison state.
-NAC-07 no numerical partial total in BLOCK_NO_TOTAL.
-NAC-08 no silent zero substitute for invalid amount.
-NAC-09 no mutation or unverified reuse of producer fingerprints.
-NAC-10 no persistence, public route/UI or downstream authority.
-NAC-11 no misleading source coverage; exclude only NOT_ADMITTED.
-NAC-12 no technical-exception disguise as business/comparability block.
+No omitted optional keys other than fingerprints being calculated, no mutation after hashing, no undocumented Unicode normalization. Verify with independently reconstructed golden vectors before implementing.
 
-### Pre-implementation enumeration after Definition acceptance
+## 10. Failure precedence and ownership
+Stop at first applicable failure:
+1. `request_validation`: invalid closed request (before DB).
+2. `snapshot_admission`: session state/dialect.
+3. `target_authority`: RIT accepted envelope, fingerprint, readiness.
+4. `crtisba_authority`: accepted producer result or validated upstream block.
+5. `cross_authority_identity`: client/planning/target identity.
+6. `source_universe`: mismatch, unsorted, missing, duplicate or extra source identities.
+7. `classification`: RTICB entry and result validity, direct-readiness coherence.
+8. `comparability`: validated upstream block or RTICB NOT_READY; return admitted `BLOCK_NO_TOTAL` and no amount.
+9. `amount_authority`: for ready candidates only, validate monthly amount, source/fingerprint and CRTISBA amount preimage.
+10. `aggregation`: rational arithmetic and justified bounds.
+11. `result_identity`: canonical serialization and digest.
 
-Enumerate the exact RTISA/CRTISBA/RTICB producer-cross-product including empty, all excluded, pension, recurring monthly/quarterly/annual, mixed and delegated cases. Cover ready, normalization-required and unresolved source states; invalid amount source identity, fingerprint, denominator and precision; malformed near-miss evidence; own-transaction and cross-snapshot mutation controls; golden fingerprint preimages and delta reuse. Do not treat this enumeration as second semantic Definition.
+CMIA-owned integrity/technical error names (not upstream professional blockers):
+- `request_validation`: `CMIA_REQUEST_SCHEMA_INVALID`, `CMIA_CLIENT_ID_INVALID`, `CMIA_EXPECTED_PLANNING_FINGERPRINT_INVALID`, `CMIA_EXPECTED_RETIREMENT_TARGET_DATE_INVALID`.
+- `snapshot_admission`: `CMIA_REQUIRES_FRESH_TRANSACTION`, `CMIA_UNSUPPORTED_DATABASE`.
+- `target_authority`: `CMIA_TARGET_AUTHORITY_INVALID`.
+- `crtisba_authority`: `CMIA_CRTISBA_AUTHORITY_INVALID`.
+- `cross_authority_identity`: `CMIA_CROSS_AUTHORITY_IDENTITY_MISMATCH`.
+- `source_universe`: `CMIA_SOURCE_UNIVERSE_MISMATCH`.
+- `classification`: `CMIA_COMPARISON_RESULT_INVALID`.
+- `amount_authority`: `CMIA_RTISA_AMOUNT_INVALID`, `CMIA_AMOUNT_AUTHORITY_FINGERPRINT_MISMATCH`.
+- `aggregation`: `CMIA_AGGREGATION_NUMERIC_ERROR`.
+- `result_identity`: `CMIA_RESULT_FINGERPRINT_CONSTRUCTION_FAILED`.
 
+These CMIA integrity errors return **no total**, are distinct from `BLOCK_NO_TOTAL` and must preserve the original cause where technically applicable. Do not emit a fake RTICB failure; no new public endpoint or UI authorized. Within a stage, validate schema before fingerprints, identity before numeric aggregation; explicitly reject a malformed upstream block instead of accepting its claimed status.
 
-## Final integration constraints and error ordering for candidate review
+## 11. Test and evidence contract
+A future authorized implementation shall reuse the accepted RIT/RTISA/CRTISBA/RTICB transaction, source and fingerprint harnesses. Independent ordinary and mutation-sensitive cases must cover:
+1. empty/all-excluded `COMPLETE` with zero sum and no contributions;
+2. one pension (unrounded PTE amount), one monthly recurring, quarterly/annual recurring and mixed exact rational sums;
+3. delegated pension alias excluded and no double counting;
+4. sorted source order, source count and complete/excluded identity partitions;
+5. RTICB `NOT_READY` with missing amount on unresolved source: valid block, not corrupt;
+6. RTICB upstream valid block: preserved stage/code/hash; corrupt blocked hash: integrity failure;
+7. one missing/duplicate/extra source or tampered source version/fingerprint or admission state;
+8. inconsistent CRTISBA/RTISA result fingerprint or source amount authority fingerprint;
+9. substitution of rounded pension amount for RTISA unquantized amount is detected;
+10. zero/negative/malformed denominator and noncanonical decimal payload are rejected;
+11. mutated contributor count, sorted order, amount or membership invalidates independently reconstructed canonical digest;
+12. read-only single-snapshot DB proof, no commit/write/nested public reader and rollback on technical exception;
+13. exact allowed response keys and explicit nulls, reproducible preimage bytes and SHA-256 golden vectors;
+14. no change in accepted public RTICB and CRTISBA result bytes/fingerprints.
 
-### Integration seam — required implementation API shape
+## 12. Negative acceptance criteria
+- NAC-01: never include any source not `DIRECTLY_COMPARABLE`.
+- NAC-02: never count a source twice, including pension delegation.
+- NAC-03: never infer monetary values from RTICB classifications or hashes.
+- NAC-04: never derive recurring frequency or pension amount independently of RTISA.
+- NAC-05: never use displayed/quantized source amounts.
+- NAC-06: never return numeric partial subtotal in a blocked result.
+- NAC-07: never allow mismatched client/planning/date/source authority identity.
+- NAC-08: never invent an amount or treat malformed source evidence as zero.
+- NAC-09: never accept a forged fingerprint or unsorted/duplicate source set.
+- NAC-10: never open a separate snapshot, write, flush, commit or retry.
+- NAC-11: never relabel technical exception as a professional block.
+- NAC-12: never add public API/UI, persistence or downstream authorization in this Definition.
+- NAC-13: never infer conversion/tax/normalization/scenario/gap semantics.
+- NAC-14: never weaken accepted producer contracts for a convenient aggregate.
 
-A new, internal-only `derive_comparison_with_amount_evidence_in_snapshot(db, request)` shall own the shared snapshot evidence assembly. It returns an immutable-by-value bundle with exactly `comparison`, `target`, `crtisba_collection`, `rtisa`, and `amount_contexts`. It may use refactored internal existing producer functions but **must** preserve existing public result bytes and hashes. The current `CRTISBA._derive_snapshot` provides validated `planning`, `portfolio`, `rtisa` and `contexts` under one transaction. Consumers may not use the underscore-prefixed helper as a permanent external/public contract: promote a bounded internal producer entrypoint with contract tests. The `amount_contexts` binding is used for verification only, not as replacement amount authority. A successful bundle proves:
-- `comparison.crtisba_result_fingerprint == crtisba_collection.result_fingerprint`;
-- `crtisba_collection.rtisa_admission_result_fingerprint == rtisa.admission_result_fingerprint`;
-- all RTICB source IDs equal RTISA source IDs, each exactly once, with the same admission, source version and source fingerprint;
-- each included source's `amount_authority_fingerprint` equals its validated CRTISBA `amount_contexts[source_id].amount`, and the context is recomputed using the accepted CRTISBA exact preimage and source owner's exact amount;
-- exact RIT and planning/date identities agree throughout.
+## 13. Stop conditions
+- SC-01: the proposed internal bundle cannot preserve current producer output semantics and single-snapshot transaction boundaries.
+- SC-02: source-level amount authority cannot be reconstructed from accepted producer evidence.
+- SC-03: the resource strategy would reject valid upstream amounts without accepted justification.
+- SC-04: failure/identity precedence contradicts an accepted upstream error contract.
+- SC-05: any new professional interpretation or unauthorized amount normalization is required.
+- SC-06: independently reconstructable exact result and block fingerprint preimages cannot be demonstrated.
+- SC-07: security or source/client isolation would be weakened.
+- SC-08: ordinary and adversarial tests cannot detect an invalid sum or forged producer evidence.
 
-The bundle must not be serializable as a new client-facing authority and shall not add mutable cache or persisted result. If preserving producer behavior requires more than a narrow internal refactor, stop for a scope-authority correction before coding.
+## 14. Pre-implementation complex Class A enumeration and next gate
+After **independent Definition Acceptance**, complete a bounded pre-implementation enumeration for all actual RTISA source amount shapes, CRTISBA current and excluded states, RTICB comparison states, direct-readiness transitions, malformed near-misses, one-snapshot composition and fingerprint vectors. The enumeration is **not** a second Definition and grants no implementation authority. Freeze the accepted Definition HEAD and complete governance's Definition manifest and master-closure gates before separately authorizing implementation; respect the protocol's exact gate order. No broad V1/V2 remapping, product discovery, tax/GAP package or production deployment.
 
-### Deterministic CMIA stage precedence
-
-Perform sequentially and stop at the first failure:
-1. `request_validation`: strict request shape/type/hash/date before DB touch.
-2. `snapshot_admission`: pristine session and supported dialect.
-3. `target_authority`: accepted RIT schema, fingerprint, identity, readiness.
-4. `crtisba_authority`: accepted CRTISBA blocked/schema/fingerprint states; original four upstream block identities preserved.
-5. `cross_authority_identity`: client, planning fingerprint and target date.
-6. `source_universe`: duplicate/missing/extra/unsorted IDs and RTICB/RTISA/CRTISBA identity correspondence.
-7. `classification`: RTICB source states, entry/result fingerprints, direct-readiness consistency.
-8. `comparability`: a validated upstream block or a valid classified `NOT_READY` result yields the corresponding `BLOCK_NO_TOTAL` without inspecting missing numeric amounts for noncontributing sources.
-9. `amount_authority`: for otherwise COMPLETE candidates only, validate each contributing source's numeric payload, authority preimage, unrounded pension amount and source-version binding.
-10. `aggregation`: canonical exact rational addition and bounds.
-11. `result_identity`: canonical serialization/fingerprint.
-
-For invalid-contract failures at stages 1–7 and 9–11, and for technical exceptions at any stage, failures are never labeled valid professional `BLOCK_NO_TOTAL`. Fail closed with a stage-specific implementation exception instead. **Open acceptance issue:** exact stable exception code vocabulary for each invalid-contract stage must be independently defined before implementation. Preserve the original accepted RTICB failure envelope unchanged; CMIA cannot rewrite upstream failures.
-
-### Size/precision protection
-
-The RTISA recurring `_money` parser presently permits at most 12 significant integer digits and two fractional digits and returns a canonical 2-decimal string. Pension exact source amounts follow PTE's separate validated numeric contract and can have more decimals due to target-date accumulation. A global “two decimals only” restriction on CMIA inputs would therefore be incorrect. The eventual bounds must be derived from the current accepted PTE precision/range and maximum admitted sources; imposing tighter limits must be separately justified without rejecting valid producer values.
-
-Rational parsing never accepts arbitrary unbounded input: accept only already-validated upstream numeric strings and enforce an engineering limit sufficient for their current authoritative maximum. Reject malformed decimal/exponent/scientific notation where not produced by accepted RTISA canonical serialization. Guard against huge intermediate integer multiplication before performing it. Preserve exactness for recurring denominators 1/3/12 and pension denominator 1.
-
-### Contract acceptance status
-
-All above are **proposed** package-local constraints, not an accepted source of authority. The unresolved exact technical exception-code set, proven upper arithmetic bounds and tested single-assembly integration API are blockers for declaring this draft `DEFINITION_ACCEPTED`. Their resolution is technical contract work, not a new owner choice. No subsequent feature and no implementation is authorized by drafting this text.
-
-
-## Bound source precision and internal error identifiers
-
-Repository evidence: `pension_target_date_portfolio_service._parse_amount` validates canonical positive decimal values at no more than 100 coefficient digits and scale at most 100; `_canonical_sum` limits pension aggregate integer digits to 97. `retirement_target_date_income_source_admission_service._money` permits at most 12 significant whole digits plus two fractional digits for recurring-native source values, then emits exactly two fractional digits. RTISA recurring denominators are precisely 1, 3, or 12, while pension denominator is 1. These are **upstream evidence**, not a new right to widen accepted amount ranges.
-
-The CMIA parser accepts only an RTISA-validated decimal numerator string with optional dot and no exponent, plus one of the owner-supplied string denominators, and converts the decimal coefficient and scale to an exact rational. For pension values, reject coefficient lengths greater than 100 or scale greater than 100, preserving the upper bounds of the upstream portfolio parser; validate against the actual accepted PTE output rather than merely truncating the string. For recurring values, require the existing RTISA two-decimal format and its exact frequency denominator. A direct-comparable item with malformed payload fails amount-authority validation, not professional readiness.
-
-All computation must operate on a finite, separately validated list of source IDs; do not accept client-supplied contribution lists. To avoid large intermediate fractions, normalize by gcd before each addition and use decimal digit-size checks before multiplication. Any resource bound that rejects an otherwise valid full authoritative source-universe sum must be treated as an explicit fail-closed technical limitation and justified in acceptance testing; never silently cap or round. The existing PTE 97-integer-digit aggregate limit is **not** assumed to be a universal limit for all pension-plus-recurring totals.
-
-### New CMIA-owned error identifiers (candidate exact vocabulary)
-
-`CMIA_REQUEST_SCHEMA_INVALID`, `CMIA_CLIENT_ID_INVALID`, `CMIA_EXPECTED_PLANNING_FINGERPRINT_INVALID`, `CMIA_EXPECTED_RETIREMENT_TARGET_DATE_INVALID` (request_validation).
-`CMIA_REQUIRES_FRESH_TRANSACTION`, `CMIA_UNSUPPORTED_DATABASE` (snapshot_admission).
-`CMIA_TARGET_AUTHORITY_INVALID` (target_authority).
-`CMIA_CRTISBA_AUTHORITY_INVALID` (crtisba_authority).
-`CMIA_CROSS_AUTHORITY_IDENTITY_MISMATCH` (cross_authority_identity).
-`CMIA_SOURCE_UNIVERSE_MISMATCH` (source_universe).
-`CMIA_COMPARISON_RESULT_INVALID` (classification).
-`CMIA_RTISA_AMOUNT_INVALID`, `CMIA_AMOUNT_AUTHORITY_FINGERPRINT_MISMATCH` (amount_authority).
-`CMIA_DIRECT_COMPARISON_NOT_READY` (comparability, the only valid professional BLOCK_NO_TOTAL code).
-`CMIA_AGGREGATION_NUMERIC_ERROR` (aggregation).
-`CMIA_RESULT_FINGERPRINT_CONSTRUCTION_FAILED` (result_identity).
-
-For all codes other than the comparability block, CMIA shall return no amount and use an owned internal error/exception path; do not invent an RTICB failure code or remap a producer exception to a professional block. The error codes above are a *candidate* implementation vocabulary, not evidence that the current backend already implements them. Independent Definition acceptance must validate each against inherited producer stage precedence and the public RTDIR error boundary.
-
-### Candidate fingerprint fixture expectations
-
-Build independent golden vectors for zero sources, all excluded, one pension, one monthly recurring, annual/quarterly rational sources, mixed-source addition, a deliberate delegated alias and valid NOT_READY classification. For each compute exact closed contribution/total/block canonical JSON preimage bytes and expected digest using two independent implementations. Mutation oracles must invalidate any changed amount, source inclusion, fingerprint, snapshot identity or contribution order. No fabricated fixture may substitute for a source-owner numeric preimage.
-
-
-## Candidate self-review corrections — authoritative contract boundaries
-
-The earlier draft's proposed `derive_comparison_with_amount_evidence_in_snapshot` is **not an existing function**. It is an interface specification for later authorized implementation. A valid implementation must either refactor existing RTICB internal classification logic into a pure composition routine, or provide an equivalent bounded internal producer API, preserving the public `RTICB.assess` behavior and fingerprints byte-for-byte. Calling that public reader under an already-open CMIA transaction is forbidden. The exact code change allowlist is to be established at implementation authorization, not invented by this Definition.
-
-The CMIA `COMPLETE` result makes the professional claim **sum of all admitted directly-comparable sources** only. It does not claim that every possible retirement income exists in the source universe, nor that the client meets a target. The zero result is likewise a valid sum of zero contributors, not a recommendation.
-
-**Error handling correction:** a valid upstream RTICB block must remain a blocked-no-total outcome preserving its own `failure_stage`, `failure_detail_code` and `result_fingerprint` as observed evidence; it must not become a CMIA corruption exception. The CMIA comparison-not-ready block remains distinct from upstream RTICB blocked results. Add to the CMIA blocked envelope three nullable fields `observed_upstream_failure_stage`, `observed_upstream_failure_detail_code`, and `observed_upstream_failure_fingerprint`. These are populated together only when upstream RTICB returns a validated block. For such a result `failure_stage=upstream_authority` and `failure_detail_code=CMIA_UPSTREAM_COMPARISON_BLOCKED`; `blocked_source_ids=[]`. Otherwise the comparison-not-ready form retains its earlier fields and the three new fields are null. This change supersedes the earlier statement that the upstream RTICB block is an internal error.
-
-**Readiness-before-amount correction:** the accepted RTICB producer itself already validates upstream classification evidence. CMIA must validate the shared bundle's source identities and structural/fingerprint coherence even for NOT_READY classification; however the stricter numeric contribution validation and aggregate arithmetic is needed only for COMPLETE candidates. If a valid NOT_READY source has no monthly amount, it is not corruption: it is correctly excluded from aggregation. Do not misclassify an unresolved RTISA monthly equivalent as `CMIA_RTISA_AMOUNT_INVALID`.
-
-**Amount resource limit correction:** preserve upstream validated pension and recurring string limits; do not impose an arbitrary global 97-digit sum limit or reject otherwise valid exact rational totals. Instead require bounded source universe derived from existing database records and validate each source operand before arithmetic; the implementation must show a practical resource guard that preserves all valid producer values. If such guard cannot be defined without suppressing a valid amount, independent acceptance must flag it rather than silently endorse truncation.
-
-**Fingerprint consistency:** the changed blocked envelope must be included in the CMIA block canonical preimage, including all explicit nullable upstream failure fields. No unpublished ad-hoc exception field is incorporated in the success result.
-
-### Additional ordinary and adversarial acceptance controls
-
-AC-11: a validated upstream comparison block yields no amount and preserves its original stage, detail and fingerprint as observed evidence; a malformed upstream block fails integrity validation.
-
-AC-12: `NOT_READY` is not rejected merely because its unresolved source has no numeric monthly equivalent; it yields no total.
-
-AC-13: a `COMPLETE` response is accepted only if every directly comparable contributor's RTISA `monthly_equivalent` and CRTISBA amount authority are jointly validated.
-
-AC-14: current `RTICB.assess` cannot be called inside an already-owned read transaction to assemble CMIA; a regression oracle rejects nested execution and second snapshots.
-
-AC-15: blocked form fingerprints must change if any observed upstream block identity changes, and cannot be repurposed as successful total identities.
-
-AC-16: a nonzero all-excluded sum, duplicated pension alias or synthesized source ID is forbidden.
-
-Definition remains a candidate, without implementation authorization.
-
-DEFINITION_DRAFT_NOT_ACCEPTED
+DEFINITION_CANDIDATE_READY_FOR_INDEPENDENT_AUDIT

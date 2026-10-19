@@ -219,4 +219,33 @@ Rational parsing never accepts arbitrary unbounded input: accept only already-va
 
 All above are **proposed** package-local constraints, not an accepted source of authority. The unresolved exact technical exception-code set, proven upper arithmetic bounds and tested single-assembly integration API are blockers for declaring this draft `DEFINITION_ACCEPTED`. Their resolution is technical contract work, not a new owner choice. No subsequent feature and no implementation is authorized by drafting this text.
 
+
+## Bound source precision and internal error identifiers
+
+Repository evidence: `pension_target_date_portfolio_service._parse_amount` validates canonical positive decimal values at no more than 100 coefficient digits and scale at most 100; `_canonical_sum` limits pension aggregate integer digits to 97. `retirement_target_date_income_source_admission_service._money` permits at most 12 significant whole digits plus two fractional digits for recurring-native source values, then emits exactly two fractional digits. RTISA recurring denominators are precisely 1, 3, or 12, while pension denominator is 1. These are **upstream evidence**, not a new right to widen accepted amount ranges.
+
+The CMIA parser accepts only an RTISA-validated decimal numerator string with optional dot and no exponent, plus one of the owner-supplied string denominators, and converts the decimal coefficient and scale to an exact rational. For pension values, reject coefficient lengths greater than 100 or scale greater than 100, preserving the upper bounds of the upstream portfolio parser; validate against the actual accepted PTE output rather than merely truncating the string. For recurring values, require the existing RTISA two-decimal format and its exact frequency denominator. A direct-comparable item with malformed payload fails amount-authority validation, not professional readiness.
+
+All computation must operate on a finite, separately validated list of source IDs; do not accept client-supplied contribution lists. To avoid large intermediate fractions, normalize by gcd before each addition and use decimal digit-size checks before multiplication. Any resource bound that rejects an otherwise valid full authoritative source-universe sum must be treated as an explicit fail-closed technical limitation and justified in acceptance testing; never silently cap or round. The existing PTE 97-integer-digit aggregate limit is **not** assumed to be a universal limit for all pension-plus-recurring totals.
+
+### New CMIA-owned error identifiers (candidate exact vocabulary)
+
+`CMIA_REQUEST_SCHEMA_INVALID`, `CMIA_CLIENT_ID_INVALID`, `CMIA_EXPECTED_PLANNING_FINGERPRINT_INVALID`, `CMIA_EXPECTED_RETIREMENT_TARGET_DATE_INVALID` (request_validation).
+`CMIA_REQUIRES_FRESH_TRANSACTION`, `CMIA_UNSUPPORTED_DATABASE` (snapshot_admission).
+`CMIA_TARGET_AUTHORITY_INVALID` (target_authority).
+`CMIA_CRTISBA_AUTHORITY_INVALID` (crtisba_authority).
+`CMIA_CROSS_AUTHORITY_IDENTITY_MISMATCH` (cross_authority_identity).
+`CMIA_SOURCE_UNIVERSE_MISMATCH` (source_universe).
+`CMIA_COMPARISON_RESULT_INVALID` (classification).
+`CMIA_RTISA_AMOUNT_INVALID`, `CMIA_AMOUNT_AUTHORITY_FINGERPRINT_MISMATCH` (amount_authority).
+`CMIA_DIRECT_COMPARISON_NOT_READY` (comparability, the only valid professional BLOCK_NO_TOTAL code).
+`CMIA_AGGREGATION_NUMERIC_ERROR` (aggregation).
+`CMIA_RESULT_FINGERPRINT_CONSTRUCTION_FAILED` (result_identity).
+
+For all codes other than the comparability block, CMIA shall return no amount and use an owned internal error/exception path; do not invent an RTICB failure code or remap a producer exception to a professional block. The error codes above are a *candidate* implementation vocabulary, not evidence that the current backend already implements them. Independent Definition acceptance must validate each against inherited producer stage precedence and the public RTDIR error boundary.
+
+### Candidate fingerprint fixture expectations
+
+Build independent golden vectors for zero sources, all excluded, one pension, one monthly recurring, annual/quarterly rational sources, mixed-source addition, a deliberate delegated alias and valid NOT_READY classification. For each compute exact closed contribution/total/block canonical JSON preimage bytes and expected digest using two independent implementations. Mutation oracles must invalidate any changed amount, source inclusion, fingerprint, snapshot identity or contribution order. No fabricated fixture may substitute for a source-owner numeric preimage.
+
 DEFINITION_DRAFT_NOT_ACCEPTED

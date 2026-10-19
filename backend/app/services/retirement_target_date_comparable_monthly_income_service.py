@@ -9,6 +9,8 @@ import json
 import re
 from typing import Any, Mapping
 
+from sqlalchemy import event
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from app.services import retirement_target_date_income_comparison_basis_service as rticb_service
@@ -148,23 +150,22 @@ def _begin_snapshot(db: Session, client_id: int) -> None:
         raise
 
 
+def _reject_poisoned_session_reuse(_session: Session, _transaction: Any) -> None:
+    raise InvalidRequestError("CMIA Session is permanently unusable after rollback failure")
+
+
+def _poison_session(db: Session) -> None:
+    if not event.contains(db, "after_transaction_create", _reject_poisoned_session_reuse):
+        event.listen(db, "after_transaction_create", _reject_poisoned_session_reuse)
+    db.invalidate()
+
+
 def _rollback_owned_transaction(db: Session) -> None:
-    connection = None
-    try:
-        if db.in_transaction():
-            connection = db.connection()
-    except BaseException:
-        pass
     try:
         db.rollback()
     except BaseException:
         try:
-            if connection is not None:
-                connection.invalidate()
-        except BaseException:
-            pass
-        try:
-            db.close()
+            _poison_session(db)
         except BaseException:
             pass
         raise

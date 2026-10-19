@@ -4,6 +4,9 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import InvalidRequestError
+from sqlalchemy.orm import Session
 
 from app.services import retirement_target_date_comparable_monthly_income_service as subject
 from app.services import retirement_target_date_income_comparison_basis_service as rticb
@@ -433,14 +436,13 @@ def test_original_exception_propagates_after_rollback_and_cleanup_failure_wins(m
         subject.assess(db, _request())
     assert db.rollback_count == 1
 
-    class RollbackFailureDB(_DB):
-        def rollback(self):
-            raise OSError("cleanup")
-
-    failed = RollbackFailureDB()
+    engine = create_engine("sqlite://")
+    failed = Session(engine)
+    monkeypatch.setattr(failed, "rollback", lambda: (_ for _ in ()).throw(OSError("cleanup")))
     with pytest.raises(OSError, match="cleanup"):
         subject.assess(failed, _request())
-    assert failed.connection_value.invalidated is True and failed.close_count == 1
+    with pytest.raises(InvalidRequestError, match="permanently unusable"):
+        failed.scalar(text("SELECT 1"))
 
 
 def test_public_rticb_and_crtisba_outputs_remain_byte_identical(monkeypatch):

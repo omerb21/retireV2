@@ -27,15 +27,15 @@ Consume accepted RIT, RTISA, CRTISBA, and RTICB outputs in one consistent read s
 - Any partial comparable subtotal must be explicitly distinguished from a complete all-sources income total.
 - Preserve complete source-universe coverage, determinism, immutable fingerprints, and read-only transaction ownership.
 
-## Contract details requiring resolution before independent acceptance
-1. Exact runtime path for validated, unrounded RTISA monthly equivalents, and proof of one-to-one binding to CRTISBA amount authority without re-executing upstream logic.
-2. Exact request, success and blocked output schema; closed fields, status vocabularies and error precedence.
-3. Canonical numerator/denominator or Decimal format, reduction, size limits and exact serialization.
-4. Fingerprint contract strings and precise field-by-field JSON preimages for included contribution, total and blocked result.
-5. Precise partial-total and completeness behavior when any source requires normalization or has unresolved basis.
-6. Read-only transaction failure behavior and regression-sensitive negative oracle matrix.
+## Original contract gaps and their resolution status
+1. RTISA numeric payload and CRTISBA binding are now identified in executable code; the new one-snapshot evidence-carrying internal API still requires detailed contract acceptance.
+2. Request and COMPLETE/BLOCK_NO_TOTAL output schemas are proposed below; corruption/error stage precedence remains acceptance-critical.
+3. Exact rational reduction/serialization is proposed below; approved source-derived numeric resource limits still require proof.
+4. Fingerprint namespaces and preimages are proposed below, subject to golden-vector independent validation.
+5. Proposed complete-only output and non-ready block are defined below; no partial amount is public.
+6. Transaction invariant and negative acceptance controls are proposed below; implementation-route mutation evidence remains future work.
 
-These six items are acceptance blockers until specified from repository-authoritative evidence or a genuine professional choice. They are not implementation permissions.
+The verified producer findings and proposed V1 execution contract below resolve the direction of these items but do not supersede acceptance of the exact internal producer composition API, error precedence, or source-bound precision limits. No implementation permission follows from this draft.
 
 ## Candidate acceptance criteria
 AC-01: exact allowed source set and no double-counting.

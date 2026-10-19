@@ -21,7 +21,7 @@ An empty accepted source universe or an entirely `NOT_ADMITTED` universe may yie
 - **CRTISBA**: canonical source/version/source-fingerprint/amount-authority binding; collection fingerprint and its RTISA admission fingerprint; the exact pension/recurring amount-authority preimages. Its public collection does **not** carry full numeric RTISA amounts.
 - **RTICB V2**: full source-comparison universe, comparison states, source entry fingerprints, classification completeness, direct readiness, target and CRTISBA identities, comparison result/input fingerprints.
 
-Do not invert a hash to infer a numeric amount; do not re-run a source under a different owner or snapshot. Source sets from the accepted RTICB result, CRTISBA collection and RTISA result must correspond exactly by sorted canonical ID, kind, admitted state, version and source fingerprint.
+Do not invert a hash to infer a numeric amount; do not re-run a source under a different owner or snapshot. Source sets from the accepted RTICB result, CRTISBA collection and RTISA result must correspond exactly by sorted canonical ID, admission state and source fingerprint. **RTISA entries do not expose a `source_version` or `source_kind` field.** Those authoritative fields must be checked on RTICB/CRTISBA against the CRTISBA producer context and upstream Planning Input (pension version or recurring source-fingerprint version), rather than demanded from the RTISA public envelope. RTISA source kind is determined from its accepted canonical source identity and source-authority contract, not an invented RTISA field.
 
 ## 4. Execution and internal producer composition
 Proposed Python entrypoint: `assess(db: Session, request: Mapping[str, Any]) -> dict`. Exact request keys: `client_id` (strict positive integer excluding bool), `expected_planning_calculation_input_fingerprint` (64 lowercase hex SHA-256), `expected_retirement_target_date` (canonical ISO calendar date). Reject invalid requests before touching the session.
@@ -34,7 +34,7 @@ Prove:
 1. `comparison.crtisba_result_fingerprint == crtisba_collection.result_fingerprint`.
 2. `crtisba_collection.rtisa_admission_result_fingerprint == rtisa.admission_result_fingerprint`.
 3. RIT/client/planning/target-date identities match all outputs and request.
-4. Every RTICB comparison source maps one-to-one to exactly one RTISA source and CRTISBA source-basis entry with identical source version, fingerprint and admission.
+4. Every RTICB comparison source maps one-to-one to exactly one RTISA source and CRTISBA source-basis entry with identical admission and source fingerprint; source version is independently bound through the validated CRTISBA/Planning producer context, not a nonexistent RTISA field.
 5. For each contributing source, the accepted CRTISBA amount-authority canonical preimage reconstructed from the producer's evidence equals the CRTISBA/RTICB published `amount_authority_fingerprint`. Do not treat matching arbitrary hashes or synthetic fixtures as authoritative proof.
 6. Current accepted upstream result schemas, integrity rules, source ownership, failure modes and fingerprint constructions are unchanged.
 

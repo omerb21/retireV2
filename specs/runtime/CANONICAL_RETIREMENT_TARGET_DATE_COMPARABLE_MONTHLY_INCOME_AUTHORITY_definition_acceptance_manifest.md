@@ -9,6 +9,8 @@
 - Accepted Definition TREE: `ddc6b6d35f49b2f1b2ec33ec0bff1617503605a9`
 - Accepted Definition blob: `56bc4400f4b2c4ac04471d422d167979322d1212`
 - Independent Definition decision: `DEFINITION_ACCEPTANCE = PASS`
+- Exact WORK Definition decision token: `ACCEPT_CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_AUTHORITY_DEFINITION`
+- Exact WORK Definition acceptance token: `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_AUTHORITY_DEFINITION_ACCEPTED`
 - Closed findings: `CMIA-DEF-001 = CLOSED`; `CMIA-DEF-002 = CLOSED`; `CMIA-DEF-003 = CLOSED`; `CMIA-DEF-004 = CLOSED`
 - Focused re-acceptance: `PROVENANCE = PASS`; no new contradiction reported
 - Professional decision: `OWNER_DECISION_REQUIRED = NO`

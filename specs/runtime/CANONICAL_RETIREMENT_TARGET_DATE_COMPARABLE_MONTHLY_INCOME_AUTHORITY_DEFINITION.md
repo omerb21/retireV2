@@ -248,4 +248,35 @@ For all codes other than the comparability block, CMIA shall return no amount an
 
 Build independent golden vectors for zero sources, all excluded, one pension, one monthly recurring, annual/quarterly rational sources, mixed-source addition, a deliberate delegated alias and valid NOT_READY classification. For each compute exact closed contribution/total/block canonical JSON preimage bytes and expected digest using two independent implementations. Mutation oracles must invalidate any changed amount, source inclusion, fingerprint, snapshot identity or contribution order. No fabricated fixture may substitute for a source-owner numeric preimage.
 
+
+## Candidate self-review corrections — authoritative contract boundaries
+
+The earlier draft's proposed `derive_comparison_with_amount_evidence_in_snapshot` is **not an existing function**. It is an interface specification for later authorized implementation. A valid implementation must either refactor existing RTICB internal classification logic into a pure composition routine, or provide an equivalent bounded internal producer API, preserving the public `RTICB.assess` behavior and fingerprints byte-for-byte. Calling that public reader under an already-open CMIA transaction is forbidden. The exact code change allowlist is to be established at implementation authorization, not invented by this Definition.
+
+The CMIA `COMPLETE` result makes the professional claim **sum of all admitted directly-comparable sources** only. It does not claim that every possible retirement income exists in the source universe, nor that the client meets a target. The zero result is likewise a valid sum of zero contributors, not a recommendation.
+
+**Error handling correction:** a valid upstream RTICB block must remain a blocked-no-total outcome preserving its own `failure_stage`, `failure_detail_code` and `result_fingerprint` as observed evidence; it must not become a CMIA corruption exception. The CMIA comparison-not-ready block remains distinct from upstream RTICB blocked results. Add to the CMIA blocked envelope three nullable fields `observed_upstream_failure_stage`, `observed_upstream_failure_detail_code`, and `observed_upstream_failure_fingerprint`. These are populated together only when upstream RTICB returns a validated block. For such a result `failure_stage=upstream_authority` and `failure_detail_code=CMIA_UPSTREAM_COMPARISON_BLOCKED`; `blocked_source_ids=[]`. Otherwise the comparison-not-ready form retains its earlier fields and the three new fields are null. This change supersedes the earlier statement that the upstream RTICB block is an internal error.
+
+**Readiness-before-amount correction:** the accepted RTICB producer itself already validates upstream classification evidence. CMIA must validate the shared bundle's source identities and structural/fingerprint coherence even for NOT_READY classification; however the stricter numeric contribution validation and aggregate arithmetic is needed only for COMPLETE candidates. If a valid NOT_READY source has no monthly amount, it is not corruption: it is correctly excluded from aggregation. Do not misclassify an unresolved RTISA monthly equivalent as `CMIA_RTISA_AMOUNT_INVALID`.
+
+**Amount resource limit correction:** preserve upstream validated pension and recurring string limits; do not impose an arbitrary global 97-digit sum limit or reject otherwise valid exact rational totals. Instead require bounded source universe derived from existing database records and validate each source operand before arithmetic; the implementation must show a practical resource guard that preserves all valid producer values. If such guard cannot be defined without suppressing a valid amount, independent acceptance must flag it rather than silently endorse truncation.
+
+**Fingerprint consistency:** the changed blocked envelope must be included in the CMIA block canonical preimage, including all explicit nullable upstream failure fields. No unpublished ad-hoc exception field is incorporated in the success result.
+
+### Additional ordinary and adversarial acceptance controls
+
+AC-11: a validated upstream comparison block yields no amount and preserves its original stage, detail and fingerprint as observed evidence; a malformed upstream block fails integrity validation.
+
+AC-12: `NOT_READY` is not rejected merely because its unresolved source has no numeric monthly equivalent; it yields no total.
+
+AC-13: a `COMPLETE` response is accepted only if every directly comparable contributor's RTISA `monthly_equivalent` and CRTISBA amount authority are jointly validated.
+
+AC-14: current `RTICB.assess` cannot be called inside an already-owned read transaction to assemble CMIA; a regression oracle rejects nested execution and second snapshots.
+
+AC-15: blocked form fingerprints must change if any observed upstream block identity changes, and cannot be repurposed as successful total identities.
+
+AC-16: a nonzero all-excluded sum, duplicated pension alias or synthesized source ID is forbidden.
+
+Definition remains a candidate, without implementation authorization.
+
 DEFINITION_DRAFT_NOT_ACCEPTED

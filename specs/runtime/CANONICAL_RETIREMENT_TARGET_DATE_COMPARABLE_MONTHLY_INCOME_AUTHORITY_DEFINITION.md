@@ -59,4 +59,31 @@ SC-05: producer snapshot or fingerprint invariants cannot be preserved.
 ## Next action
 Read-only targeted contract resolution from accepted upstream service code and definitions; expand this same file to a complete executable Definition candidate, then request ONE consolidated independent Definition Acceptance. Do not implement or merge this unaccepted draft.
 
+
+## Verified producer-path findings (repository master)
+
+These are inspected executable facts, not assumed new authority:
+
+1. `retirement_target_date_income_comparison_basis_service.assess` currently starts a fresh PostgreSQL REPEATABLE READ READ ONLY / SQLite snapshot, calls RIT `assess_in_snapshot`, then CRTISBA `derive_in_snapshot`, validates producer envelopes, and returns only the classification. The comparison result exposes `source_comparisons`, `comparison_input_fingerprint`, `comparison_result_fingerprint`, `crtisba_result_fingerprint`, `target_result_fingerprint` and `target_semantic_fingerprint`, **not monthly amount values**.
+2. `retirement_target_date_income_source_basis_service.derive_in_snapshot` obtains an RTISA output by its internal `_derive_snapshot` flow and calls RTISA `read_in_snapshot`, then constructs `CRTISBA_COLLECTION_RESULT_V1`. The CRTISBA public collection carries `rtisa_admission_result_fingerprint` and entries with `amount_authority_fingerprint`, but does **not** expose the complete RTISA amount payload.
+3. RTISA `_pension_entry` provides `monthly_equivalent = {numerator: unquantized_target_monthly_amount, denominator: "1"}`; `native_amount` carries a different final/display pension amount. The unquantized amount must be the only aggregation input.
+4. RTISA `_recurring_entry` provides `monthly_equivalent = {numerator: canonical native amount, denominator: "1" | "3" | "12"}` as determined by its own frequency table. This is a rational monthly amount, and the downstream authority must not replace it with display-rounded decimal arithmetic.
+5. The existing RTICB result uses `direct_comparison_ready` only when every comparison entry is `DIRECTLY_COMPARABLE` or `NOT_ADMITTED`. A `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED` source means direct total readiness is false. Exactly this predicate is a defensible gate for an **all-sources comparable total**, not a license to report a partial sum as complete.
+
+### Exact interface gap to solve before acceptance
+
+A downstream aggregate cannot safely take only public RTICB + CRTISBA responses and calculate a verified amount: neither exposes the numeric RTISA monthly equivalent; an amount-authority fingerprint is non-invertible. The eventual implementation must define a **single-snapshot internal producer composition** which returns both the validated RTICB classification and the exact RTISA entry payload bound to the same CRTISBA fingerprint, without invoking separate public readers/sessions or changing source owner authority. The contract must name that internal composition interface and prove no producer is recomputed in a different snapshot. Invoking `RTICB.assess` and then `RTISA.read` separately is forbidden.
+
+### Safe proposed completion semantics
+
+A canonical **complete total** is available only when RTICB reports `classification_complete = true` and `direct_comparison_ready = true`, all accepted RTISA identities/amount bindings validate, and every `DIRECTLY_COMPARABLE` source contributes once. When any source is normalization-required or unresolved, return a blocked/not-ready outcome for the authoritative complete total. A diagnostic subtotal may be considered separately but cannot be surfaced or fingerprinted as the complete total without a distinct approved contract. No new professional choice is required for the fail-closed complete-total policy.
+
+### Deterministic arithmetic proposal for independent review
+
+Parse RTISA numerator and denominator from their **existing exact string representation** using decimal/integer arithmetic. For each admitted directly comparable source, treat `numerator / denominator` as an exact rational, sum over source IDs in canonical sorted order with integer numerator/positive denominator arithmetic, then reduce by integer gcd and require a positive denominator. Do not quantize recurring thirds or convert through binary float. Canonical serialization proposal: numerator and denominator are ASCII signed/unsigned base-10 integer strings without leading zeros, with zero encoded as `{"numerator":"0","denominator":"1"}`. This is a new total-output proposal, not a claim that upstream currently exports reduced integer numerator strings. If an upstream decimal cannot be parsed exactly within approved limits, stop rather than round.
+
+### Acceptance-critical unresolved engineering proof
+
+The precise allowed internal composition entrypoint, full closed result/failure schemas and canonical JSON preimages are still to be locked. An independent reviewer must not accept this draft as a final executable contract until those are complete. The immutable upstream acceptance identities must be preserved.
+
 DEFINITION_DRAFT_NOT_ACCEPTED

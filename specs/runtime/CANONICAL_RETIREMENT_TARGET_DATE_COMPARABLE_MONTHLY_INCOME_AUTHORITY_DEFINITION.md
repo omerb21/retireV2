@@ -153,9 +153,9 @@ Exactly one fingerprint level for each; forbid timestamps, floats, arbitrary met
 Schema `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_BLOCK_NO_TOTAL_V1`.
 
 Closed top-level keys:
-`schema_version`, `result_state`, `client_id`, `supplied_planning_calculation_input_fingerprint`, `supplied_retirement_target_date`, `observed_comparison_result_fingerprint`, `observed_crtisba_result_fingerprint`, `observed_rtisa_admission_result_fingerprint`, `failure_stage`, `failure_detail_code`, `blocked_source_ids`, `result_fingerprint`.
+`schema_version`, `result_state`, `client_id`, `supplied_planning_calculation_input_fingerprint`, `supplied_retirement_target_date`, `observed_comparison_result_fingerprint`, `observed_crtisba_result_fingerprint`, `observed_rtisa_admission_result_fingerprint`, `observed_upstream_failure_stage`, `observed_upstream_failure_detail_code`, `observed_upstream_failure_fingerprint`, `failure_stage`, `failure_detail_code`, `blocked_source_ids`, `result_fingerprint`.
 
-`result_state=BLOCK_NO_TOTAL`; `failure_stage=comparability`; `failure_detail_code=CMIA_DIRECT_COMPARISON_NOT_READY`; `blocked_source_ids` equals sorted unique RTICB source IDs in `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`. No total or partial sum field. The three `observed_*` hashes are the accepted SHA-256 identities of the same validated snapshot.
+`result_state=BLOCK_NO_TOTAL`. For a validated, complete RTICB classification that is not direct-ready: `failure_stage=comparability`, `failure_detail_code=CMIA_DIRECT_COMPARISON_NOT_READY`, `blocked_source_ids` equals sorted unique RTICB source IDs in `NORMALIZATION_REQUIRED` or `BASIS_UNRESOLVED`, and the three `observed_upstream_failure_*` fields are null. For a validated upstream RTICB blocked result: `failure_stage=upstream_authority`, `failure_detail_code=CMIA_UPSTREAM_COMPARISON_BLOCKED`, `blocked_source_ids=[]`, and the three `observed_upstream_failure_*` values reproduce the accepted upstream stage, detail and fingerprint exactly. None of these forms contains a total or subtotal. The three `observed_*` hashes are the accepted SHA-256 identities of the same validated snapshot.
 
 Malformed requests and upstream corruption shall NOT reuse this professional block code. Their precise internal exception and stage/code taxonomy remains an independent acceptance blocker if not specified; technical failures must not be serialized as professional blocks.
 
@@ -202,12 +202,12 @@ Perform sequentially and stop at the first failure:
 5. `cross_authority_identity`: client, planning fingerprint and target date.
 6. `source_universe`: duplicate/missing/extra/unsorted IDs and RTICB/RTISA/CRTISBA identity correspondence.
 7. `classification`: RTICB source states, entry/result fingerprints, direct-readiness consistency.
-8. `amount_authority`: admitted source numeric payload shape, source amount fingerprint/preimage, unrounded pension amount and source-version binding.
-9. `comparability`: legitimate `NOT_READY` classification yields `BLOCK_NO_TOTAL` without sum.
+8. `comparability`: a validated upstream block or a valid classified `NOT_READY` result yields the corresponding `BLOCK_NO_TOTAL` without inspecting missing numeric amounts for noncontributing sources.
+9. `amount_authority`: for otherwise COMPLETE candidates only, validate each contributing source's numeric payload, authority preimage, unrounded pension amount and source-version binding.
 10. `aggregation`: canonical exact rational addition and bounds.
 11. `result_identity`: canonical serialization/fingerprint.
 
-For stages 1–8 and 10–11, contract-invalid and technical failures are never labeled valid professional `BLOCK_NO_TOTAL`. Fail closed with a stage-specific implementation exception instead. **Open acceptance issue:** exact stable exception code vocabulary for each invalid-contract stage must be independently defined before implementation. Preserve the original accepted RTICB failure envelope unchanged; CMIA cannot rewrite upstream failures.
+For invalid-contract failures at stages 1–7 and 9–11, and for technical exceptions at any stage, failures are never labeled valid professional `BLOCK_NO_TOTAL`. Fail closed with a stage-specific implementation exception instead. **Open acceptance issue:** exact stable exception code vocabulary for each invalid-contract stage must be independently defined before implementation. Preserve the original accepted RTICB failure envelope unchanged; CMIA cannot rewrite upstream failures.
 
 ### Size/precision protection
 

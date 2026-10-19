@@ -986,6 +986,102 @@ def _begin_snapshot(db:Session)->None:
     else:raise AssertionError("unsupported dialect")
     db.expire_all()
 
+
+def _evaluate_in_snapshot(db: Session, request: Mapping[str, Any], *, include_evidence: bool) -> dict:
+    """Evaluate RTICB inside the caller-owned snapshot.
+
+    The evidence members are deliberately internal.  The public ``assess``
+    result remains the unmodified ``comparison`` member.
+    """
+    target = collection = None
+    planning = portfolio = rtisa = amount_contexts = None
+    target = target_service.assess_in_snapshot(db, request["client_id"])
+    if not _target_schema_valid(target):
+        result = _failure(request, "target_authority", "RTICB_TARGET_AUTHORITY_SCHEMA_INVALID", target=target)
+    elif not _target_fingerprints_valid(target):
+        result = _failure(request, "target_authority", "RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID", target=target)
+    elif target["authority_state"] == "UNAVAILABLE":
+        result = _failure(request, "target_authority", "RTICB_TARGET_AUTHORITY_UNAVAILABLE", target=target)
+    elif not (
+        target["authority_state"] == "CURRENT"
+        and target["target_readiness_state"] == "READY"
+        and target["target_ready"] is True
+        and target["target"] is not None
+        and target["authority"] is not None
+        and target["authority"]["confirmation_state"] == "CONFIRMED"
+        and not target["blockers"]
+    ):
+        result = _failure(request, "target_authority", "RTICB_TARGET_AUTHORITY_NOT_READY", target=target)
+    else:
+        if include_evidence:
+            evidence = crtisba_service.derive_evidence_in_snapshot(
+                db, request["client_id"], operation="READ",
+            )
+            collection = evidence["collection"]
+            planning = evidence["planning"]
+            portfolio = evidence["portfolio"]
+            rtisa = evidence["rtisa"]
+            amount_contexts = evidence["amount_contexts"]
+        else:
+            collection = crtisba_service.derive_in_snapshot(
+                db, request["client_id"], operation="READ",
+            )
+        if isinstance(collection, Mapping) and collection.get("schema_version") == "CRTISBA_BLOCK_NO_RESULT_V1":
+            if _blocked_valid(collection, request["client_id"]):
+                result = _failure(
+                    request, "crtisba_authority", BLOCKED_RTICB[collection["failure_stage"]],
+                    target=target, crtisba=collection,
+                )
+            else:
+                result = _failure(
+                    request, "crtisba_authority", "RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID",
+                    target=target, crtisba=collection,
+                )
+        elif not _collection_shape(collection):
+            result = _failure(
+                request, "crtisba_authority", "RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID",
+                target=target, crtisba=collection,
+            )
+        elif not _collection_fingerprint_valid(collection):
+            result = _failure(
+                request, "crtisba_authority", "RTICB_CRTISBA_RESULT_FINGERPRINT_MISMATCH",
+                target=target, crtisba=collection,
+            )
+        elif target["client_id"] != request["client_id"] or collection["client_id"] != request["client_id"]:
+            result = _failure(request, "cross_authority_identity", "RTICB_CLIENT_ID_MISMATCH", target=target, crtisba=collection)
+        elif not (
+            target["planning_calculation_input_fingerprint"]
+            == collection["planning_calculation_input_fingerprint"]
+            == request["expected_planning_calculation_input_fingerprint"]
+        ):
+            result = _failure(request, "cross_authority_identity", "RTICB_PLANNING_IDENTITY_MISMATCH", target=target, crtisba=collection)
+        elif not (
+            target["retirement_target_date"]
+            == collection["retirement_target_date"]
+            == request["expected_retirement_target_date"]
+        ):
+            result = _failure(request, "cross_authority_identity", "RTICB_RETIREMENT_TARGET_DATE_MISMATCH", target=target, crtisba=collection)
+        elif not _universe_valid(collection):
+            result = _failure(request, "source_universe", "RTICB_CRTISBA_SOURCE_UNIVERSE_MISMATCH", target=target, crtisba=collection)
+        elif not _consistent(collection):
+            result = _failure(request, "source_universe", "RTICB_CRTISBA_COLLECTION_CONSISTENCY_INVALID", target=target, crtisba=collection)
+        elif not all(_entry_authority_valid(entry) for entry in collection["source_basis_entries"]):
+            result = _failure(request, "source_universe", "RTICB_CRTISBA_ENTRY_AUTHORITY_INVALID", target=target, crtisba=collection)
+        elif not all(_entry_state_valid(entry) for entry in collection["source_basis_entries"]):
+            result = _failure(request, "classification", "RTICB_CRTISBA_STATE_BASIS_INVALID", target=target, crtisba=collection)
+        else:
+            result = _result(request, target, collection)
+    return {
+        "comparison": result, "target": target, "crtisba_collection": collection,
+        "rtisa": rtisa, "planning": planning, "portfolio": portfolio,
+        "amount_contexts": amount_contexts,
+    }
+
+
+def assess_with_evidence_in_snapshot(db: Session, request: Mapping[str, Any]) -> dict:
+    """Bounded evidence-returning boundary for same-snapshot internal consumers."""
+    return _evaluate_in_snapshot(db, request, include_evidence=True)
+
 def assess(db:Session,request:Any)->dict:
     error=_request_error(request)
     if error is not None:return _failure(request,"request_validation",error)
@@ -993,59 +1089,12 @@ def assess(db:Session,request:Any)->dict:
         return _failure(request,"snapshot_admission","RTICB_REQUIRES_FRESH_TRANSACTION")
     if db.get_bind().dialect.name not in {"postgresql","sqlite"}:
         return _failure(request,"snapshot_admission","RTICB_UNSUPPORTED_DATABASE")
-    target=collection=None
     owns_transaction=False
     try:
         owns_transaction=True
         _begin_snapshot(db)
         with db.no_autoflush:
-            target=target_service.assess_in_snapshot(db,request["client_id"])
-            if not _target_schema_valid(target):
-                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_SCHEMA_INVALID",target=target)
-            elif not _target_fingerprints_valid(target):
-                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_FINGERPRINT_INVALID",target=target)
-            elif target["authority_state"]=="UNAVAILABLE":
-                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_UNAVAILABLE",target=target)
-            elif not (target["authority_state"]=="CURRENT" and target["target_readiness_state"]=="READY"
-                      and target["target_ready"] is True and target["target"] is not None
-                      and target["authority"] is not None
-                      and target["authority"]["confirmation_state"]=="CONFIRMED"
-                      and not target["blockers"]):
-                result=_failure(request,"target_authority","RTICB_TARGET_AUTHORITY_NOT_READY",target=target)
-            else:
-                collection=crtisba_service.derive_in_snapshot(db,request["client_id"],operation="READ")
-                if isinstance(collection,Mapping) and collection.get("schema_version")=="CRTISBA_BLOCK_NO_RESULT_V1":
-                    if _blocked_valid(collection,request["client_id"]):
-                        result=_failure(request,"crtisba_authority",BLOCKED_RTICB[collection["failure_stage"]],
-                                        target=target,crtisba=collection)
-                    else:
-                        result=_failure(request,"crtisba_authority","RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID",
-                                        target=target,crtisba=collection)
-                elif not _collection_shape(collection):
-                    result=_failure(request,"crtisba_authority","RTICB_CRTISBA_COLLECTION_SCHEMA_INVALID",
-                                    target=target,crtisba=collection)
-                elif not _collection_fingerprint_valid(collection):
-                    result=_failure(request,"crtisba_authority","RTICB_CRTISBA_RESULT_FINGERPRINT_MISMATCH",
-                                    target=target,crtisba=collection)
-                elif target["client_id"]!=request["client_id"] or collection["client_id"]!=request["client_id"]:
-                    result=_failure(request,"cross_authority_identity","RTICB_CLIENT_ID_MISMATCH",target=target,crtisba=collection)
-                elif not (target["planning_calculation_input_fingerprint"]==
-                          collection["planning_calculation_input_fingerprint"]==
-                          request["expected_planning_calculation_input_fingerprint"]):
-                    result=_failure(request,"cross_authority_identity","RTICB_PLANNING_IDENTITY_MISMATCH",target=target,crtisba=collection)
-                elif not (target["retirement_target_date"]==collection["retirement_target_date"]==
-                          request["expected_retirement_target_date"]):
-                    result=_failure(request,"cross_authority_identity","RTICB_RETIREMENT_TARGET_DATE_MISMATCH",target=target,crtisba=collection)
-                elif not _universe_valid(collection):
-                    result=_failure(request,"source_universe","RTICB_CRTISBA_SOURCE_UNIVERSE_MISMATCH",target=target,crtisba=collection)
-                elif not _consistent(collection):
-                    result=_failure(request,"source_universe","RTICB_CRTISBA_COLLECTION_CONSISTENCY_INVALID",target=target,crtisba=collection)
-                elif not all(_entry_authority_valid(e) for e in collection["source_basis_entries"]):
-                    result=_failure(request,"source_universe","RTICB_CRTISBA_ENTRY_AUTHORITY_INVALID",target=target,crtisba=collection)
-                elif not all(_entry_state_valid(e) for e in collection["source_basis_entries"]):
-                    result=_failure(request,"classification","RTICB_CRTISBA_STATE_BASIS_INVALID",target=target,crtisba=collection)
-                else:
-                    result=_result(request,target,collection)
+            result = _evaluate_in_snapshot(db, request, include_evidence=False)["comparison"]
     except BaseException:
         if owns_transaction:_rollback_owned_transaction(db)
         raise

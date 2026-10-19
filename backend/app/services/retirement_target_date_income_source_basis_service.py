@@ -568,6 +568,7 @@ def _amount_context(planning: dict, portfolio: dict, rtisa: dict) -> dict[str, d
             numerator = (entry.get("monthly_equivalent") or {}).get("numerator")
             exact = pte.get("unquantized_target_monthly_amount")
             amount_fp = None
+            amount_preimage = None
             if numerator is not None and exact is not None and Decimal(str(numerator)) == Decimal(str(exact)):
                 preimage = {
                     "contract": PENSION_AMOUNT_CONTRACT, "client_id": planning["client_id"], "source_id": source_id,
@@ -588,26 +589,33 @@ def _amount_context(planning: dict, portfolio: dict, rtisa: dict) -> dict[str, d
                     "temporal_semantic_fingerprint", "temporal_source_fingerprint", "planning_calculation_input_fingerprint",
                     "pension_source_execution_fingerprint", "pension_source_result_fingerprint", "portfolio_source_entry_fingerprint")):
                     amount_fp = fingerprint(preimage)
+                    amount_preimage = preimage
             contexts[source_id] = {
                 "kind": "PENSION", "source_version": source.get("version"), "source_fingerprint": source_fp,
                 "amount": amount_fp, "pension_source_execution_fingerprint": pte.get("source_execution_fingerprint"),
                 "pension_source_result_fingerprint": upstream_result_fp, "portfolio_source_entry_fingerprint": entry_fp,
                 "retirement_target_date": planning["retirement_target"]["retirement_target_date"],
+                "amount_preimage": amount_preimage,
+                "monthly_equivalent": deepcopy(entry.get("monthly_equivalent")),
             }
         else:
             native = entry.get("native_amount") or {}
             source = recurring_inputs.get(source_id) or {}
             amount_fp = None
+            amount_preimage = None
             reasons = sorted(set(entry.get("reason_codes") or []))
             amount_eligible = entry.get("admission_state") == "INCLUDED" or reasons == ["RTISA_SOURCE_FREQUENCY_UNSUPPORTED"]
             if amount_eligible and source.get("amount") is not None:
-                amount_fp = fingerprint({
+                amount_preimage = {
                     "contract": RECURRING_AMOUNT_CONTRACT, "client_id": planning["client_id"], "source_id": source_id,
                     "source_fingerprint": source_fp, "amount": _decimal_text(source["amount"]),
                     "amount_basis": source.get("amount_basis"), "frequency": source.get("frequency"),
-                })
+                }
+                amount_fp = fingerprint(amount_preimage)
             contexts[source_id] = {"kind": "RECURRING_INCOME", "source_version": source_fp,
-                                    "source_fingerprint": source_fp, "amount": amount_fp}
+                                    "source_fingerprint": source_fp, "amount": amount_fp,
+                                    "amount_preimage": amount_preimage,
+                                    "monthly_equivalent": deepcopy(entry.get("monthly_equivalent"))}
     return contexts
 
 
@@ -863,10 +871,7 @@ def _entry(entry: dict, context: dict | None, row: Decision | None, planning_fp:
     }
 
 
-def derive_in_snapshot(db: Session, client_id: int, operation: str = "READ", source_id: str | None = None) -> dict:
-    blocked, snapshot = _derive_snapshot(db, client_id, operation, source_id)
-    if blocked:
-        return blocked
+def _collection_from_snapshot(db: Session, client_id: int, snapshot: dict) -> dict:
     planning, rtisa = snapshot["planning"], snapshot["rtisa"]
     latest, invalid_chains = _latest_rows(db, client_id)
     result_entries = [_entry(item, snapshot["contexts"].get(item.get("source_id")), latest.get(item.get("source_id")), planning["planning_calculation_input_fingerprint"], item.get("source_id") not in invalid_chains)
@@ -888,6 +893,31 @@ def derive_in_snapshot(db: Session, client_id: int, operation: str = "READ", sou
     }
     body["result_fingerprint"] = fingerprint({"contract": RESULT_CONTRACT, "result": deepcopy(body)})
     return body
+
+
+def derive_evidence_in_snapshot(
+    db: Session, client_id: int, operation: str = "READ", source_id: str | None = None,
+) -> dict:
+    """Return the public collection and its bounded same-snapshot producer evidence.
+
+    This is an internal composition boundary.  It neither owns a transaction nor
+    changes the public CRTISBA result schema.
+    """
+    blocked, snapshot = _derive_snapshot(db, client_id, operation, source_id)
+    if blocked:
+        return {
+            "collection": blocked, "planning": None, "portfolio": None,
+            "rtisa": None, "amount_contexts": None,
+        }
+    return {
+        "collection": _collection_from_snapshot(db, client_id, snapshot),
+        "planning": snapshot["planning"], "portfolio": snapshot["portfolio"],
+        "rtisa": snapshot["rtisa"], "amount_contexts": snapshot["contexts"],
+    }
+
+
+def derive_in_snapshot(db: Session, client_id: int, operation: str = "READ", source_id: str | None = None) -> dict:
+    return derive_evidence_in_snapshot(db, client_id, operation, source_id)["collection"]
 
 
 def read(db: Session, client_id: int) -> dict:

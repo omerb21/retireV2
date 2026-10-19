@@ -178,4 +178,45 @@ NAC-12 no technical-exception disguise as business/comparability block.
 
 Enumerate the exact RTISA/CRTISBA/RTICB producer-cross-product including empty, all excluded, pension, recurring monthly/quarterly/annual, mixed and delegated cases. Cover ready, normalization-required and unresolved source states; invalid amount source identity, fingerprint, denominator and precision; malformed near-miss evidence; own-transaction and cross-snapshot mutation controls; golden fingerprint preimages and delta reuse. Do not treat this enumeration as second semantic Definition.
 
+
+## Final integration constraints and error ordering for candidate review
+
+### Integration seam — required implementation API shape
+
+A new, internal-only `derive_comparison_with_amount_evidence_in_snapshot(db, request)` shall own the shared snapshot evidence assembly. It returns an immutable-by-value bundle with exactly `comparison`, `target`, `crtisba_collection`, `rtisa`, and `amount_contexts`. It may use refactored internal existing producer functions but **must** preserve existing public result bytes and hashes. The current `CRTISBA._derive_snapshot` provides validated `planning`, `portfolio`, `rtisa` and `contexts` under one transaction. Consumers may not use the underscore-prefixed helper as a permanent external/public contract: promote a bounded internal producer entrypoint with contract tests. The `amount_contexts` binding is used for verification only, not as replacement amount authority. A successful bundle proves:
+- `comparison.crtisba_result_fingerprint == crtisba_collection.result_fingerprint`;
+- `crtisba_collection.rtisa_admission_result_fingerprint == rtisa.admission_result_fingerprint`;
+- all RTICB source IDs equal RTISA source IDs, each exactly once, with the same admission, source version and source fingerprint;
+- each included source's `amount_authority_fingerprint` equals its validated CRTISBA `amount_contexts[source_id].amount`, and the context is recomputed using the accepted CRTISBA exact preimage and source owner's exact amount;
+- exact RIT and planning/date identities agree throughout.
+
+The bundle must not be serializable as a new client-facing authority and shall not add mutable cache or persisted result. If preserving producer behavior requires more than a narrow internal refactor, stop for a scope-authority correction before coding.
+
+### Deterministic CMIA stage precedence
+
+Perform sequentially and stop at the first failure:
+1. `request_validation`: strict request shape/type/hash/date before DB touch.
+2. `snapshot_admission`: pristine session and supported dialect.
+3. `target_authority`: accepted RIT schema, fingerprint, identity, readiness.
+4. `crtisba_authority`: accepted CRTISBA blocked/schema/fingerprint states; original four upstream block identities preserved.
+5. `cross_authority_identity`: client, planning fingerprint and target date.
+6. `source_universe`: duplicate/missing/extra/unsorted IDs and RTICB/RTISA/CRTISBA identity correspondence.
+7. `classification`: RTICB source states, entry/result fingerprints, direct-readiness consistency.
+8. `amount_authority`: admitted source numeric payload shape, source amount fingerprint/preimage, unrounded pension amount and source-version binding.
+9. `comparability`: legitimate `NOT_READY` classification yields `BLOCK_NO_TOTAL` without sum.
+10. `aggregation`: canonical exact rational addition and bounds.
+11. `result_identity`: canonical serialization/fingerprint.
+
+For stages 1–8 and 10–11, contract-invalid and technical failures are never labeled valid professional `BLOCK_NO_TOTAL`. Fail closed with a stage-specific implementation exception instead. **Open acceptance issue:** exact stable exception code vocabulary for each invalid-contract stage must be independently defined before implementation. Preserve the original accepted RTICB failure envelope unchanged; CMIA cannot rewrite upstream failures.
+
+### Size/precision protection
+
+The RTISA recurring `_money` parser presently permits at most 12 significant integer digits and two fractional digits and returns a canonical 2-decimal string. Pension exact source amounts follow PTE's separate validated numeric contract and can have more decimals due to target-date accumulation. A global “two decimals only” restriction on CMIA inputs would therefore be incorrect. The eventual bounds must be derived from the current accepted PTE precision/range and maximum admitted sources; imposing tighter limits must be separately justified without rejecting valid producer values.
+
+Rational parsing never accepts arbitrary unbounded input: accept only already-validated upstream numeric strings and enforce an engineering limit sufficient for their current authoritative maximum. Reject malformed decimal/exponent/scientific notation where not produced by accepted RTISA canonical serialization. Guard against huge intermediate integer multiplication before performing it. Preserve exactness for recurring denominators 1/3/12 and pension denominator 1.
+
+### Contract acceptance status
+
+All above are **proposed** package-local constraints, not an accepted source of authority. The unresolved exact technical exception-code set, proven upper arithmetic bounds and tested single-assembly integration API are blockers for declaring this draft `DEFINITION_ACCEPTED`. Their resolution is technical contract work, not a new owner choice. No subsequent feature and no implementation is authorized by drafting this text.
+
 DEFINITION_DRAFT_NOT_ACCEPTED

@@ -135,9 +135,8 @@ def _contract(stage: str, code: str, client_id: int, cause: BaseException | None
     raise CMIAContractError(stage, code, client_id, cause) from cause
 
 
-def _begin_snapshot(db: Session, client_id: int) -> None:
+def _begin_snapshot(db: Session, connection: Any, client_id: int) -> None:
     try:
-        connection = db.connection()
         dialect = connection.dialect.name
         if dialect == "postgresql":
             connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -160,10 +159,14 @@ def _poison_session(db: Session) -> None:
     db.invalidate()
 
 
-def _rollback_owned_transaction(db: Session) -> None:
+def _rollback_owned_transaction(db: Session, connection: Any) -> None:
     try:
         db.rollback()
     except BaseException:
+        try:
+            connection.invalidate()
+        except BaseException:
+            pass
         try:
             _poison_session(db)
         except BaseException:
@@ -501,10 +504,10 @@ def assess(db: Session, request: Mapping[str, Any]) -> dict:
         _contract("snapshot_admission", "CMIA_REQUIRES_FRESH_TRANSACTION", client_id)
     if db.get_bind().dialect.name not in {"postgresql", "sqlite"}:
         _contract("snapshot_admission", "CMIA_UNSUPPORTED_DATABASE", client_id)
-    owns_transaction = False
+    owned_connection = None
     try:
-        owns_transaction = True
-        _begin_snapshot(db, client_id)
+        owned_connection = db.connection()
+        _begin_snapshot(db, owned_connection, client_id)
         with db.no_autoflush:
             evidence = rticb_service.assess_with_evidence_in_snapshot(db, request)
             comparison = evidence.get("comparison") if isinstance(evidence, Mapping) else None
@@ -515,8 +518,8 @@ def assess(db: Session, request: Mapping[str, Any]) -> dict:
             else:
                 result = _complete(request, evidence)
     except BaseException:
-        if owns_transaction:
-            _rollback_owned_transaction(db)
+        if owned_connection is not None:
+            _rollback_owned_transaction(db, owned_connection)
         raise
-    _rollback_owned_transaction(db)
+    _rollback_owned_transaction(db, owned_connection)
     return result

@@ -445,6 +445,52 @@ def test_original_exception_propagates_after_rollback_and_cleanup_failure_wins(m
         failed.scalar(text("SELECT 1"))
 
 
+def test_connection_acquisition_defines_transaction_ownership(monkeypatch):
+    class AcquisitionFailureDB(_DB):
+        def connection(self):
+            raise OSError("acquisition")
+
+    failed = AcquisitionFailureDB()
+    with pytest.raises(OSError, match="acquisition"):
+        subject.assess(failed, _request())
+    assert failed.rollback_count == 0
+
+    class PostAcquisitionFailureDB(_DB):
+        def expire_all(self):
+            raise OSError("post-acquisition")
+
+    acquired = PostAcquisitionFailureDB()
+    with pytest.raises(OSError, match="post-acquisition"):
+        subject.assess(acquired, _request())
+    assert acquired.rollback_count == 1
+
+
+def test_rollback_failure_invalidates_retained_connection_without_lookup(monkeypatch):
+    class RetainedConnectionDB(_DB):
+        def __init__(self):
+            super().__init__()
+            self.connection_calls = 0
+
+        def connection(self):
+            self.connection_calls += 1
+            if self.connection_calls > 1:
+                raise AssertionError("connection lookup after acquisition")
+            return super().connection()
+
+        def rollback(self):
+            raise OSError("cleanup")
+
+    failed = RetainedConnectionDB()
+    monkeypatch.setattr(
+        rticb, "assess_with_evidence_in_snapshot",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("producer")),
+    )
+    with pytest.raises(OSError, match="cleanup"):
+        subject.assess(failed, _request())
+    assert failed.connection_calls == 1
+    assert failed.connection_value.invalidated is True
+
+
 def test_public_rticb_and_crtisba_outputs_remain_byte_identical(monkeypatch):
     target = _target()
     collection = _collection([_entry()])
@@ -525,7 +571,7 @@ def test_rollback_mapping_mutation_fails_same_ordinary_oracle_and_restores(monke
 
     ordinary_oracle()
     original = subject._rollback_owned_transaction
-    monkeypatch.setattr(subject, "_rollback_owned_transaction", lambda _db: None)
+    monkeypatch.setattr(subject, "_rollback_owned_transaction", lambda _db, _connection: None)
     with pytest.raises(AssertionError):
         ordinary_oracle()
     monkeypatch.setattr(subject, "_rollback_owned_transaction", original)

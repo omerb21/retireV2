@@ -50,7 +50,7 @@ Validate a successfully classified RTICB output, its source universe, target and
 ## 6. Exact arithmetic
 Use rational integer arithmetic, **never binary float or intermediate rounding**. Parse only upstream-owner validated finite nonnegative decimal numerator text with the source-owner's formatting/precision rules and its exact valid positive denominator string; convert each decimal coefficient and scale into a reduced integer numerator/positive denominator. Add by exact cross multiplication and gcd reduction in sorted canonical source-ID order. Serialize rational results as `{"numerator":"N","denominator":"D","currency":"ILS","frequency":"MONTHLY"}` with ASCII canonical integers, no leading zeros, positive denominator, gcd(N,D)=1, zero as `0/1`.
 
-Portfolio PTE currently bounds source decimal coefficient to at most 100 digits and scale at most 100, while RTISA recurring `_money` accepts up to 12 whole digits and two fractional digits. Existing PTE pension aggregate's 97-integer-digit bound is **not** an all-source CMIA total limit. Reject malformed or resource-exhausting operands fail-closed, but do not impose an invented smaller valid-value range or silently round/cap. The implementation must prove a bounded resource strategy over the accepted finite source universe. If valid accepted inputs cannot be calculated under a justified bound, stop for a technical contract correction rather than misstate a result.
+Portfolio PTE currently bounds source decimal coefficient to at most 100 digits and scale at most 100, while RTISA recurring `_money` accepts up to 12 whole digits and two fractional digits. Existing PTE pension aggregate's 97-integer-digit bound is **not** an all-source CMIA total limit. Malformed source operands fail at amount-authority validation. For otherwise validated producer values there is no CMIA-owned size limit: exact arbitrary-precision integer arithmetic is required. Resource-exhaustion exceptions from the host propagate as technical exceptions under Section 15, never as a claimed numerical business result.
 
 ## 7. Success result: exact closed field inventory
 Schema `CANONICAL_RETIREMENT_TARGET_DATE_COMPARABLE_MONTHLY_INCOME_RESULT_V1`. Exact top-level fields:
@@ -93,7 +93,7 @@ Stop at first applicable failure:
 7. `classification`: RTICB entry and result validity, direct-readiness coherence.
 8. `comparability`: validated upstream block or RTICB NOT_READY; return admitted `BLOCK_NO_TOTAL` and no amount.
 9. `amount_authority`: for ready candidates only, validate monthly amount, source/fingerprint and CRTISBA amount preimage.
-10. `aggregation`: rational arithmetic and justified bounds.
+10. `aggregation`: exact rational arithmetic for the complete admitted universe, with no new CMIA numeric limit.
 11. `result_identity`: canonical serialization and digest.
 
 CMIA-owned integrity/technical error names (not upstream professional blockers):
@@ -146,7 +146,7 @@ A future authorized implementation shall reuse the accepted RIT/RTISA/CRTISBA/RT
 ## 13. Stop conditions
 - SC-01: the proposed internal bundle cannot preserve current producer output semantics and single-snapshot transaction boundaries.
 - SC-02: source-level amount authority cannot be reconstructed from accepted producer evidence.
-- SC-03: the resource strategy would reject valid upstream amounts without accepted justification.
+- SC-03: implementation rejects an otherwise valid upstream amount or collection using a CMIA-owned size heuristic, or fails to propagate a host resource failure as a technical exception.
 - SC-04: failure/identity precedence contradicts an accepted upstream error contract.
 - SC-05: any new professional interpretation or unauthorized amount normalization is required.
 - SC-06: independently reconstructable exact result and block fingerprint preimages cannot be demonstrated.

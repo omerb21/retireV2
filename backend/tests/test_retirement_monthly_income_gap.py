@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+from math import gcd
 from types import SimpleNamespace
 
 import pytest
@@ -194,13 +195,18 @@ def test_six_decimal_target_and_mixed_denominators_are_exact(monkeypatch):
     }
 
 
-def test_rmiga_accepts_contract_valid_arbitrary_precision_cmia_amount(monkeypatch):
+@pytest.mark.parametrize(("numerator", "denominator"), [
+    ("1" + "0" * 5000, "3"),
+    ("1", "1" + "0" * 5000 + "3"),
+])
+def test_rmiga_accepts_contract_valid_arbitrary_precision_cmia_amount(
+    monkeypatch, numerator, denominator,
+):
     composition = _composition(
         monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),)),
     )
-    denominator = "1" + "0" * 5000 + "3"
     rational = {
-        "numerator": "1", "denominator": denominator,
+        "numerator": numerator, "denominator": denominator,
         "currency": "ILS", "frequency": "MONTHLY",
     }
     contribution = composition["cmia_result"]["included_contributions"][0]
@@ -216,11 +222,13 @@ def test_rmiga_accepts_contract_valid_arbitrary_precision_cmia_amount(monkeypatc
     monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", lambda *_: deepcopy(composition))
 
     result = subject.assess(_DB(), _request())
-    expected_denominator = _chunk_int(denominator)
-    expected_numerator = 10_000 * expected_denominator - 1
-    assert result["monthly_gap"]["numerator"] == _chunk_ascii(expected_numerator)
-    assert result["monthly_gap"]["denominator"] == denominator
-    assert result["gap_state"] == "SHORTFALL"
+    input_numerator = _chunk_int(numerator)
+    input_denominator = _chunk_int(denominator)
+    expected_numerator = 10_000 * input_denominator - input_numerator
+    divisor = gcd(abs(expected_numerator), input_denominator)
+    assert result["monthly_gap"]["numerator"] == _chunk_ascii(expected_numerator // divisor)
+    assert result["monthly_gap"]["denominator"] == _chunk_ascii(input_denominator // divisor)
+    assert result["gap_state"] == ("SHORTFALL" if expected_numerator > 0 else "SURPLUS")
 
 
 @pytest.mark.parametrize(

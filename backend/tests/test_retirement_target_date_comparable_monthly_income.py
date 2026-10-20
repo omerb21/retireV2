@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.retirement_income_source_basis import CRTISBACommand
 from app.services import canonical_manual_pension_service
+from app.services import retirement_monthly_income_gap_service as rmiga
 from app.services import retirement_target_date_comparable_monthly_income_service as subject
 from app.services import retirement_target_date_income_comparison_basis_service as rticb
 from app.services import retirement_target_date_income_source_basis_service as crtisba
@@ -461,6 +462,20 @@ def test_real_pension_producer_chain_binds_unrounded_amount_to_cmia(engine, monk
         "numerator": "100001", "denominator": "1000",
         "currency": "ILS", "frequency": "MONTHLY",
     }
+    with Session(engine) as db:
+        gap = rmiga.assess(db, request)
+    assert gap["included_contributions"] == result["included_contributions"]
+    assert gap["cmia_result_fingerprint"] == result["result_fingerprint"]
+    assert gap["target_monthly_amount"] == {
+        "numerator": "24000", "denominator": "1",
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+    assert gap["comparable_monthly_income"] == result["total_monthly_equivalent"]
+    assert gap["monthly_gap"] == {
+        "numerator": "23899999", "denominator": "1000",
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+    assert gap["gap_state"] == "SHORTFALL"
 
 
 def _professional_block_evidence():
@@ -975,3 +990,86 @@ def test_rollback_mapping_mutation_fails_same_ordinary_oracle_and_restores(monke
         ordinary_oracle()
     monkeypatch.setattr(subject, "_rollback_owned_transaction", original)
     ordinary_oracle()
+
+
+def test_public_result_validator_accepts_and_freezes_complete_and_block(monkeypatch):
+    complete, _ = _run(
+        monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "quarterly"),)),
+    )
+    validated = subject.validate_public_result(complete)
+    assert validated.result_state == "COMPLETE"
+    assert validated.result["total_monthly_equivalent"]["numerator"] == "400"
+    with pytest.raises(TypeError):
+        validated.result["source_count"] = 9
+    with pytest.raises(TypeError):
+        validated.result["total_monthly_equivalent"]["numerator"] = "9"
+
+    blocked, _ = _run(monkeypatch, _professional_block_evidence())
+    validated_block = subject.validate_public_result(blocked)
+    assert validated_block.result_state == "BLOCK_NO_TOTAL"
+    assert validated_block.result["failure_stage"] == "comparability"
+
+
+@pytest.mark.parametrize("mutation", ["count", "membership", "ordering", "total", "contribution"])
+def test_public_result_validator_rejects_coherently_rehashed_complete_tampering(
+    monkeypatch, mutation,
+):
+    result, _ = _run(monkeypatch, _evidence(recurring=(
+        _recurring_source(1, "1200.00", "monthly"),
+        _recurring_source(2, "900.00", "quarterly"),
+    )))
+    tampered = deepcopy(result)
+    if mutation == "count":
+        tampered["source_count"] = 1
+    elif mutation == "membership":
+        tampered["included_contributions"].pop()
+        tampered["source_count"] = 1
+    elif mutation == "ordering":
+        tampered["included_contributions"].reverse()
+    elif mutation == "total":
+        tampered["total_monthly_equivalent"] = {
+            "numerator": "1501", "denominator": "1", "currency": "ILS", "frequency": "MONTHLY",
+        }
+    else:
+        contribution = tampered["included_contributions"][0]
+        contribution["monthly_equivalent"] = {
+            "numerator": "1201", "denominator": "1", "currency": "ILS", "frequency": "MONTHLY",
+        }
+        payload = {key: value for key, value in contribution.items() if key != "contribution_fingerprint"}
+        contribution["contribution_fingerprint"] = _independent_fingerprint({
+            "contract": subject.CONTRIBUTION_CONTRACT, "contribution": payload,
+        })
+    payload = {key: value for key, value in tampered.items() if key != "result_fingerprint"}
+    tampered["result_fingerprint"] = _independent_fingerprint({
+        "contract": subject.RESULT_CONTRACT, "result": payload,
+    })
+    with pytest.raises(subject.CMIAResultValidationError) as caught:
+        subject.validate_public_result(tampered)
+    assert (caught.value.stage, caught.value.code, caught.value.client_id) == (
+        "result_validation", "CMIA_PUBLIC_RESULT_INVALID", 1,
+    )
+
+
+def test_public_result_validator_rejects_coherently_rehashed_block_variant(monkeypatch):
+    result, _ = _run(monkeypatch, _professional_block_evidence())
+    result["observed_upstream_failure_stage"] = "target_authority"
+    payload = {key: value for key, value in result.items() if key != "result_fingerprint"}
+    result["result_fingerprint"] = _independent_fingerprint({
+        "contract": subject.BLOCK_CONTRACT, "result": payload,
+    })
+    with pytest.raises(subject.CMIAResultValidationError):
+        subject.validate_public_result(result)
+
+
+def test_bounded_same_snapshot_adapter_preserves_public_result_and_target(monkeypatch):
+    evidence = _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),))
+    monkeypatch.setattr(crtisba, "_planning_envelope_valid", lambda *_: True)
+    monkeypatch.setattr(crtisba.rtisa_service, "_portfolio_is_valid", lambda *_: True)
+    monkeypatch.setattr(crtisba, "_rtisa_envelope_valid", lambda *_: True)
+    monkeypatch.setattr(rticb, "assess_with_evidence_in_snapshot", lambda *_: deepcopy(evidence))
+    public_db = _DB()
+    public = subject.assess(public_db, _request())
+    bounded_db = _DB(active=True)
+    bounded = subject.assess_with_target_in_snapshot(bounded_db, _request())
+    assert bounded == {"cmia_result": public, "target": evidence["target"]}
+    assert bounded_db.rollback_count == 0 and bounded_db.in_transaction()

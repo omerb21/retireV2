@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import hashlib
 import json
 import re
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from sqlalchemy import event
@@ -32,6 +34,31 @@ DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z", re.ASCII)
 DECIMAL_RE = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
 INTEGER_RE = re.compile(r"(?:0|[1-9][0-9]*)\Z", re.ASCII)
 POSITIVE_INTEGER_RE = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
+
+SUCCESS_FIELDS = frozenset({
+    "schema_version", "result_state", "client_id",
+    "planning_calculation_input_fingerprint", "retirement_target_date",
+    "target_result_fingerprint", "target_semantic_fingerprint",
+    "comparison_input_fingerprint", "comparison_result_fingerprint",
+    "crtisba_result_fingerprint", "rtisa_admission_result_fingerprint",
+    "target_income_basis", "target_price_basis", "target_price_reference_date",
+    "included_contributions", "excluded_source_ids", "total_monthly_equivalent",
+    "source_count", "result_fingerprint",
+})
+BLOCK_FIELDS = frozenset({
+    "schema_version", "result_state", "client_id",
+    "supplied_planning_calculation_input_fingerprint", "supplied_retirement_target_date",
+    "observed_comparison_result_fingerprint", "observed_crtisba_result_fingerprint",
+    "observed_rtisa_admission_result_fingerprint", "observed_upstream_failure_stage",
+    "observed_upstream_failure_detail_code", "observed_upstream_failure_fingerprint",
+    "failure_stage", "failure_detail_code", "blocked_source_ids", "result_fingerprint",
+})
+CONTRIBUTION_FIELDS = frozenset({
+    "source_id", "source_kind", "source_version", "source_fingerprint",
+    "amount_authority_fingerprint", "source_comparison_fingerprint",
+    "monthly_equivalent", "contribution_fingerprint",
+})
+RATIONAL_FIELDS = frozenset({"numerator", "denominator", "currency", "frequency"})
 
 
 class _CMIAErrorMixin:
@@ -82,6 +109,18 @@ class CMIAFingerprintError(_CMIAErrorMixin, RuntimeError):
             self.__cause__ = cause
 
 
+class CMIAResultValidationError(_CMIAErrorMixin, ValueError):
+    def __init__(self, client_id: int | None):
+        ValueError.__init__(self, "result_validation", "CMIA_PUBLIC_RESULT_INVALID", client_id)
+        self._set_identity("result_validation", "CMIA_PUBLIC_RESULT_INVALID", client_id)
+
+
+@dataclass(frozen=True)
+class ValidatedCMIAResult:
+    result_state: str
+    result: Mapping[str, Any]
+
+
 def _positive_int(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, int) and value > 0
 
@@ -129,6 +168,177 @@ def _canonical_bytes(value: Any, client_id: int) -> bytes:
 
 def _fingerprint(value: Any, client_id: int) -> str:
     return hashlib.sha256(_canonical_bytes(value, client_id)).hexdigest()
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return deepcopy(value)
+
+
+def _result_validation_error(value: Any) -> None:
+    client_id = value.get("client_id") if isinstance(value, Mapping) else None
+    raise CMIAResultValidationError(client_id if _positive_int(client_id) else None)
+
+
+def _public_fingerprint(value: Any, contract: str, member: str) -> str | None:
+    try:
+        raw = json.dumps(
+            {"contract": contract, member: value},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _canonical_rational(value: Any) -> Fraction | None:
+    if not isinstance(value, dict) or set(value) != RATIONAL_FIELDS:
+        return None
+    numerator = value.get("numerator")
+    denominator = value.get("denominator")
+    if (
+        not isinstance(numerator, str) or INTEGER_RE.fullmatch(numerator) is None
+        or not isinstance(denominator, str) or POSITIVE_INTEGER_RE.fullmatch(denominator) is None
+        or value.get("currency") != "ILS" or value.get("frequency") != "MONTHLY"
+    ):
+        return None
+    fraction = Fraction(int(numerator), int(denominator))
+    if str(fraction.numerator) != numerator or str(fraction.denominator) != denominator:
+        return None
+    return fraction
+
+
+def _sorted_unique_strings(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, str) and item for item in value)
+        and value == sorted(set(value))
+    )
+
+
+def _contribution_valid(value: Any) -> tuple[bool, Fraction | None]:
+    if not isinstance(value, dict) or set(value) != CONTRIBUTION_FIELDS:
+        return False, None
+    source_id = value.get("source_id")
+    source_kind = value.get("source_kind")
+    source_version = value.get("source_version")
+    if (
+        not isinstance(source_id, str) or not source_id
+        or source_kind not in {"PENSION", "RECURRING_INCOME"}
+        or (source_kind == "PENSION" and not _positive_int(source_version))
+        or (source_kind == "RECURRING_INCOME" and not _is_sha(source_version))
+        or not all(_is_sha(value.get(key)) for key in (
+            "source_fingerprint", "amount_authority_fingerprint",
+            "source_comparison_fingerprint", "contribution_fingerprint",
+        ))
+    ):
+        return False, None
+    rational = _canonical_rational(value.get("monthly_equivalent"))
+    payload = {key: deepcopy(item) for key, item in value.items() if key != "contribution_fingerprint"}
+    expected = _public_fingerprint(payload, CONTRIBUTION_CONTRACT, "contribution")
+    return rational is not None and value["contribution_fingerprint"] == expected, rational
+
+
+def validate_public_result(result: Mapping[str, Any]) -> ValidatedCMIAResult:
+    """Purely validate and freeze an accepted public CMIA result."""
+    if not isinstance(result, dict) or not _positive_int(result.get("client_id")):
+        _result_validation_error(result)
+    state = result.get("result_state")
+    if state == "COMPLETE":
+        if set(result) != SUCCESS_FIELDS or result.get("schema_version") != SUCCESS_SCHEMA:
+            _result_validation_error(result)
+        reference = result.get("target_price_reference_date")
+        price_basis = result.get("target_price_basis")
+        if (
+            not _is_sha(result.get("planning_calculation_input_fingerprint"))
+            or not _is_date(result.get("retirement_target_date"))
+            or not all(_is_sha(result.get(key)) for key in (
+                "target_result_fingerprint", "target_semantic_fingerprint",
+                "comparison_input_fingerprint", "comparison_result_fingerprint",
+                "crtisba_result_fingerprint", "rtisa_admission_result_fingerprint",
+                "result_fingerprint",
+            ))
+            or result.get("target_income_basis") not in {"GROSS", "NET"}
+            or price_basis not in {"NOMINAL_AT_RETIREMENT_TARGET_DATE", "REAL_AT_REFERENCE_DATE"}
+            or not (
+                (price_basis == "NOMINAL_AT_RETIREMENT_TARGET_DATE" and reference is None)
+                or (price_basis == "REAL_AT_REFERENCE_DATE" and _is_date(reference))
+            )
+            or not isinstance(result.get("source_count"), int)
+            or isinstance(result.get("source_count"), bool)
+            or result["source_count"] < 0
+            or not _sorted_unique_strings(result.get("excluded_source_ids"))
+            or not isinstance(result.get("included_contributions"), list)
+        ):
+            _result_validation_error(result)
+        included_ids: list[str] = []
+        total = Fraction(0, 1)
+        for contribution in result["included_contributions"]:
+            valid, rational = _contribution_valid(contribution)
+            if not valid or rational is None:
+                _result_validation_error(result)
+            included_ids.append(contribution["source_id"])
+            total += rational
+        if (
+            included_ids != sorted(set(included_ids))
+            or set(included_ids).intersection(result["excluded_source_ids"])
+            or result["source_count"] != len(included_ids)
+            or _canonical_rational(result.get("total_monthly_equivalent")) != total
+        ):
+            _result_validation_error(result)
+        payload = {key: deepcopy(item) for key, item in result.items() if key != "result_fingerprint"}
+        if result["result_fingerprint"] != _public_fingerprint(payload, RESULT_CONTRACT, "result"):
+            _result_validation_error(result)
+    elif state == "BLOCK_NO_TOTAL":
+        if (
+            set(result) != BLOCK_FIELDS or result.get("schema_version") != BLOCK_SCHEMA
+            or not _is_sha(result.get("supplied_planning_calculation_input_fingerprint"))
+            or not _is_date(result.get("supplied_retirement_target_date"))
+            or not _is_sha(result.get("result_fingerprint"))
+            or not _sorted_unique_strings(result.get("blocked_source_ids"))
+        ):
+            _result_validation_error(result)
+        if result.get("failure_stage") == "comparability":
+            valid_variant = (
+                result.get("failure_detail_code") == "CMIA_DIRECT_COMPARISON_NOT_READY"
+                and all(_is_sha(result.get(key)) for key in (
+                    "observed_comparison_result_fingerprint",
+                    "observed_crtisba_result_fingerprint",
+                    "observed_rtisa_admission_result_fingerprint",
+                ))
+                and all(result.get(key) is None for key in (
+                    "observed_upstream_failure_stage", "observed_upstream_failure_detail_code",
+                    "observed_upstream_failure_fingerprint",
+                ))
+                and bool(result["blocked_source_ids"])
+            )
+        elif result.get("failure_stage") == "upstream_authority":
+            valid_variant = (
+                result.get("failure_detail_code") == "CMIA_UPSTREAM_COMPARISON_BLOCKED"
+                and all(result.get(key) is None for key in (
+                    "observed_comparison_result_fingerprint",
+                    "observed_crtisba_result_fingerprint",
+                    "observed_rtisa_admission_result_fingerprint",
+                ))
+                and result.get("observed_upstream_failure_stage") in rticb_service.FAILURE_CODES
+                and result.get("observed_upstream_failure_detail_code")
+                in rticb_service.FAILURE_CODES[result["observed_upstream_failure_stage"]]
+                and _is_sha(result.get("observed_upstream_failure_fingerprint"))
+                and result["blocked_source_ids"] == []
+            )
+        else:
+            valid_variant = False
+        payload = {key: deepcopy(item) for key, item in result.items() if key != "result_fingerprint"}
+        if not valid_variant or result["result_fingerprint"] != _public_fingerprint(
+            payload, BLOCK_CONTRACT, "result",
+        ):
+            _result_validation_error(result)
+    else:
+        _result_validation_error(result)
+    return ValidatedCMIAResult(state, _freeze(result))
 
 
 def _contract(stage: str, code: str, client_id: int, cause: BaseException | None = None):
@@ -498,6 +708,28 @@ def _complete(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> dict:
     return result
 
 
+def assess_with_target_in_snapshot(db: Session, request: Mapping[str, Any]) -> dict[str, Any]:
+    """Compose CMIA and return its exact same-snapshot RIT target without owning cleanup."""
+    request = _validated_request(request)
+    client_id = request["client_id"]
+    if not db.in_transaction():
+        _contract("snapshot_admission", "CMIA_REQUIRES_FRESH_TRANSACTION", client_id)
+    with db.no_autoflush:
+        evidence = rticb_service.assess_with_evidence_in_snapshot(db, request)
+        comparison = evidence.get("comparison") if isinstance(evidence, Mapping) else None
+        if not rticb_service.public_result_valid(
+            comparison, client_id,
+            request["expected_planning_calculation_input_fingerprint"],
+            request["expected_retirement_target_date"],
+        ):
+            _contract("classification", "CMIA_COMPARISON_RESULT_INVALID", client_id)
+        if comparison.get("result_state") == "block_no_result":
+            result = _blocked(request, comparison=comparison, collection=None, rtisa=None)
+        else:
+            result = _complete(request, evidence)
+    return {"cmia_result": result, "target": evidence.get("target")}
+
+
 def assess(db: Session, request: Mapping[str, Any]) -> dict:
     request = _validated_request(request)
     client_id = request["client_id"]
@@ -509,15 +741,8 @@ def assess(db: Session, request: Mapping[str, Any]) -> dict:
     try:
         owned_connection = db.connection()
         _begin_snapshot(db, owned_connection, client_id)
-        with db.no_autoflush:
-            evidence = rticb_service.assess_with_evidence_in_snapshot(db, request)
-            comparison = evidence.get("comparison") if isinstance(evidence, Mapping) else None
-            if not rticb_service.public_result_valid(comparison, client_id, request["expected_planning_calculation_input_fingerprint"], request["expected_retirement_target_date"]):
-                _contract("classification", "CMIA_COMPARISON_RESULT_INVALID", client_id)
-            if comparison.get("result_state") == "block_no_result":
-                result = _blocked(request, comparison=comparison, collection=None, rtisa=None)
-            else:
-                result = _complete(request, evidence)
+        composition = assess_with_target_in_snapshot(db, request)
+        result = composition["cmia_result"]
     except BaseException:
         transaction_owned = owned_connection is not None
         if not transaction_owned:

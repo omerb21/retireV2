@@ -175,6 +175,14 @@ APPROVED_COMPARABLE_MONTHLY_INCOME_PATHS = {
     "backend/tests/test_retirement_target_date_comparable_monthly_income_postgresql.py",
     "backend/tests/test_governance_baseline.py",
 }
+APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS = {
+    "backend/app/services/retirement_target_date_comparable_monthly_income_service.py",
+    "backend/app/services/retirement_monthly_income_gap_service.py",
+    "backend/tests/test_retirement_target_date_comparable_monthly_income.py",
+    "backend/tests/test_retirement_monthly_income_gap.py",
+    "backend/tests/test_retirement_monthly_income_gap_postgresql.py",
+    "backend/tests/test_governance_baseline.py",
+}
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
     "backend/app/schemas/fixation_contracts.py",
@@ -608,6 +616,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_RETIREMENT_TARGET_INCOME_ADMISSION_PATHS,
         *APPROVED_RETIREMENT_TARGET_INCOME_SOURCE_BASIS_PATHS,
         *APPROVED_COMPARABLE_MONTHLY_INCOME_PATHS,
+        *APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,

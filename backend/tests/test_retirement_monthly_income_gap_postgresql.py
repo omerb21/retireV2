@@ -4,11 +4,13 @@ from decimal import Decimal
 from threading import Event
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError, InvalidRequestError
 from sqlalchemy.orm import Session
 
 from app.models.retirement_facts import RecurringIncome
 from app.services import retirement_monthly_income_gap_service as subject
+from app.services import retirement_target_date_comparable_monthly_income_service as cmia
 from test_recovery_migration_postgresql import postgres_url
 from test_retirement_target_date_comparable_monthly_income_postgresql import (
     _request, pg_engine,
@@ -92,3 +94,75 @@ def test_rmiga_postgresql_fresh_session_rejection_preserves_caller_transaction(p
         assert caught.value.code == "RMIGA_REQUIRES_FRESH_TRANSACTION"
         assert db.get_transaction() is transaction and db.in_transaction()
         db.rollback()
+
+
+def test_rmiga_postgresql_technical_database_failure_rolls_back_and_propagates(
+    pg_engine, monkeypatch,
+):
+    request = _request(pg_engine)
+
+    def database_failure(db, _request_value):
+        db.execute(text("SELECT * FROM rmiga_deliberately_missing_relation"))
+
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", database_failure)
+    with Session(pg_engine) as db:
+        with pytest.raises(DBAPIError):
+            subject.assess(db, request)
+        assert not db.in_transaction()
+
+
+def test_rmiga_postgresql_partial_connection_acquisition_after_autobegin_is_cleaned(
+    pg_engine, monkeypatch,
+):
+    request = _request(pg_engine)
+    with Session(pg_engine) as db:
+        acquire = db.connection
+
+        def partial_acquisition():
+            acquire()
+            assert db.in_transaction()
+            raise OSError("partial acquisition")
+
+        monkeypatch.setattr(db, "connection", partial_acquisition)
+        with pytest.raises(OSError, match="partial acquisition"):
+            subject.assess(db, request)
+        assert not db.in_transaction()
+
+
+@pytest.mark.parametrize("original_failure", [False, True])
+def test_rmiga_postgresql_rollback_failure_wins_invalidates_and_poisons_session(
+    pg_engine, monkeypatch, original_failure,
+):
+    request = _request(pg_engine)
+    with Session(pg_engine) as db:
+        retained = []
+        invalidations = []
+        acquire = db.connection
+
+        def capture_connection():
+            connection = acquire()
+            if not retained:
+                retained.append(connection)
+                invalidate = connection.invalidate
+
+                def capture_invalidate(*args, **kwargs):
+                    invalidations.append(True)
+                    return invalidate(*args, **kwargs)
+
+                monkeypatch.setattr(connection, "invalidate", capture_invalidate)
+            return connection
+
+        monkeypatch.setattr(db, "connection", capture_connection)
+        monkeypatch.setattr(
+            db, "rollback", lambda: (_ for _ in ()).throw(OSError("rmiga rollback failed")),
+        )
+        if original_failure:
+            monkeypatch.setattr(
+                cmia, "assess_with_target_in_snapshot",
+                lambda *_: (_ for _ in ()).throw(RuntimeError("original technical failure")),
+            )
+        with pytest.raises(OSError, match="rmiga rollback failed"):
+            subject.assess(db, request)
+        assert retained and invalidations
+        with pytest.raises(InvalidRequestError, match="permanently unusable"):
+            db.scalar(text("SELECT 1"))

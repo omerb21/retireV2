@@ -1010,6 +1010,59 @@ def test_public_result_validator_accepts_and_freezes_complete_and_block(monkeypa
     assert validated_block.result["failure_stage"] == "comparability"
 
 
+@pytest.mark.parametrize(("numerator", "denominator"), [
+    ("1" + "0" * 5000, "3"),
+    ("1", "1" + "0" * 5000 + "3"),
+])
+def test_public_result_validator_accepts_arbitrary_precision_canonical_rationals(
+    monkeypatch, numerator, denominator,
+):
+    result, _ = _run(
+        monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),)),
+    )
+    rational = {
+        "numerator": numerator, "denominator": denominator,
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+    contribution = result["included_contributions"][0]
+    contribution["monthly_equivalent"] = deepcopy(rational)
+    contribution_payload = {
+        key: value for key, value in contribution.items() if key != "contribution_fingerprint"
+    }
+    contribution["contribution_fingerprint"] = _independent_fingerprint({
+        "contract": subject.CONTRIBUTION_CONTRACT, "contribution": contribution_payload,
+    })
+    result["total_monthly_equivalent"] = deepcopy(rational)
+    payload = {key: value for key, value in result.items() if key != "result_fingerprint"}
+    result["result_fingerprint"] = _independent_fingerprint({
+        "contract": subject.RESULT_CONTRACT, "result": payload,
+    })
+
+    validated = subject.validate_public_result(result)
+    assert validated.result["total_monthly_equivalent"] == rational
+
+
+def test_public_result_validator_reports_invalid_arbitrary_precision_evidence_deterministically(
+    monkeypatch,
+):
+    result, _ = _run(
+        monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),)),
+    )
+    result["total_monthly_equivalent"] = {
+        "numerator": "2" + "0" * 5000, "denominator": "2",
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+    payload = {key: value for key, value in result.items() if key != "result_fingerprint"}
+    result["result_fingerprint"] = _independent_fingerprint({
+        "contract": subject.RESULT_CONTRACT, "result": payload,
+    })
+    with pytest.raises(subject.CMIAResultValidationError) as caught:
+        subject.validate_public_result(result)
+    assert (caught.value.stage, caught.value.code, caught.value.client_id) == (
+        "result_validation", "CMIA_PUBLIC_RESULT_INVALID", 1,
+    )
+
+
 @pytest.mark.parametrize("mutation", ["count", "membership", "ordering", "total", "contribution"])
 def test_public_result_validator_rejects_coherently_rehashed_complete_tampering(
     monkeypatch, mutation,

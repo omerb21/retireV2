@@ -13,6 +13,7 @@ from app.services import retirement_monthly_income_gap_service as subject
 from app.services import retirement_target_date_comparable_monthly_income_service as cmia
 from app.services import retirement_target_date_income_comparison_basis_service as rticb
 from app.services import retirement_target_date_income_source_basis_service as crtisba
+from app.services import retirement_monthly_income_target_service as target_service
 from test_retirement_target_date_comparable_monthly_income import (
     _DB, _evidence, _professional_block_evidence, _recurring_source, _request,
 )
@@ -43,6 +44,47 @@ def _rehash_cmia_block(result):
     result["result_fingerprint"] = _independent_fingerprint({
         "contract": cmia.BLOCK_CONTRACT, "result": payload,
     })
+
+
+def _rehash_cmia_complete(result):
+    payload = {key: value for key, value in result.items() if key != "result_fingerprint"}
+    result["result_fingerprint"] = _independent_fingerprint({
+        "contract": cmia.RESULT_CONTRACT, "result": payload,
+    })
+
+
+def _composition(monkeypatch, evidence):
+    _install_evidence(monkeypatch, evidence)
+    return cmia.assess_with_target_in_snapshot(_DB(active=True), _request())
+
+
+def _upstream_block_evidence():
+    evidence = _evidence()
+    evidence["comparison"] = rticb._failure(
+        _request(), "target_authority", "RTICB_TARGET_AUTHORITY_NOT_READY",
+        target=evidence["target"],
+    )
+    return evidence
+
+
+def _chunk_int(value):
+    result = 0
+    for offset in range(0, len(value), 7):
+        chunk = value[offset:offset + 7]
+        result = result * (10 ** len(chunk)) + int(chunk)
+    return result
+
+
+def _chunk_ascii(value):
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    pieces = []
+    while value:
+        value, piece = divmod(value, 10_000_000)
+        pieces.append(piece)
+    return sign + str(pieces.pop()) + "".join(f"{piece:07d}" for piece in reversed(pieces))
 
 
 @pytest.mark.parametrize(("amount", "gap", "state"), [
@@ -98,6 +140,120 @@ def test_valid_request_bound_block_short_circuits_target_and_arithmetic(monkeypa
         "target_monthly_amount", "comparable_monthly_income", "monthly_gap", "gap_state",
     })
     assert db.rollback_count == 1
+
+
+@pytest.mark.parametrize("evidence_factory", [_professional_block_evidence, _upstream_block_evidence])
+def test_both_accepted_cmia_block_variants_short_circuit(monkeypatch, evidence_factory):
+    result, _ = _run(monkeypatch, evidence_factory())
+    assert result["result_state"] == "BLOCK_NO_GAP"
+    assert result["failure_detail_code"] == "RMIGA_COMPARABLE_INCOME_BLOCKED"
+    assert "monthly_gap" not in result
+
+
+@pytest.mark.parametrize(
+    "evidence,excluded",
+    [(_evidence(), []), (_evidence(excluded=("income:9",)), ["income:9"])],
+)
+def test_zero_comparable_income_from_empty_or_all_excluded_sources(monkeypatch, evidence, excluded):
+    result, _ = _run(monkeypatch, evidence)
+    assert result["comparable_monthly_income"] == {
+        "numerator": "0", "denominator": "1", "currency": "ILS", "frequency": "MONTHLY",
+    }
+    assert result["monthly_gap"]["numerator"] == "10000"
+    assert result["included_contributions"] == []
+    assert result["excluded_source_ids"] == excluded
+
+
+def test_six_decimal_target_and_mixed_denominators_are_exact(monkeypatch):
+    evidence = _evidence(recurring=(
+        _recurring_source(1, "1.00", "quarterly"),
+        _recurring_source(2, "1.00", "annual"),
+    ))
+    target = evidence["target"]
+    target["target"]["monthly_amount"] = "10000.123456"
+    target["target_semantic_fingerprint"] = _independent_fingerprint({
+        "contract": target_service.SEMANTIC_CONTRACT, **target["target"],
+    })
+    target_payload = {key: value for key, value in target.items() if key != "target_result_fingerprint"}
+    target["target_result_fingerprint"] = _independent_fingerprint({
+        "contract": target_service.RESULT_CONTRACT, **target_payload,
+    })
+    evidence["comparison"] = rticb._result(
+        _request(), target, evidence["crtisba_collection"],
+    )
+    result, _ = _run(monkeypatch, evidence)
+    assert result["target_monthly_amount"] == {
+        "numerator": "156251929", "denominator": "15625",
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+    assert result["comparable_monthly_income"]["numerator"] == "5"
+    assert result["comparable_monthly_income"]["denominator"] == "12"
+    assert result["monthly_gap"] == {
+        "numerator": "1874945023", "denominator": "187500",
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+
+
+def test_rmiga_accepts_contract_valid_arbitrary_precision_cmia_amount(monkeypatch):
+    composition = _composition(
+        monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),)),
+    )
+    denominator = "1" + "0" * 5000 + "3"
+    rational = {
+        "numerator": "1", "denominator": denominator,
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
+    contribution = composition["cmia_result"]["included_contributions"][0]
+    contribution["monthly_equivalent"] = deepcopy(rational)
+    contribution_payload = {
+        key: value for key, value in contribution.items() if key != "contribution_fingerprint"
+    }
+    contribution["contribution_fingerprint"] = _independent_fingerprint({
+        "contract": cmia.CONTRIBUTION_CONTRACT, "contribution": contribution_payload,
+    })
+    composition["cmia_result"]["total_monthly_equivalent"] = deepcopy(rational)
+    _rehash_cmia_complete(composition["cmia_result"])
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", lambda *_: deepcopy(composition))
+
+    result = subject.assess(_DB(), _request())
+    expected_denominator = _chunk_int(denominator)
+    expected_numerator = 10_000 * expected_denominator - 1
+    assert result["monthly_gap"]["numerator"] == _chunk_ascii(expected_numerator)
+    assert result["monthly_gap"]["denominator"] == denominator
+    assert result["gap_state"] == "SHORTFALL"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "client_id",
+        "supplied_planning_calculation_input_fingerprint",
+        "supplied_retirement_target_date",
+    ],
+)
+def test_each_blocked_request_identity_field_has_positive_binding(monkeypatch, field):
+    result, _ = _run(monkeypatch, _professional_block_evidence())
+    expected = {
+        "client_id": 1,
+        "supplied_planning_calculation_input_fingerprint": _request()[
+            "expected_planning_calculation_input_fingerprint"
+        ],
+        "supplied_retirement_target_date": _request()["expected_retirement_target_date"],
+    }
+    assert result[field] == expected[field]
+
+
+def test_rmiga_fixed_complete_and_block_fingerprint_goldens(monkeypatch):
+    complete, _ = _run(
+        monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),)),
+    )
+    blocked, _ = _run(monkeypatch, _professional_block_evidence())
+    assert complete["result_fingerprint"] == (
+        "ea2124d47ee2041e0c4981a3fa8ff09d47f401fe7ecd27f3c605dd6cbc92b8a6"
+    )
+    assert blocked["result_fingerprint"] == (
+        "8a3fa677e9fd24253d6f9f1ac22f7e83c08e246981beef6fe7562b2e202c1e55"
+    )
 
 
 @pytest.mark.parametrize(("field", "replacement"), [
@@ -230,6 +386,172 @@ def test_validator_and_result_mapping_mutations_kill_ordinary_oracle_and_restore
     with pytest.raises(AssertionError):
         ordinary_oracle()
     monkeypatch.setattr(subject, "RESULT_CONTRACT", original_contract)
+    ordinary_oracle()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("client_id", 2),
+    ("supplied_planning_calculation_input_fingerprint", "9" * 64),
+    ("supplied_retirement_target_date", "2031-01-01"),
+])
+def test_each_blocked_identity_guard_mutation_is_killed_and_restored(
+    monkeypatch, field, replacement,
+):
+    composition = _composition(monkeypatch, _professional_block_evidence())
+    composition["cmia_result"][field] = replacement
+    _rehash_cmia_block(composition["cmia_result"])
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", lambda *_: deepcopy(composition))
+
+    def unchanged_oracle():
+        try:
+            subject.assess(_DB(), _request())
+        except subject.RMIGAContractError as error:
+            return error.code == "RMIGA_CMIA_RESULT_INVALID"
+        return False
+
+    assert unchanged_oracle()
+    original = subject._blocked_identity_valid
+    reached = []
+    monkeypatch.setattr(subject, "_blocked_identity_valid", lambda *_: reached.append(True) or True)
+    assert not unchanged_oracle()
+    assert reached
+    monkeypatch.setattr(subject, "_blocked_identity_valid", original)
+    assert unchanged_oracle()
+
+
+@pytest.mark.parametrize(("kind", "expected_code"), [
+    ("identity", "RMIGA_CROSS_AUTHORITY_IDENTITY_MISMATCH"),
+    ("basis", "RMIGA_BASIS_IDENTITY_MISMATCH"),
+])
+def test_complete_identity_and_basis_guard_mutations_are_killed_and_restored(
+    monkeypatch, kind, expected_code,
+):
+    composition = _composition(
+        monkeypatch, _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),)),
+    )
+    if kind == "identity":
+        composition["cmia_result"]["target_result_fingerprint"] = "9" * 64
+        helper = "_complete_identity_valid"
+    else:
+        composition["cmia_result"]["target_income_basis"] = "NET"
+        helper = "_basis_valid"
+    _rehash_cmia_complete(composition["cmia_result"])
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", lambda *_: deepcopy(composition))
+
+    def unchanged_oracle():
+        try:
+            subject.assess(_DB(), _request())
+        except subject.RMIGAContractError as error:
+            return error.code == expected_code
+        return False
+
+    assert unchanged_oracle()
+    original = getattr(subject, helper)
+    reached = []
+    monkeypatch.setattr(subject, helper, lambda *_: reached.append(True) or True)
+    assert not unchanged_oracle()
+    assert reached
+    monkeypatch.setattr(subject, helper, original)
+    assert unchanged_oracle()
+
+
+@pytest.mark.parametrize("helper", ["_subtract", "_gap_state", "_source_projection"])
+def test_arithmetic_sign_and_source_projection_mutations_are_killed_and_restored(
+    monkeypatch, helper,
+):
+    evidence = _evidence(recurring=(
+        _recurring_source(1, "1200.00", "monthly"),
+        _recurring_source(2, "900.00", "quarterly"),
+    ), excluded=("income:9",))
+
+    def ordinary_oracle():
+        result, _ = _run(monkeypatch, evidence)
+        assert result["monthly_gap"]["numerator"] == "8500"
+        assert result["gap_state"] == "SHORTFALL"
+        assert [item["source_id"] for item in result["included_contributions"]] == [
+            "income:1", "income:2",
+        ]
+        assert result["excluded_source_ids"] == ["income:9"]
+        assert result["source_count"] == 2
+
+    ordinary_oracle()
+    original = getattr(subject, helper)
+    reached = []
+    if helper == "_subtract":
+        mutant = lambda left, right: reached.append(True) or (left + right)
+    elif helper == "_gap_state":
+        mutant = lambda gap: reached.append(True) or "SURPLUS"
+    else:
+        mutant = lambda value: reached.append(True) or ([], [], 0)
+    monkeypatch.setattr(subject, helper, mutant)
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    assert reached
+    monkeypatch.setattr(subject, helper, original)
+    ordinary_oracle()
+
+
+@pytest.mark.parametrize("mutation", ["second_read", "write", "flush", "commit"])
+def test_same_snapshot_and_forbidden_database_action_mutations_are_killed_and_restored(
+    monkeypatch, mutation,
+):
+    evidence = _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),))
+    _install_evidence(monkeypatch, evidence)
+    original = cmia.assess_with_target_in_snapshot
+    calls = []
+
+    def counted(db, request):
+        calls.append("read")
+        return original(db, request)
+
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", counted)
+
+    def ordinary_oracle():
+        calls.clear()
+        db = _DB()
+        db.add = lambda _value: (_ for _ in ()).throw(AssertionError("RMIGA must not write"))
+        result = subject.assess(db, _request())
+        assert result["monthly_gap"]["numerator"] == "8800"
+        assert calls == ["read"]
+
+    ordinary_oracle()
+
+    def mutant(db, request):
+        if mutation == "second_read":
+            counted(db, request)
+        elif mutation == "write":
+            db.add(SimpleNamespace())
+        elif mutation == "flush":
+            db.flush()
+        else:
+            db.commit()
+        return counted(db, request)
+
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", mutant)
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", counted)
+    ordinary_oracle()
+
+
+def test_rollback_mapping_mutation_is_killed_and_restored(monkeypatch):
+    evidence = _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),))
+
+    def ordinary_oracle():
+        result, db = _run(monkeypatch, evidence)
+        assert result["monthly_gap"]["numerator"] == "8800"
+        assert db.rollback_count == 1 and not db.in_transaction()
+
+    ordinary_oracle()
+    original = subject._rollback_owned_transaction
+    reached = []
+    monkeypatch.setattr(
+        subject, "_rollback_owned_transaction", lambda *_: reached.append(True),
+    )
+    with pytest.raises(AssertionError):
+        ordinary_oracle()
+    assert reached
+    monkeypatch.setattr(subject, "_rollback_owned_transaction", original)
     ordinary_oracle()
 
 

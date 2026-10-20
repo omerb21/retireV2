@@ -5,6 +5,7 @@ from copy import deepcopy
 from fractions import Fraction
 import hashlib
 import json
+from math import gcd
 import re
 from typing import Any, Mapping
 
@@ -137,6 +138,28 @@ def _thaw(value: Any) -> Any:
     return deepcopy(value)
 
 
+def _ascii_digits_to_int(value: str) -> int:
+    chunk_size = 9
+    first_size = len(value) % chunk_size or chunk_size
+    number = int(value[:first_size])
+    for offset in range(first_size, len(value), chunk_size):
+        number = number * 1_000_000_000 + int(value[offset:offset + chunk_size])
+    return number
+
+
+def _int_to_ascii(value: int) -> str:
+    if value == 0:
+        return "0"
+    negative = value < 0
+    remaining = -value if negative else value
+    chunks: list[int] = []
+    while remaining:
+        remaining, chunk = divmod(remaining, 1_000_000_000)
+        chunks.append(chunk)
+    rendered = str(chunks.pop()) + "".join(f"{chunk:09d}" for chunk in reversed(chunks))
+    return "-" + rendered if negative else rendered
+
+
 def _begin_snapshot(db: Session, connection: Any, client_id: int) -> None:
     dialect = connection.dialect.name
     if dialect == "postgresql":
@@ -179,7 +202,9 @@ def _target_fraction(value: Any, client_id: int) -> Fraction:
         _contract("amount_authority", "RMIGA_TARGET_AMOUNT_INVALID", client_id)
     whole, dot, fraction = value.partition(".")
     scale = 10 ** len(fraction) if dot else 1
-    coefficient = int(whole) * scale + (int(fraction) if fraction else 0)
+    coefficient = _ascii_digits_to_int(whole) * scale + (
+        _ascii_digits_to_int(fraction) if fraction else 0
+    )
     if coefficient <= 0:
         _contract("amount_authority", "RMIGA_TARGET_AMOUNT_INVALID", client_id)
     return Fraction(coefficient, scale)
@@ -199,29 +224,36 @@ def _cmia_fraction(value: Any, client_id: int) -> Fraction:
             or value["currency"] != "ILS" or value["frequency"] != "MONTHLY"
         ):
             raise ValueError("noncanonical rational")
-        rational = Fraction(int(numerator), int(denominator))
-        if str(rational.numerator) != numerator or str(rational.denominator) != denominator:
+        numerator_value = _ascii_digits_to_int(numerator)
+        denominator_value = _ascii_digits_to_int(denominator)
+        if gcd(numerator_value, denominator_value) != 1:
             raise ValueError("unreduced rational")
-        return rational
+        return Fraction(numerator_value, denominator_value)
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         _contract("amount_authority", "RMIGA_COMPARABLE_AMOUNT_INVALID", client_id, exc)
 
 
 def _rational_payload(value: Fraction) -> dict[str, str]:
     return {
-        "numerator": str(value.numerator), "denominator": str(value.denominator),
+        "numerator": _int_to_ascii(value.numerator),
+        "denominator": _int_to_ascii(value.denominator),
         "currency": "ILS", "frequency": "MONTHLY",
     }
 
 
-def _block_result(request: Mapping[str, Any], cmia: Mapping[str, Any]) -> dict[str, Any]:
-    client_id = request["client_id"]
-    if not (
-        cmia["client_id"] == client_id
+def _blocked_identity_valid(request: Mapping[str, Any], cmia: Mapping[str, Any]) -> bool:
+    return (
+        cmia["client_id"] == request["client_id"]
         and cmia["supplied_planning_calculation_input_fingerprint"]
         == request["expected_planning_calculation_input_fingerprint"]
-        and cmia["supplied_retirement_target_date"] == request["expected_retirement_target_date"]
-    ):
+        and cmia["supplied_retirement_target_date"]
+        == request["expected_retirement_target_date"]
+    )
+
+
+def _block_result(request: Mapping[str, Any], cmia: Mapping[str, Any]) -> dict[str, Any]:
+    client_id = request["client_id"]
+    if not _blocked_identity_valid(request, cmia):
         _contract("cmia_authority", "RMIGA_CMIA_RESULT_INVALID", client_id)
     result = {
         "schema_version": BLOCK_SCHEMA, "result_state": "BLOCK_NO_GAP",
@@ -241,6 +273,50 @@ def _block_result(request: Mapping[str, Any], cmia: Mapping[str, Any]) -> dict[s
         {"contract": BLOCK_CONTRACT, "result": deepcopy(result)}, client_id,
     )
     return result
+
+
+def _complete_identity_valid(
+    request: Mapping[str, Any], cmia: Mapping[str, Any], target: Mapping[str, Any],
+    target_value: Mapping[str, Any],
+) -> bool:
+    client_id = request["client_id"]
+    planning = request["expected_planning_calculation_input_fingerprint"]
+    target_date = request["expected_retirement_target_date"]
+    return (
+        target["client_id"] == target_value["client_id"] == cmia["client_id"] == client_id
+        and target["planning_calculation_input_fingerprint"]
+        == target_value["planning_calculation_input_fingerprint"]
+        == cmia["planning_calculation_input_fingerprint"] == planning
+        and target["retirement_target_date"] == target_value["retirement_target_date"]
+        == cmia["retirement_target_date"] == target_date
+        and target["target_result_fingerprint"] == cmia["target_result_fingerprint"]
+        and target["target_semantic_fingerprint"] == cmia["target_semantic_fingerprint"]
+    )
+
+
+def _basis_valid(cmia: Mapping[str, Any], target_value: Mapping[str, Any]) -> bool:
+    return (
+        target_value["currency"] == cmia["total_monthly_equivalent"]["currency"] == "ILS"
+        and target_value["income_basis"] == cmia["target_income_basis"]
+        and target_value["price_basis"] == cmia["target_price_basis"]
+        and target_value["price_reference_date"] == cmia["target_price_reference_date"]
+    )
+
+
+def _subtract(target_amount: Fraction, comparable: Fraction) -> Fraction:
+    return target_amount - comparable
+
+
+def _gap_state(gap: Fraction) -> str:
+    return "SHORTFALL" if gap > 0 else "SURPLUS" if gap < 0 else "EQUAL"
+
+
+def _source_projection(cmia: Mapping[str, Any]) -> tuple[Any, Any, Any]:
+    return (
+        _thaw(cmia["included_contributions"]),
+        _thaw(cmia["excluded_source_ids"]),
+        cmia["source_count"],
+    )
 
 
 def _complete_result(
@@ -266,30 +342,17 @@ def _complete_result(
     target_value = target["target"]
     planning = request["expected_planning_calculation_input_fingerprint"]
     target_date = request["expected_retirement_target_date"]
-    if not (
-        target["client_id"] == target_value["client_id"] == cmia["client_id"] == client_id
-        and target["planning_calculation_input_fingerprint"]
-        == target_value["planning_calculation_input_fingerprint"]
-        == cmia["planning_calculation_input_fingerprint"] == planning
-        and target["retirement_target_date"] == target_value["retirement_target_date"]
-        == cmia["retirement_target_date"] == target_date
-        and target["target_result_fingerprint"] == cmia["target_result_fingerprint"]
-        and target["target_semantic_fingerprint"] == cmia["target_semantic_fingerprint"]
-    ):
+    if not _complete_identity_valid(request, cmia, target, target_value):
         _contract("cross_authority_identity", "RMIGA_CROSS_AUTHORITY_IDENTITY_MISMATCH", client_id)
-    if not (
-        target_value["currency"] == cmia["total_monthly_equivalent"]["currency"] == "ILS"
-        and target_value["income_basis"] == cmia["target_income_basis"]
-        and target_value["price_basis"] == cmia["target_price_basis"]
-        and target_value["price_reference_date"] == cmia["target_price_reference_date"]
-    ):
+    if not _basis_valid(cmia, target_value):
         _contract("basis_compatibility", "RMIGA_BASIS_IDENTITY_MISMATCH", client_id)
     target_amount = _target_fraction(target_value["monthly_amount"], client_id)
     comparable = _cmia_fraction(cmia["total_monthly_equivalent"], client_id)
     try:
-        gap = target_amount - comparable
+        gap = _subtract(target_amount, comparable)
     except ArithmeticError as exc:
         raise RMIGANumericError(client_id, exc) from exc
+    included_contributions, excluded_source_ids, source_count = _source_projection(cmia)
     result = {
         "schema_version": SUCCESS_SCHEMA, "result_state": "COMPLETE", "client_id": client_id,
         "planning_calculation_input_fingerprint": planning,
@@ -303,10 +366,10 @@ def _complete_result(
         "target_monthly_amount": _rational_payload(target_amount),
         "comparable_monthly_income": _thaw(cmia["total_monthly_equivalent"]),
         "monthly_gap": _rational_payload(gap),
-        "gap_state": "SHORTFALL" if gap > 0 else "SURPLUS" if gap < 0 else "EQUAL",
-        "included_contributions": _thaw(cmia["included_contributions"]),
-        "excluded_source_ids": _thaw(cmia["excluded_source_ids"]),
-        "source_count": cmia["source_count"],
+        "gap_state": _gap_state(gap),
+        "included_contributions": included_contributions,
+        "excluded_source_ids": excluded_source_ids,
+        "source_count": source_count,
     }
     result["result_fingerprint"] = _fingerprint(
         {"contract": RESULT_CONTRACT, "result": deepcopy(result)}, client_id,

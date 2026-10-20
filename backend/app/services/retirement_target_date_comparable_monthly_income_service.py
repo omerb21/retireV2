@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import hashlib
 import json
+from math import gcd
 import re
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -194,6 +195,16 @@ def _public_fingerprint(value: Any, contract: str, member: str) -> str | None:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _ascii_digits_to_int(value: str) -> int:
+    """Convert validated ASCII digits without Python's whole-string digit ceiling."""
+    chunk_size = 9
+    first_size = len(value) % chunk_size or chunk_size
+    number = int(value[:first_size])
+    for offset in range(first_size, len(value), chunk_size):
+        number = number * 1_000_000_000 + int(value[offset:offset + chunk_size])
+    return number
+
+
 def _canonical_rational(value: Any) -> Fraction | None:
     if not isinstance(value, dict) or set(value) != RATIONAL_FIELDS:
         return None
@@ -205,10 +216,11 @@ def _canonical_rational(value: Any) -> Fraction | None:
         or value.get("currency") != "ILS" or value.get("frequency") != "MONTHLY"
     ):
         return None
-    fraction = Fraction(int(numerator), int(denominator))
-    if str(fraction.numerator) != numerator or str(fraction.denominator) != denominator:
+    numerator_value = _ascii_digits_to_int(numerator)
+    denominator_value = _ascii_digits_to_int(denominator)
+    if gcd(numerator_value, denominator_value) != 1:
         return None
-    return fraction
+    return Fraction(numerator_value, denominator_value)
 
 
 def _sorted_unique_strings(value: Any) -> bool:

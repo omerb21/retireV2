@@ -639,6 +639,52 @@ def test_connection_acquisition_defines_transaction_ownership(monkeypatch):
     assert acquired.rollback_count == 1
 
 
+def test_real_session_partial_connection_acquisition_is_rolled_back(monkeypatch):
+    def fail_connection_creation():
+        raise OSError("engine connection creation")
+
+    db = Session(create_engine("sqlite://", creator=fail_connection_creation))
+    rollback_count = 0
+    original_rollback = db.rollback
+
+    def observed_rollback():
+        nonlocal rollback_count
+        rollback_count += 1
+        return original_rollback()
+
+    monkeypatch.setattr(db, "rollback", observed_rollback)
+    with pytest.raises(OSError, match="engine connection creation"):
+        subject.assess(db, _request())
+    assert rollback_count == 1
+    assert not db.in_transaction()
+
+
+def test_complete_result_then_rollback_failure_wins_and_poisons_real_session(monkeypatch):
+    evidence = _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),))
+    completed = []
+    original_complete = subject._complete
+
+    def observed_complete(*args, **kwargs):
+        result = original_complete(*args, **kwargs)
+        completed.append(result)
+        return result
+
+    monkeypatch.setattr(crtisba, "_planning_envelope_valid", lambda *_: True)
+    monkeypatch.setattr(crtisba.rtisa_service, "_portfolio_is_valid", lambda *_: True)
+    monkeypatch.setattr(crtisba, "_rtisa_envelope_valid", lambda *_: True)
+    monkeypatch.setattr(rticb, "assess_with_evidence_in_snapshot", lambda *_: deepcopy(evidence))
+    monkeypatch.setattr(subject, "_complete", observed_complete)
+    db = Session(create_engine("sqlite://"))
+    monkeypatch.setattr(db, "rollback", lambda: (_ for _ in ()).throw(OSError("complete cleanup")))
+
+    with pytest.raises(OSError, match="complete cleanup"):
+        subject.assess(db, _request())
+    assert len(completed) == 1
+    assert completed[0]["result_state"] == "COMPLETE"
+    with pytest.raises(InvalidRequestError, match="permanently unusable"):
+        db.scalar(text("SELECT 1"))
+
+
 def test_rollback_failure_invalidates_retained_connection_without_lookup(monkeypatch):
     class RetainedConnectionDB(_DB):
         def __init__(self):

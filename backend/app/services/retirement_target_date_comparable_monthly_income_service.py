@@ -159,14 +159,15 @@ def _poison_session(db: Session) -> None:
     db.invalidate()
 
 
-def _rollback_owned_transaction(db: Session, connection: Any) -> None:
+def _rollback_owned_transaction(db: Session, connection: Any | None) -> None:
     try:
         db.rollback()
     except BaseException:
-        try:
-            connection.invalidate()
-        except BaseException:
-            pass
+        if connection is not None:
+            try:
+                connection.invalidate()
+            except BaseException:
+                pass
         try:
             _poison_session(db)
         except BaseException:
@@ -518,7 +519,13 @@ def assess(db: Session, request: Mapping[str, Any]) -> dict:
             else:
                 result = _complete(request, evidence)
     except BaseException:
-        if owned_connection is not None:
+        transaction_owned = owned_connection is not None
+        if not transaction_owned:
+            try:
+                transaction_owned = db.in_transaction()
+            except BaseException:
+                transaction_owned = False
+        if transaction_owned:
             _rollback_owned_transaction(db, owned_connection)
         raise
     _rollback_owned_transaction(db, owned_connection)

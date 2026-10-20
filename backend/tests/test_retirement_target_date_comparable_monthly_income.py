@@ -1,6 +1,8 @@
 """Ordinary, negative and mutation-sensitive CMIA contract evidence."""
 from contextlib import nullcontext
 from copy import deepcopy
+import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +20,13 @@ from test_retirement_target_date_income_comparison_basis import (
 
 def _sha(character):
     return character * 64
+
+
+def _independent_fingerprint(value):
+    raw = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 class _Connection:
@@ -296,6 +305,28 @@ def test_valid_not_ready_missing_amount_is_professional_block(monkeypatch):
     assert "total_monthly_equivalent" not in result
 
 
+def test_blocked_result_has_independently_fixed_fingerprint_golden():
+    comparison = {
+        "result_state": "complete",
+        "comparison_result_fingerprint": _sha("2"),
+        "source_comparisons": [
+            {"source_id": "income:2", "comparison_state": "BASIS_UNRESOLVED"},
+            {"source_id": "income:1", "comparison_state": "NORMALIZATION_REQUIRED"},
+        ],
+    }
+    result = subject._blocked(
+        _request(), comparison=comparison,
+        collection={"result_fingerprint": _sha("3")},
+        rtisa={"admission_result_fingerprint": _sha("4")},
+    )
+    fingerprint = result.pop("result_fingerprint")
+    assert fingerprint == _independent_fingerprint({
+        "contract": subject.BLOCK_CONTRACT, "result": result,
+    })
+    assert fingerprint == "45a8c28046a7b4ac44d721e43efe90548d89898e0b9b035bdf60685c6f005329"
+    assert result["blocked_source_ids"] == ["income:1", "income:2"]
+
+
 def test_valid_upstream_block_is_preserved_and_corrupt_block_is_rejected(monkeypatch):
     target = _target()
     comparison = rticb._failure(
@@ -338,6 +369,85 @@ def test_source_universe_and_amount_authority_tampering_fail_closed(monkeypatch,
     with pytest.raises(subject.CMIAContractError) as caught:
         _run(monkeypatch, evidence)
     assert caught.value.stage in {"source_universe", "amount_authority"}
+
+
+@pytest.mark.parametrize("mutation,stage", [
+    ("admission", "source_universe"),
+    ("rtisa_result_fingerprint", "crtisba_authority"),
+])
+def test_admission_and_crtisba_rtisa_binding_mutation_killed_and_restored(monkeypatch, mutation, stage):
+    evidence = _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),))
+
+    def ordinary_oracle():
+        result, _ = _run(monkeypatch, evidence)
+        assert result["result_state"] == "COMPLETE"
+
+    ordinary_oracle()
+    if mutation == "admission":
+        original = evidence["rtisa"]["source_entries"][0]["admission_state"]
+        evidence["rtisa"]["source_entries"][0]["admission_state"] = "EXCLUDED"
+    else:
+        original = evidence["rtisa"]["admission_result_fingerprint"]
+        evidence["rtisa"]["admission_result_fingerprint"] = _sha("0")
+    with pytest.raises(subject.CMIAContractError) as caught:
+        ordinary_oracle()
+    assert caught.value.stage == stage
+    if mutation == "admission":
+        evidence["rtisa"]["source_entries"][0]["admission_state"] = original
+    else:
+        evidence["rtisa"]["admission_result_fingerprint"] = original
+    ordinary_oracle()
+
+
+@pytest.mark.parametrize("mutation", ["count", "membership", "ordering", "amount"])
+def test_complete_result_fingerprint_covers_contribution_integrity(monkeypatch, mutation):
+    result, _ = _run(monkeypatch, _evidence(recurring=(
+        _recurring_source(1, "1200.00", "monthly"),
+        _recurring_source(2, "900.00", "quarterly"),
+    )))
+    stored = result["result_fingerprint"]
+
+    def observed_fingerprint(value):
+        payload = {key: item for key, item in value.items() if key != "result_fingerprint"}
+        return _independent_fingerprint({"contract": subject.RESULT_CONTRACT, "result": payload})
+
+    assert observed_fingerprint(result) == stored
+    tampered = deepcopy(result)
+    if mutation == "count":
+        tampered["source_count"] += 1
+    elif mutation == "membership":
+        tampered["included_contributions"].pop()
+    elif mutation == "ordering":
+        tampered["included_contributions"].reverse()
+    else:
+        tampered["included_contributions"][0]["monthly_equivalent"]["numerator"] = "1201"
+    assert observed_fingerprint(tampered) != stored
+    assert observed_fingerprint(result) == stored
+
+
+def test_rounded_pension_substitution_rejected_against_authoritative_producer_amount(monkeypatch):
+    evidence = _evidence(pension=(_pension_source(),))
+
+    def ordinary_oracle():
+        result, _ = _run(monkeypatch, evidence)
+        assert result["included_contributions"][0]["monthly_equivalent"]["numerator"] == "5000123456789"
+
+    ordinary_oracle()
+    authoritative = evidence["portfolio"]["source_results"][0]["unquantized_target_monthly_amount"]
+    assert authoritative == "5000.123456789"
+    original_rtisa = deepcopy(evidence["rtisa"]["source_entries"][0]["monthly_equivalent"])
+    original_context = deepcopy(evidence["amount_contexts"]["manual:1"]["monthly_equivalent"])
+    rounded = {"numerator": "5000.12", "denominator": "1"}
+    evidence["rtisa"]["source_entries"][0]["monthly_equivalent"] = deepcopy(rounded)
+    evidence["amount_contexts"]["manual:1"]["monthly_equivalent"] = deepcopy(rounded)
+    with pytest.raises(subject.CMIAContractError) as caught:
+        ordinary_oracle()
+    assert (caught.value.stage, caught.value.code) == (
+        "amount_authority", "CMIA_RTISA_AMOUNT_INVALID",
+    )
+    evidence["rtisa"]["source_entries"][0]["monthly_equivalent"] = original_rtisa
+    evidence["amount_contexts"]["manual:1"]["monthly_equivalent"] = original_context
+    ordinary_oracle()
 
 
 @pytest.mark.parametrize("numerator,denominator", [

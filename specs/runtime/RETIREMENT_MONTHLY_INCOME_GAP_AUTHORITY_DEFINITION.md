@@ -100,10 +100,65 @@ open another Session, or reconstruct a target from CMIA fields. Refactoring
 CMIA to expose this bounded evidence must preserve public CMIA output bytes,
 field inventory, fingerprints, exceptions and transaction behavior.
 
-RMIGA verifies the public CMIA result using the accepted CMIA validator and
+RMIGA verifies the public CMIA result using the CMIA-owned validator defined
+for the future implementation by Section 5.1 and
 verifies the RIT result using the accepted RIT closed schema and fingerprint
 contracts. A hash match alone never substitutes for complete schema and
 semantic validation.
+
+### 5.1 CMIA-owned pure result validator
+
+The future authorized implementation surface must add this bounded CMIA-owned
+internal interface alongside the evidence-returning composition:
+
+`validate_public_result(result: Mapping[str, Any]) -> ValidatedCMIAResult`
+
+`ValidatedCMIAResult` is a private immutable tagged value whose tag is exactly
+`COMPLETE` or `BLOCK_NO_TOTAL` and whose only other member, `result`, is a
+recursively immutable exact deep copy of the validated public CMIA result. The
+function's sole input is the candidate public result. It is pure: it performs
+no SQL, Session access, producer call, clock read, mutation, retry or RMIGA
+request comparison. For the same input it returns the same value or raises the
+same deterministic `CMIAResultValidationError(ValueError)`. That exception has
+exact immutable fields `stage="result_validation"`,
+`code="CMIA_PUBLIC_RESULT_INVALID"`, and `client_id`, which is the strict
+positive non-bool result client ID only when that field itself is valid and is
+otherwise null. The exception string contains no monetary value or unverified
+hash. The validator never repairs, filters, normalizes, reorders, rehashes or
+partially accepts its input.
+
+For `COMPLETE`, validation requires the exact accepted CMIA schema version,
+closed key sets, types and nullability; canonical client/planning/date/target
+and basis fields; canonical rational amounts; strictly source-ID-sorted unique
+contributions; canonical contribution key sets and contribution fingerprints;
+sorted unique excluded IDs disjoint from included IDs; `source_count` equal to
+the contribution count; and a `total_monthly_equivalent` equal to the exact
+reduced rational sum of every and only included contribution. It independently
+reconstructs and verifies the accepted CMIA complete-result fingerprint.
+
+For `BLOCK_NO_TOTAL`, validation requires the exact accepted CMIA block schema
+version, closed key set, types and nullability; canonical client, supplied
+planning fingerprint and supplied retirement date; exactly one of the two
+accepted block variants and its exact stage/code/observation rules; canonical
+observed fingerprints or null as specified by CMIA; sorted unique blocked IDs;
+absence of any total, subtotal or contribution payload; and independent
+reconstruction of the accepted CMIA block-result fingerprint.
+
+Matching a recomputed outer hash is never sufficient. The validator rejects a
+malformed value and any coherently rehashed value that violates a closed key,
+type, nullability, canonical form, allowed block variant, contribution
+fingerprint, count, membership, ordering, disjointness, exact-total or observed
+field invariant. It returns no boolean and no partially trusted payload. Every
+such failure raises exactly the `CMIAResultValidationError` above; RMIGA neither
+defines, catches nor translates that exception into a block. This new private
+validation exception and interface do not alter CMIA's accepted public result
+or existing producer exception contracts.
+
+This validator is owned by CMIA. Its extraction must reuse the accepted CMIA
+contracts and preserve all public CMIA result bytes, fingerprints, professional
+semantics and failure behavior. RMIGA may consume only the returned immutable
+validated value. CMIA validation alone is not authorization for the RMIGA
+request: Section 10 defines the additional request-identity binding.
 
 ## 6. Transaction ownership and cleanup
 
@@ -134,7 +189,8 @@ Apply the first applicable stage in this exact order:
 
 1. `request_validation` — closed request and canonical values.
 2. `snapshot_admission` — pristine Session, supported dialect, snapshot setup.
-3. `cmia_authority` — exact accepted CMIA success/block schema and fingerprint.
+3. `cmia_authority` — call the pure CMIA-owned validator; for a validated block,
+   bind its three supplied request-identity fields before accepting the block.
 4. `target_authority` — exact accepted RIT schema, result fingerprint,
    confirmation and readiness.
 5. `cross_authority_identity` — client, planning identity, retirement date and
@@ -147,11 +203,14 @@ Apply the first applicable stage in this exact order:
 9. `result_identity` — closed result schema, canonical serialization and hash.
 10. transaction cleanup — rollback failure overrides every prior outcome.
 
-A valid CMIA `BLOCK_NO_TOTAL` is handled at stage 3 and returns
-`BLOCK_NO_GAP`; stages 4 through 9 are not evaluated from rejected or absent
-numeric evidence. A valid CMIA `COMPLETE` combined with anything other than the
-same valid current RIT authority is an integrity contradiction and raises; it
-is never converted to zero or a professional block.
+A valid and request-bound CMIA `BLOCK_NO_TOTAL` is handled at stage 3 and
+returns `BLOCK_NO_GAP`; target validation, cross-authority validation, basis
+validation, amount validation and arithmetic are not evaluated from rejected
+or absent numeric evidence. A CMIA block that is structurally valid but not
+request-bound raises at stage `cmia_authority` before this short circuit. A
+valid CMIA `COMPLETE` combined with anything other than the same valid current
+RIT authority is an integrity contradiction and raises; it is never converted
+to zero or a professional block.
 
 ## 8. Exact amount representation and arithmetic
 
@@ -237,6 +296,15 @@ Rules:
 
 - `result_state="BLOCK_NO_GAP"`.
 - The only admitted source is a fully validated CMIA `BLOCK_NO_TOTAL`.
+- Before admission, the validated CMIA block's `client_id`,
+  `supplied_planning_calculation_input_fingerprint` and
+  `supplied_retirement_target_date` must equal respectively the validated RMIGA
+  request's `client_id`, `expected_planning_calculation_input_fingerprint` and
+  `expected_retirement_target_date` exactly. This comparison uses the CMIA
+  validator's immutable result and occurs before copying any observation.
+- Any one or more mismatches deterministically raise the RMIGA internal error
+  with `stage="cmia_authority"` and `code="RMIGA_CMIA_RESULT_INVALID"`; a
+  recomputed valid CMIA block fingerprint does not cure the mismatch.
 - `failure_stage="upstream_authority"` and
   `failure_detail_code="RMIGA_COMPARABLE_INCOME_BLOCKED"`.
 - Observed CMIA fields reproduce the validated CMIA block exactly.
@@ -297,7 +365,7 @@ or RIT failure envelope.
 |---|---|
 | `RMIGA-AC-001` | Exact package identity, Class A status, base and exclusions; implementation remains unauthorized. |
 | `RMIGA-AC-002` | Closed request validation precedes every database interaction. |
-| `RMIGA-AC-003` | One same-snapshot bounded CMIA composition supplies the exact CMIA result and the exact RIT target it used; no second reader or Session. |
+| `RMIGA-AC-003` | One same-snapshot bounded CMIA composition supplies the exact CMIA result and exact RIT target it used; the pure CMIA-owned validator accepts only exact `COMPLETE`/`BLOCK_NO_TOTAL` contracts and returns immutable validated evidence; no second reader or Session. |
 | `RMIGA-AC-004` | A current confirmed RIT and CMIA complete result bind client, planning fingerprint, retirement date and target semantic/result fingerprints exactly. |
 | `RMIGA-AC-005` | Currency, income basis, price basis and nullable reference date match exactly. |
 | `RMIGA-AC-006` | Positive difference yields exact reduced rational and `SHORTFALL`. |
@@ -306,8 +374,8 @@ or RIT failure envelope.
 | `RMIGA-AC-009` | RIT targets with up to six fractional digits subtract exactly from mixed CMIA rational denominators without rounding. |
 | `RMIGA-AC-010` | Empty/all-excluded CMIA complete zero remains valid and gap equals the exact positive RIT target. |
 | `RMIGA-AC-011` | Source contribution order, source identities, excluded IDs, source count and contribution fingerprints are preserved byte-for-byte from CMIA. |
-| `RMIGA-AC-012` | Every valid CMIA blocked variant yields the exact block schema and no numeric fields. |
-| `RMIGA-AC-013` | Complete and blocked result schemas have exact key sets, explicit nulls and independently reproduced fingerprint goldens. |
+| `RMIGA-AC-012` | Every valid CMIA blocked variant whose three supplied request identities exactly match the RMIGA request yields the exact block schema and no numeric fields; each identity field has independent matching and coherently rehashed mismatch cases. |
+| `RMIGA-AC-013` | The CMIA-owned validator proves exact complete/block schemas, contribution/count/membership/order/total consistency, allowed block variants, explicit nulls and independently reproduced contribution/result fingerprint goldens; malformed and coherently rehashed semantic violations are rejected. |
 | `RMIGA-AC-014` | PostgreSQL proves one repeatable-read/read-only snapshot, no writes/commit/retry, and visibility consistency under a concurrent upstream change. |
 | `RMIGA-AC-015` | Success, block and technical-exception paths roll back; partial acquisition and rollback-failure precedence permanently prevent unsafe Session reuse. |
 | `RMIGA-AC-016` | Accepted public RIT and CMIA outputs, fingerprints and failure behavior remain unchanged. |
@@ -316,6 +384,16 @@ or RIT failure envelope.
 
 Acceptance range: `RMIGA-AC-001` through `RMIGA-AC-018`; count: `18`.
 
+`RMIGA-AC-012` contains six mandatory independent block-binding oracles without
+creating new criterion identifiers: positive exact equality and a negative
+coherently rehashed mismatch for (a) `client_id`, (b)
+`supplied_planning_calculation_input_fingerprint`, and (c)
+`supplied_retirement_target_date`. Each negative must preserve an otherwise
+valid CMIA `BLOCK_NO_TOTAL`, recompute its CMIA block fingerprint, and still
+raise exactly `cmia_authority/RMIGA_CMIA_RESULT_INVALID`. One positive case for
+each field must prove that a correctly validated, request-bound block
+short-circuits target validation and arithmetic.
+
 ## 14. Negative and mutation-sensitive acceptance
 
 | ID | Prohibited outcome / required kill |
@@ -323,8 +401,8 @@ Acceptance range: `RMIGA-AC-001` through `RMIGA-AC-018`; count: `18`.
 | `RMIGA-NAC-001` | Caller supplies or overrides target, comparable income, source identity, basis or actor. |
 | `RMIGA-NAC-002` | A second RIT/CMIA read, nested public transaction, new Session, write, flush, commit or retry occurs. |
 | `RMIGA-NAC-003` | A CMIA block, partial subtotal or absent total produces numeric gap. |
-| `RMIGA-NAC-004` | Malformed or rehashed forged CMIA/RIT evidence is accepted. |
-| `RMIGA-NAC-005` | Client, planning, date, target or CMIA fingerprint mismatch is accepted. |
+| `RMIGA-NAC-004` | The CMIA-owned validator accepts malformed evidence, an invalid fingerprint, or a coherently rehashed violation of schema, block-variant, contribution, count, membership, order or exact-total invariants. |
+| `RMIGA-NAC-005` | Client, planning, date, target or CMIA fingerprint mismatch is accepted, including any independently coherently rehashed CMIA block whose three supplied request identities do not exactly bind to the RMIGA request. |
 | `RMIGA-NAC-006` | Currency, gross/net, nominal/real or reference-date mismatch is converted or ignored. |
 | `RMIGA-NAC-007` | Binary float, tolerance, quantization, rounding or saturation affects subtraction. |
 | `RMIGA-NAC-008` | A surplus is clamped to zero or relabeled as adequacy. |
@@ -341,13 +419,16 @@ Material mutation controls must use unchanged ordinary oracles and demonstrate
 PASS -> actual production mutation reached -> FAIL -> restoration -> PASS for:
 
 1. bounded same-snapshot producer composition;
-2. target/CMIA fingerprint and planning/date identity bindings;
-3. income/price/reference-date compatibility;
-4. signed exact subtraction and sign classification;
-5. source-binding preservation;
-6. result fingerprint preimages;
-7. forbidden commit/write/second reader; and
-8. rollback-failure precedence and Session non-reuse.
+2. CMIA pure-validator structure, contribution/total consistency and complete
+   and blocked fingerprints;
+3. each blocked-result client/planning/date request-identity binding;
+4. target/CMIA fingerprint and complete-result planning/date identity bindings;
+5. income/price/reference-date compatibility;
+6. signed exact subtraction and sign classification;
+7. source-binding preservation;
+8. result fingerprint preimages;
+9. forbidden commit/write/second reader; and
+10. rollback-failure precedence and Session non-reuse.
 
 Acceptance range: `RMIGA-NAC-001` through `RMIGA-NAC-016`; count: `16`.
 
@@ -394,8 +475,10 @@ Stop-condition range: item 1 through item 9; count: `9`.
 
 A future separately authorized implementation is expected to add one internal
 RMIGA service and focused tests, plus the smallest bounded CMIA internal
-evidence-returning adapter needed by Section 5. No model, schema migration, API
-route or frontend file is authorized by this Definition.
+evidence-returning adapter and the pure CMIA-owned result validator specified
+by Sections 5 and 5.1. The validator belongs to CMIA, is internal, and may not
+change any public CMIA output, fingerprint or professional behavior. No model,
+schema migration, API route or frontend file is authorized by this Definition.
 
 Because RMIGA consumes two accepted authorities and a material transaction
 boundary, Governance v1.1 requires a bounded pre-implementation contract

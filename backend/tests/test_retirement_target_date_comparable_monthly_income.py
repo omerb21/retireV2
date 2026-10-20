@@ -284,7 +284,7 @@ def test_exact_unrounded_pension_and_mixed_recurring_rational_sum(monkeypatch):
     assert result["source_count"] == 4
 
 
-def test_valid_not_ready_missing_amount_is_professional_block(monkeypatch):
+def _professional_block_evidence():
     source = _recurring_source(1, "1200.00", "monthly")
     evidence = _evidence(recurring=(source,))
     collection_entry = evidence["crtisba_collection"]["source_basis_entries"][0]
@@ -297,6 +297,11 @@ def test_valid_not_ready_missing_amount_is_professional_block(monkeypatch):
     evidence["comparison"] = rticb._result(_request(), evidence["target"], evidence["crtisba_collection"])
     evidence["rtisa"]["source_entries"][0]["monthly_equivalent"] = None
     evidence["amount_contexts"]["income:1"].update(amount=None, amount_preimage=None, monthly_equivalent=None)
+    return evidence
+
+
+def test_valid_not_ready_missing_amount_is_professional_block(monkeypatch):
+    evidence = _professional_block_evidence()
     result, _ = _run(monkeypatch, evidence)
     assert result["result_state"] == "BLOCK_NO_TOTAL"
     assert result["failure_stage"] == "comparability"
@@ -553,6 +558,65 @@ def test_original_exception_propagates_after_rollback_and_cleanup_failure_wins(m
         subject.assess(failed, _request())
     with pytest.raises(InvalidRequestError, match="permanently unusable"):
         failed.scalar(text("SELECT 1"))
+
+
+def test_rollback_failure_after_accepted_professional_block_takes_precedence(monkeypatch):
+    class RollbackFailureDB(_DB):
+        def rollback(self):
+            raise OSError("block cleanup")
+
+    evidence = _professional_block_evidence()
+    blocked_calls = []
+    original = subject._blocked
+
+    def observed_block(*args, **kwargs):
+        result = original(*args, **kwargs)
+        blocked_calls.append(result)
+        return result
+
+    monkeypatch.setattr(subject, "_blocked", observed_block)
+    failed = RollbackFailureDB()
+    with pytest.raises(OSError, match="block cleanup"):
+        _run(monkeypatch, evidence, failed)
+    assert len(blocked_calls) == 1
+    assert blocked_calls[0]["result_state"] == "BLOCK_NO_TOTAL"
+    assert blocked_calls[0]["failure_detail_code"] == "CMIA_DIRECT_COMPARISON_NOT_READY"
+
+
+def test_rollback_exception_survives_connection_and_session_cleanup_failures(monkeypatch):
+    class InvalidationFailureConnection(_Connection):
+        def __init__(self, db):
+            super().__init__(db)
+            self.invalidate_count = 0
+
+        def invalidate(self):
+            self.invalidate_count += 1
+            raise RuntimeError("connection invalidation")
+
+    class CleanupFailureDB(_DB):
+        def __init__(self):
+            super().__init__()
+            self.connection_value = InvalidationFailureConnection(self)
+            self.session_invalidate_count = 0
+
+        def rollback(self):
+            raise OSError("rollback primary")
+
+        def invalidate(self):
+            self.session_invalidate_count += 1
+            raise RuntimeError("session cleanup")
+
+    failed = CleanupFailureDB()
+    monkeypatch.setattr(subject.event, "contains", lambda *_: False)
+    monkeypatch.setattr(subject.event, "listen", lambda *_: None)
+    monkeypatch.setattr(
+        rticb, "assess_with_evidence_in_snapshot",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("technical original")),
+    )
+    with pytest.raises(OSError, match="rollback primary"):
+        subject.assess(failed, _request())
+    assert failed.connection_value.invalidate_count == 1
+    assert failed.session_invalidate_count == 1
 
 
 def test_connection_acquisition_defines_transaction_ownership(monkeypatch):

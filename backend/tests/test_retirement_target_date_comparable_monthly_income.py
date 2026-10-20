@@ -1,18 +1,27 @@
 """Ordinary, negative and mutation-sensitive CMIA contract evidence."""
 from contextlib import nullcontext
 from copy import deepcopy
+from datetime import date
 import hashlib
 import json
 from types import SimpleNamespace
 
 import pytest
+from pydantic import TypeAdapter
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
+from app.schemas.retirement_income_source_basis import CRTISBACommand
+from app.services import canonical_manual_pension_service
 from app.services import retirement_target_date_comparable_monthly_income_service as subject
 from app.services import retirement_target_date_income_comparison_basis_service as rticb
 from app.services import retirement_target_date_income_source_basis_service as crtisba
+from test_planning_input import choose, view
+from test_professional_source_snapshot import facts
+from test_recovery_pension_products import engine
+from test_retirement_monthly_income_target import command as target_command, confirm as confirm_target
+from test_retirement_target import payload as target_payload, save as save_target
 from test_retirement_target_date_income_comparison_basis import (
     PLANNING, TARGET_DATE, _collection, _entry, _request, _target,
 )
@@ -282,6 +291,176 @@ def test_exact_unrounded_pension_and_mixed_recurring_rational_sum(monkeypatch):
         "currency": "ILS", "frequency": "MONTHLY",
     }
     assert result["source_count"] == 4
+
+
+def test_real_pension_producer_chain_binds_unrounded_amount_to_cmia(engine, monkeypatch):
+    """Exercise Planning -> PTE/portfolio -> RTISA -> CRTISBA -> RTICB -> CMIA."""
+    with Session(engine) as db, db.begin():
+        created = canonical_manual_pension_service.create(db, 1, facts(
+            monthly_amount="90.91",
+            pension_start_date=date(2030, 1, 1),
+            base_amount_effective_date=date(2030, 1, 1),
+            temporal_authority={"authority_kind": "fixed_manual", "annual_rate": "0.1"},
+        ))
+    source_id = f"manual:{created['manual_pension_source_id']}"
+    choose(engine)
+    save_target(engine, target_payload(engine, value=date(2031, 1, 1)))
+    confirm_target(engine, target_command(engine, income_basis="GROSS"))
+
+    # CRTISBA is PostgreSQL-authoritative, while this accepted producer harness
+    # uses SQLite only as its deterministic transaction adapter.
+    monkeypatch.setattr(crtisba, "_begin", lambda db, *, write: db.begin())
+    with Session(engine) as db:
+        initial = crtisba.read(db, 1)
+    basis = next(item for item in initial["source_basis_entries"] if item["source_id"] == source_id)
+    classify = TypeAdapter(CRTISBACommand).validate_python({
+        "schema_version": "CRTISBA_PENSION_CLASSIFY_COMMAND_V1",
+        "operation": "CLASSIFY",
+        "source_kind": "PENSION",
+        "expected_decision_version": 0,
+        "expected_planning_calculation_input_fingerprint": initial[
+            "planning_calculation_input_fingerprint"
+        ],
+        "expected_source_version": basis["source_version"],
+        "expected_source_fingerprint": basis["source_fingerprint"],
+        "expected_amount_authority_fingerprint": basis["amount_authority_fingerprint"],
+        "income_basis": "GROSS",
+    })
+    with Session(engine) as db:
+        crtisba.write(db, 1, source_id, classify, "cmia:pension-integration")
+
+    calls = []
+    captured = {}
+    original_pte = crtisba.portfolio_service.pte.execute_from_planning_result
+    original_portfolio = crtisba.portfolio_service.execute_from_planning_result
+    original_rtisa = crtisba.rtisa_service.read_in_snapshot
+    original_rticb = rticb.assess_with_evidence_in_snapshot
+
+    def capture_pte(*args, **kwargs):
+        result = original_pte(*args, **kwargs)
+        calls.append(("PTE", result["source_id"]))
+        return result
+
+    def capture_portfolio(*args, **kwargs):
+        result = original_portfolio(*args, **kwargs)
+        calls.append(("PORTFOLIO", result["result_state"]))
+        return result
+
+    def capture_rtisa(*args, **kwargs):
+        result = original_rtisa(*args, **kwargs)
+        calls.append(("RTISA", result["admission_readiness_state"]))
+        return result
+
+    def capture_rticb(*args, **kwargs):
+        evidence = original_rticb(*args, **kwargs)
+        calls.append(("RTICB", evidence["comparison"]["schema_version"]))
+        captured.update(deepcopy(evidence))
+        return evidence
+
+    monkeypatch.setattr(crtisba.portfolio_service.pte, "execute_from_planning_result", capture_pte)
+    monkeypatch.setattr(crtisba.portfolio_service, "execute_from_planning_result", capture_portfolio)
+    monkeypatch.setattr(crtisba.rtisa_service, "read_in_snapshot", capture_rtisa)
+    monkeypatch.setattr(rticb, "assess_with_evidence_in_snapshot", capture_rticb)
+
+    planning = view(engine)
+    request = {
+        "client_id": 1,
+        "expected_planning_calculation_input_fingerprint": planning[
+            "planning_calculation_input_fingerprint"
+        ],
+        "expected_retirement_target_date": "2031-01-01",
+    }
+    with Session(engine) as db:
+        result = subject.assess(db, request)
+
+    assert {name for name, _state in calls} == {"PTE", "PORTFOLIO", "RTISA", "RTICB"}
+    portfolio_result = next(
+        item for item in captured["portfolio"]["source_results"] if item["source_id"] == source_id
+    )
+    portfolio_entry = next(
+        item for item in captured["portfolio"]["source_entry_fingerprints"]
+        if item["source_id"] == source_id
+    )
+    rtisa_entry = next(
+        item for item in captured["rtisa"]["source_entries"] if item["source_id"] == source_id
+    )
+    collection_entry = next(
+        item for item in captured["crtisba_collection"]["source_basis_entries"]
+        if item["source_id"] == source_id
+    )
+    comparison_entry = next(
+        item for item in captured["comparison"]["source_comparisons"]
+        if item["source_id"] == source_id
+    )
+    context = captured["amount_contexts"][source_id]
+    planning_source = next(
+        item for item in captured["planning"]["pension_inputs"] if item["source_id"] == source_id
+    )
+
+    assert portfolio_result["unquantized_target_monthly_amount"] == "100.001"
+    assert portfolio_result["final_monthly_amount"] == "100.00"
+    assert rtisa_entry["monthly_equivalent"] == {"numerator": "100.001", "denominator": "1"}
+    expected_preimage = {
+        "contract": crtisba.PENSION_AMOUNT_CONTRACT,
+        "client_id": 1,
+        "source_id": source_id,
+        "source_version": planning_source["version"],
+        "source_fingerprint": rtisa_entry["upstream_identity"]["source_fingerprint"],
+        "base_amount_semantic_fingerprint": planning_source["monthly_amount_basis"][
+            "base_amount_semantic_fingerprint"
+        ],
+        "base_amount_source_fingerprint": planning_source["monthly_amount_basis"][
+            "base_amount_source_fingerprint"
+        ],
+        "temporal_semantic_fingerprint": planning_source["temporal_authority"][
+            "temporal_semantic_fingerprint"
+        ],
+        "temporal_source_fingerprint": planning_source["temporal_authority"][
+            "temporal_source_fingerprint"
+        ],
+        "planning_calculation_input_fingerprint": request[
+            "expected_planning_calculation_input_fingerprint"
+        ],
+        "retirement_target_date": "2031-01-01",
+        "pension_source_execution_fingerprint": portfolio_result[
+            "source_execution_fingerprint"
+        ],
+        "pension_source_result_fingerprint": rtisa_entry["upstream_identity"][
+            "pension_source_result_fingerprint"
+        ],
+        "portfolio_source_entry_fingerprint": portfolio_entry["source_entry_fingerprint"],
+        "amount": {
+            "numerator": "100.001", "denominator": "1",
+            "currency": "ILS", "frequency": "MONTHLY",
+        },
+    }
+    expected_amount_fingerprint = crtisba.fingerprint(expected_preimage)
+    assert context["amount_preimage"] == expected_preimage
+    assert context["amount"] == expected_amount_fingerprint
+    assert collection_entry["amount_authority_fingerprint"] == expected_amount_fingerprint
+    assert comparison_entry["amount_authority_fingerprint"] == expected_amount_fingerprint
+
+    assert result["result_state"] == "COMPLETE"
+    assert result["source_count"] == 1
+    assert result["included_contributions"] == [{
+        "source_id": source_id,
+        "source_kind": "PENSION",
+        "source_version": planning_source["version"],
+        "source_fingerprint": rtisa_entry["upstream_identity"]["source_fingerprint"],
+        "amount_authority_fingerprint": expected_amount_fingerprint,
+        "source_comparison_fingerprint": comparison_entry["source_comparison_fingerprint"],
+        "monthly_equivalent": {
+            "numerator": "100001", "denominator": "1000",
+            "currency": "ILS", "frequency": "MONTHLY",
+        },
+        "contribution_fingerprint": result["included_contributions"][0][
+            "contribution_fingerprint"
+        ],
+    }]
+    assert result["total_monthly_equivalent"] == {
+        "numerator": "100001", "denominator": "1000",
+        "currency": "ILS", "frequency": "MONTHLY",
+    }
 
 
 def _professional_block_evidence():

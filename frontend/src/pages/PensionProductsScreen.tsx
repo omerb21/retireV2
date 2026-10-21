@@ -56,13 +56,13 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
       <p role="alert">נמצאה יתרה במקור שלא ניתן לסווג לרכיב מקצועי. יש לבדוק את נתוני המקור; אפס ברכיב אינו בהכרח אפס שדווח במקור.</p>}
     <form onSubmit={save}><fieldset disabled={busy}><legend>פרטי מוצר ורכיבים</legend>
       <MetadataFields value={metadata} onChange={setMetadata} />
-      {Object.entries(components).map(([code, balance]) => <p key={code}><label>{code.replace(/_/g, " ")}<input dir="ltr" inputMode="decimal" required pattern="-?[0-9]+([.][0-9]{1,2})?" value={balance} onChange={event => setComponents({ ...components, [code]: event.target.value })} /></label></p>)}
+      {Object.entries(components).map(([code, balance]) => <p key={code}><label>{code.replace(/_/g, " ")}<input id={`pension-balance-${product.product_id}-${code}`} dir="ltr" inputMode="decimal" required pattern="-?[0-9]+([.][0-9]{1,2})?" value={balance} onChange={event => setComponents({ ...components, [code]: event.target.value })} /></label></p>)}
       <button type="submit">שמירת מוצר</button>
       <button type="button" onClick={() => { setMetadata(metadataOf(product)); setComponents(product.components); setError(null); }}>ביטול עריכה</button>
     </fieldset></form>
     <h4>התאמות לפי הנתונים השמורים</h4>
     <section aria-label="המרות מהיתרות השמורות"><h4>המרת רכיבים</h4>
-      <p>המרה מתבצעת מהיתרות השמורות בלבד. יש לשמור עריכות לפני המרה.</p>
+      <p role="note"><strong>חשוב:</strong> ההמרה הקנונית הקיימת משנה את יתרות הכספים השמורות ויוצרת תיעוד המרה. היא אינה בחירת תרחיש היפותטי. יש לשמור עריכות לפני המרה; אין להשתמש בה כפעולת סימולציה.</p>
       {(product.conversion_components ?? []).filter(item => Number(item.balance) > 0).map(item => <p key={item.component_id}>
         {item.component_code.replace(/_/g, " ")}: <bdi>{item.balance}</bdi> {Object.keys(item.allowed_destinations).length ? <button disabled={busy || conversion !== null} onClick={() => setConversion(item)}>המרת {item.component_code.replace(/_/g, " ")}</button> : "אין יעד המרה מותר"}
       </p>)}
@@ -108,8 +108,8 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
         <small>{products.length} מוצרים · {componentCodes.length} סוגי רכיבים</small>
       </div>
       <p className="pension-workbench__note">
-        היתרות בטבלה הן הנתונים השמורים בפועל. לתיקון יתרות או לביצוע המרות יש לעבור לעריכת המוצר.
-        הטבלה נגללת אופקית כדי להציג את כל רכיבי הכספים.
+        היתרות בטבלה הן הנתונים השמורים בפועל. לחיצה על יתרה מעבירה לעריכת הרכיב המתאים.
+        פעולות ההמרה הקנוניות הקיימות משנות יתרות אמיתיות ואינן סימולציה.
       </p>
       <div className="pension-workbench__scroll" role="region"
         aria-label="טבלת יתרות נגללת" tabIndex={0}>
@@ -141,7 +141,11 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
                 {componentCodes.map(code => (
                   <td data-kind="amount" key={code}>
                     {Object.prototype.hasOwnProperty.call(product.components, code)
-                      ? <bdi dir="ltr">{product.components[code]}</bdi> : "—"}
+                      ? <a className="pension-workbench__balance-link"
+                          href={`#pension-balance-${product.product_id}-${code}`}
+                          aria-label={`עריכת יתרת ${code.replace(/_/g, " ")} — ${product.product_name}`}>
+                          <bdi dir="ltr">{product.components[code]}</bdi>
+                        </a> : "—"}
                   </td>
                 ))}
                 <td><a className="pension-workbench__edit-link"

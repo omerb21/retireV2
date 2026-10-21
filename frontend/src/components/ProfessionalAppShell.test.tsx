@@ -49,7 +49,13 @@ describe("ProfessionalAppShell", () => {
     fireEvent.click(open);
     const close = screen.getByRole("button", { name: "סגירת תפריט" });
     expect(close).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(close);
+    fireEvent.keyDown(document, { key: "Escape" });
+    const reopened = screen.getByRole("button", { name: "פתיחת תפריט" });
+    expect(reopened).toHaveAttribute("aria-expanded", "false");
+    expect(reopened).toHaveFocus();
+
+    fireEvent.click(reopened);
+    fireEvent.click(screen.getByRole("button", { name: "סגירת תפריט" }));
     expect(screen.getByRole("button", { name: "פתיחת תפריט" })).toHaveAttribute("aria-expanded", "false");
   });
 });

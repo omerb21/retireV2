@@ -110,7 +110,7 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
     if (normalizedSearch && !haystack.includes(normalizedSearch)) return false;
     if (onlyDiscrepancies) {
       const discrepancy = product.reconciliation?.product_discrepancy;
-      if (discrepancy == null || !/^-?(?:\\d+)(?:\\.\\d+)?$/.test(discrepancy)) return false;
+      if (discrepancy == null || !/^-?(?:\d+)(?:\.\d+)?$/.test(discrepancy)) return false;
       if (Number(discrepancy) === 0) return false;
     }
     return true;

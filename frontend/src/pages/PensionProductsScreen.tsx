@@ -83,7 +83,52 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
  * deliberately does not edit balances or create hypothetical conversions:
  * those actions remain in each existing product editor and its conversion UI.
  */
-function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
+function PensionBalanceWorkbench({ products, clientId, onSaved }: {
+  products: PensionProduct[];
+  clientId: number;
+  onSaved: (product: PensionProduct) => void;
+}) {
+  const [editing, setEditing] = useState<{
+    productId: string;
+    code: string;
+    amount: string;
+    expectedVersion: number;
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
+
+  async function saveBalance(event: FormEvent, product: PensionProduct, code: string) {
+    event.preventDefault();
+    if (!editing || saving || editing.productId !== product.product_id || editing.code !== code) return;
+    if (editing.expectedVersion !== product.version) {
+      setBalanceError("המוצר עודכן מאז תחילת העריכה. יש לבטל את העריכה ולבדוק את היתרה העדכנית.");
+      return;
+    }
+    if (!/^-?[0-9]+(?:[.][0-9]{1,2})?$/.test(editing.amount)) {
+      setBalanceError("יש להזין סכום תקין עם עד שתי ספרות אחרי הנקודה.");
+      return;
+    }
+    if (editing.amount === product.components[code]) {
+      setEditing(null);
+      setBalanceError(null);
+      return;
+    }
+    setSaving(true);
+    setBalanceError(null);
+    try {
+      const saved = await savePensionProduct(clientId, product.product_id, {
+        ...metadataOf(product),
+        expected_version: product.version,
+        components: { ...product.components, [code]: editing.amount },
+      });
+      onSaved(saved);
+      setEditing(null);
+    } catch (error) {
+      setBalanceError(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
   const [search, setSearch] = useState("");
   const [onlyDiscrepancies, setOnlyDiscrepancies] = useState(false);
   // Keep the familiar eleven-column V1 order even if import key order varies.
@@ -122,9 +167,10 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
         <small>{displayedProducts.length} מתוך {products.length} מוצרים · {componentCodes.length} סוגי רכיבים</small>
       </div>
       <p className="pension-workbench__note">
-        היתרות בטבלה הן הנתונים השמורים בפועל. לחיצה על יתרה מעבירה לעריכת הרכיב המתאים.
-        פעולות ההמרה הקנוניות הקיימות משנות יתרות אמיתיות ואינן סימולציה.
+        היתרות בטבלה הן הנתונים השמורים בפועל. לחיצה על יתרה מאפשרת לערוך את הרכיב בטבלה,
+        ורק שמירה מפורשת מעדכנת את התיק. פעולות ההמרה הקנוניות משנות יתרות אמיתיות ואינן סימולציה.
       </p>
+      {balanceError && <p role="alert" className="pension-workbench__edit-error">{balanceError}</p>}
       <div className="pension-workbench__filters">
         <label htmlFor="pension-workbench-search">חיפוש מוצר או חשבון
           <input id="pension-workbench-search" type="search" value={search}
@@ -174,11 +220,36 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
                 {componentCodes.map(code => (
                   <td data-kind="amount" key={code}>
                     {Object.prototype.hasOwnProperty.call(product.components, code)
-                      ? <a className="pension-workbench__balance-link"
-                          href={`#pension-balance-${product.product_id}-${code}`}
+                      ? editing?.productId === product.product_id && editing.code === code ? (
+                        <form className="pension-workbench__inline-edit"
+                          onSubmit={event => void saveBalance(event, product, code)}>
+                          <label>
+                            <span className="pension-workbench__sr-only">יתרה מעודכנת — {code.replace(/_/g, " ")} — {product.product_name}</span>
+                            <input dir="ltr" inputMode="decimal" autoFocus disabled={saving}
+                              aria-label={`יתרה מעודכנת — ${code.replace(/_/g, " ")} — ${product.product_name}`}
+                              pattern="-?[0-9]+([.][0-9]{1,2})?"
+                              required value={editing.amount}
+                              onChange={event => setEditing({ ...editing, amount: event.target.value })} />
+                          </label>
+                          <div className="pension-workbench__edit-actions">
+                            <button type="submit" disabled={saving}>שמירת יתרה</button>
+                            <button type="button" disabled={saving} onClick={() => {
+                              setEditing(null); setBalanceError(null);
+                            }}>ביטול עריכה</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <button type="button" className="pension-workbench__balance-link"
+                          disabled={saving || editing !== null}
+                          onClick={() => {
+                            setEditing({ productId: product.product_id, code,
+                              amount: product.components[code], expectedVersion: product.version });
+                            setBalanceError(null);
+                          }}
                           aria-label={`עריכת יתרת ${code.replace(/_/g, " ")} — ${product.product_name}`}>
                           <bdi dir="ltr">{product.components[code]}</bdi>
-                        </a> : "—"}
+                        </button>
+                      ) : "—"}
                   </td>
                 ))}
                 <td><a className="pension-workbench__edit-link"
@@ -228,7 +299,7 @@ function ProductsForClient({ clientId }: { clientId: number }) {
     <form onSubmit={ingest}><fieldset disabled={busy || loading}><legend>ייבוא מקורות יחד</legend><label>קובצי מקור<input type="file" multiple accept=".xml,.dat" required onChange={event => setFiles(Array.from(event.target.files ?? []))} /></label><p>נבחרו {files.length} קבצים</p><ul aria-label="קבצים שנבחרו">{files.map((file, index) => <li key={index}><bdi>{file.name}</bdi></li>)}</ul><button type="submit" disabled={!files.length}>ייבוא מוצרים</button></fieldset></form>
     <details><summary>יצירת מוצר ידנית</summary><form onSubmit={create}><fieldset disabled={busy || loading}><legend>מוצר חדש</legend><MetadataFields value={manual} onChange={setManual} /><p>כל אחד עשר הרכיבים ייווצרו ביתרה אפס. הסך המדווח לא יחולק בין הרכיבים.</p><button type="submit">יצירת מוצר</button></fieldset></form></details>
     {!loading && products.length === 0 && <p>אין מוצרים פנסיוניים. ניתן לייבא מקור או ליצור מוצר ידנית.</p>}
-    {products.length > 0 && <PensionBalanceWorkbench products={products} />}
+    {products.length > 0 && <PensionBalanceWorkbench products={products} clientId={clientId} onSaved={replace} />}
     {products.map(product => <ProductEditor key={`${product.product_id}:${product.version}`} product={product} clientId={clientId} onSaved={replace} onDeleted={() => setProducts(current => current.filter(item => item.product_id !== product.product_id))} />)}
   </section>;
 }

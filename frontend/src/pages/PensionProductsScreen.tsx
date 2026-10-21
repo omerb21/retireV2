@@ -1,3 +1,4 @@
+import "./PensionProductsWorkbench.css";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { createPensionProduct, deletePensionProduct, importPensionProducts, listPensionProducts, PensionProduct, PensionProductMetadata, savePensionProduct } from "../api/pensionProductsApi";
@@ -47,7 +48,7 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
     finally { setBusy(false); }
   }
   const totalsLabels: Record<string, string> = { rewards_component_sum: "סכום רכיבי התגמולים", severance_component_sum: "סכום רכיבי הפיצויים", product_component_sum: "סכום כל הרכיבים", rewards_discrepancy: "פער תגמולים", severance_discrepancy: "פער פיצויים", product_discrepancy: "פער המוצר" };
-  return <section aria-label={`עריכת ${product.product_name}`}>
+  return <section id={`pension-editor-${product.product_id}`} className="pension-product-editor" tabIndex={-1} aria-label={`עריכת ${product.product_name}`}>
     <h3>{product.product_name}</h3>
     <p>סוג מוצר: {productTypeLabel(product.product_type)}</p>
     <p>עדכון אחרון: <bdi>{formatIsoTimestamp(product.updated_at)}</bdi></p>
@@ -75,6 +76,67 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
     {error && <p role="alert">{error}</p>}
     {confirmDelete ? <div role="group" aria-label="אישור מחיקת מוצר"><p>למחוק את המוצר ואת רכיביו? תיעוד המקור יישמר.</p><button disabled={busy} onClick={() => void remove()}>אישור מחיקה</button><button disabled={busy} onClick={() => setConfirmDelete(false)}>ביטול מחיקה</button></div> : <button disabled={busy} onClick={() => setConfirmDelete(true)}>מחיקת מוצר</button>}
   </section>;
+}
+
+/**
+ * Workbench overview over the authoritative saved component values. This table
+ * deliberately does not edit balances or create hypothetical conversions:
+ * those actions remain in each existing product editor and its conversion UI.
+ */
+function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
+  const componentCodes = [...new Set(products.flatMap(product => Object.keys(product.components)))];
+  return (
+    <section className="pension-workbench" aria-label="טבלת יתרות התיק הפנסיוני">
+      <div className="pension-workbench__heading">
+        <h3>טבלת יתרות התיק הפנסיוני</h3>
+        <small>{products.length} מוצרים · {componentCodes.length} סוגי רכיבים</small>
+      </div>
+      <p className="pension-workbench__note">
+        היתרות בטבלה הן הנתונים השמורים בפועל. לתיקון יתרות או לביצוע המרות יש לעבור לעריכת המוצר.
+        הטבלה נגללת אופקית כדי להציג את כל רכיבי הכספים.
+      </p>
+      <div className="pension-workbench__scroll" role="region"
+        aria-label="טבלת יתרות נגללת" tabIndex={0}>
+        <table className="pension-workbench__table">
+          <caption>מוצרים פנסיוניים שמורים</caption>
+          <thead>
+            <tr>
+              <th scope="col">תכנית</th>
+              <th scope="col">גוף מנהל</th>
+              <th scope="col">סוג מוצר</th>
+              <th scope="col">חשבון</th>
+              <th scope="col">נכון לתאריך</th>
+              <th scope="col">סך מדווח</th>
+              {componentCodes.map(code => (
+                <th scope="col" key={code}>{code.replace(/_/g, " ")}</th>
+              ))}
+              <th scope="col">פעולה</th>
+            </tr>
+          </thead>
+          <tbody>
+            {products.map(product => (
+              <tr key={product.product_id}>
+                <td><span className="pension-workbench__product-name">{product.product_name}</span></td>
+                <td>{product.provider_name ?? "לא נמסר"}</td>
+                <td>{productTypeLabel(product.product_type)}</td>
+                <td><bdi>{product.account_reference ?? "לא נמסר"}</bdi></td>
+                <td><bdi>{formatIsoDate(product.statement_date) || "לא נמסר"}</bdi></td>
+                <td data-kind="amount"><bdi dir="ltr">{product.reported_product_total ?? "לא נמסר"}</bdi></td>
+                {componentCodes.map(code => (
+                  <td data-kind="amount" key={code}>
+                    {Object.prototype.hasOwnProperty.call(product.components, code)
+                      ? <bdi dir="ltr">{product.components[code]}</bdi> : "—"}
+                  </td>
+                ))}
+                <td><a className="pension-workbench__edit-link"
+                  href={`#pension-editor-${product.product_id}`}>עריכה והמרות</a></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 function ProductsForClient({ clientId }: { clientId: number }) {
@@ -113,7 +175,7 @@ function ProductsForClient({ clientId }: { clientId: number }) {
     <form onSubmit={ingest}><fieldset disabled={busy || loading}><legend>ייבוא מקורות יחד</legend><label>קובצי מקור<input type="file" multiple accept=".xml,.dat" required onChange={event => setFiles(Array.from(event.target.files ?? []))} /></label><p>נבחרו {files.length} קבצים</p><ul aria-label="קבצים שנבחרו">{files.map((file, index) => <li key={index}><bdi>{file.name}</bdi></li>)}</ul><button type="submit" disabled={!files.length}>ייבוא מוצרים</button></fieldset></form>
     <details><summary>יצירת מוצר ידנית</summary><form onSubmit={create}><fieldset disabled={busy || loading}><legend>מוצר חדש</legend><MetadataFields value={manual} onChange={setManual} /><p>כל אחד עשר הרכיבים ייווצרו ביתרה אפס. הסך המדווח לא יחולק בין הרכיבים.</p><button type="submit">יצירת מוצר</button></fieldset></form></details>
     {!loading && products.length === 0 && <p>אין מוצרים פנסיוניים. ניתן לייבא מקור או ליצור מוצר ידנית.</p>}
-    {products.length > 0 && <table><caption>מוצרים פנסיוניים שמורים</caption><thead><tr><th>שם תכנית</th><th>גוף מנהל</th><th>חשבון</th><th>סך מדווח</th></tr></thead><tbody>{products.map(product => <tr key={product.product_id}><td>{product.product_name}</td><td>{product.provider_name ?? "לא נמסר"}</td><td><bdi>{product.account_reference}</bdi></td><td><bdi>{product.reported_product_total ?? "לא נמסר"}</bdi></td></tr>)}</tbody></table>}
+    {products.length > 0 && <PensionBalanceWorkbench products={products} />}
     {products.map(product => <ProductEditor key={`${product.product_id}:${product.version}`} product={product} clientId={clientId} onSaved={replace} onDeleted={() => setProducts(current => current.filter(item => item.product_id !== product.product_id))} />)}
   </section>;
 }

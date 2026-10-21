@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
 import "./ProfessionalAppShell.css";
@@ -143,10 +143,23 @@ function SidebarGroup({
 export function ProfessionalAppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const clientId = routeClientId(location.pathname);
   const pageTitle = currentScreenLabel(location.pathname);
 
   useEffect(() => { setMenuOpen(false); }, [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
 
   return (
     <div dir="rtl" lang="he" className="professional-shell">
@@ -166,7 +179,7 @@ export function ProfessionalAppShell({ children }: { children: ReactNode }) {
               <span>תיק לקוח <bdi>#{clientId}</bdi></span>
             </Link>
           ) : <span className="professional-shell__top-context is-neutral">ניהול תיקים</span>}
-          <button type="button" className="professional-shell__menu-toggle"
+          <button ref={toggleRef} type="button" className="professional-shell__menu-toggle"
             aria-label={menuOpen ? "סגירת תפריט" : "פתיחת תפריט"}
             aria-controls="professional-navigation"
             aria-expanded={menuOpen}

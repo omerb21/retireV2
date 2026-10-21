@@ -84,7 +84,23 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
  * those actions remain in each existing product editor and its conversion UI.
  */
 function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
-  const componentCodes = [...new Set(products.flatMap(product => Object.keys(product.components)))];
+  // Keep the familiar eleven-column V1 order even if import key order varies.
+  // Unknown future component codes remain visible, after the known columns.
+  const knownColumns = [
+    "פיצויים_מעסיק_נוכחי", "פיצויים_לאחר_התחשבנות",
+    "פיצויים_שלא_עברו_התחשבנות",
+    "פיצויים_ממעסיקים_קודמים_רצף_זכויות",
+    "פיצויים_ממעסיקים_קודמים_רצף_קצבה",
+    "תגמולי_עובד_עד_2000", "תגמולי_עובד_אחרי_2000",
+    "תגמולי_עובד_אחרי_2008_לא_משלמת",
+    "תגמולי_מעביד_עד_2000", "תגמולי_מעביד_אחרי_2000",
+    "תגמולי_מעביד_אחרי_2008_לא_משלמת",
+  ];
+  const presentCodes = [...new Set(products.flatMap(product => Object.keys(product.components)))];
+  const componentCodes = [
+    ...knownColumns.filter(code => presentCodes.includes(code)),
+    ...presentCodes.filter(code => !knownColumns.includes(code)),
+  ];
   return (
     <section className="pension-workbench" aria-label="טבלת יתרות התיק הפנסיוני">
       <div className="pension-workbench__heading">

@@ -204,4 +204,39 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(screen.getByText(/ההמרה הקנונית הקיימת משנה את יתרות הכספים השמורות/))
       .toBeInTheDocument();
   });
+
+  it("filters the portfolio without deleting data or recalculating balances", async () => {
+    const first = {
+      ...product(), product_name: "תכנית א", account_reference: "111",
+      reconciliation: { ...product().reconciliation,
+        product_component_sum: "123.45", product_discrepancy: "0.00" },
+    };
+    const second = {
+      ...product(), product_id: "p2", product_name: "תכנית ב",
+      account_reference: "222", provider_name: "מנהל אחר",
+      reconciliation: { ...product().reconciliation,
+        product_component_sum: "100.00", product_discrepancy: "23.45" },
+    };
+    vi.mocked(api.listPensionProducts).mockResolvedValue([first, second]);
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת יתרות התיק הפנסיוני" });
+    const table = within(ledger).getByRole("table", { name: "מוצרים פנסיוניים שמורים" });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "חיפוש מוצר או חשבון" }),
+      { target: { value: "222" } });
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).getByText("תכנית ב")).toBeInTheDocument();
+    expect(within(table).queryByText("תכנית א")).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "חיפוש מוצר או חשבון" }),
+      { target: { value: "" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "הצג רק מוצרים עם פער מדווח" }));
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).getByText("23.45")).toBeInTheDocument();
+    expect(within(table).queryByText("תכנית א")).toBeNull();
+
+    expect(api.savePensionProduct).not.toHaveBeenCalled();
+    expect(api.deletePensionProduct).not.toHaveBeenCalled();
+  });
 });

@@ -1232,7 +1232,7 @@ describe("ClientDetailScreen", () => {
     await screen.findByText("OLD_JOURNEY_CONTEXT");
     const nameInput = screen.getByLabelText("שם");
     fireEvent.change(nameInput, { target: { value: "Unsaved Professional Edit" } });
-    const nextAction = screen.getByRole("link", { name: "מעבר לפעולה הבאה" });
+    const nextAction = screen.getByRole("link", { name: "השלמת תשתית תיק הלקוח" });
     fireEvent.click(nextAction);
     expect(nameInput).toHaveValue("Unsaved Professional Edit");
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "תשתית תיק הלקוח" }));
@@ -1271,7 +1271,7 @@ describe("ClientDetailScreen", () => {
     expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
     expect(screen.queryByText("OLD_JOURNEY_CONTEXT")).not.toBeInTheDocument();
     expect(screen.getByText("טוען מצב מוכנות עדכני…")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "רישום מסמך תכנון פרישה" })).toHaveAttribute(
       "href",
       "/clients/7#retirement-documents-heading"
     );
@@ -1297,7 +1297,7 @@ describe("ClientDetailScreen", () => {
       retirement_target_ready: true,
       blocking_facts: []
     })));
-    expect(await screen.findByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "המשך למוכנות הכנסה במועד היעד" })).toHaveAttribute(
       "href",
       "/clients/7/retirement-income-readiness"
     );

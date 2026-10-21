@@ -181,6 +181,58 @@ const STATUS_LABELS: Record<WorkflowStatus, string> = {
   NOT_AUTHORIZED: "לא מורשה",
 };
 
+const M01_FIELD_LABELS: Record<string, string> = {
+  birth_date: "תאריך לידה",
+  gender: "מגדר",
+  employment_status: "מצב תעסוקה",
+  planned_retirement: "מועד פרישה מתוכנן",
+  id_number: "מספר זהות",
+};
+
+const DATA_STATUS_LABELS: Record<string, string> = {
+  unverified: "טרם אומת",
+  verified: "אומת",
+  partially_verified: "אומת חלקית",
+  not_applicable: "אימות אינו חל",
+  open: "פתוח",
+  resolved: "נפתר",
+  "no longer relevant": "אינו רלוונטי עוד",
+};
+
+const READINESS_FACT_LABELS: Record<string, string> = {
+  planning_base_date_missing: "חסר מועד בסיס מאושר לתכנון",
+  capital_valuation_date_missing: "חסר מועד הערכה לנכס הון",
+  capital_value_missing: "חסר שווי לנכס הון",
+  amount_basis_unknown: "בסיס הסכום אינו ידוע",
+  amount_invalid: "הסכום אינו תקין",
+  frequency_unsupported: "תדירות המקור אינה נתמכת",
+  continuation_unknown: "מצב ההמשכיות אינו ידוע",
+  start_date_missing: "חסר תאריך התחלה",
+  end_date_missing: "חסר תאריך סיום",
+  date_range_contradictory: "טווח התאריכים סותר",
+  identity_resolution_required: "נדרשת הכרעת זהות מקור",
+  identity_resolution_stale: "הכרעת זהות המקור אינה עדכנית",
+  identity_unresolved: "זהות המקור טרם הוכרעה",
+};
+
+function displayLabel(value: string, labels: Record<string, string>): string {
+  return labels[value] ?? value;
+}
+
+function nextActionLabel(target: ActionTarget): string {
+  if (target.kind === "anchor") {
+    if (target.id === "m01-case-foundation-heading") return "השלמת תשתית תיק הלקוח";
+    if (target.id === "clearinghouse-snapshots-heading") return "רישום תמונת מסלקה";
+    if (target.id === "retirement-documents-heading") return "רישום מסמך תכנון פרישה";
+    if (target.id === "missing-data-heading") return "בדיקת מידע חסר";
+  } else {
+    if (target.to.endsWith("/planning-input")) return "השלמת קלט התכנון";
+    if (target.to.endsWith("/retirement-income-readiness")) return "המשך למוכנות הכנסה במועד היעד";
+    if (target.to.endsWith("/professional-sources")) return "המשך להכנת מקורות מקצועיים";
+  }
+  return "המשך לפעולה הבאה";
+}
+
 function counts(values: Array<string | null | undefined>): Array<[string, number]> {
   const grouped = new Map<string, number>();
   for (const value of values) {
@@ -249,7 +301,7 @@ function ActionLink({
 }
 
 function Status({ value }: { value: WorkflowStatus }) {
-  return <strong><bdi>{value}</bdi> — {STATUS_LABELS[value]}</strong>;
+  return <strong data-workflow-status={value}><span hidden>{value}</span>{STATUS_LABELS[value]}</strong>;
 }
 
 export function ProfessionalWorkflowOverview({
@@ -406,15 +458,15 @@ export function ProfessionalWorkflowOverview({
   return (
     <nav dir="rtl" aria-label="מפת תהליך העבודה המקצועי" onClick={rememberInPageOrigin}>
       <h3>מפת תהליך העבודה המקצועי</h3>
-      <ol>
+      <ol style={{ listStyle: "none", paddingInlineStart: 0 }}>
         <li>
           <h4>1. תשתית תיק הלקוח</h4>
           <p><Status value={phase1} /></p>
           {m01Case?.completeness.missing_field_ids.map((field) => (
-            <p key={`missing:${field}`}>חסר: <bdi>{field}</bdi></p>
+            <p key={`missing:${field}`}>חסר: {displayLabel(field, M01_FIELD_LABELS)}</p>
           ))}
           {m01Case?.completeness.conflicting_field_ids.map((field) => (
-            <p key={`conflict:${field}`}>סתירה: <bdi>{field}</bdi></p>
+            <p key={`conflict:${field}`}>סתירה: {displayLabel(field, M01_FIELD_LABELS)}</p>
           ))}
           <AnchorLink clientId={clientId} targetId="m01-case-foundation-heading">
             מעבר לעריכת תשתית התיק
@@ -426,11 +478,11 @@ export function ProfessionalWorkflowOverview({
           <p>תמונות מסלקה: {clearinghouseSnapshots.length}</p>
           <p>מסמכים: {retirementPlanningDocuments.length}</p>
           <p>פריטי מידע חסר: {missingDataItems.length}</p>
-          {snapshotCollectionGroups.map(([name, count]) => <p key={`snapshot-collection:${name}`}>מצב איסוף מסלקה <bdi>{name}</bdi>: {count}</p>)}
-          {snapshotVerificationGroups.map(([name, count]) => <p key={`snapshot-verification:${name}`}>מצב אימות מסלקה <bdi>{name}</bdi>: {count}</p>)}
-          {documentCollectionGroups.map(([name, count]) => <p key={`document-collection:${name}`}>מצב איסוף מסמכים <bdi>{name}</bdi>: {count}</p>)}
-          {documentVerificationGroups.map(([name, count]) => <p key={`document-verification:${name}`}>מצב אימות מסמכים <bdi>{name}</bdi>: {count}</p>)}
-          {missingGroups.map(([name, count]) => <p key={`missing-advisory:${name}`}>מצב מידע חסר <bdi>{name}</bdi>: {count}</p>)}
+          {snapshotCollectionGroups.map(([name, count]) => <p key={`snapshot-collection:${name}`}>מצב איסוף מסלקה: {displayLabel(name, DATA_STATUS_LABELS)} ({count})</p>)}
+          {snapshotVerificationGroups.map(([name, count]) => <p key={`snapshot-verification:${name}`}>מצב אימות מסלקה: {displayLabel(name, DATA_STATUS_LABELS)} ({count})</p>)}
+          {documentCollectionGroups.map(([name, count]) => <p key={`document-collection:${name}`}>מצב איסוף מסמכים: {displayLabel(name, DATA_STATUS_LABELS)} ({count})</p>)}
+          {documentVerificationGroups.map(([name, count]) => <p key={`document-verification:${name}`}>מצב אימות מסמכים: {displayLabel(name, DATA_STATUS_LABELS)} ({count})</p>)}
+          {missingGroups.map(([name, count]) => <p key={`missing-advisory:${name}`}>מצב מידע חסר: {displayLabel(name, DATA_STATUS_LABELS)} ({count})</p>)}
           {collectionLoadState === "error" ? <p role="alert">נתוני האיסוף אינם זמינים לבדיקה.</p> : null}
           <ActionLink clientId={clientId} target={phase2Target}>
             {phase2Target.kind === "route" ? "המשך להכנת מקורות מקצועיים" : "טיפול בפעילות איסוף הראיות"}
@@ -444,7 +496,7 @@ export function ProfessionalWorkflowOverview({
           <p><Status value={phase3} /></p>
           {acceptedContext?.blocking_facts.map((fact, index) => (
             <p key={`${fact.source_id ?? "none"}:${fact.code}:${index}`}>
-              <bdi>{fact.code}</bdi>{fact.source_id ? <> · <bdi>{fact.source_id}</bdi></> : null}
+              {displayLabel(fact.code, READINESS_FACT_LABELS)}{fact.source_id ? <> · מקור <bdi>{fact.source_id}</bdi></> : null}
             </p>
           ))}
           <Link to={`/clients/${clientId}/planning-input`}>מעבר לקלט התכנון</Link>
@@ -467,7 +519,7 @@ export function ProfessionalWorkflowOverview({
       <section aria-labelledby="professional-workflow-next-action-heading">
         <h4 id="professional-workflow-next-action-heading">הפעולה הבאה המוצעת</h4>
         <ActionLink clientId={clientId} target={nextTarget} triggerRef={nextActionRef}>
-          מעבר לפעולה הבאה
+          {nextActionLabel(nextTarget)}
         </ActionLink>
       </section>
     </nav>

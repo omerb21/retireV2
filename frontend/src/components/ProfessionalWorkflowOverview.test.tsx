@@ -159,7 +159,7 @@ describe("ProfessionalWorkflowOverview", () => {
     expect(within(phase(/^4\./)).getByText(/READY_TO_CONTINUE/)).toBeInTheDocument();
     expect(within(phase(/^4\./)).getByText(/NOT_AUTHORIZED/)).toBeInTheDocument();
     expect(within(phase(/^5\./)).getByText(/NOT_EVALUATED/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "המשך למוכנות הכנסה במועד היעד" })).toHaveAttribute(
       "href",
       "/clients/7/retirement-income-readiness",
     );
@@ -169,7 +169,7 @@ describe("ProfessionalWorkflowOverview", () => {
   it("routes each Phase 2 condition to the existing location that can address it", async () => {
     readContextMock.mockResolvedValue(context());
     const rendered = renderOverview(props({ clearinghouseSnapshots: [], retirementPlanningDocuments: [] }));
-    expect(await screen.findByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "רישום תמונת מסלקה" })).toHaveAttribute(
       "href",
       "/clients/7#clearinghouse-snapshots-heading",
     );
@@ -180,7 +180,7 @@ describe("ProfessionalWorkflowOverview", () => {
         <h3 id="retirement-documents-heading" tabIndex={-1}>מסמכי תכנון פרישה</h3>
       </MemoryRouter>,
     );
-    expect(screen.getByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "רישום מסמך תכנון פרישה" })).toHaveAttribute(
       "href",
       "/clients/7#retirement-documents-heading",
     );
@@ -208,7 +208,7 @@ describe("ProfessionalWorkflowOverview", () => {
       }),
     }));
     await screen.findByRole("navigation", { name: "מפת תהליך העבודה המקצועי" });
-    const action = screen.getByRole("link", { name: "מעבר לפעולה הבאה" });
+    const action = screen.getByRole("link", { name: "השלמת תשתית תיק הלקוח" });
     fireEvent.click(action);
     expect(window.location.hash).toBe("#m01-case-foundation-heading");
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "תשתית תיק הלקוח" }));
@@ -230,7 +230,7 @@ describe("ProfessionalWorkflowOverview", () => {
       }),
     }));
     await screen.findByRole("navigation", { name: "מפת תהליך העבודה המקצועי" });
-    const action = screen.getByRole("link", { name: "מעבר לפעולה הבאה" });
+    const action = screen.getByRole("link", { name: "השלמת תשתית תיק הלקוח" });
     const target = screen.getByRole("heading", { name: "תשתית תיק הלקוח" });
     const ordinary = () => {
       action.focus();
@@ -277,11 +277,11 @@ describe("ProfessionalWorkflowOverview", () => {
           "href",
           "/clients/7#retirement-documents-heading",
         );
-        expect(await screen.findByText("PLANNING_BLOCKER")).toBeInTheDocument();
+        expect(await screen.findByText(/PLANNING_BLOCKER/)).toBeInTheDocument();
         expect(within(phase(/^3\./)).getByText(/BLOCKED/)).toBeInTheDocument();
         expect(within(phase(/^4\./)).getAllByText(/BLOCKED/)).toHaveLength(1);
         expect(within(phase(/^4\./)).getByText(/NOT_AUTHORIZED/)).toBeInTheDocument();
-        expect(screen.getByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+        expect(screen.getByRole("link", { name: "השלמת תשתית תיק הלקוח" })).toHaveAttribute(
           "href",
           "/clients/7#m01-case-foundation-heading",
         );
@@ -542,9 +542,8 @@ describe("ProfessionalWorkflowOverview", () => {
         <ProfessionalWorkflowOverview {...props({ readinessContextRevision: 1 })} />
       </MemoryRouter>,
     );
-    expect(await screen.findByText("SECOND")).toBeInTheDocument();
+    expect(await screen.findByText(/SECOND/)).toBeInTheDocument();
     const blockers = within(phase(/^3\./)).getAllByText(/SECOND|FIRST/);
-    expect(blockers.map((item) => item.textContent)).toEqual(expect.arrayContaining(["SECOND", "FIRST"]));
     expect(blockers[0]).toHaveTextContent("SECOND");
     expect(blockers[1]).toHaveTextContent("FIRST");
   });

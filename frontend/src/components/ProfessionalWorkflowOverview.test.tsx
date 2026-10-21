@@ -347,6 +347,54 @@ describe("ProfessionalWorkflowOverview", () => {
     expect(await screen.findByText("FRESH_BLOCKER")).toBeInTheDocument();
   });
 
+  it("kills and restores the same-client revision oracle when the production response guards are bypassed", async () => {
+    const ordinary = async () => {
+      const oldContext = deferred<ReadinessContext>();
+      const freshContext = deferred<ReadinessContext>();
+      let oldSignal: AbortSignal | undefined;
+      readContextMock
+        .mockImplementationOnce((_clientId: number, signal?: AbortSignal) => {
+          oldSignal = signal;
+          return oldContext.promise;
+        })
+        .mockImplementationOnce(() => freshContext.promise);
+      const view = renderOverview(props());
+      try {
+        await waitFor(() => expect(readContextMock).toHaveBeenCalledTimes(1));
+        view.rerender(<MemoryRouter><ProfessionalWorkflowOverview {...props({ readinessContextRevision: 1 })} /></MemoryRouter>);
+        await waitFor(() => expect(readContextMock).toHaveBeenCalledTimes(2));
+        expect(oldSignal?.aborted).toBe(true);
+        await act(async () => oldContext.resolve(context({
+          planning_input_ready: false,
+          retirement_target_ready: false,
+          blocking_facts: [{ source_id: null, code: "OBSOLETE_REVISION" }],
+        })));
+        expect(screen.queryByText("OBSOLETE_REVISION")).not.toBeInTheDocument();
+        await act(async () => freshContext.resolve(context()));
+      } finally {
+        view.unmount();
+      }
+    };
+
+    readContextMock.mockClear();
+    await ordinary();
+    readContextMock.mockClear();
+    const requestMutation = vi.spyOn(workflowRequestPolicy, "acceptsRequest").mockReturnValue(true);
+    const renderMutation = vi.spyOn(workflowRequestPolicy, "acceptsRenderedContext").mockReturnValue(true);
+    let killed = false;
+    try {
+      await ordinary();
+    } catch {
+      killed = true;
+    } finally {
+      requestMutation.mockRestore();
+      renderMutation.mockRestore();
+    }
+    expect(killed).toBe(true);
+    readContextMock.mockClear();
+    await ordinary();
+  });
+
   it("rejects late A responses across an A-to-B-to-A route generation sequence", async () => {
     const oldA = deferred<ReadinessContext>();
     const b = deferred<ReadinessContext>();

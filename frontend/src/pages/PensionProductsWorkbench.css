@@ -136,3 +136,62 @@
   background: #fff4ec;
   font-weight: 700;
 }
+
+.pension-workbench__balance-link {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.pension-workbench__balance-link:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.pension-workbench__inline-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 150px;
+  max-width: 195px;
+}
+.pension-workbench__inline-edit input {
+  width: 100%;
+  min-width: 125px;
+  padding: 7px !important;
+  border: 2px solid #2777c4 !important;
+  background: #f8fbff;
+  font-variant-numeric: tabular-nums;
+}
+.pension-workbench__edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.pension-workbench__edit-actions button {
+  padding: 5px 8px;
+  border: 1px solid #d0deed;
+  border-radius: 5px;
+  font-size: 11px;
+  background: #f0f6fe;
+  color: #194b91;
+}
+.pension-workbench__edit-actions button:first-child {
+  background: #1657b4;
+  color: white;
+  border-color: #1657b4;
+}
+.pension-workbench__edit-error {
+  border-right: 3px solid #a34228;
+  padding: 10px 12px;
+  background: #fff6f0;
+  color: #8f3418;
+}
+.pension-workbench__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

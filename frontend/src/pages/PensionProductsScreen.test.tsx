@@ -190,6 +190,8 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(within(table).getByRole("columnheader", { name: "פיצויים מעסיק נוכחי" })).toBeInTheDocument();
     const row = within(table).getByRole("row", { name: /תכנית א/ });
     expect(within(row).getByText("124.00")).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א" }))
+      .toHaveAttribute("href", "#pension-balance-p1-פיצויים_מעסיק_נוכחי");
     expect(within(row).getByRole("link", { name: "עריכה והמרות" }))
       .toHaveAttribute("href", "#pension-editor-p1");
 
@@ -199,5 +201,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     });
     expect(within(row).getByText("124.00")).toBeInTheDocument();
     expect(api.savePensionProduct).not.toHaveBeenCalled();
+    expect(screen.getByText(/ההמרה הקנונית הקיימת משנה את יתרות הכספים השמורות/))
+      .toBeInTheDocument();
   });
 });

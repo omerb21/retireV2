@@ -27,6 +27,10 @@ import {
   useClientContextGeneration
 } from "../hooks/useClientContextGeneration";
 import { HebrewDateInput } from "../components/HebrewDateInput";
+import {
+  ProfessionalWorkflowOverview,
+  workflowLifecyclePolicy
+} from "../components/ProfessionalWorkflowOverview";
 import { heLabel } from "../i18n/he";
 import { formatIsoDate } from "../utils/dateFormat";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
@@ -78,6 +82,8 @@ export function ClientDetailScreen() {
   const [retirementPlanningDocuments, setRetirementPlanningDocuments] = useState<RetirementPlanningDocumentItem[]>([]);
   const [missingDataItems, setMissingDataItems] = useState<MissingDataItem[]>([]);
   const [collectionLoadErrorMessage, setCollectionLoadErrorMessage] = useState<string | null>(null);
+  const [isCollectionLoading, setIsCollectionLoading] = useState(true);
+  const [readinessContextRevision, setReadinessContextRevision] = useState(0);
   const [snapshotImportDate, setSnapshotImportDate] = useState("");
   const [snapshotSourceType, setSnapshotSourceType] = useState("");
   const [snapshotSourceFile, setSnapshotSourceFile] = useState("");
@@ -172,6 +178,8 @@ export function ClientDetailScreen() {
     setRetirementPlanningDocuments([]);
     setMissingDataItems([]);
     setCollectionLoadErrorMessage(null);
+    setIsCollectionLoading(true);
+    setReadinessContextRevision(0);
     setSnapshotImportDate("");
     setSnapshotSourceType("");
     setSnapshotSourceFile("");
@@ -279,11 +287,13 @@ export function ClientDetailScreen() {
           setRetirementPlanningDocuments(nextDocuments);
           setMissingDataItems(nextMissingItems);
           setCollectionLoadErrorMessage(null);
+          setIsCollectionLoading(false);
         } catch (collectionError) {
           if (!isActive || !isCurrentClientContext(clientContext)) {
             return;
           }
           setCollectionLoadErrorMessage(getErrorMessage(collectionError));
+          setIsCollectionLoading(false);
         }
       } catch (error) {
         if (!isActive || !isCurrentClientContext(clientContext)) {
@@ -367,6 +377,7 @@ export function ClientDetailScreen() {
       setBirthDate(nextCase.birth_date ?? "");
       setGender(nextCase.gender ?? "");
       setProfileExists(true);
+      setReadinessContextRevision(workflowLifecyclePolicy.nextReadinessContextRevision);
       setCaseSaveMessage("נתוני תיק הלקוח נשמרו.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
@@ -427,6 +438,7 @@ export function ClientDetailScreen() {
         );
       }
       setProfileExists(response.profile !== null);
+      setReadinessContextRevision(workflowLifecyclePolicy.nextReadinessContextRevision);
       setSaveSuccessMessage("הפרופיל נשמר בהצלחה.");
     } catch (error) {
       if (isCurrentClientContext(clientContext)) {
@@ -706,8 +718,26 @@ export function ClientDetailScreen() {
       <p>שם מלא: {client.full_name}</p>
       <p>מספר זהות: {client.id_number ?? "לא נמסר"}</p>
       {m01Case !== null ? (
+        <ProfessionalWorkflowOverview
+          clientId={client.client_id}
+          routeKey={location.key}
+          m01Case={m01Case}
+          clearinghouseSnapshots={clearinghouseSnapshots}
+          retirementPlanningDocuments={retirementPlanningDocuments}
+          missingDataItems={missingDataItems}
+          collectionLoadState={
+            isCollectionLoading
+              ? "loading"
+              : collectionLoadErrorMessage !== null
+                ? "error"
+                : "ready"
+          }
+          readinessContextRevision={readinessContextRevision}
+        />
+      ) : null}
+      {m01Case !== null ? (
         <section aria-labelledby="m01-case-foundation-heading">
-          <h3 id="m01-case-foundation-heading">תשתית תיק הלקוח</h3>
+          <h3 id="m01-case-foundation-heading" tabIndex={-1}>תשתית תיק הלקוח</h3>
           <p>שלמות נתונים: {heLabel(m01Case.completeness.status)}</p>
           {m01Case.completeness.missing_field_ids.length > 0 ? (
             <>
@@ -993,7 +1023,7 @@ export function ClientDetailScreen() {
         </ul>
       </section>
       <section aria-labelledby="clearinghouse-snapshots-heading">
-        <h3 id="clearinghouse-snapshots-heading">תמונות מצב מהמסלקה</h3>
+        <h3 id="clearinghouse-snapshots-heading" tabIndex={-1}>תמונות מצב מהמסלקה</h3>
         {collectionLoadErrorMessage ? (
           <>
             <p>לא ניתן לטעון את נתוני האיסוף.</p>
@@ -1127,7 +1157,7 @@ export function ClientDetailScreen() {
         )}
       </section>
       <section aria-labelledby="retirement-documents-heading">
-        <h3 id="retirement-documents-heading">מסמכי תכנון פרישה</h3>
+        <h3 id="retirement-documents-heading" tabIndex={-1}>מסמכי תכנון פרישה</h3>
         <form onSubmit={handleCreateDocument}>
           <p>
             <label htmlFor="document-type">סוג מסמך</label>
@@ -1270,7 +1300,7 @@ export function ClientDetailScreen() {
         </>
       ) : null}
       <section aria-labelledby="missing-data-heading">
-        <h3 id="missing-data-heading">מעקב אחר מידע חסר</h3>
+        <h3 id="missing-data-heading" tabIndex={-1}>מעקב אחר מידע חסר</h3>
         <form onSubmit={handleCreateMissingItem}>
           <p>
             <label htmlFor="missing-item-type">סוג פריט חסר</label>

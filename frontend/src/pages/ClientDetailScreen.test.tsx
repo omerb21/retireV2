@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -738,5 +738,108 @@ describe("ClientDetailScreen", () => {
         })
       })
     );
+  });
+
+  it("invalidates readiness context after an M01 save and accepts exactly one fresh response", async () => {
+    let resolveFreshContext!: (response: Response) => void;
+    const freshContext = new Promise<Response>((resolve) => {
+      resolveFreshContext = resolve;
+    });
+    let contextReads = 0;
+    const response = (body: unknown): Response => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => "application/json" },
+      json: async () => body,
+      text: async () => JSON.stringify(body)
+    }) as unknown as Response;
+    const caseItem = {
+      client_id: 7,
+      display_name: "Dana Levi",
+      id_number: "123456789",
+      birth_date: "1985-02-03",
+      gender: "female",
+      employment_status: "salaried_employee",
+      planned_retirement_date: null,
+      planned_retirement_age: 67,
+      lifecycle_status: "draft",
+      completeness: {
+        status: "complete",
+        missing_field_ids: [],
+        conflicting_field_ids: []
+      },
+      updated_at: "2026-10-21T00:00:00Z"
+    };
+    const readyContext = (code?: string) => ({
+      schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+      client_id: 7,
+      planning_calculation_input_fingerprint: "planning:7",
+      planning_input_ready: code === undefined,
+      retirement_target_date: "2047-01-01",
+      retirement_target_ready: code === undefined,
+      blocking_facts: code === undefined ? [] : [{ source_id: null, code }]
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/clients/7" && method === "GET") {
+        return Promise.resolve(response({
+          client_id: 7,
+          full_name: "Dana Levi",
+          id_number: "123456789",
+          birth_date: "1985-02-03",
+          file_status: "file_created",
+          professional_identification_status: "professionally_identified",
+          m01_case: caseItem
+        }));
+      }
+      if (url === "/api/clients/7/profile" && method === "GET") {
+        return Promise.resolve(response({ profile: null }));
+      }
+      if (
+        method === "GET"
+        && (
+          url === "/api/clients/7/clearinghouse-snapshots"
+          || url === "/api/clients/7/documents"
+          || url === "/api/clients/7/missing-items"
+        )
+      ) {
+        return Promise.resolve(response([]));
+      }
+      if (url === "/api/clients/7/retirement-income-readiness/context" && method === "GET") {
+        contextReads += 1;
+        return contextReads === 1
+          ? Promise.resolve(response(readyContext()))
+          : freshContext;
+      }
+      if (url === "/api/clients/7/case" && method === "PUT") {
+        return Promise.resolve(response(caseItem));
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={["/clients/7"]}>
+        <Routes>
+          <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("שם מלא: Dana Levi")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/READY_TO_CONTINUE/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
+    expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
+    await waitFor(() => expect(contextReads).toBe(2));
+    expect(screen.getByText("טוען מצב מוכנות עדכני…")).toBeInTheDocument();
+    expect(screen.getAllByText(/NOT_EVALUATED/).length).toBeGreaterThanOrEqual(2);
+
+    await act(async () => {
+      resolveFreshContext(response(readyContext("FRESH_POST_SAVE_BLOCKER")));
+    });
+    expect(await screen.findByText("FRESH_POST_SAVE_BLOCKER")).toBeInTheDocument();
+    expect(contextReads).toBe(2);
   });
 });

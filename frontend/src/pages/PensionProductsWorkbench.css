@@ -1,0 +1,77 @@
+.pension-workbench { margin: 20px 0 30px; }
+.pension-workbench__heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pension-workbench__heading h3 { margin: 0 0 10px; }
+.pension-workbench__note { font-size: 12px; color: #667b92; margin: 0 0 12px; }
+.pension-workbench__scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid #d9e3ef;
+  border-radius: 10px;
+  background: #fff;
+  scrollbar-color: #a5b7ce #eff3f8;
+}
+.pension-workbench__table {
+  border-collapse: separate !important;
+  border-spacing: 0;
+  min-width: 1450px;
+  width: max-content;
+  max-width: none !important;
+  font-size: 12px;
+}
+.pension-workbench__table caption { text-align: right; padding: 12px; font-weight: 700; color: #314a67; }
+.pension-workbench__table th, .pension-workbench__table td {
+  min-width: 123px;
+  padding: 11px 13px !important;
+  border-bottom: 1px solid #e7ecf4;
+  white-space: nowrap;
+  text-align: right;
+}
+.pension-workbench__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #3c5872;
+  background: #eef4fb;
+  font-size: 11px;
+  border-bottom: 2px solid #cad9ea;
+}
+.pension-workbench__table tbody tr:hover td { background: #f6f9fd; }
+.pension-workbench__table tr th:first-child, .pension-workbench__table tr td:first-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  min-width: 190px;
+  max-width: 235px;
+  background: #fff;
+  box-shadow: -2px 0 4px #263f5c14;
+}
+.pension-workbench__table thead th:first-child { z-index: 3; background: #e8f0fa; }
+.pension-workbench__table tbody tr:hover td:first-child { background: #f6f9fd; }
+.pension-workbench__table th:nth-child(2), .pension-workbench__table td:nth-child(2) { min-width: 118px; }
+.pension-workbench__table td[data-kind="amount"] { font-variant-numeric: tabular-nums; }
+.pension-workbench__table .pension-workbench__product-name {
+  display: block;
+  max-width: 210px;
+  white-space: normal;
+  line-height: 1.4;
+  font-weight: 700;
+}
+.pension-workbench__edit-link {
+  display: inline-flex;
+  padding: 6px 11px;
+  background: #e8f1ff;
+  border-radius: 6px;
+  color: #1357ad;
+  text-decoration: none;
+  font-weight: 700;
+}
+.pension-workbench__edit-link:hover { background: #d7e8ff; }
+.pension-product-editor {
+  scroll-margin-top: 100px;
+  border: 1px solid #dce6f0;
+  border-radius: 12px;
+  background: #fcfdff;
+  padding: clamp(12px, 1.8vw, 24px);
+  margin: 20px 0;
+}
+.pension-product-editor:target { outline: 3px solid #9fc6ff; }

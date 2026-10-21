@@ -101,3 +101,38 @@
   scroll-margin-top: 115px;
   background: #f5faff;
 }
+
+.pension-workbench__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  align-items: end;
+  margin: 12px 0 16px;
+}
+.pension-workbench__filters > label:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 270px;
+  max-width: 390px;
+  font-size: 12px;
+  color: #425a75;
+  font-weight: 700;
+}
+.pension-workbench__filters input[type="search"] {
+  width: 100%;
+  min-height: 38px;
+}
+.pension-workbench__discrepancy-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  font-size: 12px;
+  color: #455d76;
+}
+.pension-workbench__mismatch {
+  color: #9e401b;
+  background: #fff4ec;
+  font-weight: 700;
+}

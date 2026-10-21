@@ -195,3 +195,25 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* Keep both the product identity and the save/cancel controls available while
+   navigating the wide eleven-component ledger. */
+.pension-workbench__table th:last-child,
+.pension-workbench__table td:last-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 150px;
+  background: #fff;
+  box-shadow: 2px 0 5px #263f5c14;
+}
+.pension-workbench__table thead th:last-child {
+  z-index: 3;
+  background: #e8f0fa;
+}
+.pension-workbench__table tbody tr:hover td:last-child {
+  background: #f6f9fd;
+}
+.pension-workbench__table .pension-workbench__edit-actions {
+  min-width: 145px;
+}

@@ -264,6 +264,24 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(within(ledger).getByText("124.00")).toBeInTheDocument();
   });
 
+  it("rejects malformed amounts before sending a financial write", async () => {
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת יתרות התיק הפנסיוני" });
+    fireEvent.click(within(ledger).getByRole("button", {
+      name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א",
+    }));
+    fireEvent.change(within(ledger).getByRole("textbox", {
+      name: "יתרה מעודכנת — פיצויים מעסיק נוכחי — תכנית א",
+    }), { target: { value: "55.999" } });
+    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרות המוצר" }));
+    expect(await within(ledger).findByRole("alert")).toHaveTextContent("עד שתי ספרות");
+    expect(api.savePensionProduct).not.toHaveBeenCalled();
+    fireEvent.click(within(ledger).getByRole("button", { name: "ביטול עריכה" }));
+    expect(within(ledger).getByRole("button", {
+      name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א",
+    })).toBeInTheDocument();
+  });
+
   it("filters the portfolio without deleting data or recalculating balances", async () => {
     const first = {
       ...product(), product_name: "תכנית א", account_reference: "111",

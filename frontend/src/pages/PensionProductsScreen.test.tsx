@@ -190,8 +190,8 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(within(table).getByRole("columnheader", { name: "פיצויים מעסיק נוכחי" })).toBeInTheDocument();
     const row = within(table).getByRole("row", { name: /תכנית א/ });
     expect(within(row).getByText("124.00")).toBeInTheDocument();
-    expect(within(row).getByRole("link", { name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א" }))
-      .toHaveAttribute("href", "#pension-balance-p1-פיצויים_מעסיק_נוכחי");
+    expect(within(row).getByRole("button", { name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א" }))
+      .toBeEnabled();
     expect(within(row).getByRole("link", { name: "עריכה והמרות" }))
       .toHaveAttribute("href", "#pension-editor-p1");
 
@@ -203,6 +203,60 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(api.savePensionProduct).not.toHaveBeenCalled();
     expect(screen.getByText(/ההמרה הקנונית הקיימת משנה את יתרות הכספים השמורות/))
       .toBeInTheDocument();
+  });
+
+  it("saves one edited component directly from the grid only on explicit confirmation", async () => {
+    const source = {
+      ...product(), components: { ...product().components, [codes[0]]: "124.00" },
+    };
+    const saved = {
+      ...source, version: 2,
+      components: { ...source.components, [codes[0]]: "115.00" },
+    };
+    vi.mocked(api.listPensionProducts).mockResolvedValue([source]);
+    vi.mocked(api.savePensionProduct).mockResolvedValue(saved);
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת יתרות התיק הפנסיוני" });
+    fireEvent.click(within(ledger).getByRole("button", {
+      name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א",
+    }));
+    const input = within(ledger).getByRole("textbox", {
+      name: "יתרה מעודכנת — פיצויים מעסיק נוכחי — תכנית א",
+    });
+    fireEvent.change(input, { target: { value: "115.00" } });
+    expect(api.savePensionProduct).not.toHaveBeenCalled();
+    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרה" }));
+    await waitFor(() => expect(api.savePensionProduct).toHaveBeenCalledWith(
+      1, "p1", expect.objectContaining({
+        expected_version: 1,
+        components: expect.objectContaining({ [codes[0]]: "115.00" }),
+      }),
+    ));
+    expect(await within(ledger).findByText("115.00")).toBeInTheDocument();
+    expect(within(ledger).queryByRole("textbox", { name: /יתרה מעודכנת/ })).toBeNull();
+  });
+
+  it("preserves the original saved balance and the draft after a rejected inline save", async () => {
+    const source = {
+      ...product(), components: { ...product().components, [codes[0]]: "124.00" },
+    };
+    vi.mocked(api.listPensionProducts).mockResolvedValue([source]);
+    vi.mocked(api.savePensionProduct).mockRejectedValue(new Error("המוצר השתנה — נדרש רענון"));
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת יתרות התיק הפנסיוני" });
+    fireEvent.click(within(ledger).getByRole("button", {
+      name: "עריכת יתרת פיצויים מעסיק נוכחי — תכנית א",
+    }));
+    const input = within(ledger).getByRole("textbox", {
+      name: "יתרה מעודכנת — פיצויים מעסיק נוכחי — תכנית א",
+    });
+    fireEvent.change(input, { target: { value: "112.00" } });
+    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרה" }));
+    expect(await within(ledger).findByRole("alert")).toHaveTextContent("המוצר השתנה");
+    expect(input).toHaveValue("112.00");
+    expect(source.components[codes[0]]).toBe("124.00");
+    fireEvent.click(within(ledger).getByRole("button", { name: "ביטול עריכה" }));
+    expect(within(ledger).getByText("124.00")).toBeInTheDocument();
   });
 
   it("filters the portfolio without deleting data or recalculating balances", async () => {

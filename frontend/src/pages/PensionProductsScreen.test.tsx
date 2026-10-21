@@ -205,13 +205,13 @@ describe("מוצרים פנסיוניים קנוניים", () => {
       .toBeInTheDocument();
   });
 
-  it("saves one edited component directly from the grid only on explicit confirmation", async () => {
+  it("saves two edited balance classifications as one versioned product update", async () => {
     const source = {
       ...product(), components: { ...product().components, [codes[0]]: "124.00" },
     };
     const saved = {
       ...source, version: 2,
-      components: { ...source.components, [codes[0]]: "115.00" },
+      components: { ...source.components, [codes[0]]: "115.00", [codes[1]]: "9.00" },
     };
     vi.mocked(api.listPensionProducts).mockResolvedValue([source]);
     vi.mocked(api.savePensionProduct).mockResolvedValue(saved);
@@ -224,14 +224,19 @@ describe("מוצרים פנסיוניים קנוניים", () => {
       name: "יתרה מעודכנת — פיצויים מעסיק נוכחי — תכנית א",
     });
     fireEvent.change(input, { target: { value: "115.00" } });
+    const secondInput = within(ledger).getByRole("textbox", {
+      name: "יתרה מעודכנת — פיצויים לאחר התחשבנות — תכנית א",
+    });
+    fireEvent.change(secondInput, { target: { value: "9.00" } });
     expect(api.savePensionProduct).not.toHaveBeenCalled();
-    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרה" }));
+    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרות המוצר" }));
     await waitFor(() => expect(api.savePensionProduct).toHaveBeenCalledWith(
       1, "p1", expect.objectContaining({
         expected_version: 1,
-        components: expect.objectContaining({ [codes[0]]: "115.00" }),
+        components: expect.objectContaining({ [codes[0]]: "115.00", [codes[1]]: "9.00" }),
       }),
     ));
+    expect(api.savePensionProduct).toHaveBeenCalledTimes(1);
     expect(await within(ledger).findByText("115.00")).toBeInTheDocument();
     expect(within(ledger).queryByRole("textbox", { name: /יתרה מעודכנת/ })).toBeNull();
   });
@@ -251,7 +256,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
       name: "יתרה מעודכנת — פיצויים מעסיק נוכחי — תכנית א",
     });
     fireEvent.change(input, { target: { value: "112.00" } });
-    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרה" }));
+    fireEvent.click(within(ledger).getByRole("button", { name: "שמירת יתרות המוצר" }));
     expect(await within(ledger).findByRole("alert")).toHaveTextContent("המוצר השתנה");
     expect(input).toHaveValue("112.00");
     expect(source.components[codes[0]]).toBe("124.00");

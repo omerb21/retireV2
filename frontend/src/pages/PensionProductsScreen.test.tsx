@@ -180,4 +180,24 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("מזהה הלקוח אינו תקין");
     expect(api.listPensionProducts).not.toHaveBeenCalled();
   });
+
+  it("displays saved component balances in a scannable ledger without treating unsaved edits as facts", async () => {
+    const source = { ...product(), components: { ...product().components, [codes[0]]: "124.00" } };
+    vi.mocked(api.listPensionProducts).mockResolvedValue([source]);
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת יתרות התיק הפנסיוני" });
+    const table = within(ledger).getByRole("table", { name: "מוצרים פנסיוניים שמורים" });
+    expect(within(table).getByRole("columnheader", { name: "פיצויים מעסיק נוכחי" })).toBeInTheDocument();
+    const row = within(table).getByRole("row", { name: /תכנית א/ });
+    expect(within(row).getByText("124.00")).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "עריכה והמרות" }))
+      .toHaveAttribute("href", "#pension-editor-p1");
+
+    const editor = screen.getByRole("region", { name: "עריכת תכנית א" });
+    fireEvent.change(within(editor).getByLabelText("פיצויים מעסיק נוכחי"), {
+      target: { value: "999.00" },
+    });
+    expect(within(row).getByText("124.00")).toBeInTheDocument();
+    expect(api.savePensionProduct).not.toHaveBeenCalled();
+  });
 });

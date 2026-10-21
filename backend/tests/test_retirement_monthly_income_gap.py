@@ -574,6 +574,83 @@ def test_transaction_cleanup_and_rollback_failure_precedence_poison_session(monk
         db.scalar(text("SELECT 1"))
 
 
+def test_rollback_failure_precedence_and_session_poisoning_mutations_fail_and_restore(
+    monkeypatch,
+):
+    evidence = _evidence(recurring=(_recurring_source(1, "1200.00", "monthly"),))
+    _install_evidence(monkeypatch, evidence)
+    production_adapter = cmia.assess_with_target_in_snapshot
+    expected = (
+        ("OSError", "rmiga rollback failure", True),
+        ("OSError", "rmiga rollback failure", True),
+    )
+
+    def run_case(*, technical_failure):
+        if technical_failure:
+            monkeypatch.setattr(
+                cmia, "assess_with_target_in_snapshot",
+                lambda *_: (_ for _ in ()).throw(RuntimeError("earlier technical failure")),
+            )
+        else:
+            monkeypatch.setattr(cmia, "assess_with_target_in_snapshot", production_adapter)
+        db = Session(create_engine("sqlite://"))
+        monkeypatch.setattr(
+            db, "rollback",
+            lambda: (_ for _ in ()).throw(OSError("rmiga rollback failure")),
+        )
+        caught = None
+        try:
+            subject.assess(db, _request())
+        except BaseException as error:
+            caught = error
+        reuse_blocked = False
+        try:
+            db.scalar(text("SELECT 1"))
+        except InvalidRequestError as error:
+            reuse_blocked = "permanently unusable" in str(error)
+        finally:
+            db.close()
+        return (
+            type(caught).__name__ if caught is not None else None,
+            str(caught) if caught is not None else None,
+            reuse_blocked,
+        )
+
+    def ordinary_oracle():
+        return (
+            run_case(technical_failure=False),
+            run_case(technical_failure=True),
+        )
+
+    assert ordinary_oracle() == expected
+
+    production_rollback = subject._rollback_owned_transaction
+    precedence_mutation_reached = []
+
+    def suppress_rollback_failure(db, connection):
+        precedence_mutation_reached.append(True)
+        try:
+            production_rollback(db, connection)
+        except OSError:
+            return None
+
+    monkeypatch.setattr(subject, "_rollback_owned_transaction", suppress_rollback_failure)
+    assert ordinary_oracle() != expected
+    assert precedence_mutation_reached
+    monkeypatch.setattr(subject, "_rollback_owned_transaction", production_rollback)
+    assert ordinary_oracle() == expected
+
+    production_poison = subject._poison_session
+    poisoning_mutation_reached = []
+    monkeypatch.setattr(
+        subject, "_poison_session", lambda _db: poisoning_mutation_reached.append(True),
+    )
+    assert ordinary_oracle() != expected
+    assert poisoning_mutation_reached
+    monkeypatch.setattr(subject, "_poison_session", production_poison)
+    assert ordinary_oracle() == expected
+
+
 def test_connection_acquisition_ownership_and_retained_connection_invalidation(monkeypatch):
     class AcquisitionFailureDB(_DB):
         def connection(self):

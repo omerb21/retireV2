@@ -84,6 +84,8 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
  * those actions remain in each existing product editor and its conversion UI.
  */
 function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
+  const [search, setSearch] = useState("");
+  const [onlyDiscrepancies, setOnlyDiscrepancies] = useState(false);
   // Keep the familiar eleven-column V1 order even if import key order varies.
   // Unknown future component codes remain visible, after the known columns.
   const knownColumns = [
@@ -101,16 +103,41 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
     ...knownColumns.filter(code => presentCodes.includes(code)),
     ...presentCodes.filter(code => !knownColumns.includes(code)),
   ];
+  const normalizedSearch = search.trim().toLocaleLowerCase("he");
+  const displayedProducts = products.filter(product => {
+    const haystack = [product.product_name, product.provider_name, product.account_reference,
+      productTypeLabel(product.product_type)].filter(Boolean).join(" ").toLocaleLowerCase("he");
+    if (normalizedSearch && !haystack.includes(normalizedSearch)) return false;
+    if (onlyDiscrepancies) {
+      const discrepancy = product.reconciliation?.product_discrepancy;
+      if (discrepancy == null || !/^-?(?:\\d+)(?:\\.\\d+)?$/.test(discrepancy)) return false;
+      if (Number(discrepancy) === 0) return false;
+    }
+    return true;
+  });
   return (
     <section className="pension-workbench" aria-label="טבלת יתרות התיק הפנסיוני">
       <div className="pension-workbench__heading">
         <h3>טבלת יתרות התיק הפנסיוני</h3>
-        <small>{products.length} מוצרים · {componentCodes.length} סוגי רכיבים</small>
+        <small>{displayedProducts.length} מתוך {products.length} מוצרים · {componentCodes.length} סוגי רכיבים</small>
       </div>
       <p className="pension-workbench__note">
         היתרות בטבלה הן הנתונים השמורים בפועל. לחיצה על יתרה מעבירה לעריכת הרכיב המתאים.
         פעולות ההמרה הקנוניות הקיימות משנות יתרות אמיתיות ואינן סימולציה.
       </p>
+      <div className="pension-workbench__filters">
+        <label htmlFor="pension-workbench-search">חיפוש מוצר או חשבון
+          <input id="pension-workbench-search" type="search" value={search}
+            placeholder="שם תכנית, גוף מנהל או מספר חשבון"
+            onChange={event => setSearch(event.target.value)} />
+        </label>
+        <label className="pension-workbench__discrepancy-filter">
+          <input type="checkbox" checked={onlyDiscrepancies}
+            onChange={event => setOnlyDiscrepancies(event.target.checked)} />
+          הצג רק מוצרים עם פער מדווח
+        </label>
+      </div>
+      {displayedProducts.length === 0 && <p role="status">לא נמצאו מוצרים התואמים לסינון. הנתונים השמורים לא השתנו.</p>}
       <div className="pension-workbench__scroll" role="region"
         aria-label="טבלת יתרות נגללת" tabIndex={0}>
         <table className="pension-workbench__table">
@@ -123,6 +150,8 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
               <th scope="col">חשבון</th>
               <th scope="col">נכון לתאריך</th>
               <th scope="col">סך מדווח</th>
+              <th scope="col">סך רכיבים</th>
+              <th scope="col">פער מדווח מול רכיבים</th>
               {componentCodes.map(code => (
                 <th scope="col" key={code}>{code.replace(/_/g, " ")}</th>
               ))}
@@ -130,7 +159,7 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
             </tr>
           </thead>
           <tbody>
-            {products.map(product => (
+            {displayedProducts.map(product => (
               <tr key={product.product_id}>
                 <td><span className="pension-workbench__product-name">{product.product_name}</span></td>
                 <td>{product.provider_name ?? "לא נמסר"}</td>
@@ -138,6 +167,10 @@ function PensionBalanceWorkbench({ products }: { products: PensionProduct[] }) {
                 <td><bdi>{product.account_reference ?? "לא נמסר"}</bdi></td>
                 <td><bdi>{formatIsoDate(product.statement_date) || "לא נמסר"}</bdi></td>
                 <td data-kind="amount"><bdi dir="ltr">{product.reported_product_total ?? "לא נמסר"}</bdi></td>
+                <td data-kind="amount"><bdi dir="ltr">{product.reconciliation?.product_component_sum ?? "לא נמסר"}</bdi></td>
+                <td data-kind="amount" className={product.reconciliation?.product_discrepancy && Number(product.reconciliation.product_discrepancy) !== 0 ? "pension-workbench__mismatch" : ""}>
+                  <bdi dir="ltr">{product.reconciliation?.product_discrepancy ?? "לא נמסר"}</bdi>
+                </td>
                 {componentCodes.map(code => (
                   <td data-kind="amount" key={code}>
                     {Object.prototype.hasOwnProperty.call(product.components, code)

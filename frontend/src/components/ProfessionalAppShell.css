@@ -277,7 +277,14 @@ body { margin: 0; }
     transition: transform .2s ease;
     box-shadow: -14px 4px 32px #0b24412b;
   }
-  .professional-shell__sidebar.is-open { transform: translateX(0); }
+  .professional-shell__sidebar:not(.is-open) {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .professional-shell__sidebar.is-open {
+    visibility: visible;
+    transform: translateX(0);
+  }
   .professional-shell__scrim {
     display: block;
     position: fixed;

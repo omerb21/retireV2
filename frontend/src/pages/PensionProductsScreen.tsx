@@ -90,25 +90,24 @@ function PensionBalanceWorkbench({ products, clientId, onSaved }: {
 }) {
   const [editing, setEditing] = useState<{
     productId: string;
-    code: string;
-    amount: string;
+    focusedCode: string;
+    components: Record<string, string>;
     expectedVersion: number;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [balanceError, setBalanceError] = useState<string | null>(null);
 
-  async function saveBalance(event: FormEvent, product: PensionProduct, code: string) {
-    event.preventDefault();
-    if (!editing || saving || editing.productId !== product.product_id || editing.code !== code) return;
+  async function saveBalances(product: PensionProduct) {
+    if (!editing || saving || editing.productId !== product.product_id) return;
     if (editing.expectedVersion !== product.version) {
-      setBalanceError("המוצר עודכן מאז תחילת העריכה. יש לבטל את העריכה ולבדוק את היתרה העדכנית.");
+      setBalanceError("המוצר עודכן מאז תחילת העריכה. יש לבטל את העריכה ולבדוק את היתרות העדכניות.");
       return;
     }
-    if (!/^-?[0-9]+(?:[.][0-9]{1,2})?$/.test(editing.amount)) {
-      setBalanceError("יש להזין סכום תקין עם עד שתי ספרות אחרי הנקודה.");
+    if (Object.values(editing.components).some(amount => !/^-?[0-9]+(?:[.][0-9]{1,2})?$/.test(amount))) {
+      setBalanceError("יש להזין סכומים תקינים עם עד שתי ספרות אחרי הנקודה.");
       return;
     }
-    if (editing.amount === product.components[code]) {
+    if (Object.keys(product.components).every(code => editing.components[code] === product.components[code])) {
       setEditing(null);
       setBalanceError(null);
       return;
@@ -119,7 +118,7 @@ function PensionBalanceWorkbench({ products, clientId, onSaved }: {
       const saved = await savePensionProduct(clientId, product.product_id, {
         ...metadataOf(product),
         expected_version: product.version,
-        components: { ...product.components, [code]: editing.amount },
+        components: { ...editing.components },
       });
       onSaved(saved);
       setEditing(null);
@@ -167,18 +166,18 @@ function PensionBalanceWorkbench({ products, clientId, onSaved }: {
         <small>{displayedProducts.length} מתוך {products.length} מוצרים · {componentCodes.length} סוגי רכיבים</small>
       </div>
       <p className="pension-workbench__note">
-        היתרות בטבלה הן הנתונים השמורים בפועל. לחיצה על יתרה מאפשרת לערוך את הרכיב בטבלה,
-        ורק שמירה מפורשת מעדכנת את התיק. פעולות ההמרה הקנוניות משנות יתרות אמיתיות ואינן סימולציה.
+        היתרות בטבלה הן הנתונים השמורים בפועל. לחיצה על יתרה פותחת לעריכה את רכיבי אותו מוצר.
+        ניתן לשנות כמה טורים ולשמור את כולם בפעולה אחת. המרות קנוניות משנות יתרות אמיתיות ואינן סימולציה.
       </p>
       {balanceError && <p role="alert" className="pension-workbench__edit-error">{balanceError}</p>}
       <div className="pension-workbench__filters">
         <label htmlFor="pension-workbench-search">חיפוש מוצר או חשבון
-          <input id="pension-workbench-search" type="search" value={search}
+          <input id="pension-workbench-search" type="search" value={search} disabled={editing !== null}
             placeholder="שם תכנית, גוף מנהל או מספר חשבון"
             onChange={event => setSearch(event.target.value)} />
         </label>
         <label className="pension-workbench__discrepancy-filter">
-          <input type="checkbox" checked={onlyDiscrepancies}
+          <input type="checkbox" checked={onlyDiscrepancies} disabled={editing !== null}
             onChange={event => setOnlyDiscrepancies(event.target.checked)} />
           הצג רק מוצרים עם פער מדווח
         </label>
@@ -217,33 +216,32 @@ function PensionBalanceWorkbench({ products, clientId, onSaved }: {
                 <td data-kind="amount" className={product.reconciliation?.product_discrepancy && Number(product.reconciliation.product_discrepancy) !== 0 ? "pension-workbench__mismatch" : ""}>
                   <bdi dir="ltr">{product.reconciliation?.product_discrepancy ?? "לא נמסר"}</bdi>
                 </td>
+
                 {componentCodes.map(code => (
                   <td data-kind="amount" key={code}>
                     {Object.prototype.hasOwnProperty.call(product.components, code)
-                      ? editing?.productId === product.product_id && editing.code === code ? (
-                        <form className="pension-workbench__inline-edit"
-                          onSubmit={event => void saveBalance(event, product, code)}>
-                          <label>
-                            <span className="pension-workbench__sr-only">יתרה מעודכנת — {code.replace(/_/g, " ")} — {product.product_name}</span>
-                            <input dir="ltr" inputMode="decimal" autoFocus disabled={saving}
-                              aria-label={`יתרה מעודכנת — ${code.replace(/_/g, " ")} — ${product.product_name}`}
-                              pattern="-?[0-9]+([.][0-9]{1,2})?"
-                              required value={editing.amount}
-                              onChange={event => setEditing({ ...editing, amount: event.target.value })} />
-                          </label>
-                          <div className="pension-workbench__edit-actions">
-                            <button type="submit" disabled={saving}>שמירת יתרה</button>
-                            <button type="button" disabled={saving} onClick={() => {
-                              setEditing(null); setBalanceError(null);
-                            }}>ביטול עריכה</button>
-                          </div>
-                        </form>
+                      ? editing?.productId === product.product_id ? (
+                        <label className="pension-workbench__inline-edit">
+                          <span className="pension-workbench__sr-only">יתרה מעודכנת — {code.replace(/_/g, " ")} — {product.product_name}</span>
+                          <input dir="ltr" inputMode="decimal"
+                            autoFocus={editing.focusedCode === code}
+                            disabled={saving}
+                            aria-label={`יתרה מעודכנת — ${code.replace(/_/g, " ")} — ${product.product_name}`}
+                            value={editing.components[code]}
+                            onChange={event => setEditing({
+                              ...editing,
+                              components: { ...editing.components, [code]: event.target.value },
+                            })} />
+                        </label>
                       ) : (
                         <button type="button" className="pension-workbench__balance-link"
                           disabled={saving || editing !== null}
                           onClick={() => {
-                            setEditing({ productId: product.product_id, code,
-                              amount: product.components[code], expectedVersion: product.version });
+                            setEditing({
+                              productId: product.product_id, focusedCode: code,
+                              components: { ...product.components },
+                              expectedVersion: product.version,
+                            });
                             setBalanceError(null);
                           }}
                           aria-label={`עריכת יתרת ${code.replace(/_/g, " ")} — ${product.product_name}`}>
@@ -252,8 +250,21 @@ function PensionBalanceWorkbench({ products, clientId, onSaved }: {
                       ) : "—"}
                   </td>
                 ))}
-                <td><a className="pension-workbench__edit-link"
-                  href={`#pension-editor-${product.product_id}`}>עריכה והמרות</a></td>
+                <td>
+                  {editing?.productId === product.product_id ? (
+                    <div className="pension-workbench__edit-actions">
+                      <button type="button" disabled={saving} onClick={() => void saveBalances(product)}>
+                        {saving ? "שומר..." : "שמירת יתרות המוצר"}
+                      </button>
+                      <button type="button" disabled={saving} onClick={() => {
+                        setEditing(null); setBalanceError(null);
+                      }}>ביטול עריכה</button>
+                    </div>
+                  ) : (
+                    <a className="pension-workbench__edit-link"
+                      href={`#pension-editor-${product.product_id}`}>עריכה והמרות</a>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

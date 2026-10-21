@@ -476,6 +476,53 @@ describe("ProfessionalWorkflowOverview", () => {
     await ordinary();
   });
 
+  it("kills and restores response-client binding while revision and generation remain current", async () => {
+    const ordinary = async () => {
+      readContextMock.mockResolvedValue(context({
+        client_id: 8,
+        planning_input_ready: false,
+        retirement_target_ready: false,
+        blocking_facts: [{ source_id: "income:foreign", code: "FOREIGN_CLIENT_FACT" }],
+      }));
+      const view = renderOverview(props());
+      try {
+        await waitFor(() => expect(readContextMock).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(screen.queryByText("FOREIGN_CLIENT_FACT")).not.toBeInTheDocument();
+        expect(within(phase(/^3\./)).getByText(/NOT_EVALUATED/)).toBeInTheDocument();
+      } finally {
+        view.unmount();
+      }
+    };
+
+    readContextMock.mockClear();
+    await ordinary();
+    readContextMock.mockClear();
+    let responseClientMutationReached = false;
+    const mutation = vi.spyOn(workflowRequestPolicy, "acceptsRequest").mockImplementation((input) => {
+      if (input.responseClientId === 8 && input.expectedClientId === 7) {
+        responseClientMutationReached = true;
+        return true;
+      }
+      return true;
+    });
+    let killed = false;
+    let failureReason = "";
+    try {
+      await ordinary();
+    } catch (error) {
+      killed = true;
+      failureReason = String(error);
+    } finally {
+      mutation.mockRestore();
+    }
+    expect(responseClientMutationReached).toBe(true);
+    expect(killed).toBe(true);
+    expect(failureReason).toContain("FOREIGN_CLIENT_FACT");
+    readContextMock.mockClear();
+    await ordinary();
+  });
+
   it("fails unavailable context closed and preserves blocker order from an accepted response", async () => {
     readContextMock.mockRejectedValueOnce(new Error("unavailable"));
     const rendered = renderOverview(props());

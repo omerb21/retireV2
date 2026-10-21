@@ -3,6 +3,10 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClientDetailScreen } from "./ClientDetailScreen";
+import {
+  workflowLifecyclePolicy,
+  workflowNavigationPolicy
+} from "../components/ProfessionalWorkflowOverview";
 
 vi.mock("./RetirementPlanningFactsSection", () => ({
   RetirementPlanningFactsSection: () => (
@@ -841,5 +845,467 @@ describe("ClientDetailScreen", () => {
     });
     expect(await screen.findByText("FRESH_POST_SAVE_BLOCKER")).toBeInTheDocument();
     expect(contextReads).toBe(2);
+  });
+
+  it.each(["case", "profile"] as const)(
+    "kills and restores the screen-owned revision increment after a successful %s save",
+    async (saveKind) => {
+      const runLifecycle = async () => {
+        let resolveFreshContext!: (response: Response) => void;
+        const freshContext = new Promise<Response>((resolve) => {
+          resolveFreshContext = resolve;
+        });
+        const response = (body: unknown): Response => ({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          json: async () => body,
+          text: async () => JSON.stringify(body)
+        }) as unknown as Response;
+        const caseItem = {
+          client_id: 7,
+          display_name: "Lifecycle Client",
+          id_number: "123456789",
+          birth_date: "1985-02-03",
+          gender: "female",
+          employment_status: "salaried_employee",
+          planned_retirement_date: null,
+          planned_retirement_age: 67,
+          lifecycle_status: "draft",
+          completeness: { status: "complete", missing_field_ids: [], conflicting_field_ids: [] },
+          updated_at: "2026-10-21T00:00:00Z"
+        };
+        const profile = {
+          client_profile_id: "CP-7",
+          client_id: 7,
+          id_number: "123456789",
+          birth_date: "1985-02-03",
+          gender: "female",
+          contact_method: "email",
+          contact_details: "planner@example.com",
+          notes: null,
+          file_status: "file_created",
+          professional_identification_status: "professionally_identified",
+          m01_case: caseItem
+        };
+        let contextReads = 0;
+        let oldSignal: AbortSignal | undefined;
+        const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          const method = init?.method ?? "GET";
+          if (url === "/api/clients/7" && method === "GET") {
+            return Promise.resolve(response({
+              client_id: 7,
+              full_name: caseItem.display_name,
+              id_number: caseItem.id_number,
+              birth_date: caseItem.birth_date,
+              file_status: "file_created",
+              professional_identification_status: "professionally_identified",
+              m01_case: caseItem
+            }));
+          }
+          if (url === "/api/clients/7/profile" && method === "GET") {
+            return Promise.resolve(response({ profile }));
+          }
+          if (
+            method === "GET"
+            && ["clearinghouse-snapshots", "documents", "missing-items"].some((part) => url.endsWith(part))
+          ) {
+            return Promise.resolve(response([]));
+          }
+          if (url === "/api/clients/7/retirement-income-readiness/context" && method === "GET") {
+            contextReads += 1;
+            if (contextReads === 1) {
+              oldSignal = init?.signal ?? undefined;
+              return Promise.resolve(response({
+                schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+                client_id: 7,
+                planning_calculation_input_fingerprint: "before-save",
+                planning_input_ready: true,
+                retirement_target_date: "2047-01-01",
+                retirement_target_ready: true,
+                blocking_facts: []
+              }));
+            }
+            return freshContext;
+          }
+          if (url === "/api/clients/7/case" && method === "PUT") {
+            return Promise.resolve(response(caseItem));
+          }
+          if (url === "/api/clients/7/profile" && method === "PUT") {
+            return Promise.resolve(response({ profile }));
+          }
+          throw new Error(`Unexpected request: ${method} ${url}`);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        const view = render(
+          <MemoryRouter initialEntries={["/clients/7"]}>
+            <Routes><Route path="/clients/:clientId" element={<ClientDetailScreen />} /></Routes>
+          </MemoryRouter>
+        );
+        try {
+          expect(await screen.findByText("שם מלא: Lifecycle Client")).toBeInTheDocument();
+          await waitFor(() => expect(contextReads).toBe(1));
+          fireEvent.click(screen.getByRole("button", {
+            name: saveKind === "case" ? "שמירת נתוני התיק" : "שמירת פרופיל"
+          }));
+          expect(await screen.findByText(
+            saveKind === "case" ? "נתוני תיק הלקוח נשמרו." : "הפרופיל נשמר בהצלחה."
+          )).toBeInTheDocument();
+          await act(async () => Promise.resolve());
+          const loadingVisible = screen.queryByText("טוען מצב מוכנות עדכני…") !== null;
+          if (contextReads === 2) {
+            resolveFreshContext(response({
+              schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+              client_id: 7,
+              planning_calculation_input_fingerprint: "after-save",
+              planning_input_ready: false,
+              retirement_target_date: "2047-01-01",
+              retirement_target_ready: false,
+              blocking_facts: [{ source_id: null, code: `FRESH_${saveKind.toUpperCase()}_BLOCKER` }]
+            }));
+            await screen.findByText(`FRESH_${saveKind.toUpperCase()}_BLOCKER`);
+          }
+          return { contextReads, loadingVisible, oldSignalAborted: oldSignal?.aborted === true };
+        } finally {
+          view.unmount();
+        }
+      };
+
+      const ordinary = async () => {
+        const facts = await runLifecycle();
+        expect(facts.contextReads).toBe(2);
+        expect(facts.loadingVisible).toBe(true);
+        expect(facts.oldSignalAborted).toBe(true);
+      };
+
+      await ordinary();
+      let revisionMutationReached = false;
+      const mutation = vi.spyOn(workflowLifecyclePolicy, "nextReadinessContextRevision")
+        .mockImplementation((current) => {
+          revisionMutationReached = true;
+          return current;
+        });
+      let killed = false;
+      let failureReason = "";
+      try {
+        await ordinary();
+      } catch (error) {
+        killed = true;
+        failureReason = String(error);
+      } finally {
+        mutation.mockRestore();
+      }
+      expect(revisionMutationReached).toBe(true);
+      expect(killed).toBe(true);
+      expect(failureReason).toContain("to be 2");
+      await ordinary();
+    }
+  );
+
+  it.each(["success", "failure"] as const)(
+    "rejects a late obsolete readiness %s after a real successful profile save",
+    async (lateOutcome) => {
+      let resolveOld!: (response: Response) => void;
+      let rejectOld!: (reason: unknown) => void;
+      const oldContext = new Promise<Response>((resolve, reject) => {
+        resolveOld = resolve;
+        rejectOld = reject;
+      });
+      const response = (body: unknown): Response => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "application/json" },
+        json: async () => body,
+        text: async () => JSON.stringify(body)
+      }) as unknown as Response;
+      const caseItem = {
+        client_id: 7,
+        display_name: "Profile Client",
+        id_number: "123456789",
+        birth_date: "1985-02-03",
+        gender: "female",
+        employment_status: "salaried_employee",
+        planned_retirement_date: null,
+        planned_retirement_age: 67,
+        lifecycle_status: "draft",
+        completeness: { status: "complete", missing_field_ids: [], conflicting_field_ids: [] },
+        updated_at: "2026-10-21T00:00:00Z"
+      };
+      const profile = {
+        client_profile_id: "CP-7",
+        client_id: 7,
+        id_number: "123456789",
+        birth_date: "1985-02-03",
+        gender: "female",
+        contact_method: "email",
+        contact_details: "profile@example.com",
+        notes: null,
+        file_status: "file_created",
+        professional_identification_status: "professionally_identified",
+        m01_case: caseItem
+      };
+      let contextReads = 0;
+      let oldSignal: AbortSignal | undefined;
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === "/api/clients/7" && method === "GET") {
+          return Promise.resolve(response({
+            client_id: 7,
+            full_name: caseItem.display_name,
+            id_number: caseItem.id_number,
+            birth_date: caseItem.birth_date,
+            file_status: "file_created",
+            professional_identification_status: "professionally_identified",
+            m01_case: caseItem
+          }));
+        }
+        if (url === "/api/clients/7/profile" && method === "GET") return Promise.resolve(response({ profile }));
+        if (url === "/api/clients/7/profile" && method === "PUT") return Promise.resolve(response({ profile }));
+        if (method === "GET" && ["clearinghouse-snapshots", "documents", "missing-items"].some((part) => url.endsWith(part))) {
+          return Promise.resolve(response([]));
+        }
+        if (url === "/api/clients/7/retirement-income-readiness/context" && method === "GET") {
+          contextReads += 1;
+          if (contextReads === 1) {
+            oldSignal = init?.signal ?? undefined;
+            return oldContext;
+          }
+          return Promise.resolve(response({
+            schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+            client_id: 7,
+            planning_calculation_input_fingerprint: "fresh-profile",
+            planning_input_ready: false,
+            retirement_target_date: "2047-01-01",
+            retirement_target_ready: false,
+            blocking_facts: [{ source_id: null, code: "CURRENT_PROFILE_CONTEXT" }]
+          }));
+        }
+        throw new Error(`Unexpected request: ${method} ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(
+        <MemoryRouter initialEntries={["/clients/7"]}>
+          <Routes><Route path="/clients/:clientId" element={<ClientDetailScreen />} /></Routes>
+        </MemoryRouter>
+      );
+
+      expect(await screen.findByText("שם מלא: Profile Client")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "שמירת פרופיל" }));
+      expect(await screen.findByText("הפרופיל נשמר בהצלחה.")).toBeInTheDocument();
+      expect(await screen.findByText("CURRENT_PROFILE_CONTEXT")).toBeInTheDocument();
+      expect(contextReads).toBe(2);
+      expect(oldSignal?.aborted).toBe(true);
+      if (lateOutcome === "success") {
+        await act(async () => resolveOld(response({
+          schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+          client_id: 7,
+          planning_calculation_input_fingerprint: "obsolete-profile",
+          planning_input_ready: false,
+          retirement_target_date: "1999-01-01",
+          retirement_target_ready: false,
+          blocking_facts: [{ source_id: null, code: "OBSOLETE_PROFILE_SUCCESS" }]
+        })));
+      } else {
+        await act(async () => rejectOld(new Error("OBSOLETE_PROFILE_FAILURE")));
+      }
+      await waitFor(() => {
+        expect(screen.queryByText(/OBSOLETE_PROFILE_SUCCESS|OBSOLETE_PROFILE_FAILURE/)).not.toBeInTheDocument();
+      });
+      expect(screen.getByText("CURRENT_PROFILE_CONTEXT")).toBeInTheDocument();
+    }
+  );
+
+  it("executes the integrated synthetic workflow journey without reload, stale state, comparison, or RMIGA calls", async () => {
+    let resolveFreshContext!: (response: Response) => void;
+    const freshContext = new Promise<Response>((resolve) => {
+      resolveFreshContext = resolve;
+    });
+    const response = (body: unknown): Response => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => "application/json" },
+      json: async () => body,
+      text: async () => JSON.stringify(body)
+    }) as unknown as Response;
+    const incompleteCase = {
+      client_id: 7,
+      display_name: "Synthetic Client A",
+      id_number: "123456789",
+      birth_date: "1985-02-03",
+      gender: "female",
+      employment_status: null,
+      planned_retirement_date: null,
+      planned_retirement_age: 67,
+      lifecycle_status: "draft",
+      completeness: {
+        status: "incomplete",
+        missing_field_ids: ["employment_status"],
+        conflicting_field_ids: []
+      },
+      updated_at: "2026-10-21T00:00:00Z"
+    };
+    const completeCase = {
+      ...incompleteCase,
+      display_name: "Unsaved Professional Edit",
+      employment_status: "salaried_employee",
+      completeness: { status: "complete", missing_field_ids: [], conflicting_field_ids: [] }
+    };
+    const snapshot = {
+      clearinghouse_snapshot_id: "snapshot:journey",
+      client_id: 7,
+      import_date: "2026-10-01",
+      source_type: "clearinghouse",
+      source_file: "journey.xml",
+      collection_status: "collected",
+      collection_notes: null,
+      verification_status: "verified",
+      verification_notes: null,
+      verified_at: "2026-10-02T00:00:00Z",
+      created_at: "2026-10-01T00:00:00Z"
+    };
+    const documentItem = {
+      document_id: "document:journey",
+      client_id: 7,
+      document_type: "161",
+      source_type: "document",
+      source_file: "journey.pdf",
+      collection_date: "2026-10-02",
+      collection_status: "collected",
+      collection_notes: null,
+      verification_status: "unverified",
+      verification_notes: null,
+      verified_at: null,
+      created_at: "2026-10-02T00:00:00Z"
+    };
+    let clientReads = 0;
+    let contextReads = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/clients/7" && method === "GET") {
+        clientReads += 1;
+        return Promise.resolve(response({
+          client_id: 7,
+          full_name: incompleteCase.display_name,
+          id_number: incompleteCase.id_number,
+          birth_date: incompleteCase.birth_date,
+          file_status: "file_created",
+          professional_identification_status: "professionally_identified",
+          m01_case: incompleteCase
+        }));
+      }
+      if (url === "/api/clients/7/profile" && method === "GET") return Promise.resolve(response({ profile: null }));
+      if (url === "/api/clients/7/clearinghouse-snapshots" && method === "GET") return Promise.resolve(response([snapshot]));
+      if (url === "/api/clients/7/documents" && method === "GET") return Promise.resolve(response([]));
+      if (url === "/api/clients/7/missing-items" && method === "GET") return Promise.resolve(response([]));
+      if (url === "/api/clients/7/case" && method === "PUT") return Promise.resolve(response(completeCase));
+      if (url === "/api/clients/7/documents" && method === "POST") return Promise.resolve(response(documentItem));
+      if (url === "/api/clients/7/retirement-income-readiness/context" && method === "GET") {
+        contextReads += 1;
+        return contextReads === 1
+          ? Promise.resolve(response({
+              schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+              client_id: 7,
+              planning_calculation_input_fingerprint: "journey-before",
+              planning_input_ready: false,
+              retirement_target_date: null,
+              retirement_target_ready: false,
+              blocking_facts: [{ source_id: null, code: "OLD_JOURNEY_CONTEXT" }]
+            }))
+          : freshContext;
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/clients/7"]}>
+        <Routes><Route path="/clients/:clientId" element={<ClientDetailScreen />} /></Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("שם מלא: Synthetic Client A")).toBeInTheDocument();
+    await screen.findByText("OLD_JOURNEY_CONTEXT");
+    const nameInput = screen.getByLabelText("שם");
+    fireEvent.change(nameInput, { target: { value: "Unsaved Professional Edit" } });
+    const nextAction = screen.getByRole("link", { name: "מעבר לפעולה הבאה" });
+    fireEvent.click(nextAction);
+    expect(nameInput).toHaveValue("Unsaved Professional Edit");
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "תשתית תיק הלקוח" }));
+    expect(clientReads).toBe(1);
+
+    let navigationMutationReached = false;
+    const navigationMutation = vi.spyOn(workflowNavigationPolicy, "focusAndScroll")
+      .mockImplementation((target) => {
+        navigationMutationReached = true;
+        (nameInput as HTMLInputElement).value = "";
+        target?.focus();
+      });
+    fireEvent.change(nameInput, { target: { value: "Unsaved Professional Edit" } });
+    let navigationKilled = false;
+    let navigationFailureReason = "";
+    try {
+      fireEvent.click(nextAction);
+      expect(nameInput).toHaveValue("Unsaved Professional Edit");
+      expect(clientReads).toBe(1);
+    } catch (error) {
+      navigationKilled = true;
+      navigationFailureReason = String(error);
+    } finally {
+      navigationMutation.mockRestore();
+    }
+    expect(navigationMutationReached).toBe(true);
+    expect(navigationKilled).toBe(true);
+    expect(navigationFailureReason).toContain("Unsaved Professional Edit");
+    fireEvent.change(nameInput, { target: { value: "Unsaved Professional Edit" } });
+    fireEvent.click(nextAction);
+    expect(nameInput).toHaveValue("Unsaved Professional Edit");
+    expect(clientReads).toBe(1);
+
+    fireEvent.change(screen.getByLabelText("מצב תעסוקה"), { target: { value: "salaried_employee" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
+    expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
+    expect(screen.queryByText("OLD_JOURNEY_CONTEXT")).not.toBeInTheDocument();
+    expect(screen.getByText("טוען מצב מוכנות עדכני…")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+      "href",
+      "/clients/7#retirement-documents-heading"
+    );
+
+    fireEvent.change(screen.getByLabelText("סוג מסמך"), { target: { value: "161" } });
+    fireEvent.change(screen.getByLabelText("סוג מקור המסמך"), { target: { value: "document" } });
+    fireEvent.change(screen.getByLabelText("קובץ מקור המסמך"), { target: { value: "journey.pdf" } });
+    fireEvent.change(screen.getByLabelText("תאריך איסוף המסמך"), { target: { value: "02/10/2026" } });
+    fireEvent.change(screen.getByLabelText("מצב איסוף המסמך"), { target: { value: "collected" } });
+    fireEvent.click(screen.getByRole("button", { name: "רישום מסמך" }));
+    expect(await screen.findByText("מסמך תכנון הפרישה נרשם.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "המשך להכנת מקורות מקצועיים" })).toHaveAttribute(
+      "href",
+      "/clients/7/professional-sources"
+    );
+
+    await act(async () => resolveFreshContext(response({
+      schema_version: "RTDIR_PLANNING_CONTEXT_V1",
+      client_id: 7,
+      planning_calculation_input_fingerprint: "journey-after",
+      planning_input_ready: true,
+      retirement_target_date: "2047-01-01",
+      retirement_target_ready: true,
+      blocking_facts: []
+    })));
+    expect(await screen.findByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(
+      "href",
+      "/clients/7/retirement-income-readiness"
+    );
+    expect(contextReads).toBe(2);
+    expect(clientReads).toBe(1);
+    expect(screen.queryByText(/Client B|לקוח B/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/comparison|gap/)]),
+    );
   });
 });

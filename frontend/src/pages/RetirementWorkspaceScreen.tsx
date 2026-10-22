@@ -276,7 +276,7 @@ export function RetirementWorkspaceScreen() {
   }, [products, search, discrepancyOnly]);
 
   function switchStep(next: Step) {
-    if (draft !== null || saveState === "saving") {
+    if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
       return;
     }
@@ -466,7 +466,7 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "supplement" && <section>
         <h1>נתונים משלימים</h1>
-        <p className="professional-workspace__sub">סיכום קריאה בלבד מנתוני הלקוח במערכת. קישורי העריכה מפנים לטפסים המאושרים הקיימים; לאחר השמירה יש לחזור לסביבת העבודה.</p>
+        <p className="professional-workspace__sub">נתוני הלקוח מוצגים כאן ממסד הנתונים. ניתן לתקן כאן תעסוקה ומענקים קיימים; הוספה, מחיקה ועריכת נתונים אחרים מתבצעות במסכים הייעודיים.</p>
         {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
         {supplementError && <p role="alert">{supplementError}</p>}
         {supplement?.clientId === clientId && !supplementError && <div className="professional-workspace__identity">
@@ -481,10 +481,12 @@ export function RetirementWorkspaceScreen() {
                   <strong>{item.title}</strong> <span>{item.detail}</span>
                   {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => {
                     setGrantError(null);
+                    setEmploymentEdit(null);
                     setGrantEdit({ ...grantRecords[itemIndex] });
                   }}>תקן מענק</button>}
                   {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => {
                     setEmploymentError(null);
+                    setGrantEdit(null);
                     setEmploymentEdit({ ...employmentRecords[itemIndex] });
                   }}>תקן רשומת תעסוקה</button>}
                 </li>)}

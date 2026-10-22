@@ -170,6 +170,7 @@ class GrantRequest(BaseModel):
 
 class GrantResponse(BaseModel):
     grant_id: str
+    employment_record_id: str | None
     client_id: int
     employer_name: str | None
     employer_withholding_file_number: str | None
@@ -177,6 +178,11 @@ class GrantResponse(BaseModel):
     employment_end_date: date
     grant_receipt_date: date
     exempt_grant_amount: Decimal | None
+
+
+class GrantEmploymentLinkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    employment_record_id: str
 
 
 class ActualCapitalizationRequest(BaseModel):
@@ -980,6 +986,7 @@ def _employment_record_to_response(row: EmploymentRecord) -> EmploymentRecordRes
 def _grant_to_response(row: Grant) -> GrantResponse:
     return GrantResponse(
         grant_id=row.grant_id,
+        employment_record_id=row.employment_record_id,
         client_id=row.client_id,
         employer_name=row.employer_name,
         employer_withholding_file_number=row.employer_withholding_file_number,
@@ -2298,6 +2305,29 @@ def update_grant(
     db.commit()
     db.refresh(grant)
 
+    return _grant_to_response(grant)
+
+
+@router.post("/{client_id}/grants/{grant_id}/employment-link", response_model=GrantResponse)
+def link_grant_to_employment(
+    client_id: int,
+    grant_id: str,
+    payload: GrantEmploymentLinkRequest,
+    db: Session = Depends(get_db),
+) -> GrantResponse:
+    """Explicitly bind a historical grant to one ended employment period, never by name."""
+    _require_client(db, client_id)
+    grant = _require_grant(db, client_id, grant_id)
+    period = _require_employment_record(db, client_id, payload.employment_record_id)
+    if period.is_current or period.work_end_date is None:
+        raise HTTPException(status_code=422, detail="Only ended employment periods can have historical grant links")
+    if grant.work_start_date != period.work_start_date or grant.work_end_date != period.work_end_date:
+        raise HTTPException(status_code=422, detail="Grant dates must match the selected employment period")
+    if grant.employment_record_id is not None and grant.employment_record_id != period.employment_record_id:
+        raise HTTPException(status_code=409, detail="Grant is already linked to a different employment period")
+    grant.employment_record_id = period.employment_record_id
+    db.commit()
+    db.refresh(grant)
     return _grant_to_response(grant)
 
 

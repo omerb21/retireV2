@@ -431,3 +431,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commit `3bb34f06f8154218de02ecdcc055e75c174b8dda` is CSS-only: supplementary card grid gets a 310px minimum width with responsive wrapping (generally 3–4 cards across rather than six), content top alignment and less forced equal card height, more legible item labels, and consistent native-look action button styling. Uses `:has(> section)` to scope the grid override without modifying the client identity DL. Single-column for smaller screens.
 - **Not yet visually verified or built locally**. Existing local dev server is already running and should be reused; pull branch from a second PowerShell terminal and hard-refresh Step 3. Do not restart the Docker stack.
 - No new API, financial decisions, calculation/scenario change, CI, master merge or deployment.
+
+## AR. Supplementary card layout screenshot review (2026-10-22)
+
+- Owner pulled `1b17cf91742f882d55569980745be8571c073b35` and provided refreshed live Chrome screenshot of Step 3.
+- Visual review: layout no longer compresses six categories into one row; four cards wrap on first row and two on second at this viewport. Labels and action buttons legible without apparent overlap. Layout correction visually accepted for this desktop viewport.
+- Follow-up UX opportunities, not yet implemented: reduce visual footprint of four empty categories and make categories with records more prominent. No claim of mobile layout verification or overall UX acceptance.
+- No code changes from this review, CI, merge, or deployment.

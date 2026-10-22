@@ -198,6 +198,7 @@ export function EmploymentHistoryScreen() {
     return (
       <section>
         <h2>Employment History</h2>
+      <p><Link to={`/clients/${parsedClientId}/workspace`}>חזרה לסביבת התכנון החדשה</Link></p>
         <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
         {clientName ? <p>Client Name: {clientName}</p> : null}
         <p>Loading employment history...</p>

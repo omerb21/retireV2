@@ -383,3 +383,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - The category filtering no-mutation test passed. React Router v7 future-flag warnings are informational.
 - Focused validation of category navigation is complete. Recommended next work: holistic visual/interaction design and layout of professional workspace rather than more isolated navigation guards.
 - No full CI, master merge or production deploy.
+
+## AL. Professional workbench visual hierarchy pass (2026-10-22)
+
+- Started from owner-verified 18/18 frontend focused tests and build; baseline was `cb47e0201a34d1813c7f944a9be778033c96364e`.
+- Commit `019c85e0ef42a148c92f50bd2a760e4157ffafc1` changes only `frontend/src/pages/RetirementWorkspaceScreen.css`: adds a clearer client header border, easier-to-target stage buttons, centered max-width workspace, focusable category filter presentation, section cards for supplementary facts, distinct factual editor forms, and narrow-screen horizontal category/stage scrolling plus single-column data cards.
+- Does not change APIs, React logic, source facts, scenario engine or financial calculations.
+- **Pending local visual/build verification**: run `git pull --ff-only` and `npm.cmd run build` from frontend and inspect local synthetic workspace on desktop and narrow viewport. Previously passing 18 UI tests do not verify visual polish; there are no new logic tests.
+- No full CI, master merge or production deployment.

@@ -227,3 +227,13 @@ Owner fast-forwarded Windows isolated checkout to `30a64c9ccb774285b40ec5c542c3a
 - Test-only change `b6c663313d5a2620787ae3388160b51a9414cba7` adds one targeted component test verifying all six category contextual edit anchors resolve to their client-scoped authoritative editor routes, without invoking pension write APIs.
 - This test is **not yet executed**. No direct edit forms were added: source-owned legacy screens remain the sole write interfaces. Next action: targeted build/test validation, plus browser validation of return navigation when convenient. Avoid broad CI.
 - No scenario logic or backend change, no merge, no deploy. Continue with owner-approved workflow UX and existing domain authority boundaries.
+
+## U. Supplementary edit destinations test PASSED (2026-10-22 15:44 Israel)
+
+- Owner fast-forwarded isolated checkout to `5a0cfc5c6d9bb4a7dc33db770e3217bd5704ae9d`.
+- `npm.cmd run build`: PASS, `tsc -b && vite build`, 76 modules, 927 ms.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 10/10 focused tests, 2.33 seconds.
+- New test confirms correct client-scoped links to authoritative editors for all six supplementary sections; existing tests cover factual PUT guards, scenario non-mutation, and client mismatch guards.
+- React Router future-flag warnings only. This is mocked API component testing, not full browser or DB integration.
+- Next authorized development goal: minimize legacy navigation by moving a bounded factual editing interaction into the professional workspace, reusing an accepted API and preserving validation, source and lifecycle semantics. Avoid new scenario contracts or financial calculations.
+- No master merge, production deploy or full CI.

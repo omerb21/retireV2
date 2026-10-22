@@ -414,3 +414,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS 19/19, 2.92s, including guard on returning to 'all supplementary data' with an unsaved employment edit. React Router future-flag warnings are informational.
 - This closes the focused category-navigation logic correction. CSS/visual acceptance is still not done, so next effort should prioritize a real browser viewport review rather than another speculative styling pass.
 - No master merge, production deploy, scenario implementation or full CI.
+
+## AP. Browser screenshot review: pension ledger sticky column overlap (2026-10-22)
+
+- User confirmed original local server at 127.0.0.1:5173 had remained running; attempted second Docker launcher failed because 127.0.0.1:18080 was already bound. No backend fault; do not restart or stop existing stack without reason.
+- User supplied first actual desktop Chrome screenshot at /clients/1/workspace, showing pension ledger with four synthetic products. Visual defect: sticky product/provider columns collide with displayed reported total amounts; text visually overdraws.
+- Source inspection confirmed inconsistent first sticky column max-width 200px vs second sticky offset 180px, with no fixed provider width and no dedicated reported total minimum width.
+- Commit `7fb5f94a6579797174c2ff04fa0c16a140144c17` changes CSS only: consistent 220px first sticky width and second right offset, fixed 185px provider width and explicit wrapping, dedicated 145px reported total column with LTR isolated numeric values; mobile widths 150px/145px with matching offsets.
+- **Unverified visually and not yet locally built.** Owner can fast-forward current frontend checkout (without stopping running local dev server) and refresh existing browser, then provide another screenshot; CSS hot reload should apply. Test is visual rather than repeating 19 logic tests.
+- A screenshot of supplementary data stage is still needed for UX review. No CI, master merge or deployment.

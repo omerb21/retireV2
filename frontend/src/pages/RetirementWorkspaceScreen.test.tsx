@@ -318,6 +318,22 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(updateGrant).not.toHaveBeenCalled();
   });
 
+  it("keeps an unsaved supplementary employment edit when switching workflow stages", async () => {
+    const record = { employment_record_id: "e1", client_id: 1, employer_name: "מעסיק",
+      work_start_date: "2000-01-01", work_end_date: null, is_current: true, notes: null };
+    vi.mocked(getEmploymentRecords).mockResolvedValue([record]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByText("מעסיק");
+    fireEvent.click(screen.getByRole("button", { name: "תקן רשומת תעסוקה" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "שם מעסיק" }), { target: { value: "עריכה שטרם נשמרה" } });
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("יש לשמור או לבטל");
+    expect(screen.getByRole("textbox", { name: "שם מעסיק" })).toHaveValue("עריכה שטרם נשמרה");
+    expect(updateEmploymentRecord).not.toHaveBeenCalled();
+  });
+
   it("fails closed when supplementary API returns another client's record", async () => {
     vi.mocked(getEmploymentRecords).mockResolvedValue([{
       employment_record_id: "e2", client_id: 2, employer_name: "לא שייך",

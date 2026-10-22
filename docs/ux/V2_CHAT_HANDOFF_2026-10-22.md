@@ -174,3 +174,14 @@ Copy/paste:
 - New code is limited to the development branch's React UX and test file; no backend calculation, scenario write, production deployment, master merge or full GitHub CI run.
 - Minimal next validation in owner's existing isolated Windows checkout, without restarting Docker unless the owner explicitly wants live UI: `git pull --ff-only`, then from frontend `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`. Inspect actual result before any acceptance or further edits. Do not repeat broad tests absent invalidating changes.
 - Next governed UX vertical slice after verification: in-workspace supplementary facts display/edit boundaries using accepted APIs, with client isolation; preserve source provenance, factual/scenario separation and scenario engine NOT_AUTHORIZED status.
+
+## O. Focused frontend verification PASSED (2026-10-22 14:47 Israel time)
+
+Owner ran in isolated Windows checkout fast-forwarded to `b80d5aace8f755b639ffcbe8735b3560def0a2f4`:
+- `npm.cmd run build`: `tsc -b && vite build` PASSED, 76 Vite modules transformed.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: 1 file PASSED, 9/9 tests PASSED, duration 2.15 seconds.
+- Included two new supplementary tests: read-only scoped GET summaries and rejection of cross-client response data.
+- React Router v7 future-flag warnings were non-fatal warnings, not failures.
+- Verification is **owner-executed targeted frontend build and mocked-API unit/component tests**, not independent backend SQL integration or domain-calculation acceptance.
+- Local prior synthetic factual save and client navigation were reported working by owner. Supplementary read-only cards have not yet received a direct browser review.
+- No new code, master merge, deployment or expensive CI authorized. Continue next bounded UX slice only within accepted API boundaries. Scenario engine still NOT_AUTHORIZED.

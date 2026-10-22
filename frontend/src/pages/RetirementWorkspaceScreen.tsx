@@ -195,7 +195,9 @@ export function RetirementWorkspaceScreen() {
   }
 
   if (!validClient) return <main dir="rtl"><h1>מזהה לקוח לא תקין</h1><Link to="/clients">בחזרה ללקוחות</Link></main>;
-  if (read.state === "loading") return <main dir="rtl"><p>טוען סביבת עבודה...</p></main>;
+  if (read.state === "loading" || (read.state === "ready" && read.client.client_id !== clientId)) {
+    return <main dir="rtl"><p>טוען סביבת עבודה...</p></main>;
+  }
   if (read.state === "error") return <main dir="rtl"><h1>לא ניתן להציג את התיק</h1><p role="alert">{read.message}</p><Link to="/clients">בחזרה ללקוחות</Link></main>;
 
   const client = read.client;
@@ -236,10 +238,10 @@ export function RetirementWorkspaceScreen() {
         </p>
         <div className="professional-workspace__toolbar">
           <label>חיפוש <input type="search" value={search} onChange={event => {
-            setSearch(event.target.value); setSelection([]); setDraft(null);
-          }} placeholder="תוכנית, גוף מנהל או חשבון" disabled={saveState === "saving"} /></label>
-          <label><input type="checkbox" checked={hideEmptyColumns} disabled={saveState === "saving"} onChange={event => { setHideEmptyColumns(event.target.checked); setSelection([]); setDraft(null); }}/> הסתר טורים ללא יתרה</label>
-          <label><input type="checkbox" checked={discrepancyOnly} disabled={saveState === "saving"} onChange={event => { setDiscrepancyOnly(event.target.checked); setSelection([]); setDraft(null); }}/> הצג רק פערי התאמה</label>
+            setSearch(event.target.value); setSelection([]);
+          }} placeholder="תוכנית, גוף מנהל או חשבון" disabled={draft !== null || saveState === "saving"} /></label>
+          <label><input type="checkbox" checked={hideEmptyColumns} disabled={draft !== null || saveState === "saving"} onChange={event => { setHideEmptyColumns(event.target.checked); setSelection([]); }}/> הסתר טורים ללא יתרה</label>
+          <label><input type="checkbox" checked={discrepancyOnly} disabled={draft !== null || saveState === "saving"} onChange={event => { setDiscrepancyOnly(event.target.checked); setSelection([]); }}/> הצג רק פערי התאמה</label>
           <span>{shownProducts.length} מתוך {products.length} מוצרים</span>
         </div>
         <div className="professional-workspace__ledger" role="region" aria-label="טבלת רכיבים נגללת" tabIndex={0}>

@@ -74,6 +74,7 @@ export function RetirementWorkspaceScreen() {
   const [grantEdit, setGrantEdit] = useState<GrantItem | null>(null);
   const [grantSaving, setGrantSaving] = useState(false);
   const [grantError, setGrantError] = useState<string | null>(null);
+  const [supplementCategory, setSupplementCategory] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
   const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
@@ -98,6 +99,7 @@ export function RetirementWorkspaceScreen() {
     setEmploymentEdit(null);
     setEmploymentError(null);
     setEmploymentSaving(false);
+    setSupplementCategory(null);
     setSearch("");
     setHideEmptyColumns(false);
     setDiscrepancyOnly(false);
@@ -488,9 +490,22 @@ export function RetirementWorkspaceScreen() {
         <p className="professional-workspace__sub">נתוני הלקוח מוצגים כאן ממסד הנתונים. ניתן לתקן כאן תעסוקה ומענקים קיימים; הוספה, מחיקה ועריכת נתונים אחרים מתבצעות במסכים הייעודיים.</p>
         {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
         {supplementError && <p role="alert">{supplementError}</p>}
-        {supplement?.clientId === clientId && !supplementError && <div className="professional-workspace__identity">
+        {supplement?.clientId === clientId && !supplementError && <>
+          <nav aria-label="סינון נתונים משלימים" className="professional-workspace__supplement-filter">
+            <button type="button" aria-pressed={supplementCategory === null} onClick={() => setSupplementCategory(null)}>כל הנתונים</button>
+            {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>
+              <button key={label} type="button" aria-pressed={supplementCategory === index} onClick={() => {
+                if (employmentEdit || grantEdit || employmentSaving || grantSaving) {
+                  setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לקטגוריה אחרת.");
+                  return;
+                }
+                setError(null);
+                setSupplementCategory(index);
+              }}>{label} ({supplement.groups[index].length})</button>)}
+          </nav>
+          <div className="professional-workspace__identity">
           {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>
-            <section key={label}>
+            (supplementCategory === null || supplementCategory === index) && <section key={label}>
               <h2>{label} ({supplement.groups[index].length})</h2>
               {index === 0 && <p>ניתן לתקן רשומת תעסוקה כאן, או לפתוח את המסך המלא להוספה ומחיקה.</p>}
               {index === 1 && <p>ניתן לתקן מענק קיים כאן; יצירה ומחיקה במסך המלא.</p>}
@@ -503,7 +518,7 @@ export function RetirementWorkspaceScreen() {
                 </li>)}
               </ul>}
             </section>)}
-        </div>}
+        </div></>}
         {employmentEdit && supplement?.clientId === clientId && <form onSubmit={saveEmployment}>
           <h3>תיקון רשומת תעסוקה</h3>
           <label>שם מעסיק <input required value={employmentEdit.employer_name} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, employer_name: event.target.value }))} /></label>

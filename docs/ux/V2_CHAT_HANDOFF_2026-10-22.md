@@ -311,3 +311,14 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Failure was in test-harness client selection before any employment/grant create/update actions. No server persistence outcome can yet be claimed.
 - Commit `75e7230d19b1a47fcae3b1e949d0dd23d4772667` normalizes the GET clients response when Windows PowerShell nests the JSON result and requires exactly one named synthetic A and B client with scalar IDs.
 - **Fix not yet verified**. One retry with existing running local stack: from repository root `git pull --ff-only`, then `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Workspace-Factual-Saves.ps1"`. If blocked again, inspect rather than repeat indefinite environment debugging. No full CI, master merge or deployment.
+
+## AD. Local synthetic PostgreSQL factual saves verified (2026-10-22)
+
+- Owner ran `git pull --ff-only` to `841517cea499e8c61fb6a16528e84426a318811e` and then `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Workspace-Factual-Saves.ps1"` while the isolated local FastAPI/PostgreSQL stack was available.
+- Actual console result:
+  - `PASS: employment POST / PUT / independent GET.`
+  - `PASS: grant POST / PUT / independent GET.`
+  - `PASS: client B lists exclude A employment and grant IDs.`
+  - `LOCAL SYNTHETIC API SMOKE PASSED. A=1 B=2. Temporary database only.`
+- This validates backend persistence of synthetic employment and historical grant edits and cross-client list exclusion through existing APIs against disposable PostgreSQL. It does not prove end-to-end React form interaction, professional tax/eligibility correctness, full database access-control guarantees or hypothetical scenario engine.
+- Local infrastructure validation loop is closed; avoid additional Docker iterations without new evidence. Continue development within accepted professional workspace UX/API scope. No master merge, production deployment or full CI.

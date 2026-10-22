@@ -185,3 +185,11 @@ Owner ran in isolated Windows checkout fast-forwarded to `b80d5aace8f755b639ffcb
 - Verification is **owner-executed targeted frontend build and mocked-API unit/component tests**, not independent backend SQL integration or domain-calculation acceptance.
 - Local prior synthetic factual save and client navigation were reported working by owner. Supplementary read-only cards have not yet received a direct browser review.
 - No new code, master merge, deployment or expensive CI authorized. Continue next bounded UX slice only within accepted API boundaries. Scenario engine still NOT_AUTHORIZED.
+
+## P. In-workspace supplementary details drafted (2026-10-22)
+
+- Development branch was at `80f5c691b889226f095d36824e24e697e08faf34` when this slice began. Existing 9/9 focused frontend tests and build had passed at previous HEAD (owner executed).
+- New implementation commit `d676fc0fcd6520ec878f1c4e95991478ee37d11d`: in stage 3, display read-only lists containing actual accepted API fields (employment dates/employer, grant date/exempt grant, past capitalization/date, capital-asset known value and verification state, recurring income amount/basis/frequency, recurring expense amount/frequency), replacing bare category counts. No calculation or source write, client-bound mismatch guard retained, edit links to existing accepted screens retained.
+- Focused test alignment commit `db79799aeb748fd8bfc75b65c63b2004f7fac65c`: checks real employer row display and heading count, keeps cross-client mismatch test.
+- **These new changes have NOT YET been built or tested.** Prior passing tests on older SHA do not automatically cover this delta. Next minimal validation: one targeted `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` from the existing checkout after `git pull --ff-only`. No Docker rerun required for TypeScript/unit tests.
+- Keep this as UI read-only. No direct edit forms, scenario persistence, business logic, tax/NPV or production merge authorization. Do not mistake display of reported income and expense amounts for accepted calculated outputs.

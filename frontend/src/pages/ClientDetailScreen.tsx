@@ -714,6 +714,7 @@ export function ClientDetailScreen() {
   return (
     <section>
       <h2>פרטי לקוח — M01</h2>
+      <p><Link to={`/clients/${client.client_id}/workspace`}>חזרה לסביבת התכנון החדשה</Link></p>
       <p>מזהה לקוח: {client.client_id}</p>
       <p>שם מלא: {client.full_name}</p>
       <p>מספר זהות: {client.id_number ?? "לא נמסר"}</p>

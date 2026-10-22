@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrant, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
@@ -75,6 +75,7 @@ export function RetirementWorkspaceScreen() {
   const [grantEdit, setGrantEdit] = useState<GrantItem | null>(null);
   const [grantSaving, setGrantSaving] = useState(false);
   const [grantCreating, setGrantCreating] = useState(false);
+  const [grantCreatingForPeriod, setGrantCreatingForPeriod] = useState<string | null>(null);
   const [grantError, setGrantError] = useState<string | null>(null);
   const [linkingGrantId, setLinkingGrantId] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -99,6 +100,7 @@ export function RetirementWorkspaceScreen() {
     setGrantRecords([]);
     setGrantEdit(null);
     setGrantCreating(false);
+    setGrantCreatingForPeriod(null);
     setGrantError(null);
     setGrantSaving(false);
     setLinkingGrantId(null);
@@ -240,11 +242,12 @@ export function RetirementWorkspaceScreen() {
         grant_receipt_date: record.grant_receipt_date,
         exempt_grant_amount: String(record.exempt_grant_amount),
       };
-      const saved = grantCreating
-        ? await createGrant(clientId, payload)
+      const saved = grantCreating && grantCreatingForPeriod
+        ? await createGrantForEmployment(clientId, grantCreatingForPeriod, payload)
         : await updateGrant(clientId, record.grant_id, payload);
       if (activeClient.current !== clientId || grantSaveGeneration.current !== generation) return;
-      if (saved.client_id !== clientId || (!grantCreating && saved.grant_id !== record.grant_id)) {
+      if (saved.client_id !== clientId || (grantCreating && saved.employment_record_id !== grantCreatingForPeriod)
+        || (!grantCreating && saved.grant_id !== record.grant_id)) {
         setGrantError("תשובת מענק אינה תואמת לרשומה וללקוח.");
         return;
       }
@@ -264,6 +267,7 @@ export function RetirementWorkspaceScreen() {
       } : previous);
       setGrantEdit(null);
       setGrantCreating(false);
+      setGrantCreatingForPeriod(null);
     } catch (reason) {
       if (activeClient.current === clientId && grantSaveGeneration.current === generation) setGrantError(errorText(reason));
     } finally {
@@ -364,6 +368,7 @@ export function RetirementWorkspaceScreen() {
       if (!record || record.client_id !== clientId) return;
       setGrantError(null);
       setGrantCreating(false);
+      setGrantCreatingForPeriod(null);
       setGrantEdit({ ...record });
     }
   }
@@ -588,22 +593,7 @@ export function RetirementWorkspaceScreen() {
                   });
                   setSupplementCategory(0);
                 }}>הוסף רשומת תעסוקה</button></p>}
-              {index === 1 && <p>אפשר להוסיף או לתקן מענק היסטורי כאן. מחיקה במסך המלא.
-                <button type="button" disabled={employmentSaving || grantSaving} onClick={() => {
-                  if (employmentEdit || grantEdit) {
-                    setError("יש לשמור או לבטל את העריכה הפתוחה לפני הוספת מענק.");
-                    return;
-                  }
-                  setError(null);
-                  setGrantError(null);
-                  setGrantCreating(true);
-                  setGrantEdit({
-                    grant_id: "", client_id: clientId, employer_name: "",
-                    employer_withholding_file_number: "", employment_start_date: "",
-                    employment_end_date: "", grant_receipt_date: "", exempt_grant_amount: "",
-                  });
-                  setSupplementCategory(1);
-                }}>הוסף מענק היסטורי</button></p>}
+              {index === 1 && <p>ריכוז מענקים מדווחים לתצוגה ובקרה. יצירת מענק חדש מתבצעת מתוך תקופת העסקה היסטורית; מענקים ישנים שלא שויכו נשארים גלויים עד לשיוך מפורש.</p>}
               <p><Link to={"/clients/" + clientId + "/" + (index === 0 ? "employment-history" : index === 1 ? "grants" : index === 2 ? "actual-capitalizations" : "planning-input")}>פתיחת עריכה: {label}</Link></p>
               {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
                 {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
@@ -611,6 +601,22 @@ export function RetirementWorkspaceScreen() {
                   {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => openSupplementEditor("grant", itemIndex)}>תקן מענק</button>}
                   {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => openSupplementEditor("employment", itemIndex)}>תקן רשומת תעסוקה</button>}
                   {index === 0 && employmentRecords[itemIndex] && !employmentRecords[itemIndex].is_current && <>
+                    <button type="button" disabled={!!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
+                      onClick={() => {
+                        const period = employmentRecords[itemIndex];
+                        if (!period || !period.work_end_date) return;
+                        setGrantCreating(true);
+                        setGrantCreatingForPeriod(period.employment_record_id);
+                        setGrantError(null);
+                        setError(null);
+                        setGrantEdit({
+                          grant_id: "", client_id: clientId, employer_name: period.employer_name,
+                          employer_withholding_file_number: "", employment_start_date: period.work_start_date,
+                          employment_end_date: period.work_end_date, grant_receipt_date: "",
+                          exempt_grant_amount: "",
+                        });
+                        setSupplementCategory(0);
+                      }}>הוסף מענק לתקופת העסקה</button>
                     {grantRecords.filter(grant => grant.employment_record_id === employmentRecords[itemIndex].employment_record_id).map(grant =>
                       <p key={grant.grant_id}>מענק משויך: {grant.employer_name} — {grant.exempt_grant_amount} ₪ (מדווח)</p>)}
                     {grantRecords.filter(grant => !grant.employment_record_id
@@ -638,7 +644,7 @@ export function RetirementWorkspaceScreen() {
           <button type="button" disabled={employmentSaving} onClick={() => { setEmploymentEdit(null); setEmploymentCreating(false); setEmploymentError(null); setError(null); }}>ביטול</button>
         </form>}
         {grantEdit && supplement?.clientId === clientId && <form onSubmit={saveGrant}>
-          <h3>{grantCreating ? "הוספת מענק היסטורי" : "תיקון מענק היסטורי"}</h3>
+          <h3>{grantCreating ? "הוספת מענק לתקופת העסקה" : "תיקון מענק היסטורי"}</h3>
           <label>שם מעסיק <input required value={grantEdit.employer_name ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employer_name: e.target.value }))} /></label>
           <label>מספר תיק ניכויים <input required value={grantEdit.employer_withholding_file_number ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employer_withholding_file_number: e.target.value }))} /></label>
           <label>תחילת העסקה <input type="date" required value={grantEdit.employment_start_date} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employment_start_date: e.target.value }))} /></label>
@@ -647,7 +653,7 @@ export function RetirementWorkspaceScreen() {
           <label>סכום מענק פטור מדווח <input required inputMode="decimal" value={grantEdit.exempt_grant_amount ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, exempt_grant_amount: e.target.value }))} /></label>
           {grantError && <p role="alert">{grantError}</p>}
           <button type="submit" disabled={grantSaving}>{grantCreating ? "שמור מענק חדש" : "שמור תיקון מענק"}</button>
-          <button type="button" disabled={grantSaving} onClick={() => { setGrantEdit(null); setGrantCreating(false); setGrantError(null); setError(null); }}>ביטול</button>
+          <button type="button" disabled={grantSaving} onClick={() => { setGrantEdit(null); setGrantCreating(false); setGrantCreatingForPeriod(null); setGrantError(null); setError(null); }}>ביטול</button>
         </form>}
       </section>}
       {step === "scenario" && <section>

@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrant, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrant, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
-  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), updateGrant: vi.fn(), createGrant: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), updateGrant: vi.fn(), createGrant: vi.fn(), linkGrantToEmployment: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
@@ -452,6 +452,30 @@ describe("סביבת העבודה המקצועית החדשה", () => {
       grant_receipt_date: "2020-02-01", exempt_grant_amount: "1200.00",
     });
     expect(updateGrant).not.toHaveBeenCalled();
+  });
+
+  it("links a grant to its ended employment period only after explicit confirmation", async () => {
+    const period = { employment_record_id: "e1", client_id: 1, employer_name: "מעסיק קודם",
+      work_start_date: "2010-01-01", work_end_date: "2020-01-01", is_current: false, notes: null };
+    const grant = { grant_id: "g1", client_id: 1, employment_record_id: null, employer_name: "מעסיק קודם",
+      employer_withholding_file_number: "123", employment_start_date: "2010-01-01",
+      employment_end_date: "2020-01-01", grant_receipt_date: "2020-01-15", exempt_grant_amount: "1000" };
+    vi.mocked(getEmploymentRecords).mockResolvedValue([period]);
+    vi.mocked(getGrants).mockResolvedValueOnce([grant]).mockResolvedValueOnce([{ ...grant, employment_record_id: "e1" }]);
+    vi.mocked(linkGrantToEmployment).mockResolvedValue({ ...grant, employment_record_id: "e1" });
+    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      open();
+      await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+      fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+      await screen.findByRole("heading", { name: "רשומות תעסוקה (1)" });
+      fireEvent.click(screen.getByRole("button", { name: /שייך מענק לא מקושר/ }));
+      await waitFor(() => expect(linkGrantToEmployment).toHaveBeenCalledWith(1, "g1", "e1"));
+      await screen.findByText(/מענק משויך: מעסיק קודם/);
+      expect(confirmation).toHaveBeenCalledOnce();
+    } finally {
+      confirmation.mockRestore();
+    }
   });
 
   it("fails closed when supplementary API returns another client's record", async () => {

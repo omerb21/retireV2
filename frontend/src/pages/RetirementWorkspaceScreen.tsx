@@ -204,8 +204,8 @@ export function RetirementWorkspaceScreen() {
     event.preventDefault();
     if (!grantEdit || grantSaving || activeClient.current !== clientId) return;
     const record = grantEdit;
-    const date = /^\\d{4}-\\d{2}-\\d{2}$/;
-    const amount = /^(0|[1-9][0-9]*)(\\.[0-9]{1,2})?$/;
+    const date = /^\d{4}-\d{2}-\d{2}$/;
+    const amount = /^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$/;
     if (!record.employer_name?.trim() || !record.employer_withholding_file_number?.trim()
       || !date.test(record.employment_start_date) || !date.test(record.employment_end_date)
       || !date.test(record.grant_receipt_date)

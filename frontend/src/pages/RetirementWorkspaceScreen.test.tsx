@@ -64,10 +64,12 @@ function open() {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getClient).mockImplementation(id => Promise.resolve(client(id)));
-  for (const fetcher of [getEmploymentRecords, getGrants, getActualCapitalizations,
-    getCapitalAssets, getRecurringIncomes, getRecurringExpenses]) {
-    vi.mocked(fetcher).mockResolvedValue([]);
-  }
+  vi.mocked(getEmploymentRecords).mockResolvedValue([]);
+  vi.mocked(getGrants).mockResolvedValue([]);
+  vi.mocked(getActualCapitalizations).mockResolvedValue([]);
+  vi.mocked(getCapitalAssets).mockResolvedValue([]);
+  vi.mocked(getRecurringIncomes).mockResolvedValue([]);
+  vi.mocked(getRecurringExpenses).mockResolvedValue([]);
   vi.mocked(listPensionProducts).mockImplementation(id => Promise.resolve([product(id)]));
 });
 

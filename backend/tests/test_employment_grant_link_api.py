@@ -72,3 +72,30 @@ def test_reject_other_client_current_period_and_period_mismatch(tmp_path):
         assert client.get(f"/api/clients/{a}/grants").json()[0]["employment_record_id"] is None
     finally:
         client.close()
+
+
+def test_atomic_creation_for_ended_period_and_fail_closed_for_invalid_periods(tmp_path):
+    client, _, _ = _build_client(tmp_path)
+    try:
+        a = _create_client(client, id_number="20501")["client_id"]
+        b = _create_client(client, id_number="20502")["client_id"]
+        historic = _employment(client, a)
+        current = _employment(client, a, current=True)
+        other = _employment(client, b)
+        payload = {
+            "employer_name": "Company A", "employer_withholding_file_number": "123456789",
+            "employment_start_date": "2010-01-01", "employment_end_date": "2020-01-01",
+            "grant_receipt_date": "2020-02-01", "exempt_grant_amount": "1200.00",
+        }
+        url = f"/api/clients/{a}/employment-records/{historic}/grants"
+        result = client.post(url, json=payload)
+        assert result.status_code == 200, result.text
+        assert result.json()["employment_record_id"] == historic
+        assert client.get(f"/api/clients/{a}/grants").json()[0]["employment_record_id"] == historic
+        assert client.post(f"/api/clients/{a}/employment-records/{current}/grants", json=payload).status_code == 422
+        assert client.post(f"/api/clients/{a}/employment-records/{other}/grants", json=payload).status_code == 404
+        incorrect = {**payload, "employment_end_date": "2021-01-01"}
+        assert client.post(url, json=incorrect).status_code == 422
+        assert len(client.get(f"/api/clients/{a}/grants").json()) == 1
+    finally:
+        client.close()

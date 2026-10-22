@@ -540,3 +540,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - IMPORTANT: Browser user's original FastAPI container is still running its **old built image**. Pulling GitHub into checkout does not update that backend; POST link endpoint will be missing (404) until local synthetic backend is rebuilt/restarted in a planned fashion. Do not advise launching another stack on bound port or claim live link E2E.
 - Frontend new suite expected 23 total tests, **not yet run**. Existing grants section still has legacy create/edit controls; should be moved to employer-centered entry only after a transactional create-and-link API is designed, rather than chaining two writes and leaving orphan grants on partial failure.
 - No master merge, production deploy or full CI.
+
+## BF. Frontend suite verified and transactional historical grant creation API (2026-10-23)
+
+- Owner pulled feature head `ada9f81`, built frontend with `tsc -b && vite build` successfully, and ran focused workspace suite **23/23 PASS**. Router future-flag warnings not failures.
+- Implemented API `POST /api/clients/{client_id}/employment-records/{employment_record_id}/grants` at `f1b93c48ef3602505d3ef065b5399164d263196e`: one database transaction creates a historic grant with its explicit employment period FK. Checks same-client period, ended employment, exact period dates. Legacy grant creation remains unchanged.
+- Added backend test at `16183267ab6183930e075a3305ae9374939c0d52`: atomic creation/readback and rejects active/cross-client/mismatched periods without orphan rows.
+- **Not yet executed**: new backend test. Prior standalone `dev/Test-Employment-Grant-Link.ps1` runner can be reused to execute the now 3 focused backend tests. No browser UI for atomically creating linked grant yet; next integrate its frontend entry under historical employment after test approval, then deprecate independent grant input from supplement summary.
+- Original local browser backend is still old Docker image; no port collisions or backend restarts should be triggered implicitly.
+- No broader CI, master merge, production deployment, financial/tax calculations, or scenario mutations.

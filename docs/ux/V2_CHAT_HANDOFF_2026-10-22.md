@@ -220,3 +220,10 @@ Owner fast-forwarded Windows isolated checkout to `30a64c9ccb774285b40ec5c542c3a
 - The 9 component tests do not specifically exercise new contextual link destinations or return navigation; browser navigation acceptance remains outstanding. Do not claim full end-to-end acceptance.
 - Contextual links reuse legacy authoritative editors; no duplicate write path introduced.
 - Next prioritization: targeted links/return-navigation tests then in-workspace factual edit UX with existing contracts, no scenario mutation. No master merge, deployment or broad CI authorized.
+
+## T. Supplementary edit-link coverage (2026-10-22)
+
+- Before change feature HEAD was `fe778449cce10c42fbed5665ed89ca4227688500`, previously owner-verified build and 9 tests at `30a64c9`.
+- Test-only change `b6c663313d5a2620787ae3388160b51a9414cba7` adds one targeted component test verifying all six category contextual edit anchors resolve to their client-scoped authoritative editor routes, without invoking pension write APIs.
+- This test is **not yet executed**. No direct edit forms were added: source-owned legacy screens remain the sole write interfaces. Next action: targeted build/test validation, plus browser validation of return navigation when convenient. Avoid broad CI.
+- No scenario logic or backend change, no merge, no deploy. Continue with owner-approved workflow UX and existing domain authority boundaries.

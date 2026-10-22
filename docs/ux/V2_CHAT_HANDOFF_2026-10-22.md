@@ -142,3 +142,11 @@ Copy/paste:
 - Targeted local-only fix commit: `67948ae222cc3f8f3a018f32c0a06712160eea1f` changes `dev/Start-Workspace-Local.ps1` to read HTTP response bytes via `Invoke-WebRequest -UseBasicParsing`, decode UTF-8 explicitly, and parse JSON using `ConvertFrom-Json`. No application, migration, financial, security or production changes.
 - Owner explicitly time-boxed this experiment: **one further rerun**, then abandon this local Docker harness if another blocker occurs and return to core V2 development. Do not iterate an open-ended series of environment patches. The new fix is NOT YET TESTED; no end-to-end/persistence acceptance claim.
 - Next: fetch current feature HEAD, fast-forward isolated checkout and run the same launcher once. If successful, exercise a synthetic factual save and reload and client isolation. If unsuccessful, stop Docker work and document blocker. No master merge, production deploy or expensive CI permitted.
+
+## K. Local launcher success reported by owner (2026-10-22)
+
+- Owner reports the final corrected local launcher **works** after commit `67948ae`. Treat this as owner-reported local stack/startup success; detailed logs for this successful run, factual save/reload, and cross-client isolation are not yet provided.
+- The environment repair loop is closed for now; do not reopen Docker troubleshooting speculatively.
+- Immediate remaining bounded acceptance check: in synthetic workspace, edit an existing client A product component via explicit factual correction, save, refresh and confirm persisted exact amount; navigate to synthetic client B and confirm no A products appear; verify scenario/results are non-mutating placeholders. Do not use real client data.
+- Upon that check, advance bounded UX integration of supplementary facts through existing accepted APIs. A genuinely independent scenario decision persistence/engine requires a distinct governed package and must not call canonical factual conversion execution.
+- No master merge, production deployment, expensive CI or scenario-financial acceptance authorized. Always re-read live branch HEAD before edits.

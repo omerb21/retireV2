@@ -398,3 +398,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - PASS: `tsc -b && vite build`; 76 modules transformed; CSS emitted at 9.39 kB; 952 ms Vite build; no compilation errors.
 - This validates compilation only, NOT browser visual design. Visual acceptance for desktop and mobile layouts remains pending; avoid claiming it passed.
 - Prior 18/18 UI logic tests remained previously verified, not rerun for CSS-only change. No CI, master merge, deployment or scenario engine change.
+
+## AN. Category filter guard consistency (2026-10-22)
+
+- Previous visual CSS-only change at `eb710022318b25eda087365f4a45489f3e5f5a34` passed the owner's TypeScript/Vite build; 18 focused UI tests were previously passed before CSS changes, but visual browser acceptance is still pending. The last documentation HEAD was `8f8ca4f672dfec253ea2252cc8a86bbc59f8380e`.
+- Frontend package has Vitest/jsdom but no checked-in Playwright/Storybook/screenshot harness, so no visual acceptance claimed from tooling.
+- Source review found that the 'כל הנתונים' category filter button bypassed the unsaved edit guard used by the other six filter buttons.
+- Commit `ddf92b3ebde9ffc3998e9e43623fa05c5487d554` centralizes category selection and checks active employment/grant editor and pending save for both 'all' and individual filters. Re-selecting active category is a no-op.
+- Commit `49f2850d4ab976a94d78a04350a062dd2f411fad` adds a regression test: returning to 'all data' with unsaved employment edit stays in selected category, shows warning, preserves changed field and sends no write.
+- **Pending targeted local compilation and 19 focused tests**. No backend/financial changes, CI, master merge or deployment.

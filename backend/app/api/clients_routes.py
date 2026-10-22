@@ -2268,6 +2268,39 @@ def delete_employment_record(
     return {"deleted": True, "employment_record_id": employment_record_id}
 
 
+@router.post("/{client_id}/employment-records/{employment_record_id}/grants", response_model=GrantResponse)
+def create_grant_for_employment_period(
+    client_id: int,
+    employment_record_id: str,
+    payload: GrantRequest,
+    db: Session = Depends(get_db),
+) -> GrantResponse:
+    """Persist a historical grant and its employment-period link atomically."""
+    _require_client(db, client_id)
+    period = _require_employment_record(db, client_id, employment_record_id)
+    if period.is_current or period.work_end_date is None:
+        raise HTTPException(status_code=422, detail="Historical grants require an ended employment period")
+    if payload.employment_start_date != period.work_start_date or payload.employment_end_date != period.work_end_date:
+        raise HTTPException(status_code=422, detail="Grant employment dates must match the selected period")
+    grant = Grant(
+        grant_id=f"GR-{uuid4().hex}",
+        client_id=client_id,
+        employment_record_id=period.employment_record_id,
+        employer_name=payload.employer_name,
+        employer_withholding_file_number=payload.employer_withholding_file_number,
+        nominal_amount=payload.exempt_grant_amount,
+        indexed_amount=None,
+        grant_date=payload.grant_receipt_date,
+        work_start_date=payload.employment_start_date,
+        work_end_date=payload.employment_end_date,
+        notes=None,
+    )
+    db.add(grant)
+    db.commit()
+    db.refresh(grant)
+    return _grant_to_response(grant)
+
+
 @router.post("/{client_id}/grants", response_model=GrantResponse)
 def create_grant(client_id: int, payload: GrantRequest, db: Session = Depends(get_db)) -> GrantResponse:
     _require_client(db, client_id)

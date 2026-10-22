@@ -92,7 +92,7 @@ export function ClientListScreen() {
           <li key={client.client_id}>
             <article>
               <h3>
-                <Link to={`/clients/${client.client_id}`}>{client.full_name}</Link>
+                <Link to={`/clients/${client.client_id}/workspace`}>{client.full_name}</Link>
               </h3>
               <p>מספר זהות: {client.id_number ?? "לא נמסר"}</p>
               {client.birth_date ? <p>תאריך לידה: {formatIsoDate(client.birth_date)}</p> : null}

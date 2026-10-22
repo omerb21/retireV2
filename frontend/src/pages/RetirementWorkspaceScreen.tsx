@@ -376,6 +376,7 @@ export function RetirementWorkspaceScreen() {
         onClick={() => switchStep(key)}>{index + 1}. {label}</button>)}
     </nav>
     <div className="professional-workspace__body">
+      {error && <p role="alert" className="professional-workspace__error">{error}</p>}
       {step === "client" && <section aria-label="פרטי תיק">
         <h1>תיק לקוח</h1>
         <p className="professional-workspace__sub">פרטים הדרושים להתמצאות בעבודה. מידע בקרה מפורט נשאר במסכים הייעודיים.</p>
@@ -462,7 +463,6 @@ export function RetirementWorkspaceScreen() {
             <button type="button" disabled={saveState === "saving"} onClick={() => { setDraft(null); setError(null); }}>ביטול ללא שמירה</button>
           </div>
         </form>}
-        {error && <p role="alert" className="professional-workspace__error">{error}</p>}
       </section>}
       {step === "supplement" && <section>
         <h1>נתונים משלימים</h1>

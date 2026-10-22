@@ -184,9 +184,9 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     open();
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
     fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
-    expect(await screen.findByText("רשומות תעסוקה")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "רשומות תעסוקה (1)" })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("טוען נתונים משלימים...")).toBeNull());
-    expect(screen.getByText("רשומות תעסוקה").nextElementSibling).toHaveTextContent("1");
+    expect(screen.getByText("מעסיק")).toBeInTheDocument();
     expect(getEmploymentRecords).toHaveBeenCalledWith(1);
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
@@ -200,7 +200,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
     fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("אינם תואמים");
-    expect(screen.queryByText("רשומות תעסוקה")).toBeNull();
+    expect(screen.queryByRole("heading", { name: /רשומות תעסוקה/ })).toBeNull();
   });
 
 });

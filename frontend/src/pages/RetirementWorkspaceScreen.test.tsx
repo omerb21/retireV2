@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrant, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
-  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), updateGrant: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), updateGrant: vi.fn(), createGrant: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
@@ -422,6 +422,36 @@ describe("סביבת העבודה המקצועית החדשה", () => {
       work_end_date: null, is_current: true, notes: null,
     });
     expect(updateEmploymentRecord).not.toHaveBeenCalled();
+  });
+
+  it("creates a historical grant using existing POST and reloads authoritative grants", async () => {
+    const created = {
+      grant_id: "new-grant", client_id: 1, employer_name: "מעסיק חדש",
+      employer_withholding_file_number: "123456789", employment_start_date: "2000-01-01",
+      employment_end_date: "2020-01-01", grant_receipt_date: "2020-02-01",
+      exempt_grant_amount: "1200.00",
+    };
+    vi.mocked(createGrant).mockResolvedValue(created);
+    vi.mocked(getGrants).mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "מענקים (0)" });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף מענק היסטורי" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "שם מעסיק" }), { target: { value: "מעסיק חדש" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "מספר תיק ניכויים" }), { target: { value: "123456789" } });
+    fireEvent.change(screen.getByLabelText("תחילת העסקה"), { target: { value: "2000-01-01" } });
+    fireEvent.change(screen.getByLabelText("סיום העסקה"), { target: { value: "2020-01-01" } });
+    fireEvent.change(screen.getByLabelText("מועד קבלת מענק"), { target: { value: "2020-02-01" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום מענק פטור מדווח" }), { target: { value: "1200.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמור מענק חדש" }));
+    await screen.findByRole("heading", { name: "מענקים (1)" });
+    expect(createGrant).toHaveBeenCalledWith(1, {
+      employer_name: "מעסיק חדש", employer_withholding_file_number: "123456789",
+      employment_start_date: "2000-01-01", employment_end_date: "2020-01-01",
+      grant_receipt_date: "2020-02-01", exempt_grant_amount: "1200.00",
+    });
+    expect(updateGrant).not.toHaveBeenCalled();
   });
 
   it("fails closed when supplementary API returns another client's record", async () => {

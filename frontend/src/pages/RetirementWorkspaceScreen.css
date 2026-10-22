@@ -281,3 +281,49 @@
     margin-inline: 0;
   }
 }
+
+
+/* Ledger audit: fixed sticky widths prevent provider and balance text collisions. */
+.professional-workspace__ledger th:first-child,
+.professional-workspace__ledger td:first-child {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+.professional-workspace__ledger th:nth-child(2),
+.professional-workspace__ledger td:nth-child(2) {
+  right: 220px;
+  width: 185px;
+  min-width: 185px;
+  max-width: 185px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: -2px 0 5px #183e6115;
+}
+.professional-workspace__ledger th:nth-child(3),
+.professional-workspace__ledger td:nth-child(3) {
+  min-width: 145px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.professional-workspace__ledger td:nth-child(3) bdi {
+  white-space: nowrap;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+@media (max-width: 800px) {
+  .professional-workspace__ledger th:first-child,
+  .professional-workspace__ledger td:first-child {
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+  }
+  .professional-workspace__ledger th:nth-child(2),
+  .professional-workspace__ledger td:nth-child(2) {
+    right: 150px;
+    width: 145px;
+    min-width: 145px;
+    max-width: 145px;
+  }
+}

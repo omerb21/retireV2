@@ -357,3 +357,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - `21346b2b48561a13c67ff1f0a33c514d2fec7083`: adds focused test that edited employment draft survives attempted selection of another employment record.
 - **Pending validation:** pull feature branch from frontend; `npm.cmd run build`; `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`; expect 17 tests. Do not launch full CI.
 - No new financial write contract, master merge, production deployment or scenario engine changes.
+
+## AI. Supplementary record switching guard verification PASSED (2026-10-22 17:02 Israel)
+
+- Owner pulled to `ed2a7f1f3d17e9f7d6d6a7745bef158eb0d1a4a6`.
+- `npm.cmd run build`: PASS (`tsc -b && vite build`; 76 modules; Vite 939 ms).
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS 17/17; one test file, 2.78 sec.
+- Newly added `preserves an unsaved employment edit when another supplementary record is opened` passes. React Router v7 future-flag warnings are non-blocking.
+- Frontend mocked tests and earlier local synthetic API smoke passed; browser E2E not yet claimed. Avoid repeating this validation unnecessarily.
+- Proceed to higher-impact workflow UX after this. No full CI, master merge or production deployment.

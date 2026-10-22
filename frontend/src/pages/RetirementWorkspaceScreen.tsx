@@ -22,7 +22,7 @@ type Selection = { productId: string; code: string };
 type Draft = { productId: string; version: number; components: Record<string, string> };
 type ReadState =
   | { state: "loading" }
-  | { state: "error"; message: string }
+  | { state: "error"; clientId: number; message: string }
   | { state: "ready"; client: ClientDetailItem; products: PensionProduct[] };
 
 const STEPS: Array<{ key: Step; label: string }> = [
@@ -80,19 +80,19 @@ export function RetirementWorkspaceScreen() {
     setError(null);
     setSaveState("idle");
     if (!validClient) {
-      setRead({ state: "error", message: "מזהה לקוח לא תקין" });
+      setRead({ state: "error", clientId, message: "מזהה לקוח לא תקין" });
       return;
     }
     let active = true;
     void Promise.all([getClient(clientId), listPensionProducts(clientId)]).then(([client, products]) => {
       if (!active) return;
       if (client.client_id !== clientId || products.some(product => product.client_id !== clientId)) {
-        setRead({ state: "error", message: "זוהתה אי־התאמה בהקשר הלקוח; הנתונים לא יוצגו" });
+        setRead({ state: "error", clientId, message: "זוהתה אי־התאמה בהקשר הלקוח; הנתונים לא יוצגו" });
         return;
       }
       setRead({ state: "ready", client, products });
     }).catch(reason => {
-      if (active) setRead({ state: "error", message: errorText(reason) });
+      if (active) setRead({ state: "error", clientId, message: errorText(reason) });
     });
     return () => { active = false; };
   }, [clientId, validClient]);
@@ -199,7 +199,7 @@ export function RetirementWorkspaceScreen() {
   }
 
   if (!validClient) return <main dir="rtl"><h1>מזהה לקוח לא תקין</h1><Link to="/clients">בחזרה ללקוחות</Link></main>;
-  if (read.state === "loading" || (read.state === "ready" && read.client.client_id !== clientId)) {
+  if (read.state === "loading" || (read.state === "ready" && read.client.client_id !== clientId) || (read.state === "error" && read.clientId !== clientId)) {
     return <main dir="rtl"><p>טוען סביבת עבודה...</p></main>;
   }
   if (read.state === "error") return <main dir="rtl"><h1>לא ניתן להציג את התיק</h1><p role="alert">{read.message}</p><Link to="/clients">בחזרה ללקוחות</Link></main>;

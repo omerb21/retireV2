@@ -294,3 +294,13 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Verification uses mocked API component tests, not a live PostgreSQL grant save or professional tax decision confirmation. Do not treat recorded exempt grant values as calculated or tax-authorized amounts.
 - Next recommended gate: targeted live synthetic UI/API save-and-reload of a historical grant and employment record before further proliferation of in-workspace editors; use no real client data.
 - No full CI, master merge, or production deployment.
+
+## AB. Synthetic live API factual persistence check prepared (2026-10-22)
+
+- Feature branch had passed previous 15/15 frontend mocked-API component tests, documented at `5c318c61bbe5aa9c28bd5d7f3856602c948cfcaf`.
+- New local-only PowerShell test script `dev/Test-Workspace-Factual-Saves.ps1`, commit `e00dc28e3539029ea0858c836829e7da3719e363`.
+- Designed for the owner-managed ephemeral Docker/FastAPI stack at 127.0.0.1:18080. Requires two synthetic named clients already seeded by `dev/Start-Workspace-Local.ps1`; refuses to act if either is missing.
+- Uses existing employment and grants POST, PUT and independent GET APIs. Asserts record owner and identity, updated employment employer and updated grant amount persistence, plus no newly-created A record IDs appearing in B's GET lists.
+- ASCII-only Windows PowerShell 5.1 compatible and explicitly decodes JSON replies as UTF-8. Does not touch production, Railway, or true pension balances, and does not claim professional validation of grant tax treatment.
+- **Script not executed yet**: local DB persistence and client isolation results remain PENDING. Owner should keep existing local dev launcher alive, fast-forward feature branch in a second PowerShell window, run `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Workspace-Factual-Saves.ps1"` from repository root; capture output. If local stack is no longer running, avoid assuming success; restart only by explicit choice.
+- Backend smoke is a narrower API integration test, not a browser UI end-to-end test. No full CI, master merge, deploy or scenario engine change.

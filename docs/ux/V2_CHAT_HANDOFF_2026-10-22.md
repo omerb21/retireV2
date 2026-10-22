@@ -257,3 +257,11 @@ Owner fast-forwarded local checkout to `32de20ee6a1fd38b6423dd74ba7438c7f5f34b5e
 - This is frontend mocked API validation, not an end-to-end actual DB write or an independent proof of all employment record validation semantics.
 - Next: review lifecycle/client-route stale async response and date/field validation of the employment form before expanding inline edits. Avoid restarting costly infrastructure and do not repeat already-passed broad checks unnecessarily.
 - No master merge, deployment, full CI, calculation modification or scenario engine activation.
+
+## X. Employment editor safeguards added (2026-10-22)
+
+- Starting feature branch HEAD `04b18978f0daf2773cf3347ea63fad31864d4f4c`. Owner had reported passing build and 11/11 focused tests for previous employment editor slice.
+- `f0ab731e01a27f9b73c53a46872310cc20956e24`: inline employment editor now checks required employer/date format and chronology before PUT; assigns an incrementing generation token to saves and invalidates that token on client change. Late save results/errors after a client switch are ignored. Refreshed record client ownership is checked; a mismatch is shown as an error rather than replacing display.
+- `9b33604eb2aefdebd5e2524360ec1fc684a22dcf`: two new targeted tests for invalid end date blocking PUT and stale employment save after navigating to another client.
+- **Build and tests for these changes have not been run.** Request one local targeted build and the workspace test file; do not infer acceptance from prior 11 passing tests.
+- No server/data model change, scenario implementation, master merge, production deploy or full CI.

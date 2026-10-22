@@ -508,7 +508,7 @@ export function RetirementWorkspaceScreen() {
           </nav>
           <div className="professional-workspace__identity">
           {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>
-            (supplementCategory === null || supplementCategory === index) && <section key={label}>
+            (supplementCategory === null || supplementCategory === index) && <section key={label} className={supplement.groups[index].length ? "has-records" : "is-empty"}>
               <h2>{label} ({supplement.groups[index].length})</h2>
               {index === 0 && <p>ניתן לתקן רשומת תעסוקה כאן, או לפתוח את המסך המלא להוספה ומחיקה.</p>}
               {index === 1 && <p>ניתן לתקן מענק קיים כאן; יצירה ומחיקה במסך המלא.</p>}

@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, updateGrant, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
-  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), updateGrant: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), updateGrant: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
@@ -401,6 +401,27 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(screen.getByRole("heading", { name: "מענקים (0)" }).closest("section")).toHaveClass("is-empty");
     expect(updateEmploymentRecord).not.toHaveBeenCalled();
     expect(updateGrant).not.toHaveBeenCalled();
+  });
+
+  it("creates a new employment record through the existing POST API and refetches", async () => {
+    const created = { employment_record_id: "new-e", client_id: 1, employer_name: "מעסיק חדש",
+      work_start_date: "2020-01-01", work_end_date: null, is_current: true, notes: null };
+    vi.mocked(createEmploymentRecord).mockResolvedValue(created);
+    vi.mocked(getEmploymentRecords).mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "רשומות תעסוקה (0)" });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף רשומת תעסוקה" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "שם מעסיק" }), { target: { value: "מעסיק חדש" } });
+    fireEvent.change(screen.getByLabelText("תאריך תחילה"), { target: { value: "2020-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמור רשומת תעסוקה חדשה" }));
+    await screen.findByRole("heading", { name: "רשומות תעסוקה (1)" });
+    expect(createEmploymentRecord).toHaveBeenCalledWith(1, {
+      employer_name: "מעסיק חדש", work_start_date: "2020-01-01",
+      work_end_date: null, is_current: true, notes: null,
+    });
+    expect(updateEmploymentRecord).not.toHaveBeenCalled();
   });
 
   it("fails closed when supplementary API returns another client's record", async () => {

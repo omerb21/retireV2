@@ -525,3 +525,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Confirmed `dev/compose.workspace.yml` maps live backend 127.0.0.1:18080, so launching another stack would collide with still-running user's browser environment.
 - `dev/Dockerfile.workspace` installs pinned Python dependencies, copies backend source and test suite, including Alembic migrations. Added `dev/Test-Employment-Grant-Link.ps1` in commit `ed29bef6484a2b000ad89bcbd7e762ac46ce252e`: Docker builds standalone image and invokes `python -m pytest tests/test_employment_grant_link_api.py -q` in `--network none` container, no ports, no stack restart. Tests use disposable SQLite fixture.
 - **Still unexecuted:** owner should pull then run `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Employment-Grant-Link.ps1"` from repo root. Do not announce backend approval until actual output received. No CI or deployment.
+
+## BD. Backend grant/period link tests PASSED (owner local Docker, 2026-10-22)
+
+- Owner pulled feature HEAD `18b135dd454e08aeff7a152b28c5fc9d5ea02b30` and executed `dev/Test-Employment-Grant-Link.ps1` successfully. Docker standalone image built, pytest in `--network none` resulted **2 passed, 1 nonfatal Starlette/anyio DeprecationWarning, 7.10 s**.
+- Regression test covers explicit historical period linking, repeated legal employer/independent periods, conflicting edits, current period and cross-client failures, and linked-period deletion guard. The running local dev stack was left untouched.
+- Backend contract passes isolated tests; no UI integration or end-to-end linked-grant acceptance yet. Next implement explicit link UI in historic employment category and read-only linked/unlinked grants display, with user-confirmed matching; preserve existing grants and avoid hidden data changes.
+- No CI, master merge or production deployment.

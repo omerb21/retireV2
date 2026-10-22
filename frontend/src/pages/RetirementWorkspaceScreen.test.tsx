@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, updateGrant, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
-  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), updateGrant: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
@@ -267,6 +267,55 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     await act(async () => { resolveSave(initial); await pendingSave; });
     expect(screen.queryByText("מעסיק")).toBeNull();
     expect(getEmploymentRecords).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates an existing historical grant through its authorized API only", async () => {
+    const record = {
+      grant_id: "g1", client_id: 1, employer_name: "מעסיק קודם",
+      employer_withholding_file_number: "123456789", employment_start_date: "2000-01-01",
+      employment_end_date: "2010-01-01", grant_receipt_date: "2010-02-01",
+      exempt_grant_amount: "1000.00",
+    };
+    vi.mocked(getGrants).mockResolvedValueOnce([record])
+      .mockResolvedValueOnce([{ ...record, exempt_grant_amount: "1200.00" }]);
+    vi.mocked(updateGrant).mockResolvedValue({ ...record, exempt_grant_amount: "1200.00" });
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "מענקים (1)" });
+    fireEvent.click(screen.getByRole("button", { name: "תקן מענק" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום מענק פטור מדווח" }), {
+      target: { value: "1200.00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "שמור תיקון מענק" }));
+    await screen.findByText(/1200.00/);
+    expect(updateGrant).toHaveBeenCalledWith(1, "g1", {
+      employer_name: "מעסיק קודם", employer_withholding_file_number: "123456789",
+      employment_start_date: "2000-01-01", employment_end_date: "2010-01-01",
+      grant_receipt_date: "2010-02-01", exempt_grant_amount: "1200.00",
+    });
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("rejects negative historical grant values without writing", async () => {
+    const record = {
+      grant_id: "g1", client_id: 1, employer_name: "מעסיק קודם",
+      employer_withholding_file_number: "123456789", employment_start_date: "2000-01-01",
+      employment_end_date: "2010-01-01", grant_receipt_date: "2010-02-01",
+      exempt_grant_amount: "1000.00",
+    };
+    vi.mocked(getGrants).mockResolvedValue([record]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "מענקים (1)" });
+    fireEvent.click(screen.getByRole("button", { name: "תקן מענק" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום מענק פטור מדווח" }), {
+      target: { value: "-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "שמור תיקון מענק" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("סכום מענק פטור");
+    expect(updateGrant).not.toHaveBeenCalled();
   });
 
   it("fails closed when supplementary API returns another client's record", async () => {

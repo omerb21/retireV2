@@ -1,0 +1,40 @@
+# Explicitly isolated local-only test stack. Never connect to Railway/production.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: retirement_v2_synthetic
+      POSTGRES_USER: synthetic_planner
+      POSTGRES_PASSWORD: synthetic_only_local_password
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synthetic_planner -d retirement_v2_synthetic"]
+      interval: 2s
+      timeout: 2s
+      retries: 50
+    networks:
+      - workspace_private
+  backend:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile.workspace
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg2://synthetic_planner:synthetic_only_local_password@db:5432/retirement_v2_synthetic
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+    networks:
+      - workspace_private
+networks:
+  workspace_private:
+    internal: false

@@ -322,3 +322,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
   - `LOCAL SYNTHETIC API SMOKE PASSED. A=1 B=2. Temporary database only.`
 - This validates backend persistence of synthetic employment and historical grant edits and cross-client list exclusion through existing APIs against disposable PostgreSQL. It does not prove end-to-end React form interaction, professional tax/eligibility correctness, full database access-control guarantees or hypothetical scenario engine.
 - Local infrastructure validation loop is closed; avoid additional Docker iterations without new evidence. Continue development within accepted professional workspace UX/API scope. No master merge, production deployment or full CI.
+
+## AE. Supplementary-edit workflow continuity refinement (2026-10-22)
+
+- Previous owner-reported local synthetic PostgreSQL integration succeeded (employment/grant POST, PUT and independent GET; A/B isolation), and documented HEAD was `d694ce0bc5d018b26d70cf2e10032b471fdf6c89`.
+- Feature commit `31dc882c7161f39846ac0efd4095aabf8f5607cc` makes stage navigation refuse to discard an unsaved employment or grant editor, or an in-flight factual save. Opening one supplementary editor closes the other, so only one of these factual edits is shown at a time. Supplementary copy now correctly describes in-workspace editing and which operations still use existing screens.
+- Test-only commit `3b274724865214c496dab54d15dcce0bc7b4093e` adds focused coverage of unsaved employment draft preservation on stage navigation.
+- **New changes NOT YET built or tested**. Minimal validation: pull feature branch; run `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` (expected 16 tests). Do not use broad CI.
+- No new backend writes, financial contracts, scenario engine, master merge or production deploy.

@@ -353,6 +353,21 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(updateEmploymentRecord).not.toHaveBeenCalled();
   });
 
+  it("filters supplementary categories without changing stored facts", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "מענקים (0)" });
+    const filter = screen.getByRole("navigation", { name: "סינון נתונים משלימים" });
+    fireEvent.click(within(filter).getByRole("button", { name: "מענקים (0)" }));
+    expect(screen.getByRole("heading", { name: "מענקים (0)" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "רשומות תעסוקה (0)" })).toBeNull();
+    fireEvent.click(within(filter).getByRole("button", { name: "כל הנתונים" }));
+    expect(screen.getByRole("heading", { name: "רשומות תעסוקה (0)" })).toBeInTheDocument();
+    expect(updateGrant).not.toHaveBeenCalled();
+    expect(updateEmploymentRecord).not.toHaveBeenCalled();
+  });
+
   it("fails closed when supplementary API returns another client's record", async () => {
     vi.mocked(getEmploymentRecords).mockResolvedValue([{
       employment_record_id: "e2", client_id: 2, employer_name: "לא שייך",

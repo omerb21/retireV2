@@ -1,0 +1,9 @@
+# LOCAL SYNTHETIC DEVELOPMENT ONLY; not used by production Dockerfile.
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 APP_ENV=development
+WORKDIR /app/backend
+COPY backend/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
+COPY backend/ ./
+# Alembic applies to the isolated db service only, before the API starts.
+CMD ["sh", "-c", "alembic upgrade head && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]

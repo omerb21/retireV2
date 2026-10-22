@@ -478,3 +478,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commit `8ff0a0c2d789c378e5091f431ceba11f1e5c4ce9`: added focused mock-API test for creating a grant with accepted payload, GET refetch and no update PUT. Inputs represent **reported exempt grant amount**, not a computed or approved tax exemption.
 - **PENDING:** owner runs a single frontend build and focused `RetirementWorkspaceScreen.test.tsx` suite (expect 22 tests). Scripts should always start by changing directory to `C:\\Users\\omer\\Downloads\\retireV2-workspace-test-20261022-120616\\frontend` before npm commands.
 - No financial/business formula, backend/schema, scenario execution, CI, master merge or production deployment.
+
+## AX. Inline historical grant creation verified (2026-10-22 19:52 Israel)
+
+- Owner pulled feature branch to `49b07f2910729c7f5702215d031690b495726ed7` and ran `npm.cmd run build` from frontend: `tsc -b && vite build` PASS, 76 modules transformed, Vite 845 ms.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: **22/22 PASS**, including new historical grant POST/refetch test and existing employment create, versioned component correction, scoping and unsaved-edit guards.
+- Router future-flag notices are nonfatal. These tests use mocked API and do not establish that browser form creation has been validated against live local PostgreSQL.
+- Next meaningful acceptance gate: local browser save/read-back of new employment and grant with disposable synthetic client and dedicated isolated DB. No master merge, production deploy or full CI.

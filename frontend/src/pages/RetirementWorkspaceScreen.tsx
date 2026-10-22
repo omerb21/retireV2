@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, updateGrant, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
@@ -59,6 +59,7 @@ export function RetirementWorkspaceScreen() {
   const validClient = Number.isSafeInteger(clientId);
   const activeClient = useRef(clientId);
   const employmentSaveGeneration = useRef(0);
+  const grantSaveGeneration = useRef(0);
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
@@ -69,6 +70,10 @@ export function RetirementWorkspaceScreen() {
   const [employmentEdit, setEmploymentEdit] = useState<EmploymentRecordItem | null>(null);
   const [employmentSaving, setEmploymentSaving] = useState(false);
   const [employmentError, setEmploymentError] = useState<string | null>(null);
+  const [grantRecords, setGrantRecords] = useState<GrantItem[]>([]);
+  const [grantEdit, setGrantEdit] = useState<GrantItem | null>(null);
+  const [grantSaving, setGrantSaving] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
   const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
@@ -79,12 +84,17 @@ export function RetirementWorkspaceScreen() {
 
   useEffect(() => {
     employmentSaveGeneration.current += 1;
+    grantSaveGeneration.current += 1;
     setRead({ state: "loading" });
     setStep("portfolio");
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
     setEmploymentRecords([]);
+    setGrantRecords([]);
+    setGrantEdit(null);
+    setGrantError(null);
+    setGrantSaving(false);
     setEmploymentEdit(null);
     setEmploymentError(null);
     setEmploymentSaving(false);
@@ -139,6 +149,7 @@ export function RetirementWorkspaceScreen() {
         groups[5].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency })),
       ];
       setEmploymentRecords(groups[0]);
+      setGrantRecords(groups[1]);
       setSupplement({ clientId, groups: entries });
     }).catch(reason => {
       if (active && activeClient.current === clientId) setSupplementError(errorText(reason));
@@ -186,6 +197,59 @@ export function RetirementWorkspaceScreen() {
       if (activeClient.current === clientId && employmentSaveGeneration.current === generation) setEmploymentError(errorText(reason));
     } finally {
       if (activeClient.current === clientId && employmentSaveGeneration.current === generation) setEmploymentSaving(false);
+    }
+  }
+
+  async function saveGrant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!grantEdit || grantSaving || activeClient.current !== clientId) return;
+    const record = grantEdit;
+    const date = /^\\d{4}-\\d{2}-\\d{2}$/;
+    const amount = /^(0|[1-9][0-9]*)(\\.[0-9]{1,2})?$/;
+    if (!record.employer_name?.trim() || !record.employer_withholding_file_number?.trim()
+      || !date.test(record.employment_start_date) || !date.test(record.employment_end_date)
+      || !date.test(record.grant_receipt_date)
+      || record.employment_end_date < record.employment_start_date
+      || record.exempt_grant_amount == null || !amount.test(String(record.exempt_grant_amount))) {
+      setGrantError("נדרשים מעסיק, תיק ניכויים, תאריכים תקינים וסכום מענק פטור לא שלילי. יש לוודא שסיום העסקה אינו קודם לתחילתה.");
+      return;
+    }
+    const generation = ++grantSaveGeneration.current;
+    setGrantSaving(true);
+    setGrantError(null);
+    try {
+      const saved = await updateGrant(clientId, record.grant_id, {
+        employer_name: record.employer_name.trim(),
+        employer_withholding_file_number: record.employer_withholding_file_number.trim(),
+        employment_start_date: record.employment_start_date,
+        employment_end_date: record.employment_end_date,
+        grant_receipt_date: record.grant_receipt_date,
+        exempt_grant_amount: String(record.exempt_grant_amount),
+      });
+      if (activeClient.current !== clientId || grantSaveGeneration.current !== generation) return;
+      if (saved.client_id !== clientId || saved.grant_id !== record.grant_id) {
+        setGrantError("תשובת מענק אינה תואמת לרשומה וללקוח.");
+        return;
+      }
+      const refreshed = await getGrants(clientId);
+      if (activeClient.current !== clientId || grantSaveGeneration.current !== generation) return;
+      if (refreshed.some(item => item.client_id !== clientId)) {
+        setGrantError("התקבלו מענקים השייכים ללקוח אחר.");
+        return;
+      }
+      setGrantRecords(refreshed);
+      setSupplement(previous => previous?.clientId === clientId ? {
+        ...previous, groups: previous.groups.map((group, index) => index === 1
+          ? refreshed.map(item => ({ client_id: item.client_id,
+            title: item.employer_name ?? "מענק ללא שם מעסיק",
+            detail: "מועד קבלה: " + item.grant_receipt_date + " · מענק פטור מדווח: " + (item.exempt_grant_amount ?? "לא נמסר") }))
+          : group),
+      } : previous);
+      setGrantEdit(null);
+    } catch (reason) {
+      if (activeClient.current === clientId && grantSaveGeneration.current === generation) setGrantError(errorText(reason));
+    } finally {
+      if (activeClient.current === clientId && grantSaveGeneration.current === generation) setGrantSaving(false);
     }
   }
 
@@ -410,10 +474,15 @@ export function RetirementWorkspaceScreen() {
             <section key={label}>
               <h2>{label} ({supplement.groups[index].length})</h2>
               {index === 0 && <p>ניתן לתקן רשומת תעסוקה כאן, או לפתוח את המסך המלא להוספה ומחיקה.</p>}
+              {index === 1 && <p>ניתן לתקן מענק קיים כאן; יצירה ומחיקה במסך המלא.</p>}
               <p><Link to={"/clients/" + clientId + "/" + (index === 0 ? "employment-history" : index === 1 ? "grants" : index === 2 ? "actual-capitalizations" : "planning-input")}>פתיחת עריכה: {label}</Link></p>
               {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
                 {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
                   <strong>{item.title}</strong> <span>{item.detail}</span>
+                  {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => {
+                    setGrantError(null);
+                    setGrantEdit({ ...grantRecords[itemIndex] });
+                  }}>תקן מענק</button>}
                   {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => {
                     setEmploymentError(null);
                     setEmploymentEdit({ ...employmentRecords[itemIndex] });
@@ -432,6 +501,18 @@ export function RetirementWorkspaceScreen() {
           {employmentError && <p role="alert">{employmentError}</p>}
           <button type="submit" disabled={employmentSaving || !employmentEdit.employer_name.trim() || (!employmentEdit.is_current && !employmentEdit.work_end_date)}>שמור תיקון תעסוקה</button>
           <button type="button" disabled={employmentSaving} onClick={() => { setEmploymentEdit(null); setEmploymentError(null); }}>ביטול</button>
+        </form>}
+        {grantEdit && supplement?.clientId === clientId && <form onSubmit={saveGrant}>
+          <h3>תיקון מענק היסטורי</h3>
+          <label>שם מעסיק <input required value={grantEdit.employer_name ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employer_name: e.target.value }))} /></label>
+          <label>מספר תיק ניכויים <input required value={grantEdit.employer_withholding_file_number ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employer_withholding_file_number: e.target.value }))} /></label>
+          <label>תחילת העסקה <input type="date" required value={grantEdit.employment_start_date} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employment_start_date: e.target.value }))} /></label>
+          <label>סיום העסקה <input type="date" required value={grantEdit.employment_end_date} onChange={e => setGrantEdit(prev => prev && ({ ...prev, employment_end_date: e.target.value }))} /></label>
+          <label>מועד קבלת מענק <input type="date" required value={grantEdit.grant_receipt_date} onChange={e => setGrantEdit(prev => prev && ({ ...prev, grant_receipt_date: e.target.value }))} /></label>
+          <label>סכום מענק פטור מדווח <input required inputMode="decimal" value={grantEdit.exempt_grant_amount ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, exempt_grant_amount: e.target.value }))} /></label>
+          {grantError && <p role="alert">{grantError}</p>}
+          <button type="submit" disabled={grantSaving}>שמור תיקון מענק</button>
+          <button type="button" disabled={grantSaving} onClick={() => { setGrantEdit(null); setGrantError(null); }}>ביטול</button>
         </form>}
       </section>}
       {step === "scenario" && <section>

@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
-  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
@@ -208,6 +208,29 @@ describe("סביבת העבודה המקצועית החדשה", () => {
       expect(screen.getByRole("link", { name: "פתיחת עריכה: " + label }))
         .toHaveAttribute("href", destination);
     }
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("edits an existing employment record in the workspace using its accepted PUT API", async () => {
+    const initial = { employment_record_id: "e1", client_id: 1, employer_name: "מעסיק קודם",
+      work_start_date: "2000-01-01", work_end_date: null, is_current: true, notes: null };
+    vi.mocked(getEmploymentRecords).mockResolvedValueOnce([initial])
+      .mockResolvedValueOnce([{ ...initial, employer_name: "מעסיק מתוקן" }]);
+    vi.mocked(updateEmploymentRecord).mockResolvedValue({ ...initial, employer_name: "מעסיק מתוקן" });
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByText("מעסיק קודם");
+    fireEvent.click(screen.getByRole("button", { name: "תקן רשומת תעסוקה" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "שם מעסיק" }), {
+      target: { value: "מעסיק מתוקן" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "שמור תיקון תעסוקה" }));
+    await screen.findByText("מעסיק מתוקן");
+    expect(updateEmploymentRecord).toHaveBeenCalledWith(1, "e1", {
+      employer_name: "מעסיק מתוקן", work_start_date: "2000-01-01",
+      work_end_date: null, is_current: true, notes: null,
+    });
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 

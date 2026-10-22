@@ -304,3 +304,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - ASCII-only Windows PowerShell 5.1 compatible and explicitly decodes JSON replies as UTF-8. Does not touch production, Railway, or true pension balances, and does not claim professional validation of grant tax treatment.
 - **Script not executed yet**: local DB persistence and client isolation results remain PENDING. Owner should keep existing local dev launcher alive, fast-forward feature branch in a second PowerShell window, run `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Workspace-Factual-Saves.ps1"` from repository root; capture output. If local stack is no longer running, avoid assuming success; restart only by explicit choice.
 - Backend smoke is a narrower API integration test, not a browser UI end-to-end test. No full CI, master merge, deploy or scenario engine change.
+
+## AC. Local factual persistence smoke bootstrap correction (2026-10-22)
+
+- User ran `dev/Test-Workspace-Factual-Saves.ps1` after successful `git pull --ff-only`. The script failed at `[int]$a[0].client_id`: PowerShell 5.1 reported `System.Object[]` instead of integer client ID.
+- Failure was in test-harness client selection before any employment/grant create/update actions. No server persistence outcome can yet be claimed.
+- Commit `75e7230d19b1a47fcae3b1e949d0dd23d4772667` normalizes the GET clients response when Windows PowerShell nests the JSON result and requires exactly one named synthetic A and B client with scalar IDs.
+- **Fix not yet verified**. One retry with existing running local stack: from repository root `git pull --ff-only`, then `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Workspace-Factual-Saves.ps1"`. If blocked again, inspect rather than repeat indefinite environment debugging. No full CI, master merge or deployment.

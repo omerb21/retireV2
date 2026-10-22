@@ -470,3 +470,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - New test verifies a synthetic employment record is created through the established POST and refreshed through the GET. This is a mocked frontend test. Earlier synthetic local PostgreSQL POST/PUT/GET smoke passed, but this new inline create form has not been browser E2E validated.
 - React Router future flag warnings are non-fatal. No master merge, production deploy or full CI.
 - Next: consider matching in-workspace grant creation via existing accepted POST and strict payload validation, avoiding new tax conclusions.
+
+## AW. Inline historical grant creation (2026-10-22)
+
+- Prior owner-verified `npm.cmd run build` and 21/21 focused tests passed; preceding handoff HEAD `2bf30f7c699221ac20e638ad880bb1f2c0375d7d`.
+- Commit `156d80245b3f4d8e5ce0bc3b4322c67e115671b0`: supplementary grant section now exposes "הוסף מענק היסטורי", using the exact six fields of accepted GrantPayload and existing `createGrant` API (POST); existing inline update remains PUT. After successful POST it validates client ownership and refetches grants for authoritative display. Same generation guard and single active supplementary edit; no deletes added.
+- Commit `8ff0a0c2d789c378e5091f431ceba11f1e5c4ce9`: added focused mock-API test for creating a grant with accepted payload, GET refetch and no update PUT. Inputs represent **reported exempt grant amount**, not a computed or approved tax exemption.
+- **PENDING:** owner runs a single frontend build and focused `RetirementWorkspaceScreen.test.tsx` suite (expect 22 tests). Scripts should always start by changing directory to `C:\\Users\\omer\\Downloads\\retireV2-workspace-test-20261022-120616\\frontend` before npm commands.
+- No financial/business formula, backend/schema, scenario execution, CI, master merge or production deployment.

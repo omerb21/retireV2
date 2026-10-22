@@ -1,11 +1,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
-vi.mock("../api/clientsApi", () => ({ getClient: vi.fn() }));
+vi.mock("../api/clientsApi", () => ({
+  getClient: vi.fn(),
+  getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(),
+}));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
   savePensionProduct: vi.fn(),
@@ -60,6 +64,10 @@ function open() {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getClient).mockImplementation(id => Promise.resolve(client(id)));
+  for (const fetcher of [getEmploymentRecords, getGrants, getActualCapitalizations,
+    getCapitalAssets, getRecurringIncomes, getRecurringExpenses]) {
+    vi.mocked(fetcher).mockResolvedValue([]);
+  }
   vi.mocked(listPensionProducts).mockImplementation(id => Promise.resolve([product(id)]));
 });
 
@@ -166,4 +174,31 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(screen.queryByText("לקוח א")).toBeNull();
     expect(screen.getByText("קרן פנסיה ב")).toBeInTheDocument();
   });
+  it("shows read-only supplementary counts from actual scoped GET responses", async () => {
+    vi.mocked(getEmploymentRecords).mockResolvedValue([{
+      employment_record_id: "e1", client_id: 1, employer_name: "מעסיק",
+      work_start_date: "2000-01-01", work_end_date: null, is_current: true, notes: null,
+    }]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(await screen.findByText("רשומות תעסוקה")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("טוען נתונים משלימים...")).toBeNull());
+    expect(screen.getByText("רשומות תעסוקה").nextElementSibling).toHaveTextContent("1");
+    expect(getEmploymentRecords).toHaveBeenCalledWith(1);
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when supplementary API returns another client's record", async () => {
+    vi.mocked(getEmploymentRecords).mockResolvedValue([{
+      employment_record_id: "e2", client_id: 2, employer_name: "לא שייך",
+      work_start_date: "2000-01-01", work_end_date: null, is_current: true, notes: null,
+    }]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("אינם תואמים");
+    expect(screen.queryByText("רשומות תעסוקה")).toBeNull();
+  });
+
 });

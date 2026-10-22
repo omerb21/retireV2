@@ -391,3 +391,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Does not change APIs, React logic, source facts, scenario engine or financial calculations.
 - **Pending local visual/build verification**: run `git pull --ff-only` and `npm.cmd run build` from frontend and inspect local synthetic workspace on desktop and narrow viewport. Previously passing 18 UI tests do not verify visual polish; there are no new logic tests.
 - No full CI, master merge or production deployment.
+
+## AM. CSS workbench build verified (2026-10-22)
+
+- Owner ran `git pull --ff-only` through `eb710022318b25eda087365f4a45489f3e5f5a34` and `npm.cmd run build` from frontend.
+- PASS: `tsc -b && vite build`; 76 modules transformed; CSS emitted at 9.39 kB; 952 ms Vite build; no compilation errors.
+- This validates compilation only, NOT browser visual design. Visual acceptance for desktop and mobile layouts remains pending; avoid claiming it passed.
+- Prior 18/18 UI logic tests remained previously verified, not rerun for CSS-only change. No CI, master merge, deployment or scenario engine change.

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrant, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrant, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
@@ -76,6 +76,8 @@ export function RetirementWorkspaceScreen() {
   const [grantSaving, setGrantSaving] = useState(false);
   const [grantCreating, setGrantCreating] = useState(false);
   const [grantError, setGrantError] = useState<string | null>(null);
+  const [linkingGrantId, setLinkingGrantId] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [supplementCategory, setSupplementCategory] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
@@ -99,6 +101,8 @@ export function RetirementWorkspaceScreen() {
     setGrantCreating(false);
     setGrantError(null);
     setGrantSaving(false);
+    setLinkingGrantId(null);
+    setLinkError(null);
     setEmploymentEdit(null);
     setEmploymentCreating(false);
     setEmploymentError(null);
@@ -297,6 +301,50 @@ export function RetirementWorkspaceScreen() {
     }
     setError(null);
     setSupplementCategory(next);
+  }
+
+  async function confirmGrantLink(grant: GrantItem, period: EmploymentRecordItem) {
+    if (activeClient.current !== clientId || linkingGrantId || grantSaving || employmentSaving || employmentEdit || grantEdit) return;
+    if (grant.client_id !== clientId || period.client_id !== clientId || grant.employment_record_id
+      || period.is_current || !period.work_end_date
+      || grant.employment_start_date !== period.work_start_date
+      || grant.employment_end_date !== period.work_end_date) {
+      setLinkError("אפשר לשייך רק מענק לא מקושר לתקופת העסקה שהסתיימה, עם תאריכים תואמים.");
+      return;
+    }
+    const approved = window.confirm("לשייך את המענק המדווח של " + (grant.employer_name ?? "מעסיק לא מזוהה")
+      + " לתקופת ההעסקה " + period.employer_name + " (" + period.work_start_date + "–" + period.work_end_date + ")?");
+    if (!approved) return;
+    const capturedClient = clientId;
+    setLinkingGrantId(grant.grant_id);
+    setLinkError(null);
+    try {
+      const linked = await linkGrantToEmployment(clientId, grant.grant_id, period.employment_record_id);
+      if (activeClient.current !== capturedClient) return;
+      if (linked.client_id !== capturedClient || linked.grant_id !== grant.grant_id
+        || linked.employment_record_id !== period.employment_record_id) {
+        setLinkError("תשובת השיוך אינה תואמת למענק ולתקופת ההעסקה.");
+        return;
+      }
+      const refreshed = await getGrants(clientId);
+      if (activeClient.current !== capturedClient) return;
+      if (refreshed.some(item => item.client_id !== capturedClient)) {
+        setLinkError("התקבלו מענקים השייכים ללקוח אחר.");
+        return;
+      }
+      setGrantRecords(refreshed);
+      setSupplement(previous => previous?.clientId === clientId ? {
+        ...previous, groups: previous.groups.map((group, index) => index === 1
+          ? refreshed.map(item => ({ client_id: item.client_id,
+            title: item.employer_name ?? "מענק ללא שם מעסיק",
+            detail: "מועד קבלה: " + item.grant_receipt_date + " · מענק פטור מדווח: " + (item.exempt_grant_amount ?? "לא נמסר") }))
+          : group),
+      } : previous);
+    } catch (reason) {
+      if (activeClient.current === capturedClient) setLinkError(errorText(reason));
+    } finally {
+      if (activeClient.current === capturedClient) setLinkingGrantId(null);
+    }
   }
 
   function openSupplementEditor(kind: "employment" | "grant", index: number) {
@@ -514,6 +562,7 @@ export function RetirementWorkspaceScreen() {
         <p className="professional-workspace__sub">נתוני הלקוח מוצגים כאן ממסד הנתונים. ניתן לתקן כאן תעסוקה ומענקים קיימים; הוספה, מחיקה ועריכת נתונים אחרים מתבצעות במסכים הייעודיים.</p>
         {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
         {supplementError && <p role="alert">{supplementError}</p>}
+        {linkError && <p role="alert">{linkError}</p>}
         {supplement?.clientId === clientId && !supplementError && <>
           <nav aria-label="סינון נתונים משלימים" className="professional-workspace__supplement-filter">
             <button type="button" aria-pressed={supplementCategory === null} onClick={() => chooseSupplementCategory(null)}>כל הנתונים</button>
@@ -561,6 +610,18 @@ export function RetirementWorkspaceScreen() {
                   <strong>{item.title}</strong> <span>{item.detail}</span>
                   {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => openSupplementEditor("grant", itemIndex)}>תקן מענק</button>}
                   {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => openSupplementEditor("employment", itemIndex)}>תקן רשומת תעסוקה</button>}
+                  {index === 0 && employmentRecords[itemIndex] && !employmentRecords[itemIndex].is_current && <>
+                    {grantRecords.filter(grant => grant.employment_record_id === employmentRecords[itemIndex].employment_record_id).map(grant =>
+                      <p key={grant.grant_id}>מענק משויך: {grant.employer_name} — {grant.exempt_grant_amount} ₪ (מדווח)</p>)}
+                    {grantRecords.filter(grant => !grant.employment_record_id
+                      && grant.employment_start_date === employmentRecords[itemIndex].work_start_date
+                      && grant.employment_end_date === employmentRecords[itemIndex].work_end_date).map(grant =>
+                      <button type="button" key={grant.grant_id} disabled={!!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
+                        onClick={() => void confirmGrantLink(grant, employmentRecords[itemIndex])}>
+                        שייך מענק לא מקושר: {grant.employer_name} — {grant.exempt_grant_amount} ₪
+                      </button>)}
+                  </>}
+                  {index === 1 && grantRecords[itemIndex] && <small>{grantRecords[itemIndex].employment_record_id ? "משויך לתקופת העסקה" : "טרם שויך לתקופת העסקה"}</small>}
                 </li>)}
               </ul>}
             </section>)}

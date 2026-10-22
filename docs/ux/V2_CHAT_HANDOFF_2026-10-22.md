@@ -202,3 +202,11 @@ Owner fast-forwarded isolated Windows checkout to `766fe3848acbd2ad51856de69c4f4
 - React Router future-flag warnings are non-fatal.
 - Verified are frontend compile/build and targeted mocked API component tests, **not** browser acceptance of supplementary detail content, full backend integration or retirement-financial computation.
 - Next bounded slice: integrate edit affordances and existing authoritative edit routes from supplementary sections without rewriting existing domain contracts; preserve actual-source and scenario separation, client-scoped state and independent gate on scenario engine. Avoid needless repeated CI.
+
+## R. Contextual supplementary-edit navigation slice (2026-10-22)
+
+- Parent branch HEAD before edits: `98a18ea41ea916b7efbf0d7646041b65d39e3eae`; accepted read-only supplementary detail build and 9 component tests had passed at prior HEAD.
+- Feature-only commit `770cf6fcc4b933a22f5143d603e6ef191d3fc046` introduces a contextual edit link under each supplementary category: employment records -> existing employment-history screen; historical grants -> existing grants screen; actual capitalizations -> existing actual-capitalizations screen; capital assets and recurring incomes/expenses -> existing planning-input screen. Removes redundant generic links. This reuses authoritative existing editors and avoids implementing duplicate domain writes.
+- Return navigation to the new professional workspace added in existing screens: employment history `d2dc79162c885097fb90155c4af33fe90a3b20b4`, grants `1302b3d6f55b7b88f9b1db9e5691af50715e538a`, actual capitalizations `48dc1591be375607d5ede04a87245ab2d10b6420`, planning input `41085e496d6bc14fbc8d34526171cdea0ea1ad23`.
+- **Not yet compiled, unit-tested or browser-reviewed** after these code edits. Minimum next check: local `git pull --ff-only`, `npm.cmd run build`, and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`. Avoid full CI.
+- No new edit mutations, scenario writes, financial calculations, changes to backend, master merge or production deployment. Genuine inline edit UX remains a future slice requiring reuse of accepted API contracts and route guard review.

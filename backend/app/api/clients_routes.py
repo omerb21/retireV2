@@ -2226,6 +2226,16 @@ def update_employment_record(
 ) -> EmploymentRecordResponse:
     _require_client(db, client_id)
     record = _require_employment_record(db, client_id, employment_record_id)
+    linked_grant = db.scalar(select(Grant.grant_id).where(
+        Grant.client_id == client_id,
+        Grant.employment_record_id == employment_record_id,
+    ).limit(1))
+    if linked_grant is not None and (
+        payload.is_current or payload.work_end_date is None
+        or payload.work_start_date != record.work_start_date
+        or payload.work_end_date != record.work_end_date
+    ):
+        raise HTTPException(status_code=409, detail="Cannot change linked employment period dates or current status")
 
     record.employer_name = payload.employer_name
     record.work_start_date = payload.work_start_date
@@ -2301,6 +2311,11 @@ def update_grant(
 ) -> GrantResponse:
     _require_client(db, client_id)
     grant = _require_grant(db, client_id, grant_id)
+    if grant.employment_record_id is not None:
+        period = _require_employment_record(db, client_id, grant.employment_record_id)
+        if (payload.employment_start_date != period.work_start_date
+                or payload.employment_end_date != period.work_end_date):
+            raise HTTPException(status_code=409, detail="Linked grant dates must match employment period")
     grant.employer_name = payload.employer_name
     grant.employer_withholding_file_number = payload.employer_withholding_file_number
     grant.nominal_amount = payload.exempt_grant_amount

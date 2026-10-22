@@ -577,6 +577,13 @@ export function updateGrant(clientId: number, grantId: string, payload: GrantPay
   });
 }
 
+export function createGrantForEmployment(clientId: number, employmentRecordId: string, payload: GrantPayload): Promise<GrantItem> {
+  return requestJson<GrantItem>(`/clients/${clientId}/employment-records/${employmentRecordId}/grants`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function linkGrantToEmployment(clientId: number, grantId: string, employmentRecordId: string): Promise<GrantItem> {
   return requestJson<GrantItem>(`/clients/${clientId}/grants/${grantId}/employment-link`, {
     method: "POST",

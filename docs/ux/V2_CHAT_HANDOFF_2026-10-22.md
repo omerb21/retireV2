@@ -349,3 +349,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - This closes the focused frontend regression. Earlier owner-run local synthetic API smoke verified employment/grant POST/PUT/GET and client B isolation, but not a browser-driven end-to-end UI save.
 - Next: advance professional workflow UX in bounded accepted slices, minimize unnecessary manual repeat builds. Keep source facts, factual correction and hypothetical scenario strictly separate.
 - No master merge, production deployment or full CI.
+
+## AH. Prevent lost supplementary drafts when opening other records (2026-10-22)
+
+- Prior owner-verified feature build passed and 16/16 focused workspace tests passed; recorded docs HEAD was `d63ae1189afcbf2dc82afc4b3de37daed9019969`.
+- `dd638d1616565b602d86c868bda9f418325d1cfc`: opening another employment/grant record via the supplementary list is refused while any supplementary editor is open or an API save is in flight. The previous behavior silently discarded an active factual edit. Displays the shared workflow alert and keeps the original draft. Cancel buttons also clear the shared alert.
+- `21346b2b48561a13c67ff1f0a33c514d2fec7083`: adds focused test that edited employment draft survives attempted selection of another employment record.
+- **Pending validation:** pull feature branch from frontend; `npm.cmd run build`; `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`; expect 17 tests. Do not launch full CI.
+- No new financial write contract, master merge, production deployment or scenario engine changes.

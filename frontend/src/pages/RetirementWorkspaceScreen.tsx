@@ -61,7 +61,7 @@ export function RetirementWorkspaceScreen() {
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
-  const [supplement, setSupplement] = useState<{ clientId: number; counts: number[] } | null>(null);
+  const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -118,7 +118,15 @@ export function RetirementWorkspaceScreen() {
         setSupplementError("נתונים משלימים אינם תואמים ללקוח הנוכחי.");
         return;
       }
-      setSupplement({ clientId, counts: groups.map(items => items.length) });
+      const entries = [
+        groups[0].map(item => ({ client_id: item.client_id, title: item.employer_name, detail: item.work_start_date + " עד " + (item.work_end_date ?? "כיום") })),
+        groups[1].map(item => ({ client_id: item.client_id, title: item.employer_name ?? "מענק ללא שם מעסיק", detail: "מועד קבלה: " + item.grant_receipt_date + " · מענק פטור מדווח: " + (item.exempt_grant_amount ?? "לא נמסר") })),
+        groups[2].map(item => ({ client_id: item.client_id, title: item.source_label ?? "היוון בפועל", detail: "מועד: " + item.capitalization_date + " · סכום: " + item.amount })),
+        groups[3].map(item => ({ client_id: item.client_id, title: item.asset_description, detail: "שווי ידוע: " + (item.known_value_amount ?? "לא נמסר") + " · מצב: " + item.verification_state })),
+        groups[4].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency + " · " + item.amount_basis })),
+        groups[5].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency })),
+      ];
+      setSupplement({ clientId, groups: entries });
     }).catch(reason => {
       if (active && activeClient.current === clientId) setSupplementError(errorText(reason));
     }).finally(() => {
@@ -345,7 +353,14 @@ export function RetirementWorkspaceScreen() {
         {supplementError && <p role="alert">{supplementError}</p>}
         {supplement?.clientId === clientId && !supplementError && <div className="professional-workspace__identity">
           {["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"].map((label, index) =>
-            <div key={label}><dt>{label}</dt><dd>{supplement.counts[index]}</dd></div>)}
+            <section key={label}>
+              <h2>{label} ({supplement.groups[index].length})</h2>
+              {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
+                {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
+                  <strong>{item.title}</strong> <span>{item.detail}</span>
+                </li>)}
+              </ul>}
+            </section>)}
         </div>}
         <div className="professional-workspace__links">
           <Link to={"/clients/" + clientId + "/grants"}>מענקים היסטוריים</Link>

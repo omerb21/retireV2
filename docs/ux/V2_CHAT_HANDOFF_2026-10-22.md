@@ -339,3 +339,13 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commit `d1b00a2583520e20c5384c3312ed3136932d14c2` moves the existing `error` alert out of portfolio-only content into the shared workspace body so stage-navigation validation is visible on every step. No business logic, data persistence, API or scenario engine change.
 - **Fix is not yet executed/tested**. Next bounded check: owner runs `git pull --ff-only` from frontend, `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`; expect 16/16. Do not run broad CI.
 - No master merge/deploy; no claim of complete end-to-end browser acceptance.
+
+## AG. Workspace navigation warning verification PASSED (2026-10-22 16:49 Israel)
+
+- Owner fast-forwarded local Windows checkout to `e2558b0d108f5ddc43435414eb0cc1d79d3e202c`.
+- `npm.cmd run build`: PASS, `tsc -b && vite build`, 76 modules, 827ms Vite build.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 16 of 16 tests, 2.57 seconds.
+- Previously failing unsaved supplementary edit warning test now PASSED after moving alert to shared workspace content. React Router v7 future-flag notices are non-fatal.
+- This closes the focused frontend regression. Earlier owner-run local synthetic API smoke verified employment/grant POST/PUT/GET and client B isolation, but not a browser-driven end-to-end UI save.
+- Next: advance professional workflow UX in bounded accepted slices, minimize unnecessary manual repeat builds. Keep source facts, factual correction and hypothetical scenario strictly separate.
+- No master merge, production deployment or full CI.

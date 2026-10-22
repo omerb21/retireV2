@@ -330,3 +330,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Test-only commit `3b274724865214c496dab54d15dcce0bc7b4093e` adds focused coverage of unsaved employment draft preservation on stage navigation.
 - **New changes NOT YET built or tested**. Minimal validation: pull feature branch; run `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` (expected 16 tests). Do not use broad CI.
 - No new backend writes, financial contracts, scenario engine, master merge or production deploy.
+
+## AF. Shared unsaved-edit warning render correction (2026-10-22 16:46 Israel)
+
+- Owner ran frontend build from correct folder at feature HEAD `285b3cde575e300e4cd1afb4792c5b54e5c79e83`: TypeScript/Vite build passed (76 modules).
+- Focused Vitest run: **15 of 16 tests passed, 1 failed**, specifically `keeps an unsaved supplementary employment edit when switching workflow stages`. DOM showed stage remained "נתונים משלימים" and unsaved field remained intact, but `role="alert"` was absent.
+- Root cause from source inspection: global `error` state was rendered only inside portfolio step, even though `switchStep` sets it when an employment or grant edit is active.
+- Commit `d1b00a2583520e20c5384c3312ed3136932d14c2` moves the existing `error` alert out of portfolio-only content into the shared workspace body so stage-navigation validation is visible on every step. No business logic, data persistence, API or scenario engine change.
+- **Fix is not yet executed/tested**. Next bounded check: owner runs `git pull --ff-only` from frontend, `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`; expect 16/16. Do not run broad CI.
+- No master merge/deploy; no claim of complete end-to-end browser acceptance.

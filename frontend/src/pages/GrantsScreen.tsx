@@ -230,6 +230,7 @@ export function GrantsScreen() {
     return (
       <section>
         <h2>Grants</h2>
+      <p><Link to={`/clients/${parsedClientId}/workspace`}>חזרה לסביבת התכנון החדשה</Link></p>
         <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
         {clientName ? <p>Client Name: {clientName}</p> : null}
         <p>Loading grants...</p>

@@ -366,3 +366,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Newly added `preserves an unsaved employment edit when another supplementary record is opened` passes. React Router v7 future-flag warnings are non-blocking.
 - Frontend mocked tests and earlier local synthetic API smoke passed; browser E2E not yet claimed. Avoid repeating this validation unnecessarily.
 - Proceed to higher-impact workflow UX after this. No full CI, master merge or production deployment.
+
+## AJ. Supplementary category focus UX (2026-10-22)
+
+- Started at owner-verified `a058c4e533ed95770a32fe191825061fa1a332b5`: 17/17 focused workspace tests passed and frontend build passed at 17:02.
+- `f3ca9dace6877180bfdeffeee0022b8fc4292dfc`: added an on-page category navigation for six supplementary factual data categories, with live record counts and a default 'all data' view; selecting a category narrows the visible list without changing any authoritative records or invoking writes. When employment/grant editing or saving is in progress, moving to another category is blocked to preserve the draft.
+- `62bdec2644176cb45038d297ab1fd6cd17cb7065`: focused UI test for category filtering, returning to all data, and absence of employment/grant writes.
+- **Build and new test NOT YET RUN**. Request one local frontend `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` after pull, expected 18 focused tests.
+- No scenario execution, financial calculation change, backend contract change, full CI, master merge or deploy.

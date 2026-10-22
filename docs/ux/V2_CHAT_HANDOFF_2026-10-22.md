@@ -532,3 +532,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Regression test covers explicit historical period linking, repeated legal employer/independent periods, conflicting edits, current period and cross-client failures, and linked-period deletion guard. The running local dev stack was left untouched.
 - Backend contract passes isolated tests; no UI integration or end-to-end linked-grant acceptance yet. Next implement explicit link UI in historic employment category and read-only linked/unlinked grants display, with user-confirmed matching; preserve existing grants and avoid hidden data changes.
 - No CI, master merge or production deployment.
+
+## BE. Explicit historical grant linking UI pending test validation (2026-10-22)
+
+- Backend 2/2 link/API tests passed in independent, offline Docker image (owner-provided output). Follow-on feature branch implements UI through `79c22232fc000b901af840d0551daad4361eae7a` clientsApi typing and link POST wrapper, `2156486183437db513f8b6e112876e7283d44ebe` workspace historical employment row controls. Existing unlinked grant with matching dates is shown *as a candidate only*, never automatically linked; user must press the explicit link action and approve a browser confirmation. Current periods cannot link, and existing link ownership is visible. After successful save validate returned client/grant/period IDs and reload grants. Error/failed response never claims success.
+- `a45e018d00afa1400e5f57840e7cdb2060ab707e` adds an interactive mocked frontend integration test using explicit window.confirm and API GET reload.
+- IMPORTANT: Browser user's original FastAPI container is still running its **old built image**. Pulling GitHub into checkout does not update that backend; POST link endpoint will be missing (404) until local synthetic backend is rebuilt/restarted in a planned fashion. Do not advise launching another stack on bound port or claim live link E2E.
+- Frontend new suite expected 23 total tests, **not yet run**. Existing grants section still has legacy create/edit controls; should be moved to employer-centered entry only after a transactional create-and-link API is designed, rather than chaining two writes and leaving orphan grants on partial failure.
+- No master merge, production deploy or full CI.

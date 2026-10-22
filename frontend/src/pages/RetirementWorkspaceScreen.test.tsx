@@ -129,6 +129,31 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("keeps an unsaved correction open when a workflow stage is clicked", async () => {
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(within(ledger).getByRole("button", { name: "פיצויים מעסיק נוכחי — קרן פנסיה א" }));
+    fireEvent.click(screen.getByRole("button", { name: "תיקון יתרות נבחרות" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "פיצויים מעסיק נוכחי" }),
+      { target: { value: "89.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("יש לשמור או לבטל");
+    expect(screen.getByRole("textbox", { name: "פיצויים מעסיק נוכחי" })).toHaveValue("89.00");
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed monetary input before calling the factual write endpoint", async () => {
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(within(ledger).getByRole("button", { name: "פיצויים מעסיק נוכחי — קרן פנסיה א" }));
+    fireEvent.click(screen.getByRole("button", { name: "תיקון יתרות נבחרות" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "פיצויים מעסיק נוכחי" }),
+      { target: { value: "-10" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמור תיקון נתונים" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("לא שליליים");
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
   it("rejects a previous client's late response and clears old data on route change", async () => {
     let resolveFirst!: (value: ClientDetailItem) => void;
     const first = new Promise<ClientDetailItem>(resolve => { resolveFirst = resolve; });

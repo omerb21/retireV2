@@ -365,3 +365,24 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* At-a-glance source coverage: emphasize recorded facts, compact empty groups. */
+.professional-workspace__identity:has(> section) > section.has-records {
+  border-color: #aac7e3;
+  border-top: 3px solid #3979b3;
+  background: #fafdff;
+}
+.professional-workspace__identity:has(> section) > section.is-empty {
+  min-height: 0;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border-style: dashed;
+}
+.professional-workspace__identity:has(> section) > section.is-empty h2 {
+  font-size: 14px;
+  color: #657c92;
+}
+.professional-workspace__identity:has(> section) > section.is-empty p {
+  margin: 5px 0;
+}

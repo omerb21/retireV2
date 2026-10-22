@@ -38,6 +38,18 @@ def test_explicit_link_and_protection_for_ended_employment_period(tmp_path):
         assert result.json()["employment_record_id"] == first
         assert client.get(f"/api/clients/{cid}/grants").json()[0]["employment_record_id"] == first
         assert client.post(endpoint, json={"employment_record_id": later}).status_code in (409, 422)
+        # Existing linked records cannot silently lose their period identity.
+        bad_employment = client.put(f"/api/clients/{cid}/employment-records/{first}", json={
+            "employer_name": "Company A", "work_start_date": "2011-01-01",
+            "work_end_date": "2020-01-01", "is_current": False, "notes": None,
+        })
+        assert bad_employment.status_code == 409
+        bad_grant = client.put(f"/api/clients/{cid}/grants/{gid}", json={
+            "employer_name": "Company A", "employer_withholding_file_number": "123456789",
+            "employment_start_date": "2010-01-01", "employment_end_date": "2021-01-01",
+            "grant_receipt_date": "2020-02-01", "exempt_grant_amount": "1200.00",
+        })
+        assert bad_grant.status_code == 409
         assert client.delete(f"/api/clients/{cid}/employment-records/{first}").status_code == 409
         assert client.get(f"/api/clients/{cid}/grants").json()[0]["employment_record_id"] == first
     finally:

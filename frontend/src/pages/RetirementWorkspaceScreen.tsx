@@ -275,6 +275,25 @@ export function RetirementWorkspaceScreen() {
     });
   }, [products, search, discrepancyOnly]);
 
+  function openSupplementEditor(kind: "employment" | "grant", index: number) {
+    if (employmentSaving || grantSaving || employmentEdit !== null || grantEdit !== null) {
+      setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לעריכת רשומה אחרת.");
+      return;
+    }
+    setError(null);
+    if (kind === "employment") {
+      const record = employmentRecords[index];
+      if (!record || record.client_id !== clientId) return;
+      setEmploymentError(null);
+      setEmploymentEdit({ ...record });
+    } else {
+      const record = grantRecords[index];
+      if (!record || record.client_id !== clientId) return;
+      setGrantError(null);
+      setGrantEdit({ ...record });
+    }
+  }
+
   function switchStep(next: Step) {
     if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
@@ -479,16 +498,8 @@ export function RetirementWorkspaceScreen() {
               {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
                 {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
                   <strong>{item.title}</strong> <span>{item.detail}</span>
-                  {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => {
-                    setGrantError(null);
-                    setEmploymentEdit(null);
-                    setGrantEdit({ ...grantRecords[itemIndex] });
-                  }}>תקן מענק</button>}
-                  {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => {
-                    setEmploymentError(null);
-                    setGrantEdit(null);
-                    setEmploymentEdit({ ...employmentRecords[itemIndex] });
-                  }}>תקן רשומת תעסוקה</button>}
+                  {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => openSupplementEditor("grant", itemIndex)}>תקן מענק</button>}
+                  {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => openSupplementEditor("employment", itemIndex)}>תקן רשומת תעסוקה</button>}
                 </li>)}
               </ul>}
             </section>)}
@@ -502,7 +513,7 @@ export function RetirementWorkspaceScreen() {
           <label>הערות <textarea value={employmentEdit.notes ?? ""} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, notes: event.target.value || null }))} /></label>
           {employmentError && <p role="alert">{employmentError}</p>}
           <button type="submit" disabled={employmentSaving || !employmentEdit.employer_name.trim() || (!employmentEdit.is_current && !employmentEdit.work_end_date)}>שמור תיקון תעסוקה</button>
-          <button type="button" disabled={employmentSaving} onClick={() => { setEmploymentEdit(null); setEmploymentError(null); }}>ביטול</button>
+          <button type="button" disabled={employmentSaving} onClick={() => { setEmploymentEdit(null); setEmploymentError(null); setError(null); }}>ביטול</button>
         </form>}
         {grantEdit && supplement?.clientId === clientId && <form onSubmit={saveGrant}>
           <h3>תיקון מענק היסטורי</h3>
@@ -514,7 +525,7 @@ export function RetirementWorkspaceScreen() {
           <label>סכום מענק פטור מדווח <input required inputMode="decimal" value={grantEdit.exempt_grant_amount ?? ""} onChange={e => setGrantEdit(prev => prev && ({ ...prev, exempt_grant_amount: e.target.value }))} /></label>
           {grantError && <p role="alert">{grantError}</p>}
           <button type="submit" disabled={grantSaving}>שמור תיקון מענק</button>
-          <button type="button" disabled={grantSaving} onClick={() => { setGrantEdit(null); setGrantError(null); }}>ביטול</button>
+          <button type="button" disabled={grantSaving} onClick={() => { setGrantEdit(null); setGrantError(null); setError(null); }}>ביטול</button>
         </form>}
       </section>}
       {step === "scenario" && <section>

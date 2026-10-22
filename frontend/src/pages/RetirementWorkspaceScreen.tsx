@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClient, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
@@ -61,6 +61,9 @@ export function RetirementWorkspaceScreen() {
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
+  const [supplement, setSupplement] = useState<{ clientId: number; counts: number[] } | null>(null);
+  const [supplementError, setSupplementError] = useState<string | null>(null);
+  const [supplementLoading, setSupplementLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
   const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
@@ -72,6 +75,9 @@ export function RetirementWorkspaceScreen() {
   useEffect(() => {
     setRead({ state: "loading" });
     setStep("portfolio");
+    setSupplement(null);
+    setSupplementError(null);
+    setSupplementLoading(false);
     setSearch("");
     setHideEmptyColumns(false);
     setDiscrepancyOnly(false);
@@ -96,6 +102,30 @@ export function RetirementWorkspaceScreen() {
     });
     return () => { active = false; };
   }, [clientId, validClient]);
+
+  useEffect(() => {
+    if (step !== "supplement" || !validClient || read.state !== "ready" || read.client.client_id !== clientId) return;
+    let active = true;
+    setSupplement(null);
+    setSupplementError(null);
+    setSupplementLoading(true);
+    void Promise.all([
+      getEmploymentRecords(clientId), getGrants(clientId), getActualCapitalizations(clientId),
+      getCapitalAssets(clientId), getRecurringIncomes(clientId), getRecurringExpenses(clientId),
+    ]).then(groups => {
+      if (!active || activeClient.current !== clientId) return;
+      if (groups.some(items => items.some(item => item.client_id !== clientId))) {
+        setSupplementError("נתונים משלימים אינם תואמים ללקוח הנוכחי.");
+        return;
+      }
+      setSupplement({ clientId, counts: groups.map(items => items.length) });
+    }).catch(reason => {
+      if (active && activeClient.current === clientId) setSupplementError(errorText(reason));
+    }).finally(() => {
+      if (active && activeClient.current === clientId) setSupplementLoading(false);
+    });
+    return () => { active = false; };
+  }, [step, clientId, validClient, read.state === "ready" ? read.client.client_id : null]);
 
   const products = read.state === "ready" ? read.products : [];
   const columns = useMemo(() => {
@@ -310,7 +340,13 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "supplement" && <section>
         <h1>נתונים משלימים</h1>
-        <p className="professional-workspace__sub">המידע המקצועי ממשיך להישמר במנגנונים הקיימים. בשלב זה פותחים את המסכים המאושרים במקום לשכפל אותם.</p>
+        <p className="professional-workspace__sub">סיכום קריאה בלבד מנתוני הלקוח במערכת. עריכה מתבצעת לעת עתה במסכים הקיימים.</p>
+        {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
+        {supplementError && <p role="alert">{supplementError}</p>}
+        {supplement?.clientId === clientId && !supplementError && <div className="professional-workspace__identity">
+          {["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"].map((label, index) =>
+            <div key={label}><dt>{label}</dt><dd>{supplement.counts[index]}</dd></div>)}
+        </div>}
         <div className="professional-workspace__links">
           <Link to={"/clients/" + clientId + "/grants"}>מענקים היסטוריים</Link>
           <Link to={"/clients/" + clientId + "/employment-history"}>תעסוקה ומעסיקים</Link>

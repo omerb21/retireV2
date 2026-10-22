@@ -237,3 +237,12 @@ Owner fast-forwarded Windows isolated checkout to `30a64c9ccb774285b40ec5c542c3a
 - React Router future-flag warnings only. This is mocked API component testing, not full browser or DB integration.
 - Next authorized development goal: minimize legacy navigation by moving a bounded factual editing interaction into the professional workspace, reusing an accepted API and preserving validation, source and lifecycle semantics. Avoid new scenario contracts or financial calculations.
 - No master merge, production deploy or full CI.
+
+## V. First bounded in-workspace edit: existing employment record (2026-10-22)
+
+- Owner's previous local build and 10/10 focused tests verified `5a0cfc5`, followed by documentation update `66dc7dc3ab15fef52cdacfce3b6ae6b6b57b5821`.
+- Feature commit `8343d73516eaabbe3ac8ad802de40d7abb112fea` adds a limited inline **existing employment record correction** form in supplementary stage, using existing `updateEmploymentRecord(clientId, employmentRecordId, payload)` API, followed by authoritative `getEmploymentRecords` reload. No parallel server write interface, no scenario logic.
+- Only existing records are editable here; create/delete continue in existing employment-history screen. The UI checks response client and record identity and prevents showing a different client's supplementary data.
+- Focused test commit `5b488c05feaa6a3bfb01277d22dc2d239b43c5c8` adds a mocked correction test checking PUT client/id/payload and no pension product write.
+- **Neither build nor test of this delta has been run.** Before accepting, run narrow `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` after git pull. Also browser verify factual persistence and client switch when convenient. Any error must be fixed before extending forms.
+- No master merge, production deploy, broad CI or authorized scenario engine.

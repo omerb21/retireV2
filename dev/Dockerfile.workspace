@@ -6,6 +6,8 @@ COPY backend/requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY dev/start_workspace_backend.sh /opt/workspace/start_workspace_backend.sh
+# Normalize Windows checkout CRLF before /bin/sh parses this local-only entrypoint.
+RUN sed -i 's/\r$//' /opt/workspace/start_workspace_backend.sh
 COPY dev/grant_workspace_permissions.py /opt/workspace/grant_workspace_permissions.py
 # Migrate using a dedicated local owner; switch to the restricted app role before serving.
 CMD ["sh", "/opt/workspace/start_workspace_backend.sh"]

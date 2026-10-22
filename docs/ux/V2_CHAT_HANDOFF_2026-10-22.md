@@ -519,3 +519,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commit `7f52a49eec4e2adb3cca693411d72484098cf58a` added regression assertions for both invalid edit paths.
 - **Backend tests have NOT RUN in this chat**. Next acceptance: check out feature branch locally and run isolated backend `pytest tests/test_employment_grant_link_api.py -q` inside compatible backend environment, preferably from a local one-off Docker Compose run without disrupting existing browser/server. Existing 22 frontend tests were already owner-verified before the API changes; these changes did not modify frontend.
 - No automated matching or historical grant migration, UI-link control, scenario mutation, full CI, master merge or production deploy.
+
+## BC. Offline backend verification command for grant-period link (2026-10-22)
+
+- Confirmed `dev/compose.workspace.yml` maps live backend 127.0.0.1:18080, so launching another stack would collide with still-running user's browser environment.
+- `dev/Dockerfile.workspace` installs pinned Python dependencies, copies backend source and test suite, including Alembic migrations. Added `dev/Test-Employment-Grant-Link.ps1` in commit `ed29bef6484a2b000ad89bcbd7e762ac46ce252e`: Docker builds standalone image and invokes `python -m pytest tests/test_employment_grant_link_api.py -q` in `--network none` container, no ports, no stack restart. Tests use disposable SQLite fixture.
+- **Still unexecuted:** owner should pull then run `powershell -NoProfile -ExecutionPolicy Bypass -File ".\\dev\\Test-Employment-Grant-Link.ps1"` from repo root. Do not announce backend approval until actual output received. No CI or deployment.

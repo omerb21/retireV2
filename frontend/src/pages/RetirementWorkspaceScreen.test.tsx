@@ -191,6 +191,26 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("routes each supplementary category to its existing factual editor", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    const expected = [
+      ["רשומות תעסוקה", "/clients/1/employment-history"],
+      ["מענקים", "/clients/1/grants"],
+      ["היוונים בפועל", "/clients/1/actual-capitalizations"],
+      ["נכסי הון", "/clients/1/planning-input"],
+      ["הכנסות נוספות", "/clients/1/planning-input"],
+      ["הוצאות שוטפות", "/clients/1/planning-input"],
+    ];
+    await screen.findByRole("heading", { name: "רשומות תעסוקה (0)" });
+    for (const [label, destination] of expected) {
+      expect(screen.getByRole("link", { name: "פתיחת עריכה: " + label }))
+        .toHaveAttribute("href", destination);
+    }
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
   it("fails closed when supplementary API returns another client's record", async () => {
     vi.mocked(getEmploymentRecords).mockResolvedValue([{
       employment_record_id: "e2", client_id: 2, employer_name: "לא שייך",

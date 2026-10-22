@@ -86,6 +86,15 @@ try {
       $health = Invoke-RestMethod -Uri ($base + "/health") -TimeoutSec 2
       if ($health.status -eq "ok") { $ready = $true; break }
     } catch {}
+    # Fail immediately on a crashed migration; avoid a lengthy health wait.
+    $backendId = (& docker compose -p $project -f $composeFile ps -a -q backend |
+      Select-Object -First 1)
+    if ($backendId) {
+      $backendState = (& docker inspect --format "{{.State.Status}}" $backendId)
+      if ($backendState -eq "exited" -or $backendState -eq "dead") {
+        throw "Local FastAPI container exited. See the logs below for the exact migration or server error."
+      }
+    }
     Start-Sleep -Seconds 2
   }
   if (-not $ready) { throw "Local FastAPI health endpoint did not become ready." }

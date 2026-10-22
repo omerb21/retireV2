@@ -193,3 +193,12 @@ Owner ran in isolated Windows checkout fast-forwarded to `b80d5aace8f755b639ffcb
 - Focused test alignment commit `db79799aeb748fd8bfc75b65c63b2004f7fac65c`: checks real employer row display and heading count, keeps cross-client mismatch test.
 - **These new changes have NOT YET been built or tested.** Prior passing tests on older SHA do not automatically cover this delta. Next minimal validation: one targeted `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` from the existing checkout after `git pull --ff-only`. No Docker rerun required for TypeScript/unit tests.
 - Keep this as UI read-only. No direct edit forms, scenario persistence, business logic, tax/NPV or production merge authorization. Do not mistake display of reported income and expense amounts for accepted calculated outputs.
+
+## Q. Read-only supplementary detail slice verified (2026-10-22 15:28 Israel)
+
+Owner fast-forwarded isolated Windows checkout to `766fe3848acbd2ad51856de69c4f411f0206e9c9` and ran:
+- `npm.cmd run build`: PASS, `tsc -b && vite build`; Vite 76 modules, build complete in 930 ms.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 1 test file, 9/9 tests, 2.36 sec total.
+- React Router future-flag warnings are non-fatal.
+- Verified are frontend compile/build and targeted mocked API component tests, **not** browser acceptance of supplementary detail content, full backend integration or retirement-financial computation.
+- Next bounded slice: integrate edit affordances and existing authoritative edit routes from supplementary sections without rewriting existing domain contracts; preserve actual-source and scenario separation, client-scoped state and independent gate on scenario engine. Avoid needless repeated CI.

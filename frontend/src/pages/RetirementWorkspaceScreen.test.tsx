@@ -234,6 +234,41 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("rejects an employment end date before its start without a PUT", async () => {
+    const initial = { employment_record_id: "e1", client_id: 1, employer_name: "מעסיק",
+      work_start_date: "2020-01-01", work_end_date: "2021-01-01", is_current: false, notes: null };
+    vi.mocked(getEmploymentRecords).mockResolvedValue([initial]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByText("מעסיק");
+    fireEvent.click(screen.getByRole("button", { name: "תקן רשומת תעסוקה" }));
+    fireEvent.change(screen.getByLabelText("תאריך סיום"), { target: { value: "2019-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמור תיקון תעסוקה" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("תאריך הסיום");
+    expect(updateEmploymentRecord).not.toHaveBeenCalled();
+  });
+
+  it("does not apply an old client's employment save after switching client", async () => {
+    const initial = { employment_record_id: "e1", client_id: 1, employer_name: "מעסיק",
+      work_start_date: "2000-01-01", work_end_date: null, is_current: true, notes: null };
+    vi.mocked(getEmploymentRecords).mockImplementation(id => Promise.resolve(id === 1 ? [initial] : []));
+    let resolveSave!: (record: typeof initial) => void;
+    const pendingSave = new Promise<typeof initial>(resolve => { resolveSave = resolve; });
+    vi.mocked(updateEmploymentRecord).mockReturnValue(pendingSave);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByText("מעסיק");
+    fireEvent.click(screen.getByRole("button", { name: "תקן רשומת תעסוקה" }));
+    fireEvent.click(screen.getByRole("button", { name: "שמור תיקון תעסוקה" }));
+    fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח ב" }));
+    await screen.findByText("קרן פנסיה ב");
+    await act(async () => { resolveSave(initial); await pendingSave; });
+    expect(screen.queryByText("מעסיק")).toBeNull();
+    expect(getEmploymentRecords).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when supplementary API returns another client's record", async () => {
     vi.mocked(getEmploymentRecords).mockResolvedValue([{
       employment_record_id: "e2", client_id: 2, employer_name: "לא שייך",

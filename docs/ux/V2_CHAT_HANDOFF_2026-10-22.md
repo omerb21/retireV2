@@ -455,3 +455,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Wrong-directory failures were environment invocation errors (`ENOENT` package.json and `document is not defined` with a different Vitest version), not code regressions. Future commands must include explicit frontend `cd`.
 - Continue substantive professional workflow work; no need to repeat this focused validation now. Visual verification of latest populated/empty card color/spacing remains separate.
 - No master merge, production deployment or full CI.
+
+## AU. In-workspace employment creation (2026-10-22)
+
+- Began from owner-verified 20/20 focused frontend tests and local PostgreSQL synthetic employment/grant POST/PUT/GET smoke; baseline docs HEAD `3e724276ca4973375ca6d92ece2144acd2634bab`.
+- `33fbd95e6826cd459d4f451814ebe056c94c27e9`: Employment category in Step 3 now includes "הוסף רשומת תעסוקה". Reuses approved employment fields and the existing `createEmploymentRecord` POST endpoint; update path remains existing PUT. New record starts with blank employer/date and current-employment flag, and both create/update refetch GET after successful mutation. Single-editor and cross-client generation safeguards remain. Delete stays on existing full screen. No backend/schema changes.
+- `20026be94eb53b37198bcab27de93005be543315`: targeted mock-API test asserts new record POST payload, GET refetch and no update PUT.
+- **NOT YET BUILT OR TESTED**. The owner should fast-forward feature branch and run single frontend build plus `RetirementWorkspaceScreen.test.tsx` suite; expected 21 tests. A separate browser create/save may be valuable after build.
+- No scenario execution, financial calculations, CI, master merge or production deployment.

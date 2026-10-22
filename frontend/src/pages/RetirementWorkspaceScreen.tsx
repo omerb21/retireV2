@@ -38,10 +38,11 @@ function errorText(error: unknown) {
 }
 function money(value: string | null | undefined): string {
   if (value == null || value === "") return "לא נמסר";
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? parsed.toLocaleString("he-IL", { maximumFractionDigits: 2 })
-    : "נתון לא תקין";
+  const parts = /^(-?)([0-9]+)(?:\.([0-9]+))?$/.exec(value);
+  if (!parts) return "נתון לא תקין";
+  const integer = BigInt(parts[2]).toLocaleString("he-IL");
+  const fraction = (parts[3] ?? "").replace(/0+$/, "");
+  return parts[1] + integer + (fraction ? "." + fraction : "");
 }
 function completeAmount(value: string): boolean {
   return /^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$/.test(value);

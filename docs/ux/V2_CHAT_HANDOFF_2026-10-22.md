@@ -265,3 +265,13 @@ Owner fast-forwarded local checkout to `32de20ee6a1fd38b6423dd74ba7438c7f5f34b5e
 - `9b33604eb2aefdebd5e2524360ec1fc684a22dcf`: two new targeted tests for invalid end date blocking PUT and stale employment save after navigating to another client.
 - **Build and tests for these changes have not been run.** Request one local targeted build and the workspace test file; do not infer acceptance from prior 11 passing tests.
 - No server/data model change, scenario implementation, master merge, production deploy or full CI.
+
+## Y. Employment editor safeguards verified (2026-10-22 16:14 Israel)
+
+Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d2438319c` and executed:
+- `npm.cmd run build`: PASS; TypeScript and Vite, 76 modules, 833 ms build.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 13/13 tests, one test file, 2.28 s.
+- Specifically, chronology guard and stale save across client navigation tests passed. React Router future-flag warnings are non-fatal.
+- These are frontend mocked-API tests, not direct PostgreSQL employment-save integration.
+- Next: bounded extension of inline edits only if an accepted endpoint and validation constraints are read and retained; no unapproved hypothetical scenario execution. Prefer concise meaningful UX improvements over endless infrastructure reruns.
+- No merge to master, deployment or GitHub CI.

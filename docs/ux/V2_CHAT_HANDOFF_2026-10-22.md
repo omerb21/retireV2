@@ -549,3 +549,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - **Not yet executed**: new backend test. Prior standalone `dev/Test-Employment-Grant-Link.ps1` runner can be reused to execute the now 3 focused backend tests. No browser UI for atomically creating linked grant yet; next integrate its frontend entry under historical employment after test approval, then deprecate independent grant input from supplement summary.
 - Original local browser backend is still old Docker image; no port collisions or backend restarts should be triggered implicitly.
 - No broader CI, master merge, production deployment, financial/tax calculations, or scenario mutations.
+
+## BG. Atomic employer-centred historical grant creation frontend pending validation (2026-10-23)
+
+- Owner pulled `8778cc5` and ran standalone Docker backend tests **3/3 PASS**, 1 nonfatal Starlette DeprecationWarning. Existing dev server unaffected.
+- Frontend commits: `6bc6dfb406b4d13a3179903c629af72d28437dfe` (typed API atomic POST), `083887cfd75a4902de0277e93471d80cdd82591c` (create a linked grant only from an ended employment period row, prefill employer + period dates; grants summary no longer has independent create action; link to legacy overview and editing remain temporarily), `6f6e11b6f8668a825934df0c38bc91ecb0a75d88` (replace old detached creation test with linked creation/refetch).
+- Existing standalone grant update remains for backwards-compatible editing. There is no new retirement/exemption calculation and no current-employer grant-create action.
+- **PENDING:** owner needs a single frontend `npm.cmd run build` and focused Vitest suite (23 tests expected) from frontend after git pull. Docker backend on 18080 remains the older running container and will not expose the atomic API until a controlled refresh. Do NOT claim browser end-to-end acceptance of this new feature.
+- No CI, master merge or deployment.

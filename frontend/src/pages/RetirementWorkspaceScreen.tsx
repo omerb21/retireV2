@@ -120,8 +120,11 @@ export function RetirementWorkspaceScreen() {
   }, [products, search, discrepancyOnly]);
 
   function switchStep(next: Step) {
+    if (draft !== null || saveState === "saving") {
+      setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
+      return;
+    }
     setSelection([]);
-    setDraft(null);
     setError(null);
     setStep(next);
   }

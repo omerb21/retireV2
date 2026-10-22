@@ -210,3 +210,13 @@ Owner fast-forwarded isolated Windows checkout to `766fe3848acbd2ad51856de69c4f4
 - Return navigation to the new professional workspace added in existing screens: employment history `d2dc79162c885097fb90155c4af33fe90a3b20b4`, grants `1302b3d6f55b7b88f9b1db9e5691af50715e538a`, actual capitalizations `48dc1591be375607d5ede04a87245ab2d10b6420`, planning input `41085e496d6bc14fbc8d34526171cdea0ea1ad23`.
 - **Not yet compiled, unit-tested or browser-reviewed** after these code edits. Minimum next check: local `git pull --ff-only`, `npm.cmd run build`, and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`. Avoid full CI.
 - No new edit mutations, scenario writes, financial calculations, changes to backend, master merge or production deployment. Genuine inline edit UX remains a future slice requiring reuse of accepted API contracts and route guard review.
+
+## S. Contextual edit navigation build verified (2026-10-22 15:41 Israel time)
+
+Owner fast-forwarded Windows isolated checkout to `30a64c9ccb774285b40ec5c542c3aac4a67c4866`, then:
+- `npm.cmd run build`: PASS; `tsc -b && vite build`, 76 modules, 917 ms.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 9/9 tests, 2.22 seconds.
+- React Router v7 future-flag warnings only; no errors.
+- The 9 component tests do not specifically exercise new contextual link destinations or return navigation; browser navigation acceptance remains outstanding. Do not claim full end-to-end acceptance.
+- Contextual links reuse legacy authoritative editors; no duplicate write path introduced.
+- Next prioritization: targeted links/return-navigation tests then in-workspace factual edit UX with existing contracts, no scenario mutation. No master merge, deployment or broad CI authorized.

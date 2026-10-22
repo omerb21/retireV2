@@ -511,3 +511,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commits: `537dac15926969824c37d04a31bb8dfcf63534d2`, `c3947e7e117d62584718b643bc7cc13d03243317`, `ca91a8ddd4c958ff8511bc8db3137155c586110f`. New isolated backend API tests cover link, reload, repeat employment, cross-client rejection, current period rejection, date mismatch, refusal to move and deletion guard.
 - **NOT YET EXECUTED/VALIDATED**: backend tests require local Python+DB testing; do not claim acceptance or production readiness. Client-side link reconciliation control intentionally not yet exposed, pending browser flow review and accepted backend test results.
 - Existing independent grant POST remains operational for legacy/back-compat; not yet the target employer-centred workflow. No backend migration, scenario calculation, full CI, master merge, or production deploy.
+
+## BB. Linked grant integrity hardening, pending backend test execution
+
+- Post-link consistency audit identified a gap: existing PUT grant and PUT employment period endpoints could diverge historical dates after an explicit link.
+- Commit `61f2f6f0c9d646711d0bfcbc426f1fc89a644b5e` now returns HTTP 409 if a linked grant's employment start/end dates are changed to conflict with its period, or if a period with linked grants is changed to current or its start/end boundaries are edited. Non-identity employer-name/notes edits remain permitted. Historical grants already linked through the ORM FK are thus protected through both endpoints.
+- Commit `7f52a49eec4e2adb3cca693411d72484098cf58a` added regression assertions for both invalid edit paths.
+- **Backend tests have NOT RUN in this chat**. Next acceptance: check out feature branch locally and run isolated backend `pytest tests/test_employment_grant_link_api.py -q` inside compatible backend environment, preferably from a local one-off Docker Compose run without disrupting existing browser/server. Existing 22 frontend tests were already owner-verified before the API changes; these changes did not modify frontend.
+- No automated matching or historical grant migration, UI-link control, scenario mutation, full CI, master merge or production deploy.

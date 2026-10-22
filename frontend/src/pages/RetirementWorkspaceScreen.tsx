@@ -348,13 +348,14 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "supplement" && <section>
         <h1>נתונים משלימים</h1>
-        <p className="professional-workspace__sub">סיכום קריאה בלבד מנתוני הלקוח במערכת. עריכה מתבצעת לעת עתה במסכים הקיימים.</p>
+        <p className="professional-workspace__sub">סיכום קריאה בלבד מנתוני הלקוח במערכת. קישורי העריכה מפנים לטפסים המאושרים הקיימים; לאחר השמירה יש לחזור לסביבת העבודה.</p>
         {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
         {supplementError && <p role="alert">{supplementError}</p>}
         {supplement?.clientId === clientId && !supplementError && <div className="professional-workspace__identity">
-          {["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"].map((label, index) =>
+          {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>
             <section key={label}>
               <h2>{label} ({supplement.groups[index].length})</h2>
+              <p><Link to={"/clients/" + clientId + "/" + (index === 0 ? "employment-history" : index === 1 ? "grants" : index === 2 ? "actual-capitalizations" : "planning-input")}>פתיחת עריכה: {label}</Link></p>
               {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
                 {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
                   <strong>{item.title}</strong> <span>{item.detail}</span>
@@ -362,12 +363,7 @@ export function RetirementWorkspaceScreen() {
               </ul>}
             </section>)}
         </div>}
-        <div className="professional-workspace__links">
-          <Link to={"/clients/" + clientId + "/grants"}>מענקים היסטוריים</Link>
-          <Link to={"/clients/" + clientId + "/employment-history"}>תעסוקה ומעסיקים</Link>
-          <Link to={"/clients/" + clientId + "/actual-capitalizations"}>היוונים שבוצעו בפועל</Link>
-          <Link to={"/clients/" + clientId + "/planning-input"}>נתוני תכנון פרישה</Link>
-        </div>
+
       </section>}
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>

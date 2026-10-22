@@ -438,3 +438,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Visual review: layout no longer compresses six categories into one row; four cards wrap on first row and two on second at this viewport. Labels and action buttons legible without apparent overlap. Layout correction visually accepted for this desktop viewport.
 - Follow-up UX opportunities, not yet implemented: reduce visual footprint of four empty categories and make categories with records more prominent. No claim of mobile layout verification or overall UX acceptance.
 - No code changes from this review, CI, merge, or deployment.
+
+## AS. Populated vs empty supplementary facts distinction (2026-10-22)
+
+- Last confirmed desktop screenshot after the 310px minimum-width card fix showed legible four/two cards and was visually accepted; handoff HEAD before this slice `656a0654995254126085ec31667570a84b83d947`.
+- `ac01aad3edccba0bf086134020995d8caff1203e`: supplementary sections now carry only presentation-oriented `has-records` or `is-empty` CSS classes derived directly from client-scoped GET response lengths.
+- `d779938f00a6674d6638d56b052ab3a00880eec4`: CSS highlights groups with data using top border while reducing padding and forced height for empty groups; no change in whether empty cards/links appear, no hidden data.
+- `55e568ba6e8e1661720f89826117fb3e227ff205`: focused test verifies classes on populated and empty categories and that no factual write endpoint was invoked.
+- **NOT YET VERIFIED:** owner should run `git pull --ff-only`, `npm.cmd run build`, and targeted `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` from frontend; expect 20/20. Review refreshed Step 3 screenshot if available. Do not infer visual acceptance from test.
+- No backend write contract, financial calculations, scenario execution, full CI, master merge, or production deployment.

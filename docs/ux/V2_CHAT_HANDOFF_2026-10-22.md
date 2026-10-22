@@ -447,3 +447,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - `55e568ba6e8e1661720f89826117fb3e227ff205`: focused test verifies classes on populated and empty categories and that no factual write endpoint was invoked.
 - **NOT YET VERIFIED:** owner should run `git pull --ff-only`, `npm.cmd run build`, and targeted `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` from frontend; expect 20/20. Review refreshed Step 3 screenshot if available. Do not infer visual acceptance from test.
 - No backend write contract, financial calculations, scenario execution, full CI, master merge, or production deployment.
+
+## AT. Populated/empty card focused verification PASSED (2026-10-22 19:12 Israel)
+
+- Owner reran from the correct `frontend` directory after an initial wrong-directory run. Correct `npm.cmd run build` PASS (`tsc -b && vite build`, 76 modules; 984ms Vite).
+- Correct `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 20/20 focused tests, 2.83s total. Includes populated/empty category display markers and no factual writes.
+- Wrong-directory failures were environment invocation errors (`ENOENT` package.json and `document is not defined` with a different Vitest version), not code regressions. Future commands must include explicit frontend `cd`.
+- Continue substantive professional workflow work; no need to repeat this focused validation now. Visual verification of latest populated/empty card color/spacing remains separate.
+- No master merge, production deployment or full CI.

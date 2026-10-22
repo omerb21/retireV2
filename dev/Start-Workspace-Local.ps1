@@ -22,7 +22,11 @@ function Request-Json([string]$method, [string]$path, $data = $null) {
     $args["Body"] = [System.Text.Encoding]::UTF8.GetBytes($json)
     $args["ContentType"] = "application/json; charset=utf-8"
   }
-  return Invoke-RestMethod @args
+  $response = Invoke-WebRequest @args -UseBasicParsing
+  $response.RawContentStream.Position = 0
+  $reader = New-Object System.IO.StreamReader($response.RawContentStream, [System.Text.Encoding]::UTF8)
+  try { $responseJson = $reader.ReadToEnd() } finally { $reader.Dispose() }
+  return ConvertFrom-Json -InputObject $responseJson
 }
 function Add-SyntheticProduct([int]$client, [string]$name, [string]$account,
     [string]$reported, [string[]]$allocations) {

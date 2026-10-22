@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
@@ -64,6 +64,10 @@ export function RetirementWorkspaceScreen() {
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
+  const [employmentRecords, setEmploymentRecords] = useState<EmploymentRecordItem[]>([]);
+  const [employmentEdit, setEmploymentEdit] = useState<EmploymentRecordItem | null>(null);
+  const [employmentSaving, setEmploymentSaving] = useState(false);
+  const [employmentError, setEmploymentError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
   const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
@@ -78,6 +82,10 @@ export function RetirementWorkspaceScreen() {
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
+    setEmploymentRecords([]);
+    setEmploymentEdit(null);
+    setEmploymentError(null);
+    setEmploymentSaving(false);
     setSearch("");
     setHideEmptyColumns(false);
     setDiscrepancyOnly(false);
@@ -108,6 +116,8 @@ export function RetirementWorkspaceScreen() {
     let active = true;
     setSupplement(null);
     setSupplementError(null);
+    setEmploymentRecords([]);
+    setEmploymentEdit(null);
     setSupplementLoading(true);
     void Promise.all([
       getEmploymentRecords(clientId), getGrants(clientId), getActualCapitalizations(clientId),
@@ -126,6 +136,7 @@ export function RetirementWorkspaceScreen() {
         groups[4].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency + " · " + item.amount_basis })),
         groups[5].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency })),
       ];
+      setEmploymentRecords(groups[0]);
       setSupplement({ clientId, groups: entries });
     }).catch(reason => {
       if (active && activeClient.current === clientId) setSupplementError(errorText(reason));
@@ -134,6 +145,38 @@ export function RetirementWorkspaceScreen() {
     });
     return () => { active = false; };
   }, [step, clientId, validClient, read.state === "ready" ? read.client.client_id : null]);
+
+  async function saveEmployment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!employmentEdit || employmentSaving || activeClient.current !== clientId) return;
+    const record = employmentEdit;
+    setEmploymentSaving(true);
+    setEmploymentError(null);
+    try {
+      const saved = await updateEmploymentRecord(clientId, record.employment_record_id, {
+        employer_name: record.employer_name.trim(), work_start_date: record.work_start_date,
+        work_end_date: record.is_current ? null : record.work_end_date,
+        is_current: record.is_current, notes: record.notes,
+      });
+      if (activeClient.current !== clientId || saved.client_id !== clientId || saved.employment_record_id !== record.employment_record_id) {
+        setEmploymentError("תשובת שמירה אינה תואמת לתיק הנוכחי.");
+        return;
+      }
+      const refreshed = await getEmploymentRecords(clientId);
+      if (activeClient.current !== clientId || refreshed.some(item => item.client_id !== clientId)) return;
+      setEmploymentRecords(refreshed);
+      setSupplement(previous => previous?.clientId === clientId ? {
+        ...previous, groups: previous.groups.map((group, index) => index === 0
+          ? refreshed.map(item => ({ client_id: item.client_id, title: item.employer_name,
+            detail: item.work_start_date + " עד " + (item.work_end_date ?? "כיום") })) : group),
+      } : previous);
+      setEmploymentEdit(null);
+    } catch (reason) {
+      if (activeClient.current === clientId) setEmploymentError(errorText(reason));
+    } finally {
+      if (activeClient.current === clientId) setEmploymentSaving(false);
+    }
+  }
 
   const products = read.state === "ready" ? read.products : [];
   const columns = useMemo(() => {
@@ -355,15 +398,30 @@ export function RetirementWorkspaceScreen() {
           {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>
             <section key={label}>
               <h2>{label} ({supplement.groups[index].length})</h2>
+              {index === 0 && <p>ניתן לתקן רשומת תעסוקה כאן, או לפתוח את המסך המלא להוספה ומחיקה.</p>}
               <p><Link to={"/clients/" + clientId + "/" + (index === 0 ? "employment-history" : index === 1 ? "grants" : index === 2 ? "actual-capitalizations" : "planning-input")}>פתיחת עריכה: {label}</Link></p>
               {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
                 {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
                   <strong>{item.title}</strong> <span>{item.detail}</span>
+                  {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => {
+                    setEmploymentError(null);
+                    setEmploymentEdit({ ...employmentRecords[itemIndex] });
+                  }}>תקן רשומת תעסוקה</button>}
                 </li>)}
               </ul>}
             </section>)}
         </div>}
-
+        {employmentEdit && supplement?.clientId === clientId && <form onSubmit={saveEmployment}>
+          <h3>תיקון רשומת תעסוקה</h3>
+          <label>שם מעסיק <input required value={employmentEdit.employer_name} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, employer_name: event.target.value }))} /></label>
+          <label>תאריך תחילה <input type="date" required value={employmentEdit.work_start_date} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, work_start_date: event.target.value }))} /></label>
+          <label>מועסק כיום <input type="checkbox" checked={employmentEdit.is_current} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, is_current: event.target.checked, work_end_date: event.target.checked ? null : prev.work_end_date }))} /></label>
+          {!employmentEdit.is_current && <label>תאריך סיום <input type="date" value={employmentEdit.work_end_date ?? ""} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, work_end_date: event.target.value || null }))} /></label>}
+          <label>הערות <textarea value={employmentEdit.notes ?? ""} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, notes: event.target.value || null }))} /></label>
+          {employmentError && <p role="alert">{employmentError}</p>}
+          <button type="submit" disabled={employmentSaving || !employmentEdit.employer_name.trim() || (!employmentEdit.is_current && !employmentEdit.work_end_date)}>שמור תיקון תעסוקה</button>
+          <button type="button" disabled={employmentSaving} onClick={() => { setEmploymentEdit(null); setEmploymentError(null); }}>ביטול</button>
+        </form>}
       </section>}
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>

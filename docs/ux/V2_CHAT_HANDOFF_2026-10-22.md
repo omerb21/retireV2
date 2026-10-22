@@ -463,3 +463,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - `20026be94eb53b37198bcab27de93005be543315`: targeted mock-API test asserts new record POST payload, GET refetch and no update PUT.
 - **NOT YET BUILT OR TESTED**. The owner should fast-forward feature branch and run single frontend build plus `RetirementWorkspaceScreen.test.tsx` suite; expected 21 tests. A separate browser create/save may be valuable after build.
 - No scenario execution, financial calculations, CI, master merge or production deployment.
+
+## AV. Inline employment creation verified (2026-10-22 19:15 Israel)
+
+- Owner pulled to `7966ede4fbc4e1ebbcb6d9e93f1fadbc1f3a637d`, compiled frontend successfully (`tsc -b && vite build`, 76 modules, 963 ms), and ran focused workspace Vitest suite: **21/21 PASS** (3.41 seconds).
+- New test verifies a synthetic employment record is created through the established POST and refreshed through the GET. This is a mocked frontend test. Earlier synthetic local PostgreSQL POST/PUT/GET smoke passed, but this new inline create form has not been browser E2E validated.
+- React Router future flag warnings are non-fatal. No master merge, production deploy or full CI.
+- Next: consider matching in-workspace grant creation via existing accepted POST and strict payload validation, avoiding new tax conclusions.

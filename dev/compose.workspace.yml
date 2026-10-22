@@ -8,6 +8,8 @@ services:
       POSTGRES_PASSWORD: synthetic_only_local_password
     tmpfs:
       - /var/lib/postgresql/data
+    volumes:
+      - ./init_workspace_role.sql:/docker-entrypoint-initdb.d/10-workspace-role.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U synthetic_planner -d retirement_v2_synthetic"]
       interval: 2s
@@ -21,7 +23,9 @@ services:
       dockerfile: dev/Dockerfile.workspace
     environment:
       APP_ENV: development
-      DATABASE_URL: postgresql+psycopg2://synthetic_planner:synthetic_only_local_password@db:5432/retirement_v2_synthetic
+      MIGRATION_DATABASE_URL: postgresql://synthetic_planner:synthetic_only_local_password@db:5432/retirement_v2_synthetic
+      APPLICATION_DATABASE_URL: postgresql://rtdir_synthetic_app:synthetic_local_only_app_password@db:5432/retirement_v2_synthetic
+      CRTISBA_APPLICATION_DB_ROLE: rtdir_synthetic_app
     depends_on:
       db:
         condition: service_healthy

@@ -19,12 +19,18 @@ function Request([string]$method, [string]$path, $body = $null) {
 function Assert([bool]$ok, [string]$why) {
   if (-not $ok) { throw "SMOKE FAILED: $why" }
 }
-$clients = @(Request "GET" "/clients")
-$a = @($clients | Where-Object { $_.full_name -eq "Synthetic Retirement Client A" } | Select-Object -First 1)
-$b = @($clients | Where-Object { $_.full_name -eq "Synthetic Retirement Client B" } | Select-Object -First 1)
-Assert ($a.Count -eq 1 -and $b.Count -eq 1) "Local synthetic A and B clients are required."
-$idA = [int]$a[0].client_id
-$idB = [int]$b[0].client_id
+$clientsRaw = Request "GET" "/clients"
+# PowerShell 5.1 may preserve the top-level JSON list as a nested array.
+$clients = @($clientsRaw)
+while ($clients.Count -eq 1 -and $clients[0] -is [array]) {
+  $clients = @($clients[0] | ForEach-Object { $_ })
+}
+$aMatches = @($clients | Where-Object { $_.full_name -eq "Synthetic Retirement Client A" })
+$bMatches = @($clients | Where-Object { $_.full_name -eq "Synthetic Retirement Client B" })
+Assert ($aMatches.Count -eq 1 -and $bMatches.Count -eq 1) "Exactly one synthetic client A and B must exist."
+Assert ($aMatches[0].client_id -isnot [array] -and $bMatches[0].client_id -isnot [array]) "Unexpected array-valued client ID."
+$idA = [int]$aMatches[0].client_id
+$idB = [int]$bMatches[0].client_id
 Assert ($idA -ne $idB) "Client isolation precondition failed."
 $employment = @{
   employer_name = "Synthetic Employer Before"

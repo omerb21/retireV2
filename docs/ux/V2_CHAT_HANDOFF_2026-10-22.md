@@ -284,3 +284,13 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - `a62a0831118c3eaebef9362a4885b2c7fd8ae74e` fixes escaping of form validation regexes in the new code. No backend/financial calculation or scenario changes.
 - **Not yet compiled or tested**. Owner should run a single incremental local `git pull --ff-only` followed by `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`. Expect 15 tests. If failure occurs, inspect result and make one narrow correction before further development.
 - Backend integration and professional correctness of grants are not claimed by these frontend mock tests. No master merge, deployment or full CI.
+
+## AA. Inline grant correction focused verification PASSED (2026-10-22 16:19 Israel)
+
+- Owner fast-forwarded local Windows checkout to `57f0b467255b83e93fa48bb3e17a96463e2f9221`.
+- `npm.cmd run build`: PASS, `tsc -b && vite build`, 76 modules, 875 ms Vite.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 15/15 tests (one test file), 2.56 seconds total.
+- This includes authorized existing-grant PUT and negative amount rejection, employment editing, client separation, and scenario non-mutation. React Router future-flag warnings only.
+- Verification uses mocked API component tests, not a live PostgreSQL grant save or professional tax decision confirmation. Do not treat recorded exempt grant values as calculated or tax-authorized amounts.
+- Next recommended gate: targeted live synthetic UI/API save-and-reload of a historical grant and employment record before further proliferation of in-workspace editors; use no real client data.
+- No full CI, master merge, or production deployment.

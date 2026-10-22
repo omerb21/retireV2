@@ -157,3 +157,11 @@ Copy/paste:
 - Owner observed navigation problem: selecting the other client returned to the legacy M01 ClientDetail instead of the professional workspace. Screenshots showed client B on `/clients/2` (legacy), and client A scenario placeholder on `/clients/1/workspace`.
 - Minimal UX navigation edits in feature branch: commit `1daba2ee2b4c9d947083331e7333832322e72a07` changes primary name link in `ClientListScreen.tsx` to `/clients/:clientId/workspace`; commit `25e5d115836623d7e9d884b4d0a729d62c7fd638` adds a direct return link from the existing `ClientDetailScreen.tsx` to the same client's professional workspace. Legacy details remain accessible via an explicitly labeled secondary link.
 - Navigation edits not yet exercised after fast-forward of local checkout. No expensive CI run and no production deploy. Existing portfolio client guard remains unchanged. Next: single focused manual A to B to A browser navigation check after `git pull --ff-only` and browser reload; no need to rebuild Docker. Proceed thereafter to accepted supplementary facts workspace slice; scenario domain model needs independent governed contract before implementation.
+
+## M. Client-switching accepted; read-only supplements slice started (2026-10-22)
+
+- Owner confirmed client switching is fixed after navigation changes.
+- Follow-up code commit `4a8d9ccf79585b8fdde53d97d7b71a06cbf5fe9a` adds **read-only** client-scoped counts in the new `supplement` step from accepted GET APIs: employment records, historical grants, actual capitalizations, capital assets, recurring incomes, and recurring expenses. No scenario write or financial calculation is introduced.
+- Read response groups are rejected on client-ID mismatch, with cancellation on route/step change and visible loading/error states. Original links to accepted detail/edit screens remain.
+- **Code is drafted and committed but NOT YET compiled, tested or manually accepted.** Must run a narrow TS/build check and focused navigation/supplement tests prior to claiming acceptance. No full CI authorized. Avoid presenting counts as calculated income, tax, or planning results.
+- Master remains unchanged, no deployment or production readiness claimed. Read latest HEAD before next changes.

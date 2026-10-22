@@ -275,3 +275,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - These are frontend mocked-API tests, not direct PostgreSQL employment-save integration.
 - Next: bounded extension of inline edits only if an accepted endpoint and validation constraints are read and retained; no unapproved hypothetical scenario execution. Prefer concise meaningful UX improvements over endless infrastructure reruns.
 - No merge to master, deployment or GitHub CI.
+
+## Z. Inline factual grant correction added, PENDING targeted verification (2026-10-22)
+
+- Started from feature branch HEAD `b3dbfd333e8417ee338f2376f157493be631f7d2`, after owner-verified 13/13 tests at prior implementation HEAD.
+- `22add1ba2e4e055951149de1247295aa516e0245` adds an existing-grant correction form in stage 3 using existing authoritative `updateGrant(clientId, grantId, GrantPayload)`, then refetches `getGrants`. Preserves all six fields of the legacy grant payload. Client/record identity checks and async generation protection reject stale cross-client updates; create/delete remain in legacy grants screen.
+- `273bc3bbd16ee6bd5c5e0f88924622ed6bee0d12` adds two tests: successful owner-scoped grant correction with existing endpoint and rejection of negative grant input before any write.
+- `a62a0831118c3eaebef9362a4885b2c7fd8ae74e` fixes escaping of form validation regexes in the new code. No backend/financial calculation or scenario changes.
+- **Not yet compiled or tested**. Owner should run a single incremental local `git pull --ff-only` followed by `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`. Expect 15 tests. If failure occurs, inspect result and make one narrow correction before further development.
+- Backend integration and professional correctness of grants are not claimed by these frontend mock tests. No master merge, deployment or full CI.

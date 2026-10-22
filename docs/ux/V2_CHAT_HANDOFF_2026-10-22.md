@@ -423,3 +423,11 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commit `7fb5f94a6579797174c2ff04fa0c16a140144c17` changes CSS only: consistent 220px first sticky width and second right offset, fixed 185px provider width and explicit wrapping, dedicated 145px reported total column with LTR isolated numeric values; mobile widths 150px/145px with matching offsets.
 - **Unverified visually and not yet locally built.** Owner can fast-forward current frontend checkout (without stopping running local dev server) and refresh existing browser, then provide another screenshot; CSS hot reload should apply. Test is visual rather than repeating 19 logic tests.
 - A screenshot of supplementary data stage is still needed for UX review. No CI, master merge or deployment.
+
+## AQ. Supplementary cards real-browser visual refinement (2026-10-22)
+
+- Owner provided a live Chrome screenshot of Step 3 ("נתונים משלימים") in the synthetic workspace. Actual factual reads show 1 employment, 1 historical grant, and four empty categories. Data matches prior local synthetic API state.
+- The screenshot shows six cards compressed into a single row, excessively narrow and tall, with broken English record names and unbalanced empty whitespace. Header/category filter is usable.
+- Commit `3bb34f06f8154218de02ecdcc055e75c174b8dda` is CSS-only: supplementary card grid gets a 310px minimum width with responsive wrapping (generally 3–4 cards across rather than six), content top alignment and less forced equal card height, more legible item labels, and consistent native-look action button styling. Uses `:has(> section)` to scope the grid override without modifying the client identity DL. Single-column for smaller screens.
+- **Not yet visually verified or built locally**. Existing local dev server is already running and should be reused; pull branch from a second PowerShell terminal and hard-refresh Step 3. Do not restart the Docker stack.
+- No new API, financial decisions, calculation/scenario change, CI, master merge or deployment.

@@ -407,3 +407,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Commit `ddf92b3ebde9ffc3998e9e43623fa05c5487d554` centralizes category selection and checks active employment/grant editor and pending save for both 'all' and individual filters. Re-selecting active category is a no-op.
 - Commit `49f2850d4ab976a94d78a04350a062dd2f411fad` adds a regression test: returning to 'all data' with unsaved employment edit stays in selected category, shows warning, preserves changed field and sends no write.
 - **Pending targeted local compilation and 19 focused tests**. No backend/financial changes, CI, master merge or deployment.
+
+## AO. Category guard validation PASSED (2026-10-22 18:43 Israel)
+
+- Owner fast-forwarded to `276551ce06b1c7ea5b3725ba8e4493f3ded7d5ba` and executed `npm.cmd run build` from frontend: PASS, `tsc -b && vite build`, 76 transformed modules, 843ms Vite.
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS 19/19, 2.92s, including guard on returning to 'all supplementary data' with an unsaved employment edit. React Router future-flag warnings are informational.
+- This closes the focused category-navigation logic correction. CSS/visual acceptance is still not done, so next effort should prioritize a real browser viewport review rather than another speculative styling pass.
+- No master merge, production deploy, scenario implementation or full CI.

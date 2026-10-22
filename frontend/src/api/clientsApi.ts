@@ -130,6 +130,7 @@ export interface EmploymentRecordPayload {
 
 export interface GrantItem {
   grant_id: string;
+  employment_record_id?: string | null;
   client_id: number;
   employer_name: string | null;
   employer_withholding_file_number: string | null;
@@ -573,6 +574,13 @@ export function updateGrant(clientId: number, grantId: string, payload: GrantPay
   return requestJson<GrantItem>(`/clients/${clientId}/grants/${grantId}`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+export function linkGrantToEmployment(clientId: number, grantId: string, employmentRecordId: string): Promise<GrantItem> {
+  return requestJson<GrantItem>(`/clients/${clientId}/grants/${grantId}/employment-link`, {
+    method: "POST",
+    body: JSON.stringify({ employment_record_id: employmentRecordId })
   });
 }
 

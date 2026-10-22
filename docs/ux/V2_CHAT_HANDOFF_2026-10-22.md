@@ -165,3 +165,12 @@ Copy/paste:
 - Read response groups are rejected on client-ID mismatch, with cancellation on route/step change and visible loading/error states. Original links to accepted detail/edit screens remain.
 - **Code is drafted and committed but NOT YET compiled, tested or manually accepted.** Must run a narrow TS/build check and focused navigation/supplement tests prior to claiming acceptance. No full CI authorized. Avoid presenting counts as calculated income, tax, or planning results.
 - Master remains unchanged, no deployment or production readiness claimed. Read latest HEAD before next changes.
+
+## N. Focused supplementary-data tests drafted (2026-10-22)
+
+- Live feature branch read after prior update: `4fc91bdc142bc861d263b29ce7d271c816109a24`, master remained `6f3d523e9c81b55da045ac3c85e747104821d5da`.
+- Follow-up test-only commits `1a9ad8045b44afde563c33c6353cb6deda07cd64` and `8dcbf233a623c1623295d3ffabb0324fde3f173e` add API mocks and two focused tests to `frontend/src/pages/RetirementWorkspaceScreen.test.tsx`: read-only employment summary/count, and failure closed on a cross-client supplementary response. Existing seven workspace tests remain.
+- **Tests authored but NOT executed** in the connector environment; latest TypeScript build and local FastAPI/React integration of the supplementary summary remain UNVERIFIED. Do not report passing tests on the basis of code inspection.
+- New code is limited to the development branch's React UX and test file; no backend calculation, scenario write, production deployment, master merge or full GitHub CI run.
+- Minimal next validation in owner's existing isolated Windows checkout, without restarting Docker unless the owner explicitly wants live UI: `git pull --ff-only`, then from frontend `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`. Inspect actual result before any acceptance or further edits. Do not repeat broad tests absent invalidating changes.
+- Next governed UX vertical slice after verification: in-workspace supplementary facts display/edit boundaries using accepted APIs, with client isolation; preserve source provenance, factual/scenario separation and scenario engine NOT_AUTHORIZED status.

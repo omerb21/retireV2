@@ -58,6 +58,7 @@ export function RetirementWorkspaceScreen() {
   const clientId = rawClientId && /^[1-9][0-9]*$/.test(rawClientId) ? Number(rawClientId) : NaN;
   const validClient = Number.isSafeInteger(clientId);
   const activeClient = useRef(clientId);
+  const employmentSaveGeneration = useRef(0);
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
@@ -77,6 +78,7 @@ export function RetirementWorkspaceScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    employmentSaveGeneration.current += 1;
     setRead({ state: "loading" });
     setStep("portfolio");
     setSupplement(null);
@@ -150,6 +152,13 @@ export function RetirementWorkspaceScreen() {
     event.preventDefault();
     if (!employmentEdit || employmentSaving || activeClient.current !== clientId) return;
     const record = employmentEdit;
+    if (!record.employer_name.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(record.work_start_date)
+      || (!record.is_current && (!record.work_end_date || !/^\d{4}-\d{2}-\d{2}$/.test(record.work_end_date)
+        || record.work_end_date < record.work_start_date))) {
+      setEmploymentError("יש להזין שם מעסיק ותאריכי העסקה תקינים; תאריך הסיום אינו יכול להקדים את תאריך ההתחלה.");
+      return;
+    }
+    const generation = ++employmentSaveGeneration.current;
     setEmploymentSaving(true);
     setEmploymentError(null);
     try {
@@ -158,12 +167,14 @@ export function RetirementWorkspaceScreen() {
         work_end_date: record.is_current ? null : record.work_end_date,
         is_current: record.is_current, notes: record.notes,
       });
-      if (activeClient.current !== clientId || saved.client_id !== clientId || saved.employment_record_id !== record.employment_record_id) {
+      if (activeClient.current !== clientId || employmentSaveGeneration.current !== generation) return;
+      if (saved.client_id !== clientId || saved.employment_record_id !== record.employment_record_id) {
         setEmploymentError("תשובת שמירה אינה תואמת לתיק הנוכחי.");
         return;
       }
       const refreshed = await getEmploymentRecords(clientId);
-      if (activeClient.current !== clientId || refreshed.some(item => item.client_id !== clientId)) return;
+      if (activeClient.current !== clientId || employmentSaveGeneration.current !== generation) return;
+      if (refreshed.some(item => item.client_id !== clientId)) { setEmploymentError("התקבלו רשומות של לקוח אחר."); return; }
       setEmploymentRecords(refreshed);
       setSupplement(previous => previous?.clientId === clientId ? {
         ...previous, groups: previous.groups.map((group, index) => index === 0
@@ -172,9 +183,9 @@ export function RetirementWorkspaceScreen() {
       } : previous);
       setEmploymentEdit(null);
     } catch (reason) {
-      if (activeClient.current === clientId) setEmploymentError(errorText(reason));
+      if (activeClient.current === clientId && employmentSaveGeneration.current === generation) setEmploymentError(errorText(reason));
     } finally {
-      if (activeClient.current === clientId) setEmploymentSaving(false);
+      if (activeClient.current === clientId && employmentSaveGeneration.current === generation) setEmploymentSaving(false);
     }
   }
 

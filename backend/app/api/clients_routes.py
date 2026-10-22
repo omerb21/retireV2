@@ -2247,6 +2247,12 @@ def delete_employment_record(
     _require_client(db, client_id)
     record = _require_employment_record(db, client_id, employment_record_id)
 
+    linked = db.scalar(select(Grant.grant_id).where(
+        Grant.client_id == client_id,
+        Grant.employment_record_id == employment_record_id,
+    ).limit(1))
+    if linked is not None:
+        raise HTTPException(status_code=409, detail="Cannot delete an employment period with linked grants")
     db.delete(record)
     db.commit()
     return {"deleted": True, "employment_record_id": employment_record_id}

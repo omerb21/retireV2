@@ -277,6 +277,16 @@ export function RetirementWorkspaceScreen() {
     });
   }, [products, search, discrepancyOnly]);
 
+  function chooseSupplementCategory(next: number | null) {
+    if (next === supplementCategory) return;
+    if (employmentEdit || grantEdit || employmentSaving || grantSaving) {
+      setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לקטגוריה אחרת.");
+      return;
+    }
+    setError(null);
+    setSupplementCategory(next);
+  }
+
   function openSupplementEditor(kind: "employment" | "grant", index: number) {
     if (employmentSaving || grantSaving || employmentEdit !== null || grantEdit !== null) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לעריכת רשומה אחרת.");
@@ -492,16 +502,9 @@ export function RetirementWorkspaceScreen() {
         {supplementError && <p role="alert">{supplementError}</p>}
         {supplement?.clientId === clientId && !supplementError && <>
           <nav aria-label="סינון נתונים משלימים" className="professional-workspace__supplement-filter">
-            <button type="button" aria-pressed={supplementCategory === null} onClick={() => setSupplementCategory(null)}>כל הנתונים</button>
+            <button type="button" aria-pressed={supplementCategory === null} onClick={() => chooseSupplementCategory(null)}>כל הנתונים</button>
             {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>
-              <button key={label} type="button" aria-pressed={supplementCategory === index} onClick={() => {
-                if (employmentEdit || grantEdit || employmentSaving || grantSaving) {
-                  setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לקטגוריה אחרת.");
-                  return;
-                }
-                setError(null);
-                setSupplementCategory(index);
-              }}>{label} ({supplement.groups[index].length})</button>)}
+              <button key={label} type="button" aria-pressed={supplementCategory === index} onClick={() => chooseSupplementCategory(index)}>{label} ({supplement.groups[index].length})</button>)}
           </nav>
           <div className="professional-workspace__identity">
           {(["רשומות תעסוקה", "מענקים", "היוונים בפועל", "נכסי הון", "הכנסות נוספות", "הוצאות שוטפות"] as const).map((label, index) =>

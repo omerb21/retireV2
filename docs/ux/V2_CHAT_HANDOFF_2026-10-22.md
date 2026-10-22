@@ -374,3 +374,12 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - `62bdec2644176cb45038d297ab1fd6cd17cb7065`: focused UI test for category filtering, returning to all data, and absence of employment/grant writes.
 - **Build and new test NOT YET RUN**. Request one local frontend `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` after pull, expected 18 focused tests.
 - No scenario execution, financial calculation change, backend contract change, full CI, master merge or deploy.
+
+## AK. Supplementary category focus verification PASSED (2026-10-22 17:06 Israel)
+
+- Owner pulled feature branch to `14b94c6d0ff515e0dbe2bc8658600f5913194c82`.
+- `npm.cmd run build`: PASS (`tsc -b && vite build`, 76 transformed modules; Vite 870ms).
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 18/18 tests in one test file; 2.66s.
+- The category filtering no-mutation test passed. React Router v7 future-flag warnings are informational.
+- Focused validation of category navigation is complete. Recommended next work: holistic visual/interaction design and layout of professional workspace rather than more isolated navigation guards.
+- No full CI, master merge or production deploy.

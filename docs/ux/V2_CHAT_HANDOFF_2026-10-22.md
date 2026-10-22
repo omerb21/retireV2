@@ -246,3 +246,14 @@ Owner fast-forwarded Windows isolated checkout to `30a64c9ccb774285b40ec5c542c3a
 - Focused test commit `5b488c05feaa6a3bfb01277d22dc2d239b43c5c8` adds a mocked correction test checking PUT client/id/payload and no pension product write.
 - **Neither build nor test of this delta has been run.** Before accepting, run narrow `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` after git pull. Also browser verify factual persistence and client switch when convenient. Any error must be fixed before extending forms.
 - No master merge, production deploy, broad CI or authorized scenario engine.
+
+## W. Inline employment edit targeted verification PASSED (2026-10-22 15:50 Israel time)
+
+Owner fast-forwarded local checkout to `32de20ee6a1fd38b6423dd74ba7438c7f5f34b5e` and executed:
+- `npm.cmd run build`: PASS, `tsc -b && vite build` (76 modules; 921 ms Vite).
+- `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx`: PASS, 11/11 tests in one file (2.32 s).
+- New test covers in-workspace employment-record edit through existing accepted PUT, followed by data refetch. Prior tests cover client isolation and pension/scenario non-mutation.
+- React Router future-flag warnings only, nonfatal.
+- This is frontend mocked API validation, not an end-to-end actual DB write or an independent proof of all employment record validation semantics.
+- Next: review lifecycle/client-route stale async response and date/field validation of the employment form before expanding inline edits. Avoid restarting costly infrastructure and do not repeat already-passed broad checks unnecessarily.
+- No master merge, deployment, full CI, calculation modification or scenario engine activation.

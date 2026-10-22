@@ -327,3 +327,41 @@
     max-width: 145px;
   }
 }
+
+
+/* Real-browser review: supplementary cards need readable minimum widths. */
+.professional-workspace__identity:has(> section) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  align-items: start;
+  gap: 14px;
+}
+.professional-workspace__identity > section {
+  min-width: 0;
+  min-height: 175px;
+}
+.professional-workspace__identity > section li strong {
+  display: block;
+  line-height: 1.45;
+}
+.professional-workspace__identity > section li span {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.professional-workspace__identity > section li button {
+  min-height: 38px;
+  padding: 6px 11px;
+  border-radius: 7px;
+  border: 1px solid #b9cfe8;
+  color: #14558e;
+  background: #eef6ff;
+  font-weight: 700;
+}
+.professional-workspace__identity > section a {
+  color: #155fa6;
+  text-underline-offset: 3px;
+}
+@media (max-width: 800px) {
+  .professional-workspace__identity:has(> section) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

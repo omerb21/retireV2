@@ -331,3 +331,16 @@ The frontend code comment identifies these as capital-origin contributions, wher
 - Proposed acceptance tests cover immutable ruleset, unknown-version rejection, conflicting effective-date intervals, source/ruleset change currentness, and historical replay. Authorization/signer implementation must be reviewed before coding.
 
 **O-02 CLOSED/OWNER APPROVED; O-07 OPEN (governance proposal).** O-01 detailed resolver/anomaly interpretation and O-08 evidence production remain under review. `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED` remain in force.
+
+## 22. Owner-approved O-07 ruleset authority and historical governance (2026-10-23)
+
+**APPROVED:** Only the system owner, or a professional **expressly authorized by the owner**, can approve a change to conversion rules. Every approved ruleset has an immutable identity/version, effective dates and an auditable change history. Prior scenario decisions and results are **never automatically rewritten** after a rule change.
+
+**Proposed technical acceptance checks (not authorization to implement):**
+1. Approval requires a specifically evidenced professional delegation, not merely a generic application administrator role. A delegated approver's authorization must be valid at approval time and preserved in the audit history.
+2. Each approved version records approver, date/time, effective-from, optional effective-to, predecessor, rule diff, reason and content digest; reject ambiguous overlapping effective intervals pending policy review.
+3. Scenario evaluations reference the approved ruleset version and factual snapshot used. Currentness checks may mark an old scenario `needs_revalidation`, but do not overwrite its original decision, approval, or historical outputs.
+4. Re-evaluation creates a separate revision with an explicit professional authorization boundary where required. Retrospective legal correction policy is NOT inferred from this decision.
+5. Browser settings, unapproved drafts and administrative roles without express delegation cannot publish rulesets.
+
+**O-07 CLOSED / OWNER APPROVED.** O-08 prerequisite evidence policy and O-01 anomalous product classification verification remain outstanding. Work `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED` remain in force.

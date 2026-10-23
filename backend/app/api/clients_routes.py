@@ -158,6 +158,7 @@ class EmploymentSettlementCreateResponse(BaseModel):
 
 class EmploymentRecordResponse(BaseModel):
     employment_record_id: str
+    exempt_grant_status: str
     client_id: int
     employer_name: str
     work_start_date: date
@@ -1011,6 +1012,7 @@ def _source_item_not_found(code: str, message: str) -> HTTPException:
 def _employment_record_to_response(row: EmploymentRecord) -> EmploymentRecordResponse:
     return EmploymentRecordResponse(
         employment_record_id=row.employment_record_id,
+        exempt_grant_status=row.exempt_grant_status,
         client_id=row.client_id,
         employer_name=row.employer_name,
         work_start_date=row.work_start_date,
@@ -2249,6 +2251,7 @@ def create_historical_employment_settlement(
         client_id=client_id, employer_name=employment.employer_name,
         work_start_date=employment.work_start_date,
         work_end_date=employment.work_end_date, is_current=False, notes=employment.notes,
+        exempt_grant_status=payload.exempt_grant_status,
     )
     db.add(record)
     grant_id = None
@@ -2372,6 +2375,7 @@ def create_grant_for_employment_period(
         work_end_date=payload.employment_end_date,
         notes=None,
     )
+    period.exempt_grant_status = "recorded"
     db.add(grant)
     db.commit()
     db.refresh(grant)
@@ -2464,6 +2468,7 @@ def link_grant_to_employment(
     if existing_exempt is not None:
         raise HTTPException(status_code=409, detail="An exempt severance grant is already recorded for this employment period")
     grant.employment_record_id = period.employment_record_id
+    period.exempt_grant_status = "recorded"
     db.commit()
     db.refresh(grant)
     return _grant_to_response(grant)

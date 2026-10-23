@@ -63,3 +63,33 @@ Walk a **single synthetic case** through facts → choice → partial allocation
 - Work: independent multi-discipline audit at one substantive gate before acceptance/merge. **Not performed** as part of this review.
 
 **Gate decision:** `UX-MOCK = technically verified; professional user acceptance PENDING; scenario domain contract PENDING; independent audit PENDING`. No production merge or financial engine development authorized by this review.
+
+## Owner's professional acceptance findings and response (2026-10-23)
+
+**Scope of owner feedback:** UX direction reviewed on local synthetic case, not acceptance of scenario financial implementation. Result: **APPROVE WITH CHANGES** (scenario flow requires further real-world use).
+
+### Accepted for UX direction
+- Existing horizontal scroll for numerous canonical monetary classification columns is acceptable.
+- Fact correction vs scenario action distinction is clear.
+- Partial allocation, over-allocation guard, cloning, cancellation and return-to-correct are usable as a provisional mock.
+- Direct in-place editing of a decision is not necessary now; cancellation and re-creation suffice.
+- Scenario persistence is **UNDECIDED**, and ephemeral state is acceptable in the current prototype.
+
+### Owner change requests
+1. **Ledger totals:** keep both imported/reported total and **computed sum of classified balances**, visually distinct. Deferred, not essential to this mock iteration. Must clarify inconsistency/reconciliation behavior; do not replace the reported figure.
+2. **Choice granularity:** planning must permit **whole pension plans and individual monetary components**. Current component-only handoff is insufficient. **OPEN design requirement**; a whole plan may span different tax classes, so 'one action on whole plan' must be designed without collapsing provenance/tax distinctions.
+3. **Scenario context:** show original source component balance, sum allocated within current mock alternative and amount still available. Implemented UX only; no server calculations.
+4. **Warning salience:** emphasize over-allocation notice. Implemented accessible alert with stronger visual treatment.
+5. **Comparison:** compare how much capital and how much pension each scenario yields and how much portfolio remains unutilized; eventually add NPV. In mock display **nominal principal allocated to pension/capital** separately labelled, NOT calculated monthly pension/withdrawal; full unused portfolio remains uncomputed pending approved scope/engine.
+6. **Workflow readiness:** owner needs extended hands-on usage before locking scenario UX; do not mark professional journey fully accepted.
+
+### Contract decisions intentionally deferred
+- Semantics and eligibility of a whole-plan choice (by plan vs decomposition into 11 classification components), whether mass actions are bulk suggestions or binding, and override granularity.
+- Defined portfolio 'computed total' vs reported total, reconciliation and whether empty classifications count.
+- Meaning of 'remaining' — non-allocated within the selected component, all selected sources, or whole factual portfolio, including unclassified amounts and historical tax reconciliation; prevent double counting.
+- Mapping nominal capital sources to actually **withdrawable capital** and nominal pension-designated sources to **monthly pension income**; no conversion without authorized assumptions, indexation/retirement date/actuarial factors/tax rules.
+- NPV model and presentation only when authorized V2 financial engines and underlying assumptions are valid.
+- Whether mock/real alternatives need retention and for how long. No automatic persistence.
+
+### Readiness statement
+**UX mock technically testable, user-approved with changes, domain contract and independent Work gate PENDING.** Do not call the mock scenario comparison a financially computed retirement comparison.

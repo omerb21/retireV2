@@ -139,7 +139,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
     expect(screen.getByText(/לא יוצגו מספרי קצבה/)).toBeInTheDocument();
     const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
-    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(21);
+    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(6);
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
@@ -162,6 +162,12 @@ describe("סביבת העבודה המקצועית החדשה", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
     expect(screen.getByRole("option", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    const preview = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
+    expect(within(preview).getByRole("columnheader", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
+    expect(within(preview).getByRole("columnheader", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
+    expect(within(preview).getAllByText(/40(?:[.]00)? ₪/).length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "בטל החלטת הדמיה" }));
     expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();

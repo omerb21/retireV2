@@ -788,6 +788,10 @@ export function RetirementWorkspaceScreen() {
                 <option value="capital">ייעוד להון</option>
               </select>
             </label>
+            <label>סכום להחלטת הדמיה (₪)
+              <input inputMode="decimal" value={mockAmount} onChange={event => { setMockAmount(event.target.value); setMockError(null); }} placeholder="למשל 25000.00" />
+            </label>
+            {mockError && <p role="alert">{mockError}</p>}
             <button type="button" disabled={!mockSource} onClick={() => {
               if (!mockSource) return;
               setMockAlternatives(prev => prev.map(item => item.id === mockActiveId

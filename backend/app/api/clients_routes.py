@@ -2282,6 +2282,12 @@ def create_grant_for_employment_period(
         raise HTTPException(status_code=422, detail="Historical grants require an ended employment period")
     if payload.employment_start_date != period.work_start_date or payload.employment_end_date != period.work_end_date:
         raise HTTPException(status_code=422, detail="Grant employment dates must match the selected period")
+    existing_exempt = db.scalar(select(Grant.grant_id).where(
+        Grant.client_id == client_id,
+        Grant.employment_record_id == period.employment_record_id,
+    ).limit(1))
+    if existing_exempt is not None:
+        raise HTTPException(status_code=409, detail="An exempt severance grant is already recorded for this employment period")
     grant = Grant(
         grant_id=f"GR-{uuid4().hex}",
         client_id=client_id,
@@ -2379,6 +2385,13 @@ def link_grant_to_employment(
         raise HTTPException(status_code=422, detail="Grant dates must match the selected employment period")
     if grant.employment_record_id is not None and grant.employment_record_id != period.employment_record_id:
         raise HTTPException(status_code=409, detail="Grant is already linked to a different employment period")
+    existing_exempt = db.scalar(select(Grant.grant_id).where(
+        Grant.client_id == client_id,
+        Grant.employment_record_id == period.employment_record_id,
+        Grant.grant_id != grant.grant_id,
+    ).limit(1))
+    if existing_exempt is not None:
+        raise HTTPException(status_code=409, detail="An exempt severance grant is already recorded for this employment period")
     grant.employment_record_id = period.employment_record_id
     db.commit()
     db.refresh(grant)

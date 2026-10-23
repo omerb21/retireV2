@@ -706,3 +706,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Cause is the **incorrectly double-escaped JavaScript regex literal** added in component dropdown filtering, matching backslashes rather than digit/decimal notation. This is a UI prototype filter bug, NOT evidence of a backend, tax, or PostgreSQL error.
 - Fixed dropdown match with escape-free `/^[0-9]+(?:[.][0-9]+)?$/` plus zero exclusion `!/^0+(?:[.]0+)?$/`; amended focused test to assert visible positive component option *before* selecting or adding a decision.
 - The fix and test update are **not yet run on owner's local Windows**. Expected 25/25 if successful. Only in-memory mock UI changed; no financial math, backend, DB, CI, master merge or production deploy.
+
+## CE. Owner verified component-level scenario mock fix (2026-10-23)
+- Owner pulled `b7f85c2`, TypeScript/Vite build succeeded (76 modules), focused `RetirementWorkspaceScreen.test.tsx` **25/25 PASS**. The positive-component selector regex bug is closed. React Router future-flag warnings nonblocking.
+- Component-granularity choices and mock create/copy/cancel interactions are **UX-only**, in React memory; no persisted scenario, calculation, or protected business logic approval.
+- Preserve budget methodology (direct small UX changes; Codex implementation gate and Work independent review for substantive domain changes), no repeated CI. Next substantive UX consideration: owner hands-on professional journey review, no authority to implement scenario engine from this test.

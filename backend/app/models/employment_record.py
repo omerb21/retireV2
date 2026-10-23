@@ -15,6 +15,10 @@ class EmploymentRecord(Base):
             "work_end_date IS NULL OR work_end_date >= work_start_date",
             name="ck_employment_dates_order",
         ),
+        CheckConstraint(
+            "exempt_grant_status IN ('not_reviewed', 'none', 'recorded', 'requires_reconciliation')",
+            name="ck_employment_exempt_grant_status",
+        ),
     )
 
     employment_record_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -26,6 +30,7 @@ class EmploymentRecord(Base):
     work_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exempt_grant_status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="not_reviewed", default="not_reviewed")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

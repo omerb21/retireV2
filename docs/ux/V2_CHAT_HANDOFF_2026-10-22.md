@@ -881,3 +881,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner approved approval authority restricted to system owner or explicitly delegated professional. Preserve historical versions, effective dates and change audit; historical scenario results must not be silently overwritten.
 - Updated decision register and contract §22 with approval/delegation audit, immutable ruleset versions, revision/currentness semantics. This is accepted governance policy, not implementation authorization. O-08 evidence policy and O-01 anomaly verification remain open. Work contract BLOCKED.
 - Docs-only. No changes to financial services, CI, DB, deployment or production.
+
+## DK. Owner APPROVED O-08 evidence-dependent blocking (2026-10-23)
+- Owner approved: a missing essential professional datum blocks only the component/action that depends on it, not an unrelated conversion or the entire scenario. Missing datum, reason and evidence source must be shown and documented.
+- Updated owner decision register and enforcement contract §23 with dependency scope, provenance, status distinction, per-action errors, revalidation/staleness and atomicity; detailed source-to-rule mapping remains a review prerequisite.
+- O-02 through O-08 approved; O-01 owner rationale clarified, canonical product-type/anomaly verification pending. Independent Work contract remains BLOCKED, no financial implementation authorized. Docs only, no CI/DB/merge/deploy.

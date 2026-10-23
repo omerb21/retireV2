@@ -95,3 +95,26 @@ The following findings were confirmed by direct GitHub source reads on the activ
 - Independently re-review this normative contract after the above evidence is added. The only candidate first implementation is a **permission-only, read-only** slice, subject to explicit authorization; authoritative scenario save and tax calculation remain blocked.
 
 **Status after this evidence update:** SOURCE-GAPS DOCUMENTED; CLOSED-ALIAS-INVENTORY=OPEN; INDEPENDENT_RE-REVIEW=OPEN; PERMISSION-PREVIEW IMPLEMENTATION=NOT_AUTHORIZED; SCENARIO-SAVE=BLOCKED. Documentation-only update, no CI required.
+
+
+## H. Source-type intake evidence and explicit no-guess mapping gate (2026-10-23)
+
+**Code evidence:** `backend/app/services/pension_product_import_service.py` defines `PRODUCT_TYPE_LABELS = {"1": "פוליסת ביטוח חיים משולב חיסכון", "2": "פוליסת ביטוח חיים", "3": "קופת גמל", "4": "קרן פנסיה", "5": "פוליסת חיסכון טהור"}`. The importer obtains `SUG-MUTZAR` by `_product_type`, checks direct account and product-scoped metadata for inconsistency, and retains the **original code** as `metadata.product_type`. The label dictionary is for recognition/diagnostics, **not** evidence that the canonical value is saved as the Hebrew display label. A value not in the dictionary currently generates `unmapped_product_type` diagnostics; mere presence of this diagnostic does not establish the final row's persisted status. Source parsing distinguishes source-absent, explicit-zero and mapped/unmapped nonzero facts.
+
+| Raw imported exact code | Source label | Proposed classification decision for later review |
+| --- | --- | --- |
+| `1` | פוליסת ביטוח חיים משולב חיסכון | Candidate `insurance_policy`; confirm intended scenario permissions |
+| `2` | פוליסת ביטוח חיים | Candidate `insurance_policy`; check if pure risk/no balances and legal treatment differ |
+| `3` | קופת גמל | Candidate `provident_fund`; **not** automatically `investment_provident_fund` |
+| `4` | קרן פנסיה | Candidate `pension_fund` |
+| `5` | פוליסת חיסכון טהור | **UNRESOLVED:** do not silently assign to `insurance_policy` or `provident_fund`; assess whether contract needs a sixth class or a nonconvertible/unknown status |
+
+**Crucial non-equivalence:** The `PRODUCT_TYPE_LABELS` mapping above does not contain a demonstrated explicit education-fund or investment-provident-fund code. Neither can be inferred from code `3` solely because its label says provident fund. Do not introduce guessed numeric IDs or grant capital conversion from textual provider/product names.
+
+**Manual source:** `backend/app/schemas/pension_product.py::ProductMetadata.product_type` is free text and `backend/app/services/pension_product_service.py::create_product` stores that text. Thus imported numeric raw codes and manually entered literal labels belong to different *verified input formats*. The manual alias vocabulary has **not** been enumerated; do not mistake a UI suggestion or substring recognized by old matrix for accepted authoritative normalization.
+
+**Classification precedence proposal for independent review:** retain `source_kind`, the immutable raw `product_type`, source identity and audit provenance; resolve against a versioned exact mapping *specific to origin*. A product class decision must be supported by either (a) an enumerated, accepted importer code or (b) an enumerated, accepted manual source value. No substring or unverified English alias. If the raw code is recognized but its professional equivalence is still unresolved, return an unresolved classification rather than the default permission matrix.
+
+**Open evidence to collect before approval:** confirm import persistence and handling of missing/unknown code; inventory real manual input values and any frontend select options; resolve code `5`, distinguish pure insurance risk versus pension insurance; establish actual source identifiers for education and investment provident funds; confirm product-scoped account metadata behavior in mixed files. Do not query or expose private customer records merely to construct a public example.
+
+**No change in gate:** Only code-level alias candidates are identified; no complete source-backed canonical alias list exists. `O-01 TYPE RESOLVER=OPEN`; `INDEPENDENT WORK RE-REVIEW=REQUIRED`; `PERMISSION-ONLY PREVIEW=NOT IMPLEMENTATION AUTHORIZED`; `SCENARIO SAVE=BLOCKED`.

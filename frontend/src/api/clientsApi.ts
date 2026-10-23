@@ -524,6 +524,27 @@ export function updateClientCase(
   });
 }
 
+export type ExemptGrantStatus = "not_reviewed" | "none" | "recorded";
+export interface HistoricalEmploymentSettlementPayload {
+  employment: EmploymentRecordPayload;
+  exempt_grant_status: ExemptGrantStatus;
+  employer_withholding_file_number?: string;
+  grant_receipt_date?: string;
+  exempt_grant_amount?: string;
+}
+export interface HistoricalEmploymentSettlementResponse {
+  employment_record_id: string;
+  client_id: number;
+  exempt_grant_status: ExemptGrantStatus;
+  grant_id: string | null;
+}
+
+export function createHistoricalEmploymentSettlement(clientId: number, payload: HistoricalEmploymentSettlementPayload): Promise<HistoricalEmploymentSettlementResponse> {
+  return requestJson<HistoricalEmploymentSettlementResponse>(`/clients/${clientId}/historical-employment-settlements`, {
+    method: "POST", body: JSON.stringify(payload)
+  });
+}
+
 export function getEmploymentRecords(clientId: number): Promise<EmploymentRecordItem[]> {
   return requestJson<EmploymentRecordItem[]>(`/clients/${clientId}/employment-records`, {
     method: "GET"

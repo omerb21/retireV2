@@ -737,3 +737,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 ## CJ. Owner-confirmed portfolio-to-scenario UX handoff (2026-10-23)
 - Owner pulled `bc6cf38`; TypeScript/Vite build PASS and focused workspace Vitest **26/26 PASS**, including single-component handoff to transient scenario and no financial API mutation. React Router v7 future warnings only.
 - Working UX mock journey: factual ledger → exact component selection → scenario preview → partial mock decisions → ephemeral alternatives → dynamic comparison. This is not approved scenario-engine functionality. Next step is a hands-on professional UX walkthrough and independent Work review at the substantive implementation gate, rather than further speculative backend code. No CI/merge/deploy.
+
+## CK. Formal in-chat professional UX readiness gate (2026-10-23)
+- Updated `docs/ux/SCENARIO_WORKFLOW_UX_REVIEW_2026-10-23.md` following owner-verified **26/26** focused tests, marking dynamic comparison and factual source-component handoff as UX-MOCK complete.
+- Documented pending business-domain gates: `unchanged` mock action allocation semantics, source provenance/version and stale detection, historical grant reconciliation/eligibility prerequisites, alternative editing/naming, and baseline-comparison contract. None are authoritatively designed or implemented merely because the UI passed tests.
+- **No new executable code** in this step; no need to rerun local build or tests. Next checkpoint is owner reviewing the actual synthetic client flow, then one bounded independent Work review prior to Codex-authoritative scenario persistence or engine. No CI, DB, merge or deployment.

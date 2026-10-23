@@ -119,6 +119,43 @@ class EmploymentRecordRequest(BaseModel):
     notes: str | None = None
 
 
+class EmploymentSettlementCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    employment: EmploymentRecordRequest
+    exempt_grant_status: str
+    employer_withholding_file_number: str | None = None
+    grant_receipt_date: date | None = None
+    exempt_grant_amount: Decimal | None = None
+
+    @model_validator(mode="after")
+    def validate_settlement(self) -> "EmploymentSettlementCreateRequest":
+        if self.exempt_grant_status not in {"not_reviewed", "none", "recorded"}:
+            raise ValueError("Unknown exempt grant status")
+        if self.employment.is_current:
+            raise ValueError("Settlement entry is reserved for ended historical periods")
+        if self.employment.work_end_date is None or self.employment.work_end_date <= self.employment.work_start_date:
+            raise ValueError("Historical employment end date must be after start date")
+        if self.exempt_grant_status == "recorded":
+            if not self.employer_withholding_file_number or not self.employer_withholding_file_number.strip():
+                raise ValueError("Withholding file number is required for a reported exempt grant")
+            if self.grant_receipt_date is None or self.exempt_grant_amount is None:
+                raise ValueError("Grant date and amount required")
+            if not self.exempt_grant_amount.is_finite() or self.exempt_grant_amount <= 0:
+                raise ValueError("Recorded grant amount must be positive")
+        elif any(value is not None for value in (
+            self.employer_withholding_file_number, self.grant_receipt_date, self.exempt_grant_amount,
+        )):
+            raise ValueError("Grant fields only allowed when exempt grant is recorded")
+        return self
+
+
+class EmploymentSettlementCreateResponse(BaseModel):
+    employment_record_id: str
+    client_id: int
+    exempt_grant_status: str
+    grant_id: str | None
+
+
 class EmploymentRecordResponse(BaseModel):
     employment_record_id: str
     client_id: int
@@ -2198,6 +2235,40 @@ def create_employment_record(
     db.commit()
 
     return _employment_record_to_response(record)
+
+
+@router.post("/{client_id}/historical-employment-settlements", response_model=EmploymentSettlementCreateResponse)
+def create_historical_employment_settlement(
+    client_id: int, payload: EmploymentSettlementCreateRequest, db: Session = Depends(get_db),
+) -> EmploymentSettlementCreateResponse:
+    """Atomic employment-period creation, with at most one recorded exempt grant."""
+    _require_client(db, client_id)
+    employment = payload.employment
+    record = EmploymentRecord(
+        employment_record_id=f"ER-{uuid4().hex}",
+        client_id=client_id, employer_name=employment.employer_name,
+        work_start_date=employment.work_start_date,
+        work_end_date=employment.work_end_date, is_current=False, notes=employment.notes,
+    )
+    db.add(record)
+    grant_id = None
+    if payload.exempt_grant_status == "recorded":
+        grant_id = f"GR-{uuid4().hex}"
+        db.add(Grant(
+            grant_id=grant_id, client_id=client_id,
+            employment_record_id=record.employment_record_id,
+            employer_name=employment.employer_name,
+            employer_withholding_file_number=payload.employer_withholding_file_number.strip(),
+            grant_date=payload.grant_receipt_date,
+            nominal_amount=payload.exempt_grant_amount, indexed_amount=None,
+            work_start_date=employment.work_start_date, work_end_date=employment.work_end_date,
+            notes=None,
+        ))
+    db.commit()
+    return EmploymentSettlementCreateResponse(
+        employment_record_id=record.employment_record_id,
+        client_id=client_id, exempt_grant_status=payload.exempt_grant_status, grant_id=grant_id,
+    )
 
 
 @router.get("/{client_id}/employment-records", response_model=list[EmploymentRecordResponse])

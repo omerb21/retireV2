@@ -803,10 +803,24 @@ export function RetirementWorkspaceScreen() {
                 <option value="capital">ייעוד להון</option>
               </select>
             </label>
+            {mockSource && (() => {
+              const [productId, code] = mockSource.split("|");
+              const source = products.find(item => item.product_id === productId)?.components[code];
+              const original = source == null ? null : mockAmountInCents(source);
+              const assigned = (mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? [])
+                .filter(item => item.source === mockSource)
+                .reduce((total, item) => total + (mockAmountInCents(item.amount) ?? 0n), 0n);
+              const displayCents = (amount: bigint) => money((amount / 100n).toString() + "." + (amount % 100n).toString().padStart(2, "0"));
+              return <p aria-label="מצב יתרה בהדמיה">
+                יתרת מקור: <strong>{source == null ? "לא זמינה" : money(source)} ₪</strong>
+                {" · "}הוקצה בחלופה: <strong>{displayCents(assigned)} ₪</strong>
+                {" · "}נותר להקצאה: <strong>{original == null ? "לא זמין" : displayCents(original - assigned) + " ₪"}</strong>
+              </p>;
+            })()}
             <label>סכום להחלטת הדמיה (₪)
               <input inputMode="decimal" value={mockAmount} onChange={event => { setMockAmount(event.target.value); setMockError(null); }} placeholder="למשל 25000.00" />
             </label>
-            {mockError && <p role="alert">{mockError}</p>}
+            {mockError && <p role="alert" style={{ border: "2px solid #b42318", backgroundColor: "#fff1f0", color: "#881c15", padding: "12px", fontWeight: 700, borderRadius: "6px" }}>⚠ {mockError}</p>}
             <button type="button" disabled={!mockSource} onClick={() => {
               if (!mockSource) return;
               const [productId, code] = mockSource.split("|");

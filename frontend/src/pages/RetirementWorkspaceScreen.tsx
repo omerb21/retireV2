@@ -645,6 +645,12 @@ export function RetirementWorkspaceScreen() {
                   <strong>{item.title}</strong> <span>{item.detail}</span>
                   {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => openSupplementEditor("grant", itemIndex)}>תקן מענק</button>}
                   {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => openSupplementEditor("employment", itemIndex)}>תקן רשומת תעסוקה</button>}
+                  {index === 0 && employmentRecords[itemIndex] && !employmentRecords[itemIndex].is_current && <p>
+                    מצב מענק פטור: {({
+                      not_reviewed: "טרם נבדק", none: "לא התקבל מענק פטור",
+                      recorded: "דווח מענק פטור", requires_reconciliation: "נדרשת בדיקת כפילות",
+                    } as Record<string, string>)[employmentRecords[itemIndex].exempt_grant_status ?? "not_reviewed"]}
+                  </p>}
                   {index === 0 && employmentRecords[itemIndex] && !employmentRecords[itemIndex].is_current && <>
                     <button type="button" disabled={grantRecords.some(grant => grant.employment_record_id === employmentRecords[itemIndex].employment_record_id) || !!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
                       onClick={() => {

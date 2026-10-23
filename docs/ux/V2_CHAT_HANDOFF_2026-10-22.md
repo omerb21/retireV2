@@ -861,3 +861,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner decision: block conversions of unresolved severance components and actions genuinely dependent on them, without automatically blocking unrelated contribution components.
 - Updated decision register and scenario contract §18; component/action-scoped dependency evidence, no implicit product-level/global veto, integration with O-03/O-04 review and atomic submit, no fictitious authorization for unknown O-01/O-08 cases.
 - O-03/O-04/O-05/O-06 now APPROVED; O-01/O-02/O-07/O-08 OPEN. Work BLOCKED implementation gate remains. Docs only; no code changes, tests, CI, DB, merge or deploy.
+
+## DG. Owner correction of O-01 product-type rationale (2026-10-23)
+- Owner clarified that education funds/investment provident funds cannot have genuine severance; their type-level exception ensures capital conversion remains possible when balances land in arbitrary technical contribution columns, notably post-2000 columns otherwise pension-only.
+- Corrected owner decision register and appended contract §19. Treat unexpected severance-coded rows under these products as source-classification anomalies requiring reconciliation, rather than legal severance eligibility through override. Closed product identity determination, anomaly handling and tax authority still require validation. O-01 rationale clarified, not blanket scenario implementation authorization.
+- No financial code change, CI, DB, merge or deploy. Contract remains BLOCKED.

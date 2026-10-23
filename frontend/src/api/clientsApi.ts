@@ -565,7 +565,7 @@ export function createEmploymentRecord(
 export function updateEmploymentRecord(
   clientId: number,
   employmentRecordId: string,
-  payload: EmploymentRecordPayload
+  payload: EmploymentRecordPayload & { exempt_grant_status?: "not_reviewed" | "none" | "recorded" | "requires_reconciliation" }
 ): Promise<EmploymentRecordItem> {
   return requestJson<EmploymentRecordItem>(`/clients/${clientId}/employment-records/${employmentRecordId}`, {
     method: "PUT",

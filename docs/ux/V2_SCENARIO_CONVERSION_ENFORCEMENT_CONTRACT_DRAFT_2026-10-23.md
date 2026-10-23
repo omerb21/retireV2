@@ -242,3 +242,16 @@ This section closes ambiguities of **technical safety behavior**, not those prof
 6. This is a scenario-domain UX/business decision only. The existing V2 factual `whole_product` code path, which reports `skipped` and performs actual mutations, is unchanged and **must not** be reused as a scenario implementation.
 
 **O-03 is CLOSED / APPROVED. O-01, O-02, O-04, O-05, O-06, O-07, O-08 remain OPEN.** Independent Work review verdict `BLOCKED` and implementation prohibition remain until these and other critical contract gates are addressed.
+
+## 16. Owner-approved O-04: one grouped acknowledgment of excluded components (2026-10-23)
+
+**APPROVED:** One explicit confirmation is sufficient for the entire excluded-component group, **only after** presenting the complete list of excluded components and the individual reason for each exclusion. No need for one click per excluded row. This complements the owner-approved O-03 explicit eligible-subset selection.
+
+**Proposed implementation safeguards, subject to independent contract review:**
+- Before confirmation, display each excluded source product/component identity, its positive balance, the attempted destination, and the specific blocked/unresolved reason. Keep excluded and available amounts distinct.
+- The grouped acknowledgment applies to a specific preview revision/fingerprint comprising the chosen action, selected amounts, and complete exclusion list/reasons. A changed source balance, eligibility result, selection, or ruleset invalidates that acknowledgment and requires redisplay and reconfirmation.
+- Confirmation does not reclassify forbidden components as legally convertible, does not authorize an unknown product-type exception, and cannot waive missing professional evidence.
+- On submission, revalidate the explicitly selected permitted component IDs and amounts atomically in the scenario service. Any newly disallowed item rejects the submitted batch, without factual mutations or implicit omission.
+- Audit metadata should record only that the *displayed exclusion set* was acknowledged under the preview revision; it must not imply individualized tax or severance eligibility approval.
+
+**O-03 and O-04 are now CLOSED / OWNER APPROVED.** O-01, O-02, O-05, O-06, O-07, O-08 remain OPEN. Independent Work contract verdict and implementation gate remain BLOCKED.

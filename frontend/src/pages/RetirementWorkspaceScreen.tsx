@@ -19,6 +19,7 @@ const FIXED_CODES: Array<[string, string, "פיצויים" | "תגמולים"]> 
 ];
 type Step = "client" | "portfolio" | "supplement" | "scenario" | "results";
 type Selection = { productId: string; code: string };
+type ScenarioMockDecision = { id: number; source: string; action: "pension" | "capital" | "unchanged" };
 type Draft = { productId: string; version: number; components: Record<string, string> };
 type ReadState =
   | { state: "loading" }
@@ -63,6 +64,10 @@ export function RetirementWorkspaceScreen() {
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
+  const [mockAlternatives, setMockAlternatives] = useState<Array<{ id: number; name: string; decisions: ScenarioMockDecision[] }>>([]);
+  const [mockActiveId, setMockActiveId] = useState<number | null>(null);
+  const [mockSource, setMockSource] = useState("");
+  const [mockAction, setMockAction] = useState<ScenarioMockDecision["action"]>("unchanged");
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
@@ -97,6 +102,10 @@ export function RetirementWorkspaceScreen() {
     grantSaveGeneration.current += 1;
     setRead({ state: "loading" });
     setStep("portfolio");
+    setMockAlternatives([]);
+    setMockActiveId(null);
+    setMockSource("");
+    setMockAction("unchanged");
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
@@ -738,6 +747,61 @@ export function RetirementWorkspaceScreen() {
           שלב החיבור למנוע התרחישים עדיין לא בוצע. ההמרה הקנונית הקיימת ב־V2 מעדכנת יתרות אמת,
           ולכן היא לא תופעל מכאן בתור החלטת תרחיש.
         </p>
+        <section aria-label="התנסות בתכנון תרחיש מקומי">
+          <h2>התנסות במסע התכנון — זיכרון דפדפן בלבד</h2>
+          <p>החלטות אלו הן הדמיית אינטראקציה זמנית. הן אינן נשמרות בשרת, אינן מחשבות מס או קצבה, ויימחקו ביציאה מתיק הלקוח או ברענון הדף.</p>
+          <button type="button" onClick={() => {
+            const id = Math.max(0, ...mockAlternatives.map(item => item.id)) + 1;
+            setMockAlternatives(prev => [...prev, { id, name: "חלופת בדיקה " + id, decisions: [] }]);
+            setMockActiveId(id);
+          }}>צור חלופת הדמיה</button>
+          {mockAlternatives.length > 0 && <label>חלופה פעילה
+            <select value={mockActiveId ?? ""} onChange={event => setMockActiveId(Number(event.target.value))}>
+              {mockAlternatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>}
+          {mockActiveId !== null && <div>
+            <label>מקור כספי לדוגמה
+              <select value={mockSource} onChange={event => setMockSource(event.target.value)}>
+                <option value="">בחר מקור</option>
+                {products.map(item => <option key={item.product_id} value={item.product_id}>{item.product_name} — {item.account_reference ?? "ללא מספר חשבון"}</option>)}
+              </select>
+            </label>
+            <label>כיוון החלטה בהדמיה
+              <select value={mockAction} onChange={event => setMockAction(event.target.value as ScenarioMockDecision["action"])}>
+                <option value="unchanged">השארה ללא שינוי</option>
+                <option value="pension">ייעוד לקצבה</option>
+                <option value="capital">ייעוד להון</option>
+              </select>
+            </label>
+            <button type="button" disabled={!mockSource} onClick={() => {
+              if (!mockSource) return;
+              setMockAlternatives(prev => prev.map(item => item.id === mockActiveId
+                ? { ...item, decisions: [...item.decisions, { id: Math.max(0, ...item.decisions.map(d => d.id)) + 1, source: mockSource, action: mockAction }] }
+                : item));
+            }}>הוסף החלטת הדמיה</button>
+            <h3>החלטות בדיקה בחלופה</h3>
+            <ul>
+              {(mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? []).map(decision =>
+                <li key={decision.id}>
+                  {products.find(item => item.product_id === decision.source)?.product_name ?? "מקור לא זמין"} — {decision.action === "pension" ? "ייעוד לקצבה" : decision.action === "capital" ? "ייעוד להון" : "ללא שינוי"}
+                  <button type="button" onClick={() => setMockAlternatives(prev => prev.map(item => item.id === mockActiveId
+                    ? { ...item, decisions: item.decisions.filter(row => row.id !== decision.id) } : item))}>בטל החלטת הדמיה</button>
+                </li>)}
+            </ul>
+            <button type="button" onClick={() => {
+              const source = mockAlternatives.find(item => item.id === mockActiveId);
+              if (!source) return;
+              const id = Math.max(0, ...mockAlternatives.map(item => item.id)) + 1;
+              setMockAlternatives(prev => [...prev, { id, name: source.name + " — העתק", decisions: source.decisions.map(row => ({ ...row })) }]);
+              setMockActiveId(id);
+            }}>שכפל חלופת הדמיה</button>
+            <button type="button" onClick={() => {
+              setMockAlternatives(prev => prev.filter(item => item.id !== mockActiveId));
+              setMockActiveId(null);
+            }}>מחק חלופת הדמיה</button>
+          </div>}
+        </section>
         <h2>לוח עבודה לתרחישים — המחשת UX, ללא שמירה</h2>
         <div className="professional-workspace__scenario-preview" aria-label="תצוגה תכנונית ללא נתוני תרחיש אמיתיים">
           <section>

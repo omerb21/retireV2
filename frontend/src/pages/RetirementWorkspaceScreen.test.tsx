@@ -143,6 +143,25 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("keeps mock scenario decisions transient and never saves them to financial APIs", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
+    expect(screen.getByRole("option", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "מקור כספי לדוגמה" }), {
+      target: { value: "p1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
+    expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
+    expect(screen.getByRole("option", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "בטל החלטת הדמיה" }));
+    expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
   it("keeps an unsaved correction open when a workflow stage is clicked", async () => {
     open();
     const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });

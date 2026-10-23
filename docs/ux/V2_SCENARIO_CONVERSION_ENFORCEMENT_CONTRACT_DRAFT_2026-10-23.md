@@ -298,3 +298,20 @@ This section closes ambiguities of **technical safety behavior**, not those prof
 5. Add explicit parity/negative cases for irregular technical contribution-column placements, unexpected severance-coded components, unknown product type and correctly typed normal pension products.
 
 **Decision status:** O-01 business rationale is clarified by owner; exact server-side type resolver and inconsistent-input handling are proposed for acceptance. The overall contract and implementation remain `BLOCKED` pending remaining policy/evidence decisions and independent review.
+
+## 20. O-02 source-level tax conflict isolation (2026-10-23; NOT an owner tax ruling)
+
+A targeted comparison of V1 `frontend/src/config/conversionRules.ts` default rules, V1 backend `app/services/pension_portfolio/conversion_rules.py`, and V2 backend `backend/app/services/canonical_conversion_matrix.py` confirms the following **for ordinary product types**:
+
+| Component | Destination permission | V1 frontend default pension tax | V1 backend pension tax | V2 backend pension tax |
+| --- | --- | --- | --- | --- |
+| `תגמולי_עובד_עד_2000` | allowed | `exempt` | `taxable` | `taxable` |
+| `תגמולי_מעביד_עד_2000` | allowed | `exempt` | `taxable` | `taxable` |
+
+The frontend code comment identifies these as capital-origin contributions, whereas its tax label differs from backend defaults. The frontend also supports `localStorage` rule loading, so those defaults do not constitute an immutable tax authority. **No source inspection adjudicates real Israeli tax entitlement, whether the converted principal is exempt, or whether a pension payment is exempt.**
+
+**Binding scope of the future scenario permission contract:** A permission to allocate to `pension` can be displayed as a permission only. Tax classification must be returned as `not_evaluated` in scenario preview/decision responses until O-02 has a professional disposition and documented evidence. Preserve the original component identity and existing factual source details for future tax calculation. Do not silently copy `tax_for` into the scenario tax result. Do not change factual tax rules in V1 or V2 as a side effect of this contract.
+
+**Required professional ruling for O-02:** specify separately (a) capital-origin nature of pre-2000 contributions, (b) whether and when converting them to a pension creates exempt versus taxable pension payments, (c) whether allocation permission and tax entitlement can diverge, (d) required evidence/effective-date authority, and (e) which existing V1 behavior is financially correct for actual users. Do not choose `exempt` merely because of a frontend comment, or `taxable` merely because two backends agree.
+
+**O-02 remains OPEN.** The independent Work `BLOCKED` contract readiness and `NOT_AUTHORIZED` financial implementation gates remain unchanged.

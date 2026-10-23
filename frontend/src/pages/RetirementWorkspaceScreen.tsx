@@ -217,7 +217,10 @@ export function RetirementWorkspaceScreen() {
         ? { employment_record_id: settlement.employment_record_id, client_id: settlement.client_id }
         : employmentCreating
           ? await createEmploymentRecord(clientId, payload)
-          : await updateEmploymentRecord(clientId, record.employment_record_id, payload);
+          : await updateEmploymentRecord(clientId, record.employment_record_id, {
+              ...payload, ...(!record.is_current && grantRecords.every(grant => grant.employment_record_id !== record.employment_record_id)
+                ? { exempt_grant_status: historicalGrantStatus } : {}),
+            });
       if (activeClient.current !== clientId || employmentSaveGeneration.current !== generation) return;
       if (saved.client_id !== clientId || (!employmentCreating && saved.employment_record_id !== record.employment_record_id)) {
         setEmploymentError("תשובת שמירה אינה תואמת לתיק הנוכחי.");
@@ -408,6 +411,7 @@ export function RetirementWorkspaceScreen() {
       setEmploymentError(null);
       setEmploymentCreating(false);
       setEmploymentEdit({ ...record });
+      setHistoricalGrantStatus(record.exempt_grant_status === "none" ? "none" : record.exempt_grant_status === "recorded" ? "recorded" : "not_reviewed");
     } else {
       const record = grantRecords[index];
       if (!record || record.client_id !== clientId) return;
@@ -689,16 +693,18 @@ export function RetirementWorkspaceScreen() {
           <label>שם מעסיק <input required value={employmentEdit.employer_name} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, employer_name: event.target.value }))} /></label>
           <label>תאריך תחילה <input type="date" required value={employmentEdit.work_start_date} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, work_start_date: event.target.value }))} /></label>
           <label>מועסק כיום <input type="checkbox" checked={employmentEdit.is_current} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, is_current: event.target.checked, work_end_date: event.target.checked ? null : prev.work_end_date }))} /></label>
-          {employmentCreating && !employmentEdit.is_current && <fieldset>
+          {!employmentEdit.is_current && <fieldset>
             <legend>התחשבנות פיצויים בסיום העסקה</legend>
-            <label>מצב מענק הפיצויים הפטור
+            {!employmentCreating && grantRecords.some(grant => grant.employment_record_id === employmentEdit.employment_record_id) ? (
+              <p>מצב מענק: {employmentEdit.exempt_grant_status === "requires_reconciliation" ? "נדרשת בדיקת כפילות מענקים — אין לשנות סטטוס עד לבירור" : "קיים מענק פטור משויך — יש לתקן את הנתון במענק הקיים"}</p>
+            ) : <label>מצב מענק הפיצויים הפטור
               <select value={historicalGrantStatus} onChange={event => setHistoricalGrantStatus(event.target.value as ExemptGrantStatus)}>
                 <option value="not_reviewed">טרם נבדק</option>
                 <option value="none">לא התקבל מענק פטור</option>
-                <option value="recorded">התקבל מענק פטור</option>
+                {employmentCreating && <option value="recorded">התקבל מענק פטור</option>}
               </select>
             </label>
-            {historicalGrantStatus === "recorded" && <>
+            {(employmentCreating && historicalGrantStatus === "recorded") && <>
               <label>מספר תיק ניכויים <input required value={historicalGrantFile} onChange={event => setHistoricalGrantFile(event.target.value)} /></label>
               <label>מועד קבלת מענק <input required type="date" value={historicalGrantDate} onChange={event => setHistoricalGrantDate(event.target.value)} /></label>
               <label>מענק פיצויים פטור מדווח <input required inputMode="decimal" value={historicalGrantAmount} onChange={event => setHistoricalGrantAmount(event.target.value)} /></label>

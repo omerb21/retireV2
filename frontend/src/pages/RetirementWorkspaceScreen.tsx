@@ -77,6 +77,7 @@ export function RetirementWorkspaceScreen() {
   const [mockAlternatives, setMockAlternatives] = useState<Array<{ id: number; name: string; decisions: ScenarioMockDecision[] }>>([]);
   const [mockActiveId, setMockActiveId] = useState<number | null>(null);
   const [mockSource, setMockSource] = useState("");
+  const [mockPlanId, setMockPlanId] = useState<string | null>(null);
   const [mockAmount, setMockAmount] = useState("");
   const [mockError, setMockError] = useState<string | null>(null);
   const [mockAction, setMockAction] = useState<ScenarioMockDecision["action"]>("unchanged");
@@ -117,6 +118,7 @@ export function RetirementWorkspaceScreen() {
     setMockAlternatives([]);
     setMockActiveId(null);
     setMockSource("");
+    setMockPlanId(null);
     setMockAmount("");
     setMockError(null);
     setMockAction("unchanged");
@@ -468,6 +470,20 @@ export function RetirementWorkspaceScreen() {
     setMockError(null);
     switchStep("scenario");
   }
+  function previewWholePlan(productId: string) {
+    if (draft !== null || saveState === "saving") return;
+    const product = products.find(item => item.product_id === productId);
+    if (!product) return;
+    const first = FIXED_CODES.find(([code]) => {
+      const value = product.components[code];
+      return value != null && (mockAmountInCents(value) ?? 0n) > 0n;
+    });
+    setMockPlanId(productId);
+    setMockSource(first ? productId + "|" + first[0] : "");
+    setMockAmount("");
+    setMockError(null);
+    switchStep("scenario");
+  }
   function toggleCell(productId: string, code: string) {
     if (draft || saveState === "saving") return;
     setSelection(prev => prev.some(item => item.productId === productId && item.code === code)
@@ -626,6 +642,12 @@ export function RetirementWorkspaceScreen() {
           <div className="professional-workspace__actions">
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={startCorrection}>תיקון יתרות נבחרות</button>
             <button type="button" disabled={selection.length !== 1 || draft !== null || saveState === "saving"} onClick={startMockScenarioFromSelection}>העבר רכיב להדמיית תרחיש (ללא שמירה)</button>
+            <label>תוכנית מלאה להדמיה
+              <select aria-label="בחר תוכנית שלמה להדמיה" defaultValue="" disabled={draft !== null || saveState === "saving"} onChange={event => { if (event.target.value) previewWholePlan(event.target.value); event.target.value = ""; }}>
+                <option value="">בחר תוכנית — סקירה בלבד</option>
+                {products.map(product => <option key={product.product_id} value={product.product_id}>{product.product_name} — {product.account_reference ?? "ללא מספר חשבון"}</option>)}
+              </select>
+            </label>
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={() => setSelection([])}>בטל בחירה</button>
             <Link to={"/clients/" + clientId + "/pension-products"}>ייבוא מסלקה ופרטי מוצר מורחבים</Link>
           </div>
@@ -789,6 +811,18 @@ export function RetirementWorkspaceScreen() {
               {mockAlternatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>}
+          {mockPlanId && (() => {
+            const product = products.find(item => item.product_id === mockPlanId);
+            if (!product) return null;
+            return <section aria-label="סקירת רכיבי תוכנית שלמה">
+              <h3>תוכנית נבחרת לסקירה: {product.product_name}</h3>
+              <p className="professional-workspace__boundary">זוהי בחירה של תוכנית שלמה לסקירת מקורות בלבד. לא בוצעה המרה גורפת או החלטה אוטומטית; כל רכיב נשאר מסווג בנפרד.</p>
+              <ul>{FIXED_CODES.filter(([code]) => (mockAmountInCents(product.components[code] ?? "") ?? 0n) > 0n).map(([code, label]) =>
+                <li key={code}>{label} — {money(product.components[code])} ₪
+                  <button type="button" onClick={() => { setMockSource(product.product_id + "|" + code); setMockAmount(""); setMockError(null); }}>בחר רכיב לתכנון</button>
+                </li>)}</ul>
+            </section>;
+          })()}
           {mockActiveId !== null && <div>
             <label>רכיב כספי לדוגמה
               <select value={mockSource} onChange={event => setMockSource(event.target.value)}>

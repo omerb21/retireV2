@@ -721,3 +721,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 ## CG. Owner-confirmed partial-allocation mock tests (2026-10-23)
 - Owner pulled `0e4fd31`. TypeScript/Vite build PASS; focused workspace Vitest **25/25 PASS**, including mock partial amount input, aggregate no-overallocation guard, duplication/cancellation and no financial writes. Only React Router future-flag warnings.
 - Partial allocation is a client-side mock, not persisted scenario or validated retirement calculation. No more testing of this unchanged slice required. Next gate is professional full-journey UX review and independent scrutiny before implementation of authoritative scenario workflow. No CI/master merge/production deployment.
+
+## CH. UX journey review and dynamic mock comparison (2026-10-23)
+- Recorded formal in-chat UX gap review in `docs/ux/SCENARIO_WORKFLOW_UX_REVIEW_2026-10-23.md`, with separate independent Work review still **PENDING**.
+- Updated `RetirementWorkspaceScreen.tsx` comparison mock: dynamic columns correspond to **actual temporary alternatives created** in Step 4, with in-memory decision counts and source-component/amount/action summaries. Retains `לא חושב` for every modeled financial metric; no calculation/persistence. Thus supports scenario → comparison → back-to-scenario journey for UX testing.
+- Adapted focused Vitest expected uncalculated baseline count and asserted duplicated alternatives/decision amounts appear after step navigation. **LATEST CHANGES NOT YET RUN**: owner should execute local frontend TypeScript/Vite build and the existing focused 25-test suite once.
+- No Backend or database modifications, no full CI, no Work/Codex credits used, no master merge or production deploy.

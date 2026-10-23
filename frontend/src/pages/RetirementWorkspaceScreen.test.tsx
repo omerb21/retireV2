@@ -134,8 +134,12 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
     expect(screen.getByText(/ההמרה הקנונית הקיימת ב־V2 מעדכנת יתרות אמת/))
       .toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "לוח עבודה לתרחישים — המחשת UX, ללא שמירה" })).toBeInTheDocument();
+    expect(screen.getAllByText("טרם נוצרה")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
     expect(screen.getByText(/לא יוצגו מספרי קצבה/)).toBeInTheDocument();
+    const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
+    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(21);
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 

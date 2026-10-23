@@ -166,3 +166,14 @@ Directly inspected `backend/app/main.py`, `backend/app/security/middleware.py`, 
 - Security acceptance cases: no session, forged route client ID, foreign product/client pair, developer/test auth bypass, changed component between reads, no record, malformed/partial eleven-row source, zero-write SQL statement capture, and stale product version/fingerprint. Return no product-existence information before authorization is resolved.
 
 **Classification:** authentication middleware EXISTS; per-client authorization MODEL NOT PROVEN; safe strictly read-only transactional reader NOT IMPLEMENTED. This is a documented engineering/review gate, **not** approval to implement. Neither a broad RBAC system nor a new account architecture is prescribed without a demonstrated requirement.
+
+
+## L. Verified production session identity and bounded preview access model (2026-10-23)
+
+Direct source evidence from `backend/app/security/transport.py::validate_session`, `backend/app/security/session.py::issue/verify`, `backend/app/security/config.py::AuthConfig`, and `backend/app/api/auth_routes.py`: production session validation verifies the session token and stores `request.state.auth_session` and `request.state.trusted_professional_actor = payload["actor_id"]`. The session actor identity is bound to the single configured `AUTH_ACTOR_ID`. Inspected code does **not** implement independent planner-to-client memberships or per-client ACL roles.
+
+**Narrow acceptance boundary for read-only permission preview:** Authenticate via existing production middleware and require a verified session actor; scope product reads by both selected client ID and server-owned product ID. In the **existing single-operator deployment only**, a valid configured professional session may access that operator's client records, conditional on owner acceptance of that operational security model. Do not claim user-specific client membership exists. In future multi-operator deployments, fail closed until a dedicated client access authorization rule has been specified and independently approved.
+
+The preview API must not accept an actor identity from the request body, must not reimplement or bypass session validation, and must never authorize based solely on product name/type or `client_id` asserted by a browser. Production-like tests must exercise missing/invalid session, valid configured session with nonexistent or wrong-client product ID, and spoofed identity fields. Development bypass behavior is not production authorization evidence.
+
+This does not remove the separate source-snapshot read consistency and zero-write design gate (§K), or product-type resolver gate (§H/J), nor does it authorize an implementation. **Preview review remains BLOCKED pending independent assessment.**

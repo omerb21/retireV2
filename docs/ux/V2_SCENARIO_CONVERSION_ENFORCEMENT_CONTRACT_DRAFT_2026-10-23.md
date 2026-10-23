@@ -1,3 +1,5 @@
+> **ARCHIVED CHRONOLOGICAL DRAFT — NOT NORMATIVE (2026-10-23):** This file preserves historical discussion and superseded open-decision statements, including conflicting §§2,5,8,10,11,13,15–21. The authoritative *proposed* consolidated design is `docs/ux/V2_SCENARIO_CONVERSION_NORMATIVE_CONTRACT_V1_2026-10-23.md`. If text conflicts, the consolidated design governs review; **neither document authorizes implementation**, and independent Work re-review remains required.
+
 # V2 scenario conversion validation — review-ready contract DRAFT
 
 **Status:** DRAFT / DOMAIN-CHANGE / INDEPENDENT-REVIEW PENDING. Not an authorization to implement or deploy financial logic.

@@ -38,7 +38,7 @@ def test_explicit_link_and_protection_for_ended_employment_period(tmp_path):
         assert result.json()["employment_record_id"] == first
         second_grant = _grant(client, cid)
         assert client.post(f"/api/clients/{cid}/grants/{second_grant}/employment-link", json={"employment_record_id": first}).status_code == 409
-        assert client.get(f"/api/clients/{cid}/grants").json()[0]["employment_record_id"] == first
+        assert next(item for item in client.get(f"/api/clients/{cid}/grants").json() if item["grant_id"] == gid)["employment_record_id"] == first
         assert client.post(endpoint, json={"employment_record_id": later}).status_code in (409, 422)
         # Existing linked records cannot silently lose their period identity.
         bad_employment = client.put(f"/api/clients/{cid}/employment-records/{first}", json={
@@ -53,7 +53,7 @@ def test_explicit_link_and_protection_for_ended_employment_period(tmp_path):
         })
         assert bad_grant.status_code == 409
         assert client.delete(f"/api/clients/{cid}/employment-records/{first}").status_code == 409
-        assert client.get(f"/api/clients/{cid}/grants").json()[0]["employment_record_id"] == first
+        assert next(item for item in client.get(f"/api/clients/{cid}/grants").json() if item["grant_id"] == gid)["employment_record_id"] == first
     finally:
         client.close()
 

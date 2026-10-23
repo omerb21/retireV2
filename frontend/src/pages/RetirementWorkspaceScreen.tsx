@@ -45,6 +45,11 @@ function money(value: string | null | undefined): string {
   const fraction = (parts[3] ?? "").replace(/0+$/, "");
   return parts[1] + integer + (fraction ? "." + fraction : "");
 }
+function mockAmountInCents(value: string): bigint | null {
+  if (!/^(0|[1-9][0-9]*)(?:[.][0-9]{1,2})?$/.test(value)) return null;
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(whole) * 100n + BigInt((fraction + "00").slice(0, 2));
+}
 function completeAmount(value: string): boolean {
   return /^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$/.test(value);
 }

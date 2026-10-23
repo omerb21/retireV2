@@ -1,13 +1,13 @@
 # RETIRE V2 — Owner decision register for scenario conversion
 
-**Status:** O-03 OWNER APPROVED on 2026-10-23; O-01, O-02, O-04 through O-08 remain OPEN. Independent Work contract BLOCKED; financial implementation and production NOT authorized. The owner approval is a product-workflow decision, not legal eligibility approval.
+**Status:** O-03 OWNER APPROVED on 2026-10-23; O-01, O-02, O-05 through O-08 remain OPEN. Independent Work contract BLOCKED; financial implementation and production NOT authorized. The owner approval is a product-workflow decision, not legal eligibility approval.
 
 | ID | Professional decision | Conservative proposed default (NOT APPROVED) | Safe work independent of decision |
 | --- | --- | --- | --- |
 | O-01 | Do investment provident / education fund product exceptions override otherwise blocked severance/termination classifications? | Never override an unsettled severance prerequisite automatically; mark disputed pairing unresolved | Type-resolution design; component × product test fixtures |
 | O-02 | Tax treatment for pre-2000 employee/employer contribution converted to pension: V1 frontend exempt vs V1/V2 backend taxable | Return `tax_status=not_evaluated`; make no tax claims | Permission-only preview and evidence collection |
 | O-03 | **APPROVED 2026-10-23**: A whole-plan preview must show all components; after explicit review and confirmation the planner may convert only the permitted selected components. Prohibited components remain unchanged; no silent pruning. | **Owner decision recorded**; server must revalidate the explicitly selected subset and reject a now-invalid submitted batch atomically. | Define preview, selection, confirmation, and submit protocol without changing factual conversion behavior |
-| O-04 | For excluded components, individual acknowledgments or one reviewed grouped acknowledgment? | No automatic acknowledgment; require conscious user selection before any save | UI explanation/preview prototype, no persistence |
+| O-04 | **APPROVED 2026-10-23**: A single group confirmation is sufficient only after the full list of excluded components and the specific reason for excluding each component is displayed. | **Owner decision recorded**; one explicit confirmation for the reviewed exclusion set, never implicit acknowledgment. | Specify confirmation tied to exact preview/fingerprint and invalidate it on changes |
 | O-05 | Is `leave_unallocated` a residual or an explicit retained-as-is instruction? | Residual calculated only; do not create a pseudo-conversion decision | Availability math and separate residual display |
 | O-06 | Scope of V1 global unresolved-severance/rights-continuity blocker: component, product, or entire scenario? | Do not assume a global rule; block affected operations pending evidence, unrelated operations unresolved only if interdependent | Dependency/source classification mapping |
 | O-07 | Who approves a ruleset and how historical effective dates and rule replacements work? | No user-managed financial overrides or retroactive automatic relabeling | Versioned rule record schema draft and audit review |
@@ -27,6 +27,6 @@
 
 ## Recorded approval and next open boundary
 
-**O-03 approved by the professional owner in the conversation on 2026-10-23.** Exact accepted meaning: display all components of a whole pension plan, permit conversion of the allowed subset only after explicit review and confirmation, and never silently skip prohibited components. This does **not** accept product-type exception precedence (O-01), tax treatment (O-02), or individual-versus-grouped exclusion acknowledgment (O-04).
+**O-03 approved by the professional owner in the conversation on 2026-10-23.** Exact accepted meaning: display all components of a whole pension plan, permit conversion of the allowed subset only after explicit review and confirmation, and never silently skip prohibited components. This does **not** accept product-type exception precedence (O-01) or tax treatment (O-02). **O-04 was subsequently approved** as one explicit grouped acknowledgment after full per-component exclusions/reasons disclosure.
 
-**Next open owner decision: O-04**, granularity of exclusion acknowledgment. No default is yet approved. Other decisions remain open; contract gate remains BLOCKED.
+**O-04 approved by the professional owner on 2026-10-23:** one confirmation for all excluded components, after displaying the complete list and individual reasons. **Next open owner decision: O-05**, whether unallocated balances are merely residual or explicitly marked as retained. O-01, O-02 and O-05–O-08 remain open. Other decisions remain open; contract gate remains BLOCKED.

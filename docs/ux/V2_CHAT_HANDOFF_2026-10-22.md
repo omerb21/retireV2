@@ -815,3 +815,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - The standalone file defines **15 expected pytest cases**: 11 parameterized base-code permission checks and four other test functions (product overrides, unknown code, matrix version, pre-2000 backend tax handling). It has no database dependency and need not touch/restart the PostgreSQL tmpfs.
 - To verify in the owner's existing checkout after fast-forward: from `backend`, run `python -m pytest -q tests/test_component_conversion_permission_contract.py` using the existing project Python environment. Do not invoke full CI, migrations, tests requiring DB reset or production changes.
 - Work independent audit and authoritative pension-product scenario engine are still PENDING; frontend **33/33** was verified at `a6ebe86`.
+
+## CY. Owner confirmed focused V2 backend permission tests (2026-10-23)
+- Owner pulled `2c902a0` and executed `python -m pytest -q tests/test_component_conversion_permission_contract.py` from local backend: **15 passed in 1.74s**.
+- Previous local frontend verification: **33/33 passed** across two files. Together **48 focused tests** are confirmed, on their respective code slices; NOT full-suite CI or professional tax/scenario-engine acceptance.
+- Next pending stage: independent READ-ONLY Work review using `docs/ux/WORK_INDEPENDENT_REVIEW_BRIEF_SCENARIO_CONVERSION_2026-10-23.md` and parity findings. No authoritative scenario server enforcement yet, no financial calculation changes, merge, CI or deployment.

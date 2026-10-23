@@ -856,3 +856,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner approved: money not allocated to pension/capital is an **automatically calculated remaining balance**, not a separate conversion/retain decision.
 - Updated decision register and scenario contract §17. Define per-component original minus accepted allocations with exact Decimal, separate projected draft remaining, reject over-allocation and negative residual, mark stale if source changes, and display reconciliation discrepancy separately.
 - O-03/O-04/O-05 are owner-approved. O-01/O-02/O-06/O-07/O-08 still open; Work contract BLOCKED and authoritative implementation prohibited. Documentation only; no code or CI changes.
+
+## DF. Owner APPROVED O-06 scoped severance blocker (2026-10-23)
+- Owner decision: block conversions of unresolved severance components and actions genuinely dependent on them, without automatically blocking unrelated contribution components.
+- Updated decision register and scenario contract §18; component/action-scoped dependency evidence, no implicit product-level/global veto, integration with O-03/O-04 review and atomic submit, no fictitious authorization for unknown O-01/O-08 cases.
+- O-03/O-04/O-05/O-06 now APPROVED; O-01/O-02/O-07/O-08 OPEN. Work BLOCKED implementation gate remains. Docs only; no code changes, tests, CI, DB, merge or deploy.

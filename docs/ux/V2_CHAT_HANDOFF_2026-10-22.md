@@ -610,3 +610,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - ORM/API create and read now persist and expose statuses; employer-first API `none` remains distinguishable after reload, with read-only workspace display. Explicit linkage and grant creation set `recorded`; explicit grant deletion recalculates status and never infers `none`.
 - Added isolated backend test to verify persisted status readback across all 3 user choices. New expected focused backend count **5**, existing frontend workspace count **24**, pending verification.
 - **Outstanding design**: finished-period edits and verification/source evidence, source-of-truth for duplicates, final DB uniqueness constraint after reconciliation, full taxable and continuity components, independent current employer workflow. Do not assume professional acceptance, do not restart synthetic DB stack, and do not deploy or run full CI.
+
+## BO. Legacy duplicate migration regression (2026-10-23), pending execution
+
+- Added `backend/tests/test_historical_settlement_migration.py` to apply migration `d2c4e6a8b031` via Alembic Operations on a deliberately crafted **disposable SQLite** pre-migration employment/grants schema: 2 linked grants on a single period, 1 grant on another, no grant on a third, plus active current employment.
+- Asserts duplicates remain untouched with `requires_reconciliation`, single linked grant -> `recorded`, missing/current -> `not_reviewed`, and explicit `none` persists. The test is migration-specific, not the existing five API tests.
+- Added `dev/Test-Historical-Settlement-Migration.ps1` to rebuild the isolated test image and run only this migration test with `--network none`, without changing the active PostgreSQL service, stack, local data or full CI.
+- **Important**: this is SQLite coverage, NOT a PostgreSQL-specific migration acceptance. A fresh isolated PostgreSQL test is still required before applying to the active local PostgreSQL DB. No migration has been applied to the running service. Do not claim test passed before user runs it.

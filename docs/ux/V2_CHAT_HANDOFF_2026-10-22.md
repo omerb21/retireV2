@@ -831,3 +831,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Added §13 to `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md`: explicit action mapping, closed source product resolver, fail-closed unresolved eligibility, read-only preview, exact component-list atomic submit, exact money, proposed lock/CAS/idempotency, source/ruleset stale handling, scoped professional evidence, and no early tax claims.
 - These are **proposed conservative technical requirements only**. Eight professional owner decisions are recorded as an approval board; none silently approved. External independent Work audit verdict remains **BLOCKED** and authoritative financial scenario implementation **NOT AUTHORIZED**.
 - No executable code, CI, DB, merge or production changes. No local test run required for this documentation-only change.
+
+## DA. Verified existing factual evidence producers for contract (2026-10-23)
+- Read-only inspected V2 pension component/product models, Decimal reconciliation service, employment records, grants and client profile. Appended source mapping to section 14 of `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md`.
+- V2 already computes component sums and discrepancies; reuse authoritative `reconcile` rather than duplicate. Employment/grant rows exist, but no automatic per-component entitlement linkage is confirmed; professional prerequisite mapping, 161d/tax producer and ruleset governance remain open.
+- Audit status remains BLOCKED; no authoritative scenario code, CI, deployment or DB changes. Document-only update; no test run required.

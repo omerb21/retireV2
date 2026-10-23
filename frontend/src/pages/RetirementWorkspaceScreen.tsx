@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
@@ -69,6 +69,10 @@ export function RetirementWorkspaceScreen() {
   const [employmentRecords, setEmploymentRecords] = useState<EmploymentRecordItem[]>([]);
   const [employmentEdit, setEmploymentEdit] = useState<EmploymentRecordItem | null>(null);
   const [employmentCreating, setEmploymentCreating] = useState(false);
+  const [historicalGrantStatus, setHistoricalGrantStatus] = useState<ExemptGrantStatus>("not_reviewed");
+  const [historicalGrantFile, setHistoricalGrantFile] = useState("");
+  const [historicalGrantDate, setHistoricalGrantDate] = useState("");
+  const [historicalGrantAmount, setHistoricalGrantAmount] = useState("");
   const [employmentSaving, setEmploymentSaving] = useState(false);
   const [employmentError, setEmploymentError] = useState<string | null>(null);
   const [grantRecords, setGrantRecords] = useState<GrantItem[]>([]);
@@ -107,6 +111,10 @@ export function RetirementWorkspaceScreen() {
     setLinkError(null);
     setEmploymentEdit(null);
     setEmploymentCreating(false);
+    setHistoricalGrantStatus("not_reviewed");
+    setHistoricalGrantFile("");
+    setHistoricalGrantDate("");
+    setHistoricalGrantAmount("");
     setEmploymentError(null);
     setEmploymentSaving(false);
     setSupplementCategory(null);
@@ -181,6 +189,12 @@ export function RetirementWorkspaceScreen() {
       setEmploymentError("יש להזין שם מעסיק ותאריכי העסקה תקינים; תאריך הסיום אינו יכול להקדים את תאריך ההתחלה.");
       return;
     }
+    if (employmentCreating && !record.is_current && historicalGrantStatus === "recorded"
+      && (!historicalGrantFile.trim() || !/^\\d{4}-\\d{2}-\\d{2}$/.test(historicalGrantDate)
+        || !completeAmount(historicalGrantAmount) || Number(historicalGrantAmount) <= 0)) {
+      setEmploymentError("להזנת מענק פטור נדרשים תיק ניכויים, תאריך קבלה וסכום חיובי תקין.");
+      return;
+    }
     const generation = ++employmentSaveGeneration.current;
     setEmploymentSaving(true);
     setEmploymentError(null);
@@ -190,9 +204,20 @@ export function RetirementWorkspaceScreen() {
         work_end_date: record.is_current ? null : record.work_end_date,
         is_current: record.is_current, notes: record.notes,
       };
-      const saved = employmentCreating
-        ? await createEmploymentRecord(clientId, payload)
-        : await updateEmploymentRecord(clientId, record.employment_record_id, payload);
+      const settlement = employmentCreating && !record.is_current
+        ? await createHistoricalEmploymentSettlement(clientId, {
+            employment: payload, exempt_grant_status: historicalGrantStatus,
+            ...(historicalGrantStatus === "recorded" ? {
+              employer_withholding_file_number: historicalGrantFile.trim(),
+              grant_receipt_date: historicalGrantDate,
+              exempt_grant_amount: historicalGrantAmount,
+            } : {}),
+          }) : null;
+      const saved = settlement
+        ? { employment_record_id: settlement.employment_record_id, client_id: settlement.client_id }
+        : employmentCreating
+          ? await createEmploymentRecord(clientId, payload)
+          : await updateEmploymentRecord(clientId, record.employment_record_id, payload);
       if (activeClient.current !== clientId || employmentSaveGeneration.current !== generation) return;
       if (saved.client_id !== clientId || (!employmentCreating && saved.employment_record_id !== record.employment_record_id)) {
         setEmploymentError("תשובת שמירה אינה תואמת לתיק הנוכחי.");
@@ -201,6 +226,22 @@ export function RetirementWorkspaceScreen() {
       const refreshed = await getEmploymentRecords(clientId);
       if (activeClient.current !== clientId || employmentSaveGeneration.current !== generation) return;
       if (refreshed.some(item => item.client_id !== clientId)) { setEmploymentError("התקבלו רשומות של לקוח אחר."); return; }
+      if (settlement?.grant_id) {
+        const updatedGrants = await getGrants(clientId);
+        if (activeClient.current !== clientId || employmentSaveGeneration.current !== generation) return;
+        if (updatedGrants.some(item => item.client_id !== clientId)) {
+          setEmploymentError("התקבלו מענקים השייכים ללקוח אחר.");
+          return;
+        }
+        setGrantRecords(updatedGrants);
+        setSupplement(previous => previous?.clientId === clientId ? {
+          ...previous, groups: previous.groups.map((group, index) => index === 1
+            ? updatedGrants.map(item => ({
+              client_id: item.client_id, title: item.employer_name ?? "מענק ללא שם מעסיק",
+              detail: "מועד קבלה: " + item.grant_receipt_date + " · מענק פטור מדווח: " + (item.exempt_grant_amount ?? "לא נמסר"),
+            })) : group),
+        } : previous);
+      }
       setEmploymentRecords(refreshed);
       setSupplement(previous => previous?.clientId === clientId ? {
         ...previous, groups: previous.groups.map((group, index) => index === 0
@@ -642,6 +683,22 @@ export function RetirementWorkspaceScreen() {
           <label>שם מעסיק <input required value={employmentEdit.employer_name} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, employer_name: event.target.value }))} /></label>
           <label>תאריך תחילה <input type="date" required value={employmentEdit.work_start_date} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, work_start_date: event.target.value }))} /></label>
           <label>מועסק כיום <input type="checkbox" checked={employmentEdit.is_current} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, is_current: event.target.checked, work_end_date: event.target.checked ? null : prev.work_end_date }))} /></label>
+          {employmentCreating && !employmentEdit.is_current && <fieldset>
+            <legend>התחשבנות פיצויים בסיום העסקה</legend>
+            <label>מצב מענק הפיצויים הפטור
+              <select value={historicalGrantStatus} onChange={event => setHistoricalGrantStatus(event.target.value as ExemptGrantStatus)}>
+                <option value="not_reviewed">טרם נבדק</option>
+                <option value="none">לא התקבל מענק פטור</option>
+                <option value="recorded">התקבל מענק פטור</option>
+              </select>
+            </label>
+            {historicalGrantStatus === "recorded" && <>
+              <label>מספר תיק ניכויים <input required value={historicalGrantFile} onChange={event => setHistoricalGrantFile(event.target.value)} /></label>
+              <label>מועד קבלת מענק <input required type="date" value={historicalGrantDate} onChange={event => setHistoricalGrantDate(event.target.value)} /></label>
+              <label>מענק פיצויים פטור מדווח <input required inputMode="decimal" value={historicalGrantAmount} onChange={event => setHistoricalGrantAmount(event.target.value)} /></label>
+            </>}
+            <p>זהו רישום עובדתי בלבד. שדות רצפים, מענקים חייבים ואסמכתאות יתווספו לאחר אישור חוזה הנתונים המקצועי.</p>
+          </fieldset>}
           {!employmentEdit.is_current && <label>תאריך סיום <input type="date" value={employmentEdit.work_end_date ?? ""} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, work_end_date: event.target.value || null }))} /></label>}
           <label>הערות <textarea value={employmentEdit.notes ?? ""} onChange={event => setEmploymentEdit(prev => prev && ({ ...prev, notes: event.target.value || null }))} /></label>
           {employmentError && <p role="alert">{employmentError}</p>}

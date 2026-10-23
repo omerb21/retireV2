@@ -861,16 +861,33 @@ export function RetirementWorkspaceScreen() {
         <p className="professional-workspace__boundary">
           אין עדיין השוואת חלופות מחושבת בממשק זה. לא יוצגו מספרי קצבה, פטורים, מס או NPV שלא חושבו ואושרו במנוע V2.
         </p>
-        <h2>מבנה טבלת השוואה — דוגמת פריסה בלבד</h2>
+        <h2>השוואת חלופות הדמיה — ללא תוצאות כספיות</h2>
         <div className="professional-workspace__ledger" role="region" aria-label="מבנה השוואת חלופות ללא תוצאות" tabIndex={0}>
           <table>
-            <thead><tr><th scope="col">מדד</th><th scope="col">מצב בסיס</th><th scope="col">חלופה א׳</th><th scope="col">חלופה ב׳</th></tr></thead>
+            <thead><tr><th scope="col">מדד</th><th scope="col">מצב בסיס</th>
+              {mockAlternatives.map(item => <th key={item.id} scope="col">{item.name}</th>)}
+            </tr></thead>
             <tbody>
-              {["מועד פרישה", "החלטות והקצאות", "קצבה חודשית", "משיכות הוניות", "מסים ופטורים", "הנחות ומקורות", "עדכניות תוצאה"].map(label =>
-                <tr key={label}><th scope="row">{label}</th><td>לא חושב</td><td>לא חושב</td><td>לא חושב</td></tr>)}
+              <tr><th scope="row">החלטות הדמיה</th><td>לא נוצר</td>
+                {mockAlternatives.map(item => <td key={item.id}>{item.decisions.length} החלטות זמניות</td>)}
+              </tr>
+              <tr><th scope="row">פירוט החלטות</th><td>אין</td>
+                {mockAlternatives.map(item => <td key={item.id}>
+                  {item.decisions.length === 0 ? "אין החלטות" :
+                    <ul>{item.decisions.map(decision => <li key={decision.id}>
+                      {(() => { const [productId, code] = decision.source.split("|"); const product = products.find(row => row.product_id === productId); return (product?.product_name ?? "מקור לא זמין") + " — " + (FIXED_CODES.find(row => row[0] === code)?.[1] ?? "רכיב לא זמין"); })()}
+                      {" · "}{money(decision.amount)} ₪ {" · "}{decision.action === "pension" ? "ייעוד לקצבה" : decision.action === "capital" ? "ייעוד להון" : "ללא שינוי"}
+                    </li>)}</ul>}
+                </td>)}
+              </tr>
+              {["מועד פרישה", "קצבה חודשית", "משיכות הוניות", "מסים ופטורים", "הנחות ומקורות", "עדכניות תוצאה"].map(label =>
+                <tr key={label}><th scope="row">{label}</th><td>לא חושב</td>
+                  {mockAlternatives.map(item => <td key={item.id}>לא חושב</td>)}
+                </tr>)}
             </tbody>
           </table>
         </div>
+        <p className="professional-workspace__boundary">שמות החלופות והחלטות ההדמיה מוצגים מהזיכרון המקומי בלבד. אין כאן השוואה פיננסית מחושבת, שמירה או אישור מקצועי.</p>
         <p>בעתיד כל תוצאה תציג את ההחלטות, הבסיס המקצועי ומועד החישוב. שינוי בנתוני המקור ידרוש אימות מחודש ולא יוצג כתוצאה מעודכנת.</p>
         <p className="professional-workspace__boundary">אין עדיין תרחישים מחושבים להצגה או אישור מקצועי של ההשוואה.</p>
         <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>

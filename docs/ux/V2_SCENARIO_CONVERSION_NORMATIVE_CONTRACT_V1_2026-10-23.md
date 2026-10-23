@@ -142,3 +142,14 @@ The raw numeric code is parsed by `_product_type` from `SUG-MUTZAR`, recorded in
 **Minimal acceptance tests to specify (design only):** all five importer labels, both fallback strings, unknown manually entered strings, type/name spoofing, changing source kind, an education/investment-fund severance-coded nonzero row, all 11 component rows with zeros, and client-isolation check. Verify that updating a balance in the current workspace preserves exact persisted product type. No CI run has established these test results.
 
 **Open gate:** authoritative manual type aliases and education/investment provident product identification are unresolved. Do not authorize Preview code or scenario save until an independently reviewed resolver policy is accepted.
+
+
+## J. Verified actual manual pension-product screen (2026-10-23)
+
+Source: `frontend/src/routes/AppRoutes.tsx` routes `/clients/:clientId/pension-products` to `frontend/src/pages/PensionProductsScreen.tsx`, which was inspected directly. `PensionProductsScreen.tsx` defines `emptyMetadata().product_type = "קופת גמל"`, shows `product_type` as an ordinary free-text `<input>` in the metadata form, and applies no closed type enumeration there. It also declares a separate `productTypeLabel` formatter that displays codes `"1"` through `"5"` as Hebrew descriptions; this presentation-only formatter is not a resolver nor proof that such codes are stored in the current import flow.
+
+**Consequences for bounded scenario design:** A manually created product may contain the initial `"קופת גמל"` default or any user-entered nonempty value accepted by backend `ShortText`. Merely retaining a default does not verify the professional subtype. The existence of a free-text input means a complete, observed manual alias *inventory cannot be derived from code alone*. For permission preview, only explicitly accepted exact labels may ever resolve to a canonical class, and any unknown or ambiguous user-entered text must produce an unresolved type, not a guessed fallback; type correction must not silently alter existing factual source records.
+
+**Potential future UX improvement (not implementation-authorized):** supply a controlled professional type selector with an explicit unresolved/other option, and keep the original source description separately for audit and provenance. Changing the existing input or rewriting product records requires a distinct migration/compatibility and ownership review; do not implement as a side effect of the read-only preview.
+
+**Review status:** Closed mapping for education funds and investment provident funds is still unavailable from this source; no professional rule has been invented. Independent review of the updated contract remains outstanding. No CI, domain changes or deployment.

@@ -20,8 +20,11 @@ try {
     Start-Sleep -Seconds 1
   }
   if (-not $ready) { throw "Probe PostgreSQL did not become ready" }
+  # The existing CRTISBA migration requires a separate, non-owner app DB role.
+  & docker exec $db psql -v ON_ERROR_STOP=1 -U probe_user -d settlement_migration_probe -c "CREATE ROLE settlement_probe_app NOLOGIN"
+  if ($LASTEXITCODE -ne 0) { throw "Could not create isolated application role" }
   $dbUrl = "postgresql://probe_user:probe_local_only@${db}:5432/settlement_migration_probe"
-  & docker run --rm --network $network --env "TEST_DATABASE_URL=$dbUrl" $image python tests/postgres_full_history_settlement_probe.py
+  & docker run --rm --network $network --env "TEST_DATABASE_URL=$dbUrl" --env "CRTISBA_APPLICATION_DB_ROLE=settlement_probe_app" $image python tests/postgres_full_history_settlement_probe.py
   if ($LASTEXITCODE -ne 0) { throw "PostgreSQL migration probe failed" }
   Write-Host "PASS: full-chain PostgreSQL historical-settlement migration. Workspace database untouched."
 } finally {

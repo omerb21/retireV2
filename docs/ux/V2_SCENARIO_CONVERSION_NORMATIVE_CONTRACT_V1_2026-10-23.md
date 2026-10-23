@@ -118,3 +118,10 @@ The following findings were confirmed by direct GitHub source reads on the activ
 **Open evidence to collect before approval:** confirm import persistence and handling of missing/unknown code; inventory real manual input values and any frontend select options; resolve code `5`, distinguish pure insurance risk versus pension insurance; establish actual source identifiers for education and investment provident funds; confirm product-scoped account metadata behavior in mixed files. Do not query or expose private customer records merely to construct a public example.
 
 **No change in gate:** Only code-level alias candidates are identified; no complete source-backed canonical alias list exists. `O-01 TYPE RESOLVER=OPEN`; `INDEPENDENT WORK RE-REVIEW=REQUIRED`; `PERMISSION-ONLY PREVIEW=NOT IMPLEMENTATION AUTHORIZED`; `SCENARIO SAVE=BLOCKED`.
+
+
+### H1. Import persistence confirmed by direct read
+
+`pension_product_import_service.import_source_batch` uses `metadata.model_dump()` to create `PensionProduct(..., source_kind="imported", **metadata.model_dump())`; existing products are updated using `ProductUpdate(**metadata.model_dump(), ...)` and `_update_locked`. Therefore the originally parsed `SUG-MUTZAR` raw code is in fact passed to the persisted `product_type` field without conversion to `PRODUCT_TYPE_LABELS` descriptions in these paths. For imported records whose raw value is exactly `"1"` ... `"5"`, the old `destinations` substring checks do not match and use `BASE_MATRIX`, even though code-level terminology might otherwise suggest a product override. This is a **demonstrated classification gap**, not proof that any individual customer record has been misclassified. Do not rewrite existing factual records in this design task.
+
+Importing unknown raw codes records `unmapped_product_type` diagnostics during parsing, but the full acceptance behavior must also be verified in `_prepare_batch` and schema validation; no claim of successful persistence of such records is made here.

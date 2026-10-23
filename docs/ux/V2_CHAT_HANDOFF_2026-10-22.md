@@ -911,3 +911,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Checked `pension_product_import_service._prepare_batch` and `ProductMetadata`: unknown XML type receives nonempty literal `סוג מוצר לא ממופה`, missing receives `סוג מוצר לא נמסר`; these are accepted as strings during schema validation. Unknown source types are therefore not safely handled by substring/base matrix fallback in prospective scenario preview.
 - Added evidence to normative contract §I in commit `e445914ce53038c22f129c727243d99d946b5362`. Do not treat the five Hebrew imported labels as complete legal type equivalences; education/investment provident manual aliases and savings insurance semantics are still open.
 - No CI/tests/code/database changes, merge or deploy. Preview implementation and scenario save not authorized. Further work: locate complete manual-entry UI and obtain authoritative classification mapping, then independently re-review normative contract.
+
+
+## DP. Manual product input located in actual routed screen (2026-10-23)
+- Inspected `frontend/src/routes/AppRoutes.tsx` and `frontend/src/pages/PensionProductsScreen.tsx`: the route `/clients/:clientId/pension-products` exposes metadata form with unbounded (nonempty) free-text `product_type` input; the default is `קופת גמל`. `productTypeLabel` is a display-only 1–5 code formatter, not an authoritative type resolver.
+- Added normative contract §J with exact finding. No complete manually entered type vocabulary can be proven from code. For prospective Preview an unknown/ambiguous type must fail closed; future controlled selector is a separate UX/migration task.
+- No financial code, CI, tests, database, PR, merge or deployment. Preview and authoritative save remain not authorized; external independent review required.

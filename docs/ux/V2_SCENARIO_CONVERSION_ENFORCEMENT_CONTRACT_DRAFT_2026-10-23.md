@@ -228,3 +228,17 @@ This section closes ambiguities of **technical safety behavior**, not those prof
 **Proposed evidence DTO:** source ID, source version or digest, effective date, scope (component/product/scenario), status (satisfied/missing/requires_reconciliation/not_applicable/unverified), and structured reason code. Do not equate an available row with an approved eligibility determination.
 
 **SCV-010 remains OPEN:** mapping an employment period, grant or tax approval to a specific source component requires an accepted authority and scope. `CONTRACT_READINESS=BLOCKED`.
+
+## 15. Owner-approved O-03: reviewed eligible subset of a whole plan (2026-10-23)
+
+**APPROVED PRODUCT WORKFLOW:** For a whole pension plan, show **every classified component** and its eligibility status; allow a conversion for only the permitted subset after the planner has explicitly reviewed and confirmed it. Prohibited components are not converted. **Never silently discard excluded components** or imply the entire plan was converted.
+
+**Required proposed contract semantics implementing O-03 (subject to technical independent re-review):**
+1. Server preview enumerates all factual components, source balances and exact classifications; displays allowed / prohibited / unresolved independently, with Hebrew reasons. Product-type overrides remain unresolved by O-01 and cannot be treated as permitted merely by the UI.
+2. Planner selects the desired eligible components and amounts, while the interface keeps all excluded components visible. Nothing is implicitly selected for a commit and no preview is a write.
+3. Before submission, show a clear confirmation of selected components/amounts and excluded/rejected/unresolved components. O-04 remains OPEN regarding whether each exclusion needs its own acknowledgment or a single reviewed-group acknowledgment.
+4. Submit **only explicit component IDs and exact amounts**, not a `whole_product=true` execution request. Server independently revalidates client ownership, source/version, action permissions, exact balances, source fingerprint and batch validity; any invalid submitted component rejects the *entire submitted batch* with zero partial writes.
+5. Original factual source components, forbidden components and residual balances are never changed by scenario decisions. Report unconverted funds separately; no invented tax, monthly pension or NPV.
+6. This is a scenario-domain UX/business decision only. The existing V2 factual `whole_product` code path, which reports `skipped` and performs actual mutations, is unchanged and **must not** be reused as a scenario implementation.
+
+**O-03 is CLOSED / APPROVED. O-01, O-02, O-04, O-05, O-06, O-07, O-08 remain OPEN.** Independent Work review verdict `BLOCKED` and implementation prohibition remain until these and other critical contract gates are addressed.

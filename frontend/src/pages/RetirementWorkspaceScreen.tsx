@@ -703,7 +703,7 @@ export function RetirementWorkspaceScreen() {
                 <option value="none">לא התקבל מענק פטור</option>
                 {employmentCreating && <option value="recorded">התקבל מענק פטור</option>}
               </select>
-            </label>
+            </label>}
             {(employmentCreating && historicalGrantStatus === "recorded") && <>
               <label>מספר תיק ניכויים <input required value={historicalGrantFile} onChange={event => setHistoricalGrantFile(event.target.value)} /></label>
               <label>מועד קבלת מענק <input required type="date" value={historicalGrantDate} onChange={event => setHistoricalGrantDate(event.target.value)} /></label>

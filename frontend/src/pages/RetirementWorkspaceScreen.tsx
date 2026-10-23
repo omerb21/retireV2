@@ -814,7 +814,7 @@ export function RetirementWorkspaceScreen() {
             <ul>
               {(mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? []).map(decision =>
                 <li key={decision.id}>
-                  {(() => { const [productId, code] = decision.source.split("|"); const item = products.find(row => row.product_id === productId); return item ? item.product_name + " — " + (FIXED_CODES.find(row => row[0] === code)?.[1] ?? "רכיב לא זמין") : "מקור לא זמין"; })()} — {decision.action === "pension" ? "ייעוד לקצבה" : decision.action === "capital" ? "ייעוד להון" : "ללא שינוי"}
+                  {(() => { const [productId, code] = decision.source.split("|"); const item = products.find(row => row.product_id === productId); return item ? item.product_name + " — " + (FIXED_CODES.find(row => row[0] === code)?.[1] ?? "רכיב לא זמין") : "מקור לא זמין"; })()} — {decision.action === "pension" ? "ייעוד לקצבה" : decision.action === "capital" ? "ייעוד להון" : "ללא שינוי"} — {money(decision.amount)} ₪ (הדמיה בלבד)
                   <button type="button" onClick={() => setMockAlternatives(prev => prev.map(item => item.id === mockActiveId
                     ? { ...item, decisions: item.decisions.filter(row => row.id !== decision.id) } : item))}>בטל החלטת הדמיה</button>
                 </li>)}

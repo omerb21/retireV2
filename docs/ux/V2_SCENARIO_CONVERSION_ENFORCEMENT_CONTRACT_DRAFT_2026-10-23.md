@@ -123,3 +123,18 @@ The mock `mockConversionEligibility.ts` is a *non-authoritative illustrative sna
 5. Do not refactor the factual conversion route as part of this UX/domain contract. Any change to it requires its own impact analysis and accepted governance gate.
 
 **Gate:** preliminary in-chat code review only; neither independent Work acceptance nor authoritative scenario engine implementation has occurred.
+
+## 11. Explicitly reviewed partial-plan selection — proposed UX only
+
+The previous sections use **atomic fail-closed** as the default for a submitted unreviewed batch. This does **not** prohibit an explicitly reviewed eligible-only request:
+
+1. Planner requests whole-plan `pension` or `capital_asset` preview.
+2. Server resolves every positive **canonical source component**, its available amount, classification and individual `allowed/blocked/needs_resolution` status.
+3. UI displays *all* components, including blocked ones; no component is silently removed. It displays a clear **eligible subset** and the aggregate eligible nominal principal, while keeping blocked amounts separate from unused balances.
+4. Planner may consciously select the permitted subset, alter amounts or cancel. The submitted request explicitly lists the chosen component identities and amounts, source/ruleset versions, and acknowledged excluded components. It is **not** `whole_product=true` implicit conversion.
+5. Server revalidates precisely this reviewed request against source and ruleset at submit. If anything changed or one submitted component is forbidden, **reject the complete submitted request atomically** with structured reasons; never silently apply the remaining subset.
+6. Blocked/unselected capital is never classified as converted; financial reporting distinguishes total original, converted nominal principal, blocked, selected-but-unallocated and independently assessed residual. Duplicate counting is prohibited.
+
+**Product decision still pending:** whether the planner must always manually acknowledge individual excluded components or can acknowledge a reviewed group. Do not interpret the assistant's recommendation of 'convert only eligible components' as owner approval.
+
+**Bounded future UX-MOCK:** a read-only list of per-component permission results for a selected whole plan, with explicit counts and disabled action preview; no server mutation and no persistent decision. To avoid conflicting sources of truth, the authoritative V2 service must later supply these results rather than the frontend's V1 snapshot.

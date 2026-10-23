@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
+import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
-  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), updateGrant: vi.fn(), createGrantForEmployment: vi.fn(), linkGrantToEmployment: vi.fn(),
+  getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), createHistoricalEmploymentSettlement: vi.fn(), updateGrant: vi.fn(), createGrantForEmployment: vi.fn(), linkGrantToEmployment: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
@@ -422,6 +422,42 @@ describe("סביבת העבודה המקצועית החדשה", () => {
       work_end_date: null, is_current: true, notes: null,
     });
     expect(updateEmploymentRecord).not.toHaveBeenCalled();
+  });
+
+  it("creates a historical employment period and its recorded exempt grant in one request", async () => {
+    const created = { employment_record_id: "historical-1", client_id: 1,
+      employer_name: "מעסיק היסטורי", work_start_date: "2000-01-01",
+      work_end_date: "2020-01-01", is_current: false, notes: null };
+    const grant = { grant_id: "one-grant", client_id: 1, employment_record_id: "historical-1",
+      employer_name: "מעסיק היסטורי", employer_withholding_file_number: "12345",
+      employment_start_date: "2000-01-01", employment_end_date: "2020-01-01",
+      grant_receipt_date: "2020-02-01", exempt_grant_amount: "1200" };
+    vi.mocked(createHistoricalEmploymentSettlement).mockResolvedValue({
+      employment_record_id: "historical-1", client_id: 1, exempt_grant_status: "recorded", grant_id: "one-grant",
+    });
+    vi.mocked(getEmploymentRecords).mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
+    vi.mocked(getGrants).mockResolvedValueOnce([]).mockResolvedValueOnce([grant]);
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "רשומות תעסוקה (0)" });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף רשומת תעסוקה" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "שם מעסיק" }), { target: { value: "מעסיק היסטורי" } });
+    fireEvent.change(screen.getByLabelText("תאריך תחילה"), { target: { value: "2000-01-01" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "מועסק כיום" }));
+    fireEvent.change(screen.getByLabelText("תאריך סיום"), { target: { value: "2020-01-01" } });
+    fireEvent.change(screen.getByLabelText("מצב מענק הפיצויים הפטור"), { target: { value: "recorded" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "מספר תיק ניכויים" }), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("מועד קבלת מענק"), { target: { value: "2020-02-01" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "מענק פיצויים פטור מדווח" }), { target: { value: "1200" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמור רשומת תעסוקה חדשה" }));
+    await waitFor(() => expect(createHistoricalEmploymentSettlement).toHaveBeenCalledWith(1, {
+      employment: { employer_name: "מעסיק היסטורי", work_start_date: "2000-01-01",
+        work_end_date: "2020-01-01", is_current: false, notes: null },
+      exempt_grant_status: "recorded", employer_withholding_file_number: "12345",
+      grant_receipt_date: "2020-02-01", exempt_grant_amount: "1200",
+    }));
+    expect(createEmploymentRecord).not.toHaveBeenCalled();
   });
 
   it("creates a grant within its historical employment period atomically", async () => {

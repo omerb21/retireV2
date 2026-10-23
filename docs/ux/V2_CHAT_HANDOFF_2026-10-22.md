@@ -684,3 +684,7 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Replaced comparison placeholder paragraph with scrollable comparison **structure**: retirement date, allocations, monthly pensions, capital draw, taxes/exemptions, evidence and freshness, all cells explicitly `לא חושב`. No invented estimates.
 - Expanded the existing focused scenario navigation test to check two `טרם נוצרה` states, no fictitious computed result (21 cells), and no factual product write calls. Latest UI changes and test assertions remain **pending user's local TypeScript/Vitest execution**.
 - Guardrails: `UX-MOCK`, in-chat bounded update; Codex and Work reserved for material implementation/review gates to conserve credits. No schema change, DB migration, backend change, master merge or production deploy.
+
+## CA. Owner-confirmed UX mock build/test pass (2026-10-23)
+- Owner pulled `c05d56e` to local Windows workspace. `npm.cmd run build` succeeded (TypeScript and Vite 76 transformed modules); focused `RetirementWorkspaceScreen.test.tsx` passed **24/24**, including scenario/results read-only/no factual writes assertion. React Router future-flag warnings nonblocking.
+- This validates presentation and existing focused interactions only, not scenario implementation or professional calculations. Work/Codex independent review not invoked; reserve for substantive domain/implementation gate. No backend/database changes, CI, merge or deployment.

@@ -766,7 +766,7 @@ export function RetirementWorkspaceScreen() {
                 <option value="">בחר מקור</option>
                 {products.flatMap(item => FIXED_CODES.filter(([code]) => {
                   const value = item.components[code];
-                  return value != null && /^(?!0+(?:\\.0+)?$)\\d+(?:\\.\\d+)?$/.test(value);
+                  return value != null && /^[0-9]+(?:[.][0-9]+)?$/.test(value) && !/^0+(?:[.]0+)?$/.test(value);
                 }).map(([code, label]) => <option key={item.product_id + "|" + code} value={item.product_id + "|" + code}>
                   {item.product_name} — {label} ({money(item.components[code])} ₪)
                 </option>))}

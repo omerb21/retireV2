@@ -935,3 +935,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Inspected `main.py`, `security/middleware.py`, `security/config.py`, `db/session.py`, `pension_product_routes.py`, `canonical_pension_source_reader.py` and `pension_product_service.py`. Production middleware enforces session validation and CSRF/origin on unsafe operations; development/test bypass its production branch. No proven per-client principal permissions model in inspected sources; single configured actor is present.
 - Existing factual read helpers use `lock_client` with SQLite UPDATE or PostgreSQL FOR UPDATE/advisory lock. A zero-write Permission Preview needs a dedicated snapshot read and independently accepted security scope, not unchecked helper reuse or a speculative multi-tenant RBAC rewrite.
 - Updated normative contract §K (commit `87e06abd3df5e0141cb6ad8d58104c8ecae13d60`). This is static source assessment, not independent Work approval. No executable modifications, tests, CI, database, merge or deployment. Permission-only preview and scenario save remain unauthorized.
+
+
+## DT. Production actor session boundary verified (2026-10-23)
+- Read `security/transport.py::validate_session`, `security/session.py`, `security/config.py` and `api/auth_routes.py`. Production verified Session sets `trusted_professional_actor` from `actor_id`, bound to configured single `AUTH_ACTOR_ID`. No evidenced per-planner client ACL. Suitable review proposal: accept authenticated operator scope only for current single-operator model, not imaginary multi-tenant RBAC.
+- Added normative contract §L at commit `cbd62bb995b5c0e0adbd52b7ca7120c2f3951b30` with bounded session access assumptions and security tests. Zero-write snapshot, source type resolution and independent review still outstanding.
+- No CI, tests, code, DB, merge or deployment. No Work audit executed; authoritative scenario-save remains BLOCKED.

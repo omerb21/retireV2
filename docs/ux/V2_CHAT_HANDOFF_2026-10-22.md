@@ -666,3 +666,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Removed duplicate legacy employment navigation link from the supplementary panel and labelled inline employer correction as canonical workflow. Grant panel retains clearly marked link `פעולות מענקים נוספות בממשק הוותיק` because not every grant action is yet replaced. Other category links unchanged.
 - Updated frontend focused test that formerly asserted the legacy employment link, to expect no old employment link and an explicit legacy grant fallback. Changed only frontend and test; no local DB or backend changes, no CI/master/production.
 - Pending owner run: `npm.cmd run build` and `npm.cmd exec vitest -- run src/pages/RetirementWorkspaceScreen.test.tsx` in frontend folder. Existing Vite dev server should hot-reload after `git pull`.
+
+## BX. Legacy employment navigation cleanup frontend verification PASS (2026-10-23)
+- User pulled commit `76c029d`; `npm.cmd run build` passed (TypeScript + Vite, 76 modules), and focused workspace Vitest suite passed **24/24** including updated test `uses workspace employment editing and labels legacy grant fallback explicitly`.
+- React Router v7 future-flag warnings only, not test failures. Backend earlier **6/6** and active local backend `healthy` / /health `ok` from prior owner verification. No further migrations are required.
+- Next UX stage: historical-employment termination components and evidence are **not yet modeled**. Do not invent professional contracts or treat taxable grants, continuity elections, 161 forms as fully supported. Preserve two linked synthetic exempt grants, keep status `requires_reconciliation`, maintain distinction current employer vs historical factual settlement.
+- No master merge, production deployment or full CI.

@@ -190,7 +190,7 @@ export function RetirementWorkspaceScreen() {
       return;
     }
     if (employmentCreating && !record.is_current && historicalGrantStatus === "recorded"
-      && (!historicalGrantFile.trim() || !/^\\d{4}-\\d{2}-\\d{2}$/.test(historicalGrantDate)
+      && (!historicalGrantFile.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(historicalGrantDate)
         || !completeAmount(historicalGrantAmount) || Number(historicalGrantAmount) <= 0)) {
       setEmploymentError("להזנת מענק פטור נדרשים תיק ניכויים, תאריך קבלה וסכום חיובי תקין.");
       return;

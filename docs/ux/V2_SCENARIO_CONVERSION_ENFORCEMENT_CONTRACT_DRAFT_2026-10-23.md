@@ -99,3 +99,27 @@ The mock `mockConversionEligibility.ts` is a *non-authoritative illustrative sna
 - **Owner:** professional decisions above. No merge, production release, migration or new financial calculation follows from this draft.
 
 **Current gate:** contract drafted, not professionally accepted; no V2 authoritative validation service implemented.
+
+## 10. Existing V2 backend source-code reconciliation (read-only, 2026-10-23)
+
+**Actual files examined on the UX branch:**
+- `backend/app/models/pension_product.py`: 11 canonical component codes and exact source product versions.
+- `backend/app/services/canonical_conversion_matrix.py`: `MATRIX_VERSION = canonical-component-conversion-matrix-v1`, `destinations(code, product_type)` and `tax_for` already provide **authoritative permissions for factual conversions**.
+- `backend/app/services/canonical_component_conversion_service.py`: `_preflight` locks source rows and checks expected product version; explicit selections invoke `tax_for`, whereas `whole_product=True` **silently accumulates disallowed components in `skipped` and proceeds with selected allowed components**. This must not be naively copied into scenario batch semantics.
+- `backend/app/api/canonical_conversion_routes.py`: `/preview` and factual `execute` live together; execute changes canonical ledger facts.
+- `backend/app/services/m06_conversion_service.py`: historical evidence reads only, not a new scenario pension producer.
+- `backend/app/services/m09_scenario_subject_service.py`: immutable scenario subject adjustment manifests and baseline artifacts exist, but their adjustments are **not** the pension-component allocation scenario contract proposed here.
+- `docs/ux/SCENARIO_ENGINE_INTEGRATION_GATE.md`: already documents why present M06/M09/M10 archive/stateless outputs are not a complete prospective scenario engine.
+
+**Explicit correction to earlier assumption:** V2 already has a central server-side component permission matrix for factual conversions; the missing capability is authoritative **scenario-scoped** validation/decisions and a reviewed compatibility contract, not inventing any permissions service from zero.
+
+**Rule parity and potential conflicts:** V2 canonical matrix appears to cover the same 11 permissions as V1's backend for ordinary products, with education/investment product-type overrides. Its tax values and some V1 frontend settings differ and require row-by-row explicit verification; permission parity does NOT imply tax parity. In particular, never load the V1 browser `localStorage` settings as V2 financial authority.
+
+**Revised implementation direction:**
+1. Reuse `destinations` as the *starting permission reference* subject to rule/version review, in a **new read-only scenario adapter**; do not call factual conversion `preview` if it needs conversion-specific inputs or implies its execution lifecycle.
+2. Verify effective source snapshot and scenario lifecycle *independently* of `M09ScenarioSubject` and M06 archival state, or obtain explicit integration contract approval before extending them.
+3. The current factual `whole_product` skip behavior is a **separate behavior** from the proposed scenario **atomic fail-closed** batch. The owner must explicitly choose whether to block whole batch or allow informed selection/exclusion; preserve skipped components in both UX and backend results.
+4. Add exact comparison tests between V1 backend and V2 `destinations` for every code and recognized product class; negative tests must verify no write and no accidental eligible-subset commit on forbidden scenario batches.
+5. Do not refactor the factual conversion route as part of this UX/domain contract. Any change to it requires its own impact analysis and accepted governance gate.
+
+**Gate:** preliminary in-chat code review only; neither independent Work acceptance nor authoritative scenario engine implementation has occurred.

@@ -309,6 +309,10 @@ export function RetirementWorkspaceScreen() {
 
   async function confirmGrantLink(grant: GrantItem, period: EmploymentRecordItem) {
     if (activeClient.current !== clientId || linkingGrantId || grantSaving || employmentSaving || employmentEdit || grantEdit) return;
+    if (grantRecords.some(item => item.employment_record_id === period.employment_record_id)) {
+      setLinkError("כבר רשום מענק פטור לתקופת העסקה זו. יש לתקן את ההתחשבנות הקיימת ולא להוסיף מענק נוסף.");
+      return;
+    }
     if (grant.client_id !== clientId || period.client_id !== clientId || grant.employment_record_id
       || period.is_current || !period.work_end_date
       || grant.employment_start_date !== period.work_start_date
@@ -601,7 +605,7 @@ export function RetirementWorkspaceScreen() {
                   {index === 1 && grantRecords[itemIndex] && <button type="button" disabled={grantSaving} onClick={() => openSupplementEditor("grant", itemIndex)}>תקן מענק</button>}
                   {index === 0 && employmentRecords[itemIndex] && <button type="button" disabled={employmentSaving} onClick={() => openSupplementEditor("employment", itemIndex)}>תקן רשומת תעסוקה</button>}
                   {index === 0 && employmentRecords[itemIndex] && !employmentRecords[itemIndex].is_current && <>
-                    <button type="button" disabled={!!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
+                    <button type="button" disabled={grantRecords.some(grant => grant.employment_record_id === employmentRecords[itemIndex].employment_record_id) || !!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
                       onClick={() => {
                         const period = employmentRecords[itemIndex];
                         if (!period || !period.work_end_date) return;
@@ -617,12 +621,13 @@ export function RetirementWorkspaceScreen() {
                         });
                         setSupplementCategory(0);
                       }}>הוסף מענק לתקופת העסקה</button>
+                    {grantRecords.filter(grant => grant.employment_record_id === employmentRecords[itemIndex].employment_record_id).length > 1 && <p role="alert">קיימת כפילות מענקים פטורים לתקופת העסקה זו. נדרש בירור ותיקון נתונים, ללא מחיקה אוטומטית.</p>}
                     {grantRecords.filter(grant => grant.employment_record_id === employmentRecords[itemIndex].employment_record_id).map(grant =>
                       <p key={grant.grant_id}>מענק משויך: {grant.employer_name} — {grant.exempt_grant_amount} ₪ (מדווח)</p>)}
                     {grantRecords.filter(grant => !grant.employment_record_id
                       && grant.employment_start_date === employmentRecords[itemIndex].work_start_date
                       && grant.employment_end_date === employmentRecords[itemIndex].work_end_date).map(grant =>
-                      <button type="button" key={grant.grant_id} disabled={!!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
+                      <button type="button" key={grant.grant_id} disabled={grantRecords.some(row => row.employment_record_id === employmentRecords[itemIndex].employment_record_id) || !!linkingGrantId || grantSaving || employmentSaving || !!employmentEdit || !!grantEdit}
                         onClick={() => void confirmGrantLink(grant, employmentRecords[itemIndex])}>
                         שייך מענק לא מקושר: {grant.employer_name} — {grant.exempt_grant_amount} ₪
                       </button>)}

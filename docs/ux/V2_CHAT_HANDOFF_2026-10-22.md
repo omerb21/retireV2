@@ -876,3 +876,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Professional owner expressly confirmed that pension payments from `תגמולי_עובד_עד_2000` and `תגמולי_מעביד_עד_2000` are tax **exempt**, as in V1 frontend; V1/V2 backend taxable labels are inconsistent with approved business rule. O-02 CLOSED for these two classifications and pension destination only.
 - Updated owner decision register and scenario contract §21. Current V2 server tax labels are **not** corrected in executable code; separate scoped domain fix and tests need explicit implementation authorization. Scenario current tax API stays `not_evaluated` until approved evidence/ruleset implementation.
 - Added O-07 proposed immutable ruleset registry (signed owner approval, effective intervals, fingerprints, historical replay, stale re-evaluation). O-07 not yet owner-approved. Overall Work contract verdict BLOCKED, engine implementation not authorized. No CI, DB, factual code or deployment changes.
+
+## DJ. Owner APPROVED O-07 conversion ruleset governance (2026-10-23)
+- Owner approved approval authority restricted to system owner or explicitly delegated professional. Preserve historical versions, effective dates and change audit; historical scenario results must not be silently overwritten.
+- Updated decision register and contract §22 with approval/delegation audit, immutable ruleset versions, revision/currentness semantics. This is accepted governance policy, not implementation authorization. O-08 evidence policy and O-01 anomaly verification remain open. Work contract BLOCKED.
+- Docs-only. No changes to financial services, CI, DB, deployment or production.

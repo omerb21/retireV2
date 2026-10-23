@@ -851,3 +851,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner chose a **single explicit acknowledgment for all excluded plan components**, after seeing the complete per-component list and each exclusion reason; no individual confirmation required. O-03 eligible-subset selection remains approved.
 - Updated owner decision register and scenario contract §16. Proposed engineering safeguards: acknowledgment bound to exact reviewed preview/reason set, invalidation on changed source/selection/ruleset, server-side atomic revalidation; do not imply financial eligibility.
 - O-03/O-04 CLOSED; O-01/O-02/O-05…O-08 remain OPEN; Work BLOCKED contract verdict and financial implementation prohibition unchanged. Documents only; no additional tests needed.
+
+## DE. Owner APPROVED O-05 automatic residual (2026-10-23)
+- Owner approved: money not allocated to pension/capital is an **automatically calculated remaining balance**, not a separate conversion/retain decision.
+- Updated decision register and scenario contract §17. Define per-component original minus accepted allocations with exact Decimal, separate projected draft remaining, reject over-allocation and negative residual, mark stale if source changes, and display reconciliation discrepancy separately.
+- O-03/O-04/O-05 are owner-approved. O-01/O-02/O-06/O-07/O-08 still open; Work contract BLOCKED and authoritative implementation prohibited. Documentation only; no code or CI changes.

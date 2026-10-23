@@ -50,6 +50,11 @@ function mockAmountInCents(value: string): bigint | null {
   const [whole, fraction = ""] = value.split(".");
   return BigInt(whole) * 100n + BigInt((fraction + "00").slice(0, 2));
 }
+function mockNominalAmount(decisions: ScenarioMockDecision[], action: ScenarioMockDecision["action"]): string {
+  const total = decisions.filter(item => item.action === action)
+    .reduce((sum, item) => sum + (mockAmountInCents(item.amount) ?? 0n), 0n);
+  return money((total / 100n).toString() + "." + (total % 100n).toString().padStart(2, "0"));
+}
 function completeAmount(value: string): boolean {
   return /^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$/.test(value);
 }
@@ -899,6 +904,15 @@ export function RetirementWorkspaceScreen() {
             <tbody>
               <tr><th scope="row">החלטות הדמיה</th><td>לא נוצר</td>
                 {mockAlternatives.map(item => <td key={item.id}>{item.decisions.length} החלטות זמניות</td>)}
+              </tr>
+              <tr><th scope="row">סכום קרן שיועד לקצבה בהדמיה (לא קצבה חודשית)</th><td>לא חושב</td>
+                {mockAlternatives.map(item => <td key={item.id}>{mockNominalAmount(item.decisions, "pension")} ₪</td>)}
+              </tr>
+              <tr><th scope="row">סכום קרן שיועד להון בהדמיה (לא משיכה מאושרת)</th><td>לא חושב</td>
+                {mockAlternatives.map(item => <td key={item.id}>{mockNominalAmount(item.decisions, "capital")} ₪</td>)}
+              </tr>
+              <tr><th scope="row">יתרה שלא נוצלה בכלל התיק</th><td>לא חושב</td>
+                {mockAlternatives.map(item => <td key={item.id}>טרם חושב — נדרש בסיס תיק מלא</td>)}
               </tr>
               <tr><th scope="row">פירוט החלטות</th><td>אין</td>
                 {mockAlternatives.map(item => <td key={item.id}>

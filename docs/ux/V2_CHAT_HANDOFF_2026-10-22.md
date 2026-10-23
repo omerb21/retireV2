@@ -941,3 +941,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Read `security/transport.py::validate_session`, `security/session.py`, `security/config.py` and `api/auth_routes.py`. Production verified Session sets `trusted_professional_actor` from `actor_id`, bound to configured single `AUTH_ACTOR_ID`. No evidenced per-planner client ACL. Suitable review proposal: accept authenticated operator scope only for current single-operator model, not imaginary multi-tenant RBAC.
 - Added normative contract §L at commit `cbd62bb995b5c0e0adbd52b7ca7120c2f3951b30` with bounded session access assumptions and security tests. Zero-write snapshot, source type resolution and independent review still outstanding.
 - No CI, tests, code, DB, merge or deployment. No Work audit executed; authoritative scenario-save remains BLOCKED.
+
+
+## DU. Zero-write read snapshot protocol design recorded (2026-10-23)
+- Inspected `db/session.py`, source lock helpers, `security/transport.py` and `security/session.py`. Current `lock_client` is deliberately writer-oriented, including SQLite UPDATE, and must remain in factual write paths.
+- Added normative contract §M, commit `2bc33b5784731f5774dc1542b5667c2ce3028fdc`: proposed PostgreSQL REPEATABLE READ READ ONLY transaction for one consistent product-and-components snapshot, separate SQLite snapshot verification, zero SQL write/lock capture, and cross-version concurrency tests. Design only, not executed or accepted.
+- Proposed POST permission-preview requires Origin+CSRF in Production as an unsafe method despite not writing data. Avoid bypassing middleware.
+- No financial implementation, tests, CI, local DB changes, merge or deployment. Independent Work re-review and closed product-type resolver still block endpoint implementation; authoritative scenario save additionally blocked.

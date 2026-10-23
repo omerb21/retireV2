@@ -19,7 +19,7 @@ const FIXED_CODES: Array<[string, string, "פיצויים" | "תגמולים"]> 
 ];
 type Step = "client" | "portfolio" | "supplement" | "scenario" | "results";
 type Selection = { productId: string; code: string };
-type ScenarioMockDecision = { id: number; source: string; action: "pension" | "capital" | "unchanged" };
+type ScenarioMockDecision = { id: number; source: string; amount: string; action: "pension" | "capital" | "unchanged" };
 type Draft = { productId: string; version: number; components: Record<string, string> };
 type ReadState =
   | { state: "loading" }
@@ -67,6 +67,8 @@ export function RetirementWorkspaceScreen() {
   const [mockAlternatives, setMockAlternatives] = useState<Array<{ id: number; name: string; decisions: ScenarioMockDecision[] }>>([]);
   const [mockActiveId, setMockActiveId] = useState<number | null>(null);
   const [mockSource, setMockSource] = useState("");
+  const [mockAmount, setMockAmount] = useState("");
+  const [mockError, setMockError] = useState<string | null>(null);
   const [mockAction, setMockAction] = useState<ScenarioMockDecision["action"]>("unchanged");
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
@@ -105,6 +107,8 @@ export function RetirementWorkspaceScreen() {
     setMockAlternatives([]);
     setMockActiveId(null);
     setMockSource("");
+    setMockAmount("");
+    setMockError(null);
     setMockAction("unchanged");
     setSupplement(null);
     setSupplementError(null);

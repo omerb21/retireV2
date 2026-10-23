@@ -138,3 +138,49 @@ The previous sections use **atomic fail-closed** as the default for a submitted 
 **Product decision still pending:** whether the planner must always manually acknowledge individual excluded components or can acknowledge a reviewed group. Do not interpret the assistant's recommendation of 'convert only eligible components' as owner approval.
 
 **Bounded future UX-MOCK:** a read-only list of per-component permission results for a selected whole plan, with explicit counts and disabled action preview; no server mutation and no persistent decision. To avoid conflicting sources of truth, the authoritative V2 service must later supply these results rather than the frontend's V1 snapshot.
+
+## 12. Independent Work audit disposition — BLOCKED (2026-10-23)
+
+**External independent review received from owner; read-only, no repo changes/tests by Work.** Review evidence cites V2 HEAD `d2b32d5abe97e478f7a97ef19a99c8a4e5de5738` and V1 HEAD `611557d7d413fa06519b0a381e259177852a8244`. Verify commit drift before relying on line-level findings. Work verdict: `CONTRACT_READINESS=BLOCKED`, `SCENARIO_ENGINE_IMPLEMENTED=NO`, `SERVER_SIDE_SCENARIO_ENFORCEMENT=NOT_IMPLEMENTED`, `IMPLEMENTATION=NOT_AUTHORIZED`.
+
+### Required changes from SCV-001…SCV-010
+
+| Finding | Contract disposition |
+| --- | --- |
+| SCV-001 | Define separate scenario-owned API, no factual execute or execute-and-reverse. |
+| SCV-002 | Never copy factual whole-product silent skip; return all permitted, blocked and unresolved components and require explicit reviewed selection. |
+| SCV-003 | Closed canonical product-type resolver; missing, ambiguous, unknown must fail closed. |
+| SCV-004 | Product-type exception precedence over blocked severance requires professional decision; do not enable in authoritative scenario until approved. |
+| SCV-005 | Permission and tax decoupled; `tax_status=not_evaluated` until professional authority accepted, including pre-2000 conflicting tax labels. |
+| SCV-006 | Public action `capital_asset` maps *only* to V2 internal `capital`; one versioned mapping, no permissive alias. |
+| SCV-007 | Define persistent ruleset authority and historical version/effective date/signer/predecessor, not only static `MATRIX_VERSION`. |
+| SCV-008 | M09 monthly cashflow adjustments are **not** pension product allocation aggregate. Use separate scenario decision aggregate, subject to architecture review. |
+| SCV-009 | Contract must define component_id, lock ordering, idempotency, CAS, scenario total allocation, snapshot fingerprint, rollback and conflict precedence before authoritative save. |
+| SCV-010 | Attach each professional prerequisite to named authoritative evidence producer, scope, version and reason code. Unrelated source allocations must not inherit an unreviewed V1 global blocker. |
+
+### Proposed strict phased engineering boundary (NOT APPROVED TO IMPLEMENT)
+
+**P0 / owner+contract:** finalize permission/eligibility/tax boundary, exception precedence, explicit reviewed eligible-subset semantics, residual, historical rules and evidence scope.
+
+**P1 / read-only server preview:** read sources using client/product scope, classify from persisted canonical type, enumerate each component with structured allow/block/unresolved decisions; return `tax_status=not_evaluated`. No persistence and no dependency on factual execute.
+
+**P2 / scenario aggregate:** separate versioned scenario/revision and append-only decisions under client, component_id, exact source version/fingerprint, deterministic money, total-availability constraint, idempotency and lifecycle. Never update factual components.
+
+**P3 / explicit batch save:** client authorization, deterministic lock order, optimistic version, same ruleset and factual snapshot, revalidation and atomic rollback. No implicit pruning.
+
+**P4 / frontend integration:** replace local mock permission guard with authoritative read-only preview; show original, permitted, blocked, unresolved and residual separately.
+
+**P5 / negative and parity tests:** 11×2, exception precedence, cross-client, unknown product, change races, double allocations, stale ruleset, rejection rollback and full source snapshots. No financial outputs until accepted engines.
+
+### OPEN owner decisions; must not be silently inferred
+
+1. Can education/investment product-type overrides bypass blocked severance classifications or do blocked severance prerequisites always prevail?
+2. What is the professional tax authority for pre-2000 employee/employer contributions' pension conversion?
+3. Confirm explicit reviewed eligible subset vs whole-batch rejection for mixed plans.
+4. Per-component exclusion acknowledgement or grouped review?
+5. Is leave-unallocated only residual or also an explicit retain instruction?
+6. What scope should unsettled severance/rights-continuity blockers have?
+7. Who approves rule versions and retroactive applicability?
+8. Which evidence source and currency/validity must govern termination, settlement, historical grants, tax approvals and 161d?
+
+**Review outcome is binding as a release/milestone gate:** Do not hand off financial implementation to Codex as approved; correct and seek review of this contract first. Owner-reviewed 33/33 frontend and 15/15 backend results support only their narrow test surfaces, not the missing scenario engine.

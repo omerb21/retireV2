@@ -315,3 +315,19 @@ The frontend code comment identifies these as capital-origin contributions, wher
 **Required professional ruling for O-02:** specify separately (a) capital-origin nature of pre-2000 contributions, (b) whether and when converting them to a pension creates exempt versus taxable pension payments, (c) whether allocation permission and tax entitlement can diverge, (d) required evidence/effective-date authority, and (e) which existing V1 behavior is financially correct for actual users. Do not choose `exempt` merely because of a frontend comment, or `taxable` merely because two backends agree.
 
 **O-02 remains OPEN.** The independent Work `BLOCKED` contract readiness and `NOT_AUTHORIZED` financial implementation gates remain unchanged.
+
+## 21. O-02 owner-approved tax treatment and O-07 ruleset governance design (2026-10-23)
+
+**O-02 APPROVED PROFESSIONAL BUSINESS CLASSIFICATION:** Pension payments originating from `תגמולי_עובד_עד_2000` or `תגמולי_מעביד_עד_2000` are **exempt**, consistent with V1 frontend defaults. This is an explicit owner's professional decision, not an independent legal conclusion. V1 backend and current V2 `canonical_conversion_matrix.py` encode `taxable` for these sources/destination and thus require a separately scoped remediation. **Do not alter live factual conversion/tax calculations as part of this documentation change.** The current server labels are not an accepted scenario tax authority.
+
+**Guardrails:** this ruling covers these two component classifications and pension output only. Do not infer tax treatment for another source, product, capital destination, historical period or evidence state. Until a versioned scenario calculation authority and its prerequisites are implemented and accepted, a live scenario response must still report `tax_status=not_evaluated`, while an approved ruleset specification may document the intended `exempt` classification. Distinguish source capital status from pension tax result.
+
+### O-07 proposal — rule authority and historical reproducibility (NOT YET OWNER APPROVED)
+
+- Every accepted conversion permission/tax ruleset is immutable, identified by a unique `ruleset_id` and content fingerprint; record approval identity, approval time, effective-from date and optional effective-to date, prior version reference, documented professional reason, and affected codes/products/outputs.
+- Draft rule edits are separate from published rulesets; publishing requires explicit professional owner authorization and human-readable differences. No browser `localStorage` or UI overrides become server authority.
+- A scenario decision references its original accepted ruleset and factual source fingerprint. Historical results remain traceable; recalculation under newly effective rules yields a new evaluation/revision rather than silently rewriting prior accepted outputs.
+- If the rule relevant to a pending decision changes, mark its evaluation stale and require revalidation before new save. Effective-date boundaries, retrospective corrections and grandfathering are **professional owner policy decisions**; do not silently choose.
+- Proposed acceptance tests cover immutable ruleset, unknown-version rejection, conflicting effective-date intervals, source/ruleset change currentness, and historical replay. Authorization/signer implementation must be reviewed before coding.
+
+**O-02 CLOSED/OWNER APPROVED; O-07 OPEN (governance proposal).** O-01 detailed resolver/anomaly interpretation and O-08 evidence production remain under review. `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED` remain in force.

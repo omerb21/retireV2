@@ -119,6 +119,11 @@ class EmploymentRecordRequest(BaseModel):
     notes: str | None = None
 
 
+class HistoricalEmploymentSettlementUpdateRequest(EmploymentRecordRequest):
+    model_config = ConfigDict(extra="forbid")
+    exempt_grant_status: Literal["not_reviewed", "none", "recorded", "requires_reconciliation"] | None = None
+
+
 class EmploymentSettlementCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     employment: EmploymentRecordRequest
@@ -2295,7 +2300,7 @@ def list_employment_records(client_id: int, db: Session = Depends(get_db)) -> li
 def update_employment_record(
     client_id: int,
     employment_record_id: str,
-    payload: EmploymentRecordRequest,
+    payload: HistoricalEmploymentSettlementUpdateRequest,
     db: Session = Depends(get_db),
 ) -> EmploymentRecordResponse:
     _require_client(db, client_id)
@@ -2311,6 +2316,21 @@ def update_employment_record(
     ):
         raise HTTPException(status_code=409, detail="Cannot change linked employment period dates or current status")
 
+    if payload.exempt_grant_status is not None:
+        if record.is_current or payload.is_current:
+            raise HTTPException(status_code=422, detail="Historical settlement status cannot be edited on current employment")
+        linked_count = db.scalar(select(func.count(Grant.grant_id)).where(
+            Grant.client_id == client_id, Grant.employment_record_id == employment_record_id,
+        ))
+        actual_status = (
+            "requires_reconciliation" if linked_count > 1 else
+            "recorded" if linked_count == 1 else None
+        )
+        if actual_status is not None and payload.exempt_grant_status != actual_status:
+            raise HTTPException(status_code=409, detail="Cannot overwrite linked grant status; reconcile grants first")
+        if actual_status is None and payload.exempt_grant_status not in ("not_reviewed", "none"):
+            raise HTTPException(status_code=409, detail="Cannot claim a recorded grant without a linked grant")
+        record.exempt_grant_status = payload.exempt_grant_status
     record.employer_name = payload.employer_name
     record.work_start_date = payload.work_start_date
     record.work_end_date = payload.work_end_date

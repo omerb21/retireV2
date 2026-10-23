@@ -214,3 +214,17 @@ These are **proposed engineering constraints**, not permission to implement the 
 | Evidence for termination/settlement/grants/tax/161d | No successful eligibility classification without source-backed prerequisites where applicable |
 
 This section closes ambiguities of **technical safety behavior**, not those professional choices. `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED` remain unchanged until reviewed.
+
+## 14. V2 evidence-producer mapping — direct code inspection
+
+- **Monetary source:** `backend/app/models/pension_product.py` holds the 11 canonical component balances, `product_id`, `product_type` and version. Source identity/version and a scenario-specific fingerprint still need a formal contract.
+- **Reported versus calculated total:** `backend/app/services/pension_product_reconciliation.py::reconcile` already computes exact Decimal component sums and reported-total discrepancies; it never distributes a discrepancy. Future UX should reuse this, not invent totals.
+- **Employment/termination:** `backend/app/models/employment_record.py` contains start/end dates, current status and exempt grant status, including `requires_reconciliation`. Presence of a historical employment record does not by itself prove eligibility for conversion.
+- **Historical grants:** `backend/app/models/grant.py` supports a client-scoped grant with optional employment-period link and dated nominal/indexed amounts. A matching/approval rule for a particular pension component has not been established.
+- **Personal dates:** `backend/app/models/client_profile.py` contains optional birth date and gender. These are not a complete accepted pension coefficient or retirement-date authority.
+- **Tax approvals / 161d:** no authoritative producer was established in this targeted inspection. Tax output remains `not_evaluated` until evidence and professional rules are accepted.
+- **Conversion permission:** `backend/app/services/canonical_conversion_matrix.py` has a static rule version, not a historical signed ruleset registry.
+
+**Proposed evidence DTO:** source ID, source version or digest, effective date, scope (component/product/scenario), status (satisfied/missing/requires_reconciliation/not_applicable/unverified), and structured reason code. Do not equate an available row with an approved eligibility determination.
+
+**SCV-010 remains OPEN:** mapping an employment period, grant or tax approval to a specific source component requires an accepted authority and scope. `CONTRACT_READINESS=BLOCKED`.

@@ -36,6 +36,8 @@ def test_explicit_link_and_protection_for_ended_employment_period(tmp_path):
         result = client.post(endpoint, json={"employment_record_id": first})
         assert result.status_code == 200, result.text
         assert result.json()["employment_record_id"] == first
+        second_grant = _grant(client, cid)
+        assert client.post(f"/api/clients/{cid}/grants/{second_grant}/employment-link", json={"employment_record_id": first}).status_code == 409
         assert client.get(f"/api/clients/{cid}/grants").json()[0]["employment_record_id"] == first
         assert client.post(endpoint, json={"employment_record_id": later}).status_code in (409, 422)
         # Existing linked records cannot silently lose their period identity.
@@ -91,6 +93,7 @@ def test_atomic_creation_for_ended_period_and_fail_closed_for_invalid_periods(tm
         result = client.post(url, json=payload)
         assert result.status_code == 200, result.text
         assert result.json()["employment_record_id"] == historic
+        assert client.post(url, json=payload).status_code == 409
         assert client.get(f"/api/clients/{a}/grants").json()[0]["employment_record_id"] == historic
         assert client.post(f"/api/clients/{a}/employment-records/{current}/grants", json=payload).status_code == 422
         assert client.post(f"/api/clients/{a}/employment-records/{other}/grants", json=payload).status_code == 404

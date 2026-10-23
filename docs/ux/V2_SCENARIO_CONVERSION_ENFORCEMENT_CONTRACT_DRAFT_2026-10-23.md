@@ -255,3 +255,17 @@ This section closes ambiguities of **technical safety behavior**, not those prof
 - Audit metadata should record only that the *displayed exclusion set* was acknowledged under the preview revision; it must not imply individualized tax or severance eligibility approval.
 
 **O-03 and O-04 are now CLOSED / OWNER APPROVED.** O-01, O-02, O-05, O-06, O-07, O-08 remain OPEN. Independent Work contract verdict and implementation gate remain BLOCKED.
+
+## 17. Owner-approved O-05: automatic unallocated residual (2026-10-23)
+
+**APPROVED BUSINESS DECISION:** Funds not allocated to pension or capital remain an **automatically calculated unallocated residual**, not a separate conversion, retention, or `leave_unallocated` decision. This applies at the component level and to the sum of the plan, within an individual scenario.
+
+**Proposed precision and presentation contract (pending independent technical re-review):**
+- For each source component `c`, compute `residual_c = factual_original_balance_c - sum(accepted_scenario_allocation_amounts_c)`. The plan residual is the exact sum of component residuals. Sum across distinct component IDs only; no duplicated counting if a component has multiple allowed allocations.
+- A draft selection is not yet an accepted allocation. Preview may present a separately labeled **projected remaining** amount based on the draft, but persisted/effective residual uses accepted scenario decisions only. Never silently merge draft and accepted totals.
+- Require `0 <= accepted_allocations_c <= factual_original_balance_c` for every component. A negative result or stale source version must fail validation, not be clipped to zero.
+- When the source/ruleset changes, mark the scenario `needs_revalidation` and distinguish historical accepted allocations from current availability; do not present stale residual as a newly validated balance.
+- The residual remains in the original factual product classification and is not automatically pension income or capital asset. No fabricated tax result, monthly income, NPV or source mutation.
+- Display at minimum **original classified component balance**, **accepted allocated principal**, and **automatically calculated remaining principal**. Where the reported plan total differs from classified sum, show the discrepancy separately via existing canonical `reconcile`, not by allocating it.
+
+**O-03, O-04, O-05 CLOSED / OWNER APPROVED.** O-01, O-02, O-06, O-07, O-08 remain OPEN. Contract readiness remains `BLOCKED`; no authorized scenario-engine implementation.

@@ -74,3 +74,26 @@ Identify whether the proposed V2 scenario-only conversion rule contract correctl
 **Verdict requested:** (a) policy readiness, (b) contract consistency, (c) readiness for *read-only permission preview only*, (d) readiness for authoritative scenario save, separately as PASS/BLOCKED with evidence. Do not give a single blanket PASS and do not state implementation was authorized unless explicitly approved by the owner.
 
 **Inputs for this re-review:** `docs/ux/SCENARIO_CONVERSION_OWNER_DECISION_REGISTER_2026-10-23.md`, `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md`, `docs/ux/CONVERSION_MATRIX_PARITY_FINDINGS_2026-10-23.md`, `docs/ux/V2_CHAT_HANDOFF_2026-10-22.md` (latest sections), V1 and V2 sources referenced earlier.
+
+
+## Third-pass bounded review instructions: normative contract and verified product classification (2026-10-23)
+
+**Read-only independent Work review requested, not performed by this file.** Inspect current branch HEAD when invoked, recording SHA. Normative target: `docs/ux/V2_SCENARIO_CONVERSION_NORMATIVE_CONTRACT_V1_2026-10-23.md` (including §§G–J) and the owner decision register. Historical chronological contract is evidence only, not current governing text.
+
+**Important corrected finding:** `pension_product_import_service._parse_source` reads numeric `SUG-MUTZAR`, but `_prepare_batch` converts recognized codes 1–5 to **Hebrew display labels before persistence**; unknown/missing map to explicit Hebrew placeholders. Earlier claims that persisted imported types remain numeric were retracted and corrected. Inspect the full call chain yourself, not simply `import_source_batch`.
+
+**Source artifacts to compare directly:** `backend/app/services/pension_product_import_service.py`, `backend/app/services/canonical_conversion_matrix.py`, `backend/app/models/pension_product.py`, `backend/app/schemas/pension_product.py`, `frontend/src/routes/AppRoutes.tsx`, `frontend/src/pages/PensionProductsScreen.tsx`, `frontend/src/pages/RetirementWorkspaceScreen.tsx`, `backend/app/services/pension_product_service.py`, and `backend/app/services/pension_product_reconciliation.py`.
+
+**Mandatory verdict dimensions** (independently PASS/BLOCKED/INSUFFICIENT_EVIDENCE): (a) professional O-01...O-08 decision alignment; (b) normative contract consistency, incl. zero/absent component handling and stateless totals; (c) closed resolver policy for exact imported/manual values; (d) readiness of **read-only permission-only preview** as a narrow engineering slice; (e) authoritative scenario decision/save; (f) tax/professional eligibility engine. Do not merge these verdicts.
+
+**Specific high-risk questions:**
+1. Does imported display-label normalization erase distinctions in raw `SUG-MUTZAR` values and how should raw source provenance be preserved without schema/data migrations? Distinguish the positive evidence for five labels from any unsupported subtype/legal equivalences.
+2. Is `קופת גמל` sufficient to establish a `provident_fund` *permission class* as distinct from `investment_provident_fund`? Must the preview return UNKNOWN for both until audited? Treat `פוליסת חיסכון טהור` and `פוליסת ביטוח חיים` distinctly until approved classification.
+3. Does manual product default `קופת גמל` plus free text pose misclassification risk? What smallest safe resolver supports genuinely verified ordinary products without silently granting exceptions?
+4. Can a product with some positive severance-coded anomalies return row-wise unresolved plus independently permitted contribution rows, without overstating professional eligibility?
+5. Does the new preview really perform zero writes, including indirect service calls, and does it reject unknown product, missing 11-row canonical source and cross-client access?
+6. Do proposed fingerprints use normalized persisted `product_type`, immutable raw input, component IDs and effective ruleset provenance consistently? Is no approved historical ruleset registry yet an obstacle even to a stateless permission-only preview?
+7. Propose exact minimal *redlines*, not just issue titles. Identify which blockers are resolvable by code/source evidence and which require an express owner professional ruling.
+8. Check historical Work findings SCV-001…SCV-010 and explain status changes without implying implementation acceptance.
+
+**Safety:** NO code/document changes, commits, CI, DB mutations or reset, merge or deployment. The review should report paths/lines and current SHA. Approval for design review is not authorization to build any endpoint.

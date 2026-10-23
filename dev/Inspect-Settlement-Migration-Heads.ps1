@@ -7,7 +7,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Backend image build failed" }
   & docker run --rm --network none --env "APP_ENV=development" retirev2-employment-link-local-test python -m alembic heads --verbose
   if ($LASTEXITCODE -ne 0) { throw "Could not determine Alembic heads" }
-  & docker run --rm --network none --env "APP_ENV=development" retirev2-employment-link-local-test python -m alembic history -r -3:heads
+  & docker run --rm --network none --env "APP_ENV=development" retirev2-employment-link-local-test python -m alembic history -r base:heads
   if ($LASTEXITCODE -ne 0) { throw "Could not inspect Alembic lineage" }
 } finally {
   Pop-Location

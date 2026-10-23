@@ -781,3 +781,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner pulled `a6ebe86`, TypeScript/Vite production build PASS (77 transformed modules), and two focused Vitest files PASS: workspace **28/28**, mock rule unit tests **5/5**, total **33/33**. Only nonblocking React Router v7 future-flag warnings.
 - Confirmed **mock UI-only** disallow rules for classified capital/pension actions in tests. Backend authoritative V2 scenario validation, V1 frontend/server reconciliation, product-specific exceptions and professional authorization remain OPEN. No financial execution, migration, CI, merge or deploy.
 - Next serious implementation should occur only against a reviewed scenario-domain rule contract, with Codex implementation / independent Work gate as appropriate. Avoid claiming the 33 UI tests demonstrate production legal eligibility.
+
+## CS. Authoritative scenario conversion enforcement draft gate (2026-10-23)
+- Owner confirmed 33/33 focused frontend tests for V1-derived mock conversion legality guard. This is strictly non-authoritative UX-only.
+- Created `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md`: review-ready contract separating permission, scenario eligibility, and tax/financial outcomes; versioned component-level inputs; strict server-side revalidation; no factual canonical-conversion mutation; fail-closed whole-plan batch behavior as a **proposal** rather than accepted product rule.
+- Identified unresolved owner/domain decisions: V1 frontend/server rule authority mismatch; global unsettled severance blocker scope; partial-batch handling; leave-unallocated semantics; prerequisites and stale results.
+- No executable code changed, so no local build/test needed for this document-only step. No independent Work review, Codex authoritative implementation, CI, database modification, merge or production release.

@@ -64,3 +64,34 @@ No new `Scenario`, `ScenarioDecision`, `Allocation` or authority ledger has been
 10. No CI, DB recreation, deploy, migration or implementation without separate owner permission.
 
 **Current verdict remains CONTRACT=BLOCKED / PREVIEW=BLOCKED pending re-review / SAVE=BLOCKED / IMPLEMENTATION_NOT_AUTHORIZED.**
+
+
+## G. Source-verified implementation gap register (2026-10-23; design evidence, not approval)
+
+The following findings were confirmed by direct GitHub source reads on the active branch. They do not represent a new independent Work verdict or permission to implement.
+
+| ID | Verified source fact | Normative consequence / bounded remediation |
+| --- | --- | --- |
+| NCG-01 | `backend/app/models/pension_product.py` declares `PensionProduct.product_type` as unconstrained `String(255)`. `backend/app/schemas/pension_product.py` accepts it as `ShortText`. | Product class cannot be inferred from a database enum. Establish an evidence-backed inventory of *actually persisted and imported* values before publishing exact aliases. Unknown/ambiguous values remain unresolved, without BASE_MATRIX fallback. |
+| NCG-02 | `backend/app/services/canonical_conversion_matrix.py` lowercases `product_type` and applies substring detection of Hebrew and English education/investment fund tokens, otherwise returning the base matrix. It applies product-wide overrides without checking severance-coded rows. | New permission-only preview must not call this function unguarded for unknown classes, or treat an anomalous severance-coded balance as allowed. Define an independent closed type resolver and row-level anomaly treatment, reusing the canonical base **permissions** only where safe. |
+| NCG-03 | `backend/app/services/pension_product_service.py::product_response` currently publishes `conversion_components[].allowed_destinations` by calling `destinations`; the latter's values are tax classification labels as well as permission markers. | The existing factual product response must not be relabelled as scenario eligibility/tax authority. In the new preview return permission as a separate status with tax and professional eligibility always `not_evaluated`. Existing factual API remediation and O-02 tax-label correction require an isolated impact assessment. |
+| NCG-04 | `backend/app/services/pension_product_service.py::create_product` creates all 11 canonical component rows; `component_balances` rejects records missing any of the 11 or containing noncanonical codes. Each component has a persisted `component_id`. | A persisted product missing a canonical row is a source-integrity error, not a fabricated zero row or a `null` component ID. Keep all 11 positions in a structured error/diagnostic only when doing so cannot conceal data corruption; the normal successful preview has 11 real rows, including zero balances. |
+| NCG-05 | `backend/app/services/canonical_component_conversion_service.py::_preflight` currently uses `whole_product` to silently collect eligible positive-balance components while recording disallowed components as `skipped`. | This factual conversion path does **not** satisfy O-03/O-04 grouped explicit review and must not be reused by the scenario preview/save pathway. No change to its factual behavior is authorized here. |
+| NCG-06 | `frontend/src/pages/mockConversionEligibility.ts` independently uses substring product-type overrides and has a mock-only `unchanged` action. | This client helper is neither the closed server resolver nor the authority for preview. `unchanged` must not be translated into an accepted financial decision or exposed as an allowed API action. |
+
+### G1. Explicit clarification of preview response and errors
+
+1. For a valid, fully canonical stored product, return **exactly 11 persisted rows** with real component IDs, regardless of zero balances. The `component_id=null` case in section B is reserved for a future explicitly specified *nonpersisted* input mode, which is **outside the first preview slice**. Do not silently synthesize missing source rows.
+2. Product-level unknown or ambiguous type produces an **envelope-level failure** `UNKNOWN_PRODUCT_TYPE` or `AMBIGUOUS_PRODUCT_TYPE`, without fallback permission statuses. A source-integrity failure (`MISSING_CANONICAL_SOURCE`) is likewise envelope-level. Authorized clients may receive a non-sensitive structured diagnostic; never disclose an unauthorized product.
+3. For a *resolved* education or investment provident fund with a positive severance-coded row, keep the complete 11-row response; that row receives `needs_source_reconciliation`, no permitted destination, and a specific diagnostic. Other contribution rows may retain base destination permission independent of the anomaly, subject to their own rule status.
+4. `permission_status` at the envelope level must be derived deterministically from row statuses rather than implying a completed eligibility decision. No overall `allowed` label may imply that all 11 components are convertible or that their legal/tax prerequisites were validated.
+5. The `totals.residual/unselected` field in section B cannot mean the O-05 accepted-decision residual in a **stateless permission-only preview**. It must either be omitted from this endpoint or explicitly named `not_allocated_in_this_preview`, equal to classified balance because **no allocation was requested or committed**. Accepted-decision residual belongs to a later versioned scenario service. Reconciliation variance remains a distinct field.
+
+### G2. Evidence gate before a Codex implementation brief
+
+- Inspect actual approved importer/normalization code and collect an alias inventory from **accepted source values**, including manually entered types. Do not infer that tokens found in code prove the full set of source labels.
+- Record an exact, enumerated alias-to-class mapping with unsupported aliases and ambiguity tests, including positive severance anomalies in education/investment products. Decide the handling of any additional real product class found in the source rather than forcing it into the five proposed classes.
+- Confirm the typed route's authentication/client scope, schema/error structure and existing reconciliation API before any read-only endpoint implementation.
+- Independently re-review this normative contract after the above evidence is added. The only candidate first implementation is a **permission-only, read-only** slice, subject to explicit authorization; authoritative scenario save and tax calculation remain blocked.
+
+**Status after this evidence update:** SOURCE-GAPS DOCUMENTED; CLOSED-ALIAS-INVENTORY=OPEN; INDEPENDENT_RE-REVIEW=OPEN; PERMISSION-PREVIEW IMPLEMENTATION=NOT_AUTHORIZED; SCENARIO-SAVE=BLOCKED. Documentation-only update, no CI required.

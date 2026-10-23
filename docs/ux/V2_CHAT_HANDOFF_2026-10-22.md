@@ -841,3 +841,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Created `docs/ux/SCENARIO_CONVERSION_OWNER_DECISION_REGISTER_2026-10-23.md`: O-01…O-08 with explicit nonapproved conservative proposals, G0…G4 review/implementation gates and one focused owner choice O-03 about consciously selecting an eligible subset for a mixed whole plan. Do not treat proposals as accepted law/policy.
 - The contract stays BLOCKED; Work found missing authoritative scenario enforcement. Next owner answer can resolve O-03 only, without prejudging tax, severance exception precedence, evidence, or rule governance.
 - No executable changes, tests, CI, migrations, merge or deploy.
+
+## DC. Professional owner APPROVED O-03 whole-plan explicit eligible subset (2026-10-23)
+- Owner explicitly approved: show all classified components of a full plan, permit converting only allowed components following explicit review and confirmation; prohibited components stay unconverted and must never be silently skipped.
+- Updated `docs/ux/SCENARIO_CONVERSION_OWNER_DECISION_REGISTER_2026-10-23.md` to mark O-03 CLOSED/APPROVED and updated `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md` section 15 with preview→review→explicit enumerated subset→server revalidation→atomic submitted-batch semantics.
+- O-01, O-02 and O-04…O-08 remain OPEN, particularly O-04 acknowledgment granularity. Work audit is still BLOCKED; no Codex financial implementation authorized. No executable code/CI/DB/merge/deploy change; no tests needed for docs-only edits.

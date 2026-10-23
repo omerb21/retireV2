@@ -157,3 +157,31 @@ def test_persisted_settlement_statuses_survive_reload(tmp_path):
             assert next(record for record in records if record["employment_record_id"] == record_id)["exempt_grant_status"] == status
     finally:
         client.close()
+
+
+def test_historical_status_edit_guarded_by_actual_grant_links(tmp_path):
+    client, _, _ = _build_client(tmp_path)
+    try:
+        cid = _create_client(client, id_number="81501")["client_id"]
+        historic = _employment(client, cid)
+        path = f"/api/clients/{cid}/employment-records/{historic}"
+        employment = {
+            "employer_name": "Company A", "work_start_date": "2010-01-01",
+            "work_end_date": "2020-01-01", "is_current": False, "notes": None,
+        }
+        update = client.put(path, json={**employment, "exempt_grant_status": "none"})
+        assert update.status_code == 200, update.text
+        assert update.json()["exempt_grant_status"] == "none"
+        assert next(r for r in client.get(f"/api/clients/{cid}/employment-records").json()
+                    if r["employment_record_id"] == historic)["exempt_grant_status"] == "none"
+        assert client.put(path, json={**employment, "exempt_grant_status": "recorded"}).status_code == 409
+        gid = _grant(client, cid)
+        linked = client.post(f"/api/clients/{cid}/grants/{gid}/employment-link",
+                             json={"employment_record_id": historic})
+        assert linked.status_code == 200, linked.text
+        assert client.put(path, json={**employment, "exempt_grant_status": "none"}).status_code == 409
+        assert next(r for r in client.get(f"/api/clients/{cid}/employment-records").json()
+                    if r["employment_record_id"] == historic)["exempt_grant_status"] == "recorded"
+        assert client.put(path, json={**employment, "exempt_grant_status": "recorded"}).status_code == 200
+    finally:
+        client.close()

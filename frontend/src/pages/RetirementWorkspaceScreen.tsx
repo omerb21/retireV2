@@ -643,7 +643,9 @@ export function RetirementWorkspaceScreen() {
                   setSupplementCategory(0);
                 }}>הוסף רשומת תעסוקה</button></p>}
               {index === 1 && <p>ריכוז מענקים מדווחים לתצוגה ובקרה. יצירת מענק חדש מתבצעת מתוך תקופת העסקה היסטורית; מענקים ישנים שלא שויכו נשארים גלויים עד לשיוך מפורש.</p>}
-              <p><Link to={"/clients/" + clientId + "/" + (index === 0 ? "employment-history" : index === 1 ? "grants" : index === 2 ? "actual-capitalizations" : "planning-input")}>פתיחת עריכה: {label}</Link></p>
+              {index === 0 ? <p>עריכת תקופות תעסוקה והתחשבנות מתבצעת כאן, באמצעות כפתור "תקן רשומת תעסוקה" בכל תקופה.</p>
+                : index === 1 ? <p>תיקון מענק מתבצע כאן. <Link to={"/clients/" + clientId + "/grants"}>פעולות מענקים נוספות בממשק הוותיק</Link></p>
+                : <p><Link to={"/clients/" + clientId + "/" + (index === 2 ? "actual-capitalizations" : "planning-input")}>פתיחת עריכה: {label}</Link></p>}
               {supplement.groups[index].length === 0 ? <p>לא קיימות רשומות</p> : <ul>
                 {supplement.groups[index].map((item, itemIndex) => <li key={itemIndex}>
                   <strong>{item.title}</strong> <span>{item.detail}</span>

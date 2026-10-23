@@ -168,6 +168,26 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("blocks a forbidden capital action for current-employer severance in the mock", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
+      target: { value: "p1|פיצויים_מעסיק_נוכחי" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "כיוון החלטה בהדמיה" }), {
+      target: { value: "capital" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), {
+      target: { value: "40.00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("נחסמה לפי כללי ההמרה");
+    expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
   it("keeps mock scenario decisions transient and never saves them to financial APIs", async () => {
     open();
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });

@@ -575,3 +575,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Duplicate-control backend checks are application-side pre-checks, not race-proof uniqueness constraints. Migration and existing duplicate reconciliation remain unresolved. Do not delete synthetic duplicates silently.
 - New backend test count expected 4, frontend workspace suite expected 24. **Both not executed yet.** Running browser backend still old image until deliberate refresh.
 - No CI, master merge or production deploy.
+
+## BJ. Focused test regressions diagnosed and patched (2026-10-23)
+
+- Owner ran tests against HEAD `30992c8`; frontend build PASS, backend pytest **3 pass / 1 fail**, frontend Vitest **23 pass / 1 fail**. Both failures are within the new employment settlement development slice.
+- Backend failure: test asserted `get_grants()[0]` was the linked original grant after creating a second unlinked grant. API orders by randomized grant_id, not insertion. The test relied on an invalid ordering guarantee, not evidence that the stored FK was lost. Fixed assertions to find the original `gid` explicitly (commit `85b80ed8eabd3a9052977d198c526f0bb91245b1`).
+- Frontend failure: the newly added preflight validation used literal regex `/^\\d{4}-\\d{2}-\\d{2}$/` rather than `/^\d{4}-\d{2}-\d{2}$/`; it rejected every normal grant receipt date and prevented the API call, exactly matching the displayed form error. Fixed one regex (commit `b250268c7fdc39072967884a7b4f6cb30d0e6932`).
+- **Retest required:** same isolated Docker script (4 expected) and focused Frontend Vitest suite (24 expected). Do not claim success until user output. No master merge, deployment or global CI.

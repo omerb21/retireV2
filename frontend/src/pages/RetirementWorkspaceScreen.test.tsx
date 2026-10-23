@@ -139,7 +139,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
     expect(screen.getByText(/לא יוצגו מספרי קצבה/)).toBeInTheDocument();
     const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
-    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(6);
+    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(9);
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
@@ -167,6 +167,8 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "40.00" } });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
+    expect(screen.getByLabelText("מצב יתרה בהדמיה")).toHaveTextContent("60");
+
     fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "70.00" } });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("alert")).toHaveTextContent("יתרת הרכיב");

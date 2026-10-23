@@ -688,3 +688,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 ## CA. Owner-confirmed UX mock build/test pass (2026-10-23)
 - Owner pulled `c05d56e` to local Windows workspace. `npm.cmd run build` succeeded (TypeScript and Vite 76 transformed modules); focused `RetirementWorkspaceScreen.test.tsx` passed **24/24**, including scenario/results read-only/no factual writes assertion. React Router future-flag warnings nonblocking.
 - This validates presentation and existing focused interactions only, not scenario implementation or professional calculations. Work/Codex independent review not invoked; reserve for substantive domain/implementation gate. No backend/database changes, CI, merge or deployment.
+
+## CB. Interactive scenario UX-only exploration (2026-10-23)
+- Owner requested continuing cost-conscious UX prototyping with independent Codex/Work checkpoints reserved for substantial implementation/acceptance.
+- Added an **in-memory, client-scoped, temporary scenario decision walkthrough** in the React workspace: create a named test alternative, select a displayed pension product as conceptual source, select an intended pension/capital/unchanged action, add/cancel mock decision, duplicate/delete mock alternative. All labels stress these are conceptual choices, **NOT amount allocations, eligibility determinations, approved tax calculations or persisted scenarios**.
+- Drafts are React state only and reset on client route change or refresh; no backend calls, factual balance changes or scenario engine added. Comparisons remain entirely `לא חושב`.
+- Added a focused Vitest interaction test; **latest changes have not yet been run on local Windows**. Expected focused count 25 if pass. No full CI, code review by Work, master merge or deployment. Do not present this as accepted domain behavior.

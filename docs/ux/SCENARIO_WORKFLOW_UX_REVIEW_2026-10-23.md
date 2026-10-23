@@ -35,3 +35,31 @@
 
 ## Safety / scope
 No tax calculations, future tax parameters, simulated eligibility, client data publication, authoritative source mutations or production release. No automatic merger or CI expansion. In-chat review status: **completed with open UX items**. Independent Work review: **PENDING**.
+
+## Follow-up review: connected prototype after 26/26 focused tests (2026-10-23)
+
+**Verified evidence:** owner confirmed branch `bc6cf38` TypeScript/Vite build and 26/26 focused frontend tests pass; the review below inspects the actual code on the UX branch. These results are *automated UI acceptance evidence*, not an independent business sign-off.
+
+### Closed prototype gaps
+- **P0: dynamic comparison:** resolved in UX-MOCK. Alternative names, decision counts, exact component and mock amounts appear in Step 5; computed pension, capital, tax and NPV results are all explicitly unavailable.
+- **P0: ledger handoff:** resolved in UX-MOCK. A single positive source component can be passed from Step 2 to Step 4, without persisting a scenario or using the canonical conversion endpoint.
+
+### Remaining business-workflow blockers for authoritative implementation
+
+1. **Professional meaning of an allocation:** the `unchanged` mock action currently consumes the selected amount in the same way as `pension` and `capital`; the real scenario contract needs clear semantics for a retained/undecided balance, mixed allocation, partial withdrawals and pension conversion. Do not copy mock decision types directly into backend schemas.
+2. **Identity and traceability:** each decision currently references `product_id|classification_code` with an amount only. Real persisted scenarios need explicit client ownership, factual source version/snapshot, source provenance and effective decision date, plus eligibility status where appropriate.
+3. **Data freshness:** Step 5 does not track whether a factual component changed after an ephemeral decision was created. Before genuine calculated results, implement a source version/fingerprint and a fail-closed stale result state. The current `לא חושב` labels prevent a misleading calculated outcome for now.
+4. **Professional prerequisites:** historical employment settlements, severance grant reconciliation, tax approvals and retirement timing require explicit rule gates before relevant scenario paths are executable. A duplicate historical exempt grant marked `requires_reconciliation` must not silently be used for accepted tax computation.
+5. **Scenario review ergonomics:** the prototype supports add/cancel/clone/delete; it has no in-place edit of an allocation, explanatory action labels, alternative naming, or client-level decision summaries. The owner should review this on a synthetic case before Codex implements persistent workflows.
+6. **Interpretation of comparison:** baseline `מצב בסיס` is not an evaluated counterfactual; it is a placeholder. Do not display baseline financial deltas, rankings or optimization labels until both calculations and a comparison contract exist.
+
+### Acceptance gate for the professional owner (not yet completed)
+
+Walk a **single synthetic case** through facts → choice → partial allocation → clone → revise → compare. Check whether the choice of 11 components, the distinction between leave-as-is vs convert, and the decision sequence match a real retirement-planning consultation. Note where explanations, timing or other source documents are needed. The owner is *not required* to run technical shell commands for this review.
+
+### Cost-conscious model split
+- In-chat prototype and regression work: limited to view-only/local-state UX and targeted tests.
+- Codex: once professional journey is approved, scope domain/persistence tasks by contract with no real-financial behavior inferred from prototype state.
+- Work: independent multi-discipline audit at one substantive gate before acceptance/merge. **Not performed** as part of this review.
+
+**Gate decision:** `UX-MOCK = technically verified; professional user acceptance PENDING; scenario domain contract PENDING; independent audit PENDING`. No production merge or financial engine development authorized by this review.

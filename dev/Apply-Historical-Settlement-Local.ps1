@@ -43,7 +43,7 @@ try {
     Start-Sleep -Seconds 2
   }
   if (-not $healthy) { throw "Backend not healthy; preserve backup: $backup" }
-  $revision = & docker exec $backend python -m alembic current 2>&1
+  $revision = & docker exec --env "DATABASE_URL=postgresql://synthetic_planner:synthetic_only_local_password@db:5432/retirement_v2_synthetic" $backend python -m alembic current 2>&1
   if ($LASTEXITCODE -ne 0) { throw "Could not verify schema revision: $revision" }
   Write-Host $revision
   if (($revision | Out-String) -notmatch "d2c4e6a8b031") {

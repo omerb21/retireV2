@@ -102,3 +102,35 @@ def test_atomic_creation_for_ended_period_and_fail_closed_for_invalid_periods(tm
         assert len(client.get(f"/api/clients/{a}/grants").json()) == 1
     finally:
         client.close()
+
+
+def test_create_historical_employment_with_single_grant_transaction(tmp_path):
+    client, _, _ = _build_client(tmp_path)
+    try:
+        cid = _create_client(client, id_number="30501")["client_id"]
+        url = f"/api/clients/{cid}/historical-employment-settlements"
+        base = {"employment": {
+            "employer_name": "Repeated legal employer", "work_start_date": "2005-01-01",
+            "work_end_date": "2010-01-01", "is_current": False, "notes": None,
+        }}
+        bad = client.post(url, json={**base, "exempt_grant_status": "recorded"})
+        assert bad.status_code == 422
+        assert client.get(f"/api/clients/{cid}/employment-records").json() == []
+        created = client.post(url, json={**base, "exempt_grant_status": "recorded",
+            "employer_withholding_file_number": "99101",
+            "grant_receipt_date": "2010-01-20", "exempt_grant_amount": "2500.00"})
+        assert created.status_code == 200, created.text
+        period_id = created.json()["employment_record_id"]
+        assert created.json()["grant_id"]
+        grants = client.get(f"/api/clients/{cid}/grants").json()
+        assert len(grants) == 1 and grants[0]["employment_record_id"] == period_id
+        second = client.post(url, json={**base,
+            "employment": {**base["employment"], "work_start_date": "2012-01-01",
+                "work_end_date": "2019-01-01"},
+            "exempt_grant_status": "none"})
+        assert second.status_code == 200, second.text
+        assert second.json()["grant_id"] is None
+        assert len(client.get(f"/api/clients/{cid}/employment-records").json()) == 2
+        assert len(client.get(f"/api/clients/{cid}/grants").json()) == 1
+    finally:
+        client.close()

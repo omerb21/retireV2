@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
+import { mockConversionRejection } from "./mockConversionEligibility";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
@@ -863,7 +864,13 @@ export function RetirementWorkspaceScreen() {
             <button type="button" disabled={!mockSource} onClick={() => {
               if (!mockSource) return;
               const [productId, code] = mockSource.split("|");
-              const sourceValue = products.find(item => item.product_id === productId)?.components[code];
+              const sourceProduct = products.find(item => item.product_id === productId);
+              const ruleError = mockConversionRejection(code, sourceProduct?.product_type ?? "", mockAction);
+              if (ruleError) {
+                setMockError("החלטת הדמיה נחסמה לפי כללי ההמרה של V1: " + ruleError);
+                return;
+              }
+              const sourceValue = sourceProduct?.components[code];
               const limit = sourceValue == null ? null : mockAmountInCents(sourceValue);
               const amount = mockAmountInCents(mockAmount);
               const allocated = (mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? [])

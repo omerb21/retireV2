@@ -917,3 +917,9 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Inspected `frontend/src/routes/AppRoutes.tsx` and `frontend/src/pages/PensionProductsScreen.tsx`: the route `/clients/:clientId/pension-products` exposes metadata form with unbounded (nonempty) free-text `product_type` input; the default is `קופת גמל`. `productTypeLabel` is a display-only 1–5 code formatter, not an authoritative type resolver.
 - Added normative contract §J with exact finding. No complete manually entered type vocabulary can be proven from code. For prospective Preview an unknown/ambiguous type must fail closed; future controlled selector is a separate UX/migration task.
 - No financial code, CI, tests, database, PR, merge or deployment. Preview and authoritative save remain not authorized; external independent review required.
+
+
+## DQ. Independent review package prepared after complete source-chain checks (2026-10-23)
+- Rechecked `canonical_conversion_matrix`, `pension_product_import_service`, `pension_product_reconciliation` and normative contract. Verified imported known codes map to Hebrew labels before persistence, manual default is free text, unknown types use explicit fallback labels, and tax/permission are currently conflated in matrix values.
+- Updated `docs/ux/WORK_INDEPENDENT_REVIEW_BRIEF_SCENARIO_CONVERSION_2026-10-23.md` with third-pass bounded questions, exact source list, SCV-001...010 disposition expectation, and separate preview/save verdicts. Commit `158eef5f5ad087a66d7f7385b1d7245aa129b125`.
+- Independent Work has NOT been invoked or passed. No CI/tests, financial implementation, DB changes, merge, or deployment. Contract remains design-only and preview/save implementation unauthorized. Next decision gate is independent read-only review of normative §§A–J, especially O-01 closed resolver, manual free text, anomalous severance, tax mismatch and signed ruleset absence.

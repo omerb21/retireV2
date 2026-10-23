@@ -134,3 +134,26 @@ def test_create_historical_employment_with_single_grant_transaction(tmp_path):
         assert len(client.get(f"/api/clients/{cid}/grants").json()) == 1
     finally:
         client.close()
+
+
+def test_persisted_settlement_statuses_survive_reload(tmp_path):
+    client, _, _ = _build_client(tmp_path)
+    try:
+        cid = _create_client(client, id_number="70501")["client_id"]
+        url = f"/api/clients/{cid}/historical-employment-settlements"
+        for index, status in enumerate(("none", "not_reviewed", "recorded")):
+            payload = {
+                "employment": {"employer_name": "Same employer", "work_start_date": f"{2000 + index}-01-01",
+                    "work_end_date": f"{2001 + index}-01-01", "is_current": False, "notes": None},
+                "exempt_grant_status": status,
+            }
+            if status == "recorded":
+                payload.update({"employer_withholding_file_number": "12345",
+                    "grant_receipt_date": "2003-02-01", "exempt_grant_amount": "2500.00"})
+            response = client.post(url, json=payload)
+            assert response.status_code == 200, response.text
+            record_id = response.json()["employment_record_id"]
+            records = client.get(f"/api/clients/{cid}/employment-records").json()
+            assert next(record for record in records if record["employment_record_id"] == record_id)["exempt_grant_status"] == status
+    finally:
+        client.close()

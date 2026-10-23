@@ -153,6 +153,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
       target: { value: "p1|פיצויים_מעסיק_נוכחי" },
     });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "40.00" } });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));

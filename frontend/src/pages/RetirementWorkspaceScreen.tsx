@@ -449,6 +449,20 @@ export function RetirementWorkspaceScreen() {
     setError(null);
     setStep(next);
   }
+  function startMockScenarioFromSelection() {
+    if (selection.length !== 1 || draft !== null || saveState === "saving") return;
+    const item = selection[0];
+    const raw = products.find(product => product.product_id === item.productId)?.components[item.code];
+    const cents = raw == null ? null : mockAmountInCents(raw);
+    if (cents == null || cents <= 0n) {
+      setError("למעבר להדמיית תכנון יש לבחור רכיב יחיד עם יתרה חיובית.");
+      return;
+    }
+    setMockSource(item.productId + "|" + item.code);
+    setMockAmount("");
+    setMockError(null);
+    switchStep("scenario");
+  }
   function toggleCell(productId: string, code: string) {
     if (draft || saveState === "saving") return;
     setSelection(prev => prev.some(item => item.productId === productId && item.code === code)
@@ -606,6 +620,7 @@ export function RetirementWorkspaceScreen() {
           <p>תיקון כמה רכיבים באותו מוצר נשמר בפעולה אחת עם בקרת גרסה. שינוי הסיווג אינו המרה.</p>
           <div className="professional-workspace__actions">
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={startCorrection}>תיקון יתרות נבחרות</button>
+            <button type="button" disabled={selection.length !== 1 || draft !== null || saveState === "saving"} onClick={startMockScenarioFromSelection}>העבר רכיב להדמיית תרחיש (ללא שמירה)</button>
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={() => setSelection([])}>בטל בחירה</button>
             <Link to={"/clients/" + clientId + "/pension-products"}>ייבוא מסלקה ופרטי מוצר מורחבים</Link>
           </div>

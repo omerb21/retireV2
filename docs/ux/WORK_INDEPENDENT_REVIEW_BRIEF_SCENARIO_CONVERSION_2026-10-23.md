@@ -97,3 +97,12 @@ Identify whether the proposed V2 scenario-only conversion rule contract correctl
 8. Check historical Work findings SCV-001…SCV-010 and explain status changes without implying implementation acceptance.
 
 **Safety:** NO code/document changes, commits, CI, DB mutations or reset, merge or deployment. The review should report paths/lines and current SHA. Approval for design review is not authorization to build any endpoint.
+
+
+## Read-only implementation hazard verified in source (2026-10-23)
+
+At the source level, `backend/app/services/canonical_pension_source_reader.py::current_products` invokes `lock_client`; `backend/app/api/pension_product_routes.py::detail` also invokes `lock_client`. In `backend/app/services/pension_product_service.py::lock_client`, PostgreSQL uses `pg_advisory_xact_lock` and `SELECT ... FOR UPDATE`; SQLite obtains a writer reservation using SQLAlchemy `update(Client)...values(client_id=client_id, updated_at=Client.updated_at)`. Therefore simply reusing existing read helpers is **not acceptable evidence of a strictly nonwriting permission-preview path**. This is a static source finding, not a runtime claim that product balances were changed.
+
+Review must specify a separate client-scoped, authorized, consistent snapshot read whose transaction has no `INSERT/UPDATE/DELETE`, no client writer reservation, no implicit source auditing, and no conversion service invocation. Identify the concrete application authentication/authorization middleware and whether it provides actual principal-to-client permissions; `get_product(db,client_id,product_id)` filters client ID but does not, by itself, establish the caller is authorized for that client. Capture cross-client, forged route client ID, missing source and concurrent-write tests. PostgreSQL `FOR UPDATE` is also an undesirable contention primitive for a read-only preview, even though not a data mutation.
+
+**Gate unchanged:** no Work execution took place merely by appending this requirement; no permission-preview implementation authorized.

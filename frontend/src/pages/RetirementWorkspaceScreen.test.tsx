@@ -143,6 +143,17 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("hands off one factual ledger component to the transient scenario preview without writing", async () => {
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(within(ledger).getByRole("button", { name: "פיצויים מעסיק נוכחי — קרן פנסיה א" }));
+    fireEvent.click(screen.getByRole("button", { name: "העבר רכיב להדמיית תרחיש (ללא שמירה)" }));
+    expect(screen.getByRole("heading", { name: "תכנון תרחישים" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
+    expect(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" })).toHaveValue("p1|פיצויים_מעסיק_נוכחי");
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
   it("keeps mock scenario decisions transient and never saves them to financial APIs", async () => {
     open();
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });

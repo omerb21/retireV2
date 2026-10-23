@@ -2478,8 +2478,18 @@ def link_grant_to_employment(
 def delete_grant(client_id: int, grant_id: str, db: Session = Depends(get_db)) -> dict:
     _require_client(db, client_id)
     grant = _require_grant(db, client_id, grant_id)
-
+    period_id = grant.employment_record_id
     db.delete(grant)
+    db.flush()
+    if period_id is not None:
+        period = _require_employment_record(db, client_id, period_id)
+        remaining_count = db.scalar(select(func.count(Grant.grant_id)).where(
+            Grant.client_id == client_id, Grant.employment_record_id == period_id,
+        ))
+        period.exempt_grant_status = (
+            "requires_reconciliation" if remaining_count > 1 else
+            "recorded" if remaining_count == 1 else "not_reviewed"
+        )
     db.commit()
     return {"deleted": True, "grant_id": grant_id}
 

@@ -184,3 +184,33 @@ The previous sections use **atomic fail-closed** as the default for a submitted 
 8. Which evidence source and currency/validity must govern termination, settlement, historical grants, tax approvals and 161d?
 
 **Review outcome is binding as a release/milestone gate:** Do not hand off financial implementation to Codex as approved; correct and seek review of this contract first. Owner-reviewed 33/33 frontend and 15/15 backend results support only their narrow test surfaces, not the missing scenario engine.
+
+## 13. Technical contract decisions safe to specify without financial owner approval
+
+These are **proposed engineering constraints**, not permission to implement the engine or to select disputed pension/tax policy.
+
+1. **Closed action vocabulary:** public scenario action values are `pension`, `capital_asset`, and a separate residual/retain status pending semantics. The only authorized adapter mapping for conversion actions is `pension -> pension`, `capital_asset -> capital` when consulting V2 `destinations()`. Unknown action values fail with a structured validation code; do not silently normalize aliases.
+2. **Product-type safety:** scenario eligibility uses only the server-stored product row associated with the client and component. An explicit canonical product-type resolver must reject missing, ambiguous or unknown types as `needs_professional_resolution`, never rely on the ordinary `BASE_MATRIX` fallback. Crucially, recognizing a product type does **not** imply overriding severance prerequisites; that policy remains undecided.
+3. **Unresolved professional rules default:** where eligibility, tax treatment or documentation is disputed, response state is `needs_professional_resolution`. No final financial output and no accepted conversion decision can follow from that state. This avoids implicitly deciding whether legacy V1 special-product precedence was lawful.
+4. **Read-only preview and factual immutability:** preview gathers authoritative source and rules, reports full component inventory and reasons; it does not create decisions, pensions or assets, and cannot call factual `execute` or `reverse`.
+5. **Explicit submit only:** a whole-product selection is a *preview scope*, not implicit permission to save all eligible components. Subsequent save may only refer to an exact, user-reviewed list of source component IDs and amounts. Submitted batch is atomic: if any submitted item is now invalid, none is accepted. Whether excluded rows must be individually acknowledged remains an owner decision.
+6. **Deterministic monetary validation:** Decimal(20,2) source amounts; forbid binary floating point for backend money, reject malformed, negative, zero and over-allocated requests, including total assigned across the *same scenario*. Preserve component-level precision and prohibit double counting.
+7. **Concurrency contract to be independently reviewed:** acquire locks in a consistent documented order (client → scenario aggregate → affected products by ID → components by ID); enforce optimistic `scenario_version`, product versions, source fingerprint and idempotency on save. Each request either commits *all enumerated decisions* or returns a structured rejection with **no partial decision writes**. Specific locking mechanism/transaction DB compatibility requires implementation review.
+8. **Currentness:** a source/ruleset change invalidates evaluated outputs and labels affected scenarios `needs_revalidation`; preserve historical decisions, evidence and revisions rather than deleting or silently recalculating results.
+9. **Scoped prerequisites:** each precondition must declare producer identity, subject (component/product/scenario), effective date, source version and missing-vs-inapplicable status. For an undecided V1 global severance blocker, mark impacted eligibility unresolved; do not apply an unreviewed blanket block to unrelated decisions.
+10. **No early tax claims:** permission preview always uses `tax_status=not_evaluated` until the professional tax authority is accepted. V1 frontend's `localStorage` settings never become V2 authoritative rules.
+
+### Residual approval board (professional decisions only)
+
+| Decision | Safest provisional behavior until owner chooses |
+| --- | --- |
+| Product exception vs prohibited severance | Do not grant contested override; flag resolution required |
+| Pre-2000 tax classification | Never publish approved taxable/exempt outcome; not evaluated |
+| Mixed-plan eligible subset | Preview all and permit **no automatic submit**; explicit submitted list as engineering constraint |
+| Acknowledging excluded rows | Display all exclusions; record neither implicit consent nor silent discard |
+| Leave-unallocated semantics | Treat unassigned money as calculated availability **in preview only**; no persistent interpretation |
+| Global unresolved-severance block scope | Do not infer cross-source eligibility; mark affected prerequisites unresolved |
+| Ruleset editor/authority and historical effect | No mutable production rule governance inferred from static version string |
+| Evidence for termination/settlement/grants/tax/161d | No successful eligibility classification without source-backed prerequisites where applicable |
+
+This section closes ambiguities of **technical safety behavior**, not those professional choices. `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED` remain unchanged until reviewed.

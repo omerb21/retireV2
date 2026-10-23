@@ -99,3 +99,13 @@ At a chat boundary, update **two separate documents** in the active branch:
 Start a new chat by instructing it to read both files from GitHub **before any further code changes**, plus accepted repo governance as needed. Update the handoff after subsequent steps. Do not rely on conversation memory alone, copied assistant assurances or an old release notes artifact.
 
 **If this playbook and authoritative accepted business governance conflict, STOP and surface that exact conflict; neither these notes nor prior assistant statements silently supersede higher authority.**
+
+
+## 10. Cost-conscious three-role workflow (owner decision, 2026-10-23)
+
+- Preserve the cost benefits of **direct in-chat development** for bounded UX prototype changes, descriptive copy, focused isolated test additions, handoff documents and small code fixes with no financial authority implications. Use GitHub connector operations on the UX branch. This does NOT make the assistant an independent reviewer of its own changes.
+- Codex is the **implementation role** for sufficiently complex, multi-file architectural changes, new persistence/financial domain logic, concurrency protections, business calculations and scenario engine work. A bounded technical implementation may be drafted directly in the chat to save credits only when it can be independently verified and the scope/risks are explicit. It does not count as a Codex review.
+- Work is the **independent assurance/technical review role** at meaningful decision gates (before adopting the full UX journey, changing protected domain contracts or accepting a release), not after every cosmetic commit or local build. Work's review must be performed separately; a self-authored checklist cannot be represented as independent Work acceptance.
+- Keep each work item labelled `UX-MOCK`, `CONNECTED-FACTUAL`, `DOMAIN-CHANGE`, or `INDEPENDENT-REVIEW`. Mark whether independent acceptance is pending. Never claim scenario persistence, evaluated results or production readiness on mock UI.
+- Continue batching small commits and using focused local tests. No CI-wide run, branch merge or production deploy without specific authorization. Prefer a single independent review of a coherent bundle over repeated paid review cycles.
+- Next **UX-MOCK** slice: complete the scenario and comparison *decision journey* in a read-only/wireframe manner, clearly labelled not executable, so the owner can judge practical workflow without inventing financial calculations or writing factual balances. Only after owner review map the scenario decisions to accepted contracts.

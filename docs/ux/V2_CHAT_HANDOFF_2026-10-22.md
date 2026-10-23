@@ -866,3 +866,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner clarified that education funds/investment provident funds cannot have genuine severance; their type-level exception ensures capital conversion remains possible when balances land in arbitrary technical contribution columns, notably post-2000 columns otherwise pension-only.
 - Corrected owner decision register and appended contract §19. Treat unexpected severance-coded rows under these products as source-classification anomalies requiring reconciliation, rather than legal severance eligibility through override. Closed product identity determination, anomaly handling and tax authority still require validation. O-01 rationale clarified, not blanket scenario implementation authorization.
 - No financial code change, CI, DB, merge or deploy. Contract remains BLOCKED.
+
+## DH. O-02 tax discrepancy isolated, NOT professionally resolved (2026-10-23)
+- Direct V1 frontend/V1 backend/V2 backend source comparison confirms both pre-2000 employee and employer contributions may be converted to pension in the base matrix; V1 frontend default `exempt` conflicts with both backends' `taxable` pension labels. Added contract §20 source comparison and prohibition on deriving a tax ruling from code agreement or comments.
+- Scenario permission display may state allowed pension allocation subject to other prerequisites, but scenario tax response must be `not_evaluated` until O-02 evidence/authority resolved. No factual tax code changed.
+- Owner clarification O-01 product-type exception remains recorded, O-03…O-06 approved. Contract remains BLOCKED pending tax, evidence and governance gates. No executable code, CI, DB, merge or deployment changes.

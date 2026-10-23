@@ -846,3 +846,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Owner explicitly approved: show all classified components of a full plan, permit converting only allowed components following explicit review and confirmation; prohibited components stay unconverted and must never be silently skipped.
 - Updated `docs/ux/SCENARIO_CONVERSION_OWNER_DECISION_REGISTER_2026-10-23.md` to mark O-03 CLOSED/APPROVED and updated `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md` section 15 with preview→review→explicit enumerated subset→server revalidation→atomic submitted-batch semantics.
 - O-01, O-02 and O-04…O-08 remain OPEN, particularly O-04 acknowledgment granularity. Work audit is still BLOCKED; no Codex financial implementation authorized. No executable code/CI/DB/merge/deploy change; no tests needed for docs-only edits.
+
+## DD. Owner APPROVED O-04 grouped exclusion confirmation (2026-10-23)
+- Owner chose a **single explicit acknowledgment for all excluded plan components**, after seeing the complete per-component list and each exclusion reason; no individual confirmation required. O-03 eligible-subset selection remains approved.
+- Updated owner decision register and scenario contract §16. Proposed engineering safeguards: acknowledgment bound to exact reviewed preview/reason set, invalidation on changed source/selection/ruleset, server-side atomic revalidation; do not imply financial eligibility.
+- O-03/O-04 CLOSED; O-01/O-02/O-05…O-08 remain OPEN; Work BLOCKED contract verdict and financial implementation prohibition unchanged. Documents only; no additional tests needed.

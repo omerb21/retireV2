@@ -191,19 +191,21 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
-  it("routes each supplementary category to its existing factual editor", async () => {
+  it("uses workspace employment editing and labels legacy grant fallback explicitly", async () => {
     open();
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
     fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    await screen.findByRole("heading", { name: "רשומות תעסוקה (0)" });
+    expect(screen.queryByRole("link", { name: "פתיחת עריכה: רשומות תעסוקה" })).not.toBeInTheDocument();
+    expect(screen.getByText(/עריכת תקופות תעסוקה והתחשבנות מתבצעת כאן/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "פעולות מענקים נוספות בממשק הוותיק" }))
+      .toHaveAttribute("href", "/clients/1/grants");
     const expected = [
-      ["רשומות תעסוקה", "/clients/1/employment-history"],
-      ["מענקים", "/clients/1/grants"],
       ["היוונים בפועל", "/clients/1/actual-capitalizations"],
       ["נכסי הון", "/clients/1/planning-input"],
       ["הכנסות נוספות", "/clients/1/planning-input"],
       ["הוצאות שוטפות", "/clients/1/planning-input"],
     ];
-    await screen.findByRole("heading", { name: "רשומות תעסוקה (0)" });
     for (const [label, destination] of expected) {
       expect(screen.getByRole("link", { name: "פתיחת עריכה: " + label }))
         .toHaveAttribute("href", destination);

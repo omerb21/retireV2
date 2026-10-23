@@ -156,6 +156,10 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "40.00" } });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "70.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("יתרת הרכיב");
+
     fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
     expect(screen.getByRole("option", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();

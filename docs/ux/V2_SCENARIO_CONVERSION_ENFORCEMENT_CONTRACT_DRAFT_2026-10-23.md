@@ -269,3 +269,17 @@ This section closes ambiguities of **technical safety behavior**, not those prof
 - Display at minimum **original classified component balance**, **accepted allocated principal**, and **automatically calculated remaining principal**. Where the reported plan total differs from classified sum, show the discrepancy separately via existing canonical `reconcile`, not by allocating it.
 
 **O-03, O-04, O-05 CLOSED / OWNER APPROVED.** O-01, O-02, O-06, O-07, O-08 remain OPEN. Contract readiness remains `BLOCKED`; no authorized scenario-engine implementation.
+
+## 18. Owner-approved O-06: scoped unsettled-severance blocker (2026-10-23)
+
+**APPROVED:** An unsettled severance component, including unresolved employment settlement or rights-continuity prerequisites, is blocked from conversion, as are operations whose professional eligibility **actually depends** on resolving it. The existence of such a component does **not** automatically block conversions of unrelated employee/employer contribution components in the same product or scenario.
+
+**Technical enforcement contract proposed for independent review:**
+1. Determine blockers for each requested source component and action, with an evidence-backed `dependency_scope` identifying the affected component(s) and specific reason code; never copy V1's blanket global blocker into the V2 scenario engine.
+2. Do not infer that a contribution component depends on unsettled severance merely because both belong to the same pension product or client. A broader blocker requires explicit, reviewable professional evidence and a rule establishing that dependency.
+3. Preview must display blocked/unresolved severance items alongside independent eligible contribution items, including reasons and any dependency links. This integrates with approved O-03 whole-plan subset and O-04 grouped excluded-component acknowledgment.
+4. Revalidate every submitted component and declared dependency under the same server transaction; if a selected item becomes blocked, reject the **submitted batch atomically**, without excluding it silently. Independently eligible items remain available for a new explicit request.
+5. This decision does **not** resolve O-01 product-type exception precedence or O-08 the required evidence producers and severance-specific validity criteria. Until those are accepted, affected cases remain `needs_professional_resolution`; never invent eligibility.
+6. Scenario cancellation or amendment must not write source balances or perform factual conversion reversal.
+
+**O-03, O-04, O-05, O-06 are owner-approved and CLOSED.** O-01, O-02, O-07 and O-08 remain OPEN; `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED`.

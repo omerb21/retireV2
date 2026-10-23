@@ -97,31 +97,33 @@ The following findings were confirmed by direct GitHub source reads on the activ
 **Status after this evidence update:** SOURCE-GAPS DOCUMENTED; CLOSED-ALIAS-INVENTORY=OPEN; INDEPENDENT_RE-REVIEW=OPEN; PERMISSION-PREVIEW IMPLEMENTATION=NOT_AUTHORIZED; SCENARIO-SAVE=BLOCKED. Documentation-only update, no CI required.
 
 
-## H. Source-type intake evidence and explicit no-guess mapping gate (2026-10-23)
+## H. Corrected source-type intake evidence (2026-10-23)
 
-**Code evidence:** `backend/app/services/pension_product_import_service.py` defines `PRODUCT_TYPE_LABELS = {"1": "פוליסת ביטוח חיים משולב חיסכון", "2": "פוליסת ביטוח חיים", "3": "קופת גמל", "4": "קרן פנסיה", "5": "פוליסת חיסכון טהור"}`. The importer obtains `SUG-MUTZAR` by `_product_type`, checks direct account and product-scoped metadata for inconsistency, and retains the **original code** as `metadata.product_type`. The label dictionary is for recognition/diagnostics, **not** evidence that the canonical value is saved as the Hebrew display label. A value not in the dictionary currently generates `unmapped_product_type` diagnostics; mere presence of this diagnostic does not establish the final row's persisted status. Source parsing distinguishes source-absent, explicit-zero and mapped/unmapped nonzero facts.
+**Correction superseding commits `7c02605` and `39b409b`:** Earlier conclusions that imported numeric `SUG-MUTZAR` codes remain numeric in persisted `PensionProduct.product_type` were **incorrect**. Direct inspection of `backend/app/services/pension_product_import_service.py::_prepare_batch` establishes that the raw parsed value is converted **before** `ProductMetadata` validation and `import_source_batch` persistence:
 
-| Raw imported exact code | Source label | Proposed classification decision for later review |
+```python
+product_type = metadata.get("product_type")
+metadata["product_type"] = PRODUCT_TYPE_LABELS.get(product_type, "סוג מוצר לא ממופה") if product_type else "סוג מוצר לא נמסר"
+```
+
+The raw numeric code is parsed by `_product_type` from `SUG-MUTZAR`, recorded in XML source diagnostics when unmapped, and the raw original XML is preserved as source evidence. **The persisted product_type is a Hebrew display label or fallback text**, not the original numeric code. Existing-product updates and new-product creation both use the normalized `metadata.model_dump()`. The canonical product-source fingerprint in §C currently includes the *persisted display string*, not an independently normalized or immutable raw code; future versioned type resolution must therefore preserve/recover raw type evidence when necessary.
+
+| Exact import code | Value persisted as `product_type` | Candidate canonical class, **not yet approved** |
 | --- | --- | --- |
-| `1` | פוליסת ביטוח חיים משולב חיסכון | Candidate `insurance_policy`; confirm intended scenario permissions |
-| `2` | פוליסת ביטוח חיים | Candidate `insurance_policy`; check if pure risk/no balances and legal treatment differ |
-| `3` | קופת גמל | Candidate `provident_fund`; **not** automatically `investment_provident_fund` |
-| `4` | קרן פנסיה | Candidate `pension_fund` |
-| `5` | פוליסת חיסכון טהור | **UNRESOLVED:** do not silently assign to `insurance_policy` or `provident_fund`; assess whether contract needs a sixth class or a nonconvertible/unknown status |
+| `1` | פוליסת ביטוח חיים משולב חיסכון | `insurance_policy` candidate |
+| `2` | פוליסת ביטוח חיים | `insurance_policy` candidate, risk-only ambiguity |
+| `3` | קופת גמל | `provident_fund` candidate; **not** an investment-provident-fund assertion |
+| `4` | קרן פנסיה | `pension_fund` candidate |
+| `5` | פוליסת חיסכון טהור | unresolved distinct product semantics |
+| Unrecognized nonempty | סוג מוצר לא ממופה | unknown, must fail closed |
+| Missing | סוג מוצר לא נמסר | unknown, must fail closed |
 
-**Crucial non-equivalence:** The `PRODUCT_TYPE_LABELS` mapping above does not contain a demonstrated explicit education-fund or investment-provident-fund code. Neither can be inferred from code `3` solely because its label says provident fund. Do not introduce guessed numeric IDs or grant capital conversion from textual provider/product names.
+`_parse_source` records an `unmapped_product_type` diagnostic for unrecognized raw codes, but `_prepare_batch` collapses multiple distinct unknown source codes into the same persisted fallback text. A secure new resolver **must not** interpret that fallback as a legitimate type or infer permissions from the product name. If distinction among original unknown codes is necessary, consult protected source links/diagnostics rather than guessing. No factual migration is authorized.
 
-**Manual source:** `backend/app/schemas/pension_product.py::ProductMetadata.product_type` is free text and `backend/app/services/pension_product_service.py::create_product` stores that text. Thus imported numeric raw codes and manually entered literal labels belong to different *verified input formats*. The manual alias vocabulary has **not** been enumerated; do not mistake a UI suggestion or substring recognized by old matrix for accepted authoritative normalization.
+**Manual product path:** `backend/app/schemas/pension_product.py::ProductMetadata.product_type` is free text (`ShortText`) and `pension_product_service.create_product` persists the supplied string; there is no proven controlled manual-type vocabulary. Some imported Hebrew labels may overlap with manual labels, but equal text alone is not proof of equal provenance or professional classification. Resolver inputs should include `source_kind`, the persisted `product_type` and controlled, versioned evidence, with exact accepted aliases only.
 
-**Classification precedence proposal for independent review:** retain `source_kind`, the immutable raw `product_type`, source identity and audit provenance; resolve against a versioned exact mapping *specific to origin*. A product class decision must be supported by either (a) an enumerated, accepted importer code or (b) an enumerated, accepted manual source value. No substring or unverified English alias. If the raw code is recognized but its professional equivalence is still unresolved, return an unresolved classification rather than the default permission matrix.
+**O-01 gap:** This importer map does not explicitly recognize an education fund or an investment provident fund as distinct product types. No numeric code may be invented. The existing matrix's substring handling for such fund names does not establish authoritative recognition of imported products. The recognized code `3` is not sufficient to identify investment provident funds.
 
-**Open evidence to collect before approval:** confirm import persistence and handling of missing/unknown code; inventory real manual input values and any frontend select options; resolve code `5`, distinguish pure insurance risk versus pension insurance; establish actual source identifiers for education and investment provident funds; confirm product-scoped account metadata behavior in mixed files. Do not query or expose private customer records merely to construct a public example.
+**Important distinction:** The original matrix's substring matching *can* match some persisted Hebrew strings (unlike the earlier inaccurate all-numeric assertion). It still does not provide closed, deterministic, evidence-backed type classification and still applies product-wide permission overrides to severance-coded anomalies. The gap remains real, but its mechanism is different from the previously reported one.
 
-**No change in gate:** Only code-level alias candidates are identified; no complete source-backed canonical alias list exists. `O-01 TYPE RESOLVER=OPEN`; `INDEPENDENT WORK RE-REVIEW=REQUIRED`; `PERMISSION-ONLY PREVIEW=NOT IMPLEMENTATION AUTHORIZED`; `SCENARIO SAVE=BLOCKED`.
-
-
-### H1. Import persistence confirmed by direct read
-
-`pension_product_import_service.import_source_batch` uses `metadata.model_dump()` to create `PensionProduct(..., source_kind="imported", **metadata.model_dump())`; existing products are updated using `ProductUpdate(**metadata.model_dump(), ...)` and `_update_locked`. Therefore the originally parsed `SUG-MUTZAR` raw code is in fact passed to the persisted `product_type` field without conversion to `PRODUCT_TYPE_LABELS` descriptions in these paths. For imported records whose raw value is exactly `"1"` ... `"5"`, the old `destinations` substring checks do not match and use `BASE_MATRIX`, even though code-level terminology might otherwise suggest a product override. This is a **demonstrated classification gap**, not proof that any individual customer record has been misclassified. Do not rewrite existing factual records in this design task.
-
-Importing unknown raw codes records `unmapped_product_type` diagnostics during parsing, but the full acceptance behavior must also be verified in `_prepare_batch` and schema validation; no claim of successful persistence of such records is made here.
+**Acceptance gate:** verify the manual frontend inputs and source dictionaries, specify the treatment of insurance and savings policies, and establish an exact reviewed type mapping including unknown/missing values and positive severance anomalies. Independent Work re-review is still required. No preview implementation, scenario save, ruleset authority change, factual data rewrite, CI, migration or deployment is authorized by this documentation.

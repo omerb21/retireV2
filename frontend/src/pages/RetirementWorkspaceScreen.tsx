@@ -794,8 +794,20 @@ export function RetirementWorkspaceScreen() {
             {mockError && <p role="alert">{mockError}</p>}
             <button type="button" disabled={!mockSource} onClick={() => {
               if (!mockSource) return;
+              const [productId, code] = mockSource.split("|");
+              const sourceValue = products.find(item => item.product_id === productId)?.components[code];
+              const limit = sourceValue == null ? null : mockAmountInCents(sourceValue);
+              const amount = mockAmountInCents(mockAmount);
+              const allocated = (mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? [])
+                .filter(item => item.source === mockSource)
+                .reduce((total, item) => total + (mockAmountInCents(item.amount) ?? 0n), 0n);
+              if (limit == null || amount == null || amount <= 0n || allocated + amount > limit) {
+                setMockError("יש להזין סכום חיובי שאינו חורג מיתרת הרכיב הזמינה בהדמיה.");
+                return;
+              }
+              setMockError(null);
               setMockAlternatives(prev => prev.map(item => item.id === mockActiveId
-                ? { ...item, decisions: [...item.decisions, { id: Math.max(0, ...item.decisions.map(d => d.id)) + 1, source: mockSource, action: mockAction }] }
+                ? { ...item, decisions: [...item.decisions, { id: Math.max(0, ...item.decisions.map(d => d.id)) + 1, source: mockSource, amount: mockAmount, action: mockAction }] }
                 : item));
             }}>הוסף החלטת הדמיה</button>
             <h3>החלטות בדיקה בחלופה</h3>

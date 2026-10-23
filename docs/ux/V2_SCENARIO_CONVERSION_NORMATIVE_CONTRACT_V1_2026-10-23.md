@@ -177,3 +177,18 @@ Direct source evidence from `backend/app/security/transport.py::validate_session
 The preview API must not accept an actor identity from the request body, must not reimplement or bypass session validation, and must never authorize based solely on product name/type or `client_id` asserted by a browser. Production-like tests must exercise missing/invalid session, valid configured session with nonexistent or wrong-client product ID, and spoofed identity fields. Development bypass behavior is not production authorization evidence.
 
 This does not remove the separate source-snapshot read consistency and zero-write design gate (§K), or product-type resolver gate (§H/J), nor does it authorize an implementation. **Preview review remains BLOCKED pending independent assessment.**
+
+
+## M. Concrete zero-write snapshot design candidate (2026-10-23; NOT IMPLEMENTED)
+
+Source evidence: `backend/app/db/session.py` configures SQLAlchemy `Session(autocommit=False, autoflush=False)` via `sessionmaker`; `pension_product_service.lock_client` is a deliberate *write-coordination* boundary and **must remain unchanged** for factual mutations. Production configuration requires a PostgreSQL URL. A new preview must not use `current_products`, existing `detail` route, or `lock_client` because they may acquire writer locks and, on SQLite, issue UPDATE.
+
+**Candidate PostgreSQL read protocol for later independent review:** use a dedicated short-lived transaction with `REPEATABLE READ READ ONLY` established **before its first SQL statement**, read client/product/component data under the same snapshot with server-side client scoping, and close it without committing a mutation. No `SELECT FOR UPDATE`, advisory transaction lock, ORM flush, source audit, or call to conversion APIs. Treat source absence, structural defects and wrong-client product as errors; include component IDs and product version in fingerprint. Use documented SQLAlchemy transaction/isolation configuration rather than issuing `SET TRANSACTION` after a prior implicit transaction has started.
+
+**SQLite test protocol:** ensure a single consistent read snapshot with a read transaction selected according to SQLite's actual transaction initiation/isolation semantics; do not assume that `autoflush=False` or SQLAlchemy session creation alone guarantees a database snapshot. No writer reservation and no UPDATE allowed. Validate with concurrent writer tests. SQLite is a test/development capability, not an excuse to weaken production consistency.
+
+**Validation:** Capture executed SQL and assert zero DML/DDL or write-capable lock statements; concurrent factual product update cannot yield product/version from one revision and components from another; follow-up stale fingerprint is detectable. A permission preview never allocates or persists results; its response is informational.
+
+**API method security:** proposed `POST` endpoint is an unsafe method, so production `RTDIRSecurityMiddleware` will require both exact Origin and CSRF token despite the endpoint having zero database writes. Do not bypass origin/CSRF to make the read-only operation easier. Consider GET only as a separately versioned API design decision if the input/response shape supports it.
+
+**Review gate:** This is a bounded implementation design candidate, not evidence of tested transaction behavior and not permission to code or run CI. The independent review must choose the exact safe SQLAlchemy pattern and verify its behavior on PostgreSQL and SQLite.

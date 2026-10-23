@@ -283,3 +283,18 @@ This section closes ambiguities of **technical safety behavior**, not those prof
 6. Scenario cancellation or amendment must not write source balances or perform factual conversion reversal.
 
 **O-03, O-04, O-05, O-06 are owner-approved and CLOSED.** O-01, O-02, O-07 and O-08 remain OPEN; `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED`.
+
+## 19. O-01 owner clarification: product classification is not severance entitlement (2026-10-23)
+
+**Professional source clarification received:** Education funds (`קרן השתלמות`) and investment provident funds (`קופת גמל להשקעה`) do not have genuine severance components. Their product-type override exists because actual source balances may appear in different technical contribution columns, including post-2000 contribution columns that ordinary pension products cannot convert to capital. Treating those technical columns as conclusive eligibility would incorrectly block capital conversion for these two product classes.
+
+**Correction to earlier contract discussion:** The hypothetical conflict 'a genuine severance component in an education/investment fund is legally overridden' is not the business reason for the V1 exception, and must NOT be presented as such. A severance-coded source row under one of these product types is a **source classification anomaly**, not an approved severance conversion. It needs source reconciliation before any authoritative scenario eligibility decision. This does not change O-06's scoped protections for genuine severance in products where severance is applicable.
+
+**Proposed test/contract obligations:**
+1. Verify canonical product type from server-controlled source metadata; do not trust an arbitrary browser-supplied type, substring alone, or unknown-type base-matrix fallback.
+2. For verified education-fund / investment-provident-fund products, permit the product-specific **capital eligibility check** for balances found in genuine contribution columns, including `תגמולי_עובד_אחרי_2000` and `תגמולי_מעביד_אחרי_2000`, subject to any separately accepted evidence prerequisites.
+3. If a component has a genuine severance code under one of these products, return `needs_source_reconciliation`; do not silently relabel as contribution, and do not infer professional approval from the legacy override.
+4. Continue separating destination permission from tax determination. Existing `capital_gains`/`exempt` labels in the factual matrix do not become approved scenario tax outputs.
+5. Add explicit parity/negative cases for irregular technical contribution-column placements, unexpected severance-coded components, unknown product type and correctly typed normal pension products.
+
+**Decision status:** O-01 business rationale is clarified by owner; exact server-side type resolver and inconsistent-input handling are proposed for acceptance. The overall contract and implementation remain `BLOCKED` pending remaining policy/evidence decisions and independent review.

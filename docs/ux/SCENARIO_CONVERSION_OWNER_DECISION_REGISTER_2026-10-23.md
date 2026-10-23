@@ -1,6 +1,6 @@
 # RETIRE V2 — Owner decision register for scenario conversion
 
-**Status:** O-03 OWNER APPROVED on 2026-10-23; O-01, O-07 and O-08 remain OPEN. Independent Work contract BLOCKED; financial implementation and production NOT authorized. The owner approval is a product-workflow decision, not legal eligibility approval.
+**Status:** O-02 through O-08 OWNER APPROVED on 2026-10-23; O-01 product-type anomaly handling remains pending technical verification. Independent Work contract BLOCKED; financial implementation and production NOT authorized. The owner approval is a product-workflow decision, not legal eligibility approval.
 
 | ID | Professional decision | Conservative proposed default (NOT APPROVED) | Safe work independent of decision |
 | --- | --- | --- | --- |
@@ -11,7 +11,7 @@
 | O-05 | **APPROVED 2026-10-23**: Unallocated money is an automatically calculated residual; it is **not** a separate conversion or explicit retain-as-is decision. | **Owner decision recorded**; calculate per source component from original balance minus accepted scenario allocations, without double counting. | Show original, allocated, and remaining separately; validate totals and staleness |
 | O-06 | **APPROVED 2026-10-23**: Block conversion of unsettled severance components and operations genuinely dependent on them; do not automatically block unrelated contribution components. | **Owner decision recorded**; evaluate dependencies and blockers by component/operation, not whole-scenario global veto. | Specify server-side dependency evidence and negative tests for independent rewards/contribution allocations |
 | O-07 | **APPROVED 2026-10-23:** Only the system owner or a professional explicitly authorized by the owner may approve conversion-rule changes. Preserve historical versions, effective dates and change records; never automatically alter past results. | **Owner decision recorded**; immutable approved rulesets, auditable delegations and explicit reevaluation of historical outcomes. | Specify proposed approval audit schema and independent review of temporal rules |
-| O-08 | Which employment, grant, tax approvals/161d evidence is required for each action? | Missing or unreconciled required proof prevents accepted outcome; never infer from existence of unrelated record | Producer inventory and formal evidence status DTO |
+| O-08 | **APPROVED 2026-10-23:** Missing professional evidence blocks only the action that depends on it, not the whole scenario. Display the missing datum, the blocking reason and record the evidence source. | **Owner decision recorded:** dependency-scoped validation, explicit missing versus not-applicable status; no invented global veto. | Establish authoritative evidence producers and component/action dependency mapping before implementation |
 
 ## Review gates
 
@@ -41,3 +41,6 @@ The owner expressly confirmed that pension payments derived from **both employee
 
 ## O-07 owner approval (2026-10-23)
 Only the system owner or a professional explicitly delegated authority by the owner may approve any change to conversion rules. Record version, effective interval, approver identity, rationale, change details and predecessor; historical scenario outcomes never change automatically. Approval does not establish rules for retroactive legal corrections or resolve prerequisite evidence O-08. O-07 is CLOSED / OWNER APPROVED. O-01 data anomaly verification and O-08 evidence policy remain for closure.
+
+## O-08 owner approval (2026-10-23)
+The professional owner confirmed that unavailable essential evidence blocks only operations that actually depend on that evidence; unrelated operations remain independently evaluable. Every blocker must identify the missing datum, specific reason, evidence producer/source and affected component/action. Do not infer eligibility from missing records. The detailed per-rule evidence-source mapping is still a technical/professional acceptance gate, not permission to implement. O-08 is CLOSED as a workflow policy. O-01 irregular product-type classification remains to be verified; Work re-review remains outstanding.

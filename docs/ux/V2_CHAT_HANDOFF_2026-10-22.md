@@ -582,3 +582,10 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Backend failure: test asserted `get_grants()[0]` was the linked original grant after creating a second unlinked grant. API orders by randomized grant_id, not insertion. The test relied on an invalid ordering guarantee, not evidence that the stored FK was lost. Fixed assertions to find the original `gid` explicitly (commit `85b80ed8eabd3a9052977d198c526f0bb91245b1`).
 - Frontend failure: the newly added preflight validation used literal regex `/^\\d{4}-\\d{2}-\\d{2}$/` rather than `/^\d{4}-\d{2}-\d{2}$/`; it rejected every normal grant receipt date and prevented the API call, exactly matching the displayed form error. Fixed one regex (commit `b250268c7fdc39072967884a7b4f6cb30d0e6932`).
 - **Retest required:** same isolated Docker script (4 expected) and focused Frontend Vitest suite (24 expected). Do not claim success until user output. No master merge, deployment or global CI.
+
+## BK. Owner verified focused regression fixes (2026-10-23)
+
+- Owner pulled `a133c24` and reran `dev/Test-Employment-Grant-Link.ps1`: **4 passed**, one nonblocking Starlette DeprecationWarning, 22.50s.
+- Owner reran frontend `npm.cmd run build`: `tsc -b && vite build` **PASS**, 76 modules. Focused `RetirementWorkspaceScreen.test.tsx`: **24/24 passed**; two React Router future-flag warnings only.
+- Both previous failures from BJ resolved. This is code-level acceptance only, NOT PostgreSQL browser end-to-end acceptance for employer-first historical settlement form. Running Docker server may still have an older image. Existing two linked synthetic exempt grant amounts remain unresolved; do not mutate or delete them automatically.
+- Business incompleteness: persist reviewed/none/not-reviewed status, full severance settlement evidence/components, uniqueness enforcement and reconcile legacy duplicates before schema constraint, current-employer separate facts. Keep isolated feature branch; no full CI, merge or deployment.

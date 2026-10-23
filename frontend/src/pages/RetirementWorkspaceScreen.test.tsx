@@ -149,8 +149,8 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
     fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
     expect(screen.getByRole("option", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("combobox", { name: "מקור כספי לדוגמה" }), {
-      target: { value: "p1" },
+    fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
+      target: { value: "p1|פיצויים_מעסיק_נוכחי" },
     });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();

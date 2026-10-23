@@ -344,3 +344,17 @@ The frontend code comment identifies these as capital-origin contributions, wher
 5. Browser settings, unapproved drafts and administrative roles without express delegation cannot publish rulesets.
 
 **O-07 CLOSED / OWNER APPROVED.** O-08 prerequisite evidence policy and O-01 anomalous product classification verification remain outstanding. Work `CONTRACT_READINESS=BLOCKED` and `IMPLEMENTATION=NOT_AUTHORIZED` remain in force.
+
+## 23. Owner-approved O-08: evidence-dependent blocking (2026-10-23)
+
+**APPROVED:** A missing professional datum or required supporting evidence blocks **only the conversion decision or related action that depends on that datum**. It must **not** automatically block an unrelated component, product or the whole scenario. For each blocked or unresolved action, display exactly what is missing and why, and document the authoritative evidence source.
+
+**Required bounded validation contract (design still subject to independent review):**
+1. Each prerequisite has `evidence_type`, source/producer identity, source record reference and version/fingerprint, effective date, affected component IDs, affected action, dependency reason, and one of `satisfied`, `missing`, `requires_reconciliation`, `not_applicable`, `unverified`.
+2. Distinguish **not applicable** from **missing**. Unrelated actions must be assessed on their own prerequisites, not blocked by a global missing-data flag. Never infer that an employment or grant record proves settlement merely because it exists.
+3. The server returns structured affected-component/action blockers and the user-visible missing data/reason. Preview keeps all original components visible. The approved O-03/O-04 subset and grouped-exclusion review apply; excluded rows remain unconverted.
+4. On authoritative future submit, revalidate the prerequisites relevant to the explicitly selected component IDs. If any submitted decision depends on missing or changed evidence, reject that submitted batch atomically without source writes. Unrelated independently eligible decisions can be submitted separately.
+5. Existing candidate sources include `EmploymentRecord`, `Grant`, canonical pension component metadata and reconciliation; detailed evidence-to-rule linkage and tax/161d producer ownership are **still to be specified**, not invented by this approval.
+6. Evidence updates and changed rule/source fingerprints must mark affected scenario evaluations stale without modifying historical decisions or factual balances.
+
+**O-08 CLOSED / OWNER APPROVED.** The professional workflow decisions O-02 through O-08 are now approved. O-01's product classification rationale was clarified by owner but its canonical type resolver and anomaly handling still require technical verification. Overall Work contract readiness remains `BLOCKED`; no implementation authorized pending corrected contract re-review.

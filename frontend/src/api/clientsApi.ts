@@ -112,6 +112,7 @@ export interface M01CaseUpdatePayload {
 
 export interface EmploymentRecordItem {
   employment_record_id: string;
+  exempt_grant_status?: "not_reviewed" | "none" | "recorded" | "requires_reconciliation";
   client_id: number;
   employer_name: string;
   work_start_date: string;

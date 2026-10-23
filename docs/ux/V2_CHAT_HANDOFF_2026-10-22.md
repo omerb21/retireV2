@@ -836,3 +836,8 @@ Owner fast-forwarded Windows local checkout to `b00797cf2afdf77dd6083fda2adb609d
 - Read-only inspected V2 pension component/product models, Decimal reconciliation service, employment records, grants and client profile. Appended source mapping to section 14 of `docs/ux/V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md`.
 - V2 already computes component sums and discrepancies; reuse authoritative `reconcile` rather than duplicate. Employment/grant rows exist, but no automatic per-component entitlement linkage is confirmed; professional prerequisite mapping, 161d/tax producer and ruleset governance remain open.
 - Audit status remains BLOCKED; no authoritative scenario code, CI, deployment or DB changes. Document-only update; no test run required.
+
+## DB. Single professional decision board and review segmentation (2026-10-23)
+- Created `docs/ux/SCENARIO_CONVERSION_OWNER_DECISION_REGISTER_2026-10-23.md`: O-01…O-08 with explicit nonapproved conservative proposals, G0…G4 review/implementation gates and one focused owner choice O-03 about consciously selecting an eligible subset for a mixed whole plan. Do not treat proposals as accepted law/policy.
+- The contract stays BLOCKED; Work found missing authoritative scenario enforcement. Next owner answer can resolve O-03 only, without prejudging tax, severance exception precedence, evidence, or rule governance.
+- No executable changes, tests, CI, migrations, merge or deploy.

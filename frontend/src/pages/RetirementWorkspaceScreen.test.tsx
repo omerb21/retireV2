@@ -49,7 +49,10 @@ function product(id = 1): PensionProduct {
 
 function SwitchClient() {
   const navigate = useNavigate();
-  return <button type="button" onClick={() => navigate("/clients/2/workspace")}>עבור ללקוח ב</button>;
+  return <>
+    <button type="button" onClick={() => navigate("/clients/1/workspace")}>עבור ללקוח א</button>
+    <button type="button" onClick={() => navigate("/clients/2/workspace")}>עבור ללקוח ב</button>
+  </>;
 }
 
 function open() {
@@ -139,7 +142,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
     expect(screen.getByText(/לא יוצגו מספרי קצבה/)).toBeInTheDocument();
     const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
-    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(9);
+    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(8);
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
@@ -154,6 +157,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
     fireEvent.click(within(plan).getAllByRole("button", { name: "בחר רכיב לתכנון" })[1]);
     expect(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" })).toHaveValue("p1|פיצויים_לאחר_התחשבנות");
+    expect(screen.queryByRole("region", { name: "סקירת רכיבי תוכנית שלמה" })).not.toBeInTheDocument();
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
@@ -183,7 +187,8 @@ describe("סביבת העבודה המקצועית החדשה", () => {
       target: { value: "40.00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("נחסמה לפי כללי ההמרה");
+    expect(screen.getByRole("alert")).toHaveTextContent("החלטת UX-MOCK נחסמה");
+    expect(screen.getByRole("alert")).toHaveTextContent("אינה הכרעה מקצועית מחייבת");
     expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
@@ -194,16 +199,16 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
     fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
     expect(screen.getByRole("option", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /קרן פנסיה א — פיצויים מעסיק נוכחי/ })).toHaveValue("p1|פיצויים_מעסיק_נוכחי");
+    expect(screen.queryByRole("option", { name: "השארה ללא שינוי" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
-      target: { value: "p1|פיצויים_מעסיק_נוכחי" },
+      target: { value: "p1|פיצויים_לאחר_התחשבנות" },
     });
     fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "40.00" } });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
-    expect(screen.getByLabelText("מצב יתרה בהדמיה")).toHaveTextContent("60");
+    expect(screen.getByLabelText("מצב יתרה בהדמיה")).toHaveTextContent("10");
 
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "70.00" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "20.00" } });
     fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
     expect(screen.getByRole("alert")).toHaveTextContent("יתרת הרכיב");
 
@@ -214,10 +219,73 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(within(preview).getByRole("columnheader", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
     expect(within(preview).getByRole("columnheader", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
     expect(within(preview).getAllByText(/40(?:[.]00)? ₪/).length).toBeGreaterThanOrEqual(2);
+    expect(within(preview).getAllByText(/10(?:[.]00)? ₪/).length).toBeGreaterThanOrEqual(2);
     fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
     expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "בטל החלטת הדמיה" }));
     expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("cancels decision editing and selects a remaining alternative after deleting the active copy", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
+      target: { value: "p1|פיצויים_לאחר_התחשבנות" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "20.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
+    fireEvent.click(screen.getByRole("button", { name: "ערוך החלטת הדמיה" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "30.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "בטל עריכת החלטה" }));
+    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "שמור שינוי בהחלטת הדמיה" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
+    expect(screen.getByRole("combobox", { name: "חלופה פעילה" })).toHaveValue("2");
+    fireEvent.click(screen.getByRole("button", { name: "מחק חלופת הדמיה" }));
+    expect(screen.getByRole("combobox", { name: "חלופה פעילה" })).toHaveValue("1");
+    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
+  });
+
+  it("completes a two-alternative planner journey, edits the copy, compares it, and returns without losing context", async () => {
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(within(ledger).getByRole("button", { name: "פיצויים לאחר התחשבנות — קרן פנסיה א" }));
+    fireEvent.click(screen.getByRole("button", { name: "העבר רכיב להדמיית תרחיש (ללא שמירה)" }));
+    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "כיוון החלטה בהדמיה" }), { target: { value: "pension" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "20.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
+    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
+    fireEvent.click(screen.getByRole("button", { name: "ערוך החלטת הדמיה" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "כיוון החלטה בהדמיה" }), { target: { value: "capital" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "30.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמור שינוי בהחלטת הדמיה" }));
+    expect(screen.getByText(/ייעוד להון — 30/)).toBeInTheDocument();
+
+    const activeAlternative = screen.getByRole("combobox", { name: "חלופה פעילה" });
+    fireEvent.change(activeAlternative, { target: { value: "1" } });
+    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
+    fireEvent.change(activeAlternative, { target: { value: "2" } });
+    expect(screen.getByText(/ייעוד להון — 30/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
+    expect(within(comparison).getByRole("columnheader", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
+    expect(within(comparison).getByRole("columnheader", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
+    expect(within(comparison).getByText(/20(?:[.]00)? ₪ · ייעוד לקצבה/)).toBeInTheDocument();
+    expect(within(comparison).getByText(/30(?:[.]00)? ₪ · ייעוד להון/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "2. תיק פנסיוני" }));
+    expect(screen.getByRole("region", { name: "טבלת רכיבים נגללת" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.getByRole("option", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
@@ -246,17 +314,19 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
-  it("rejects a previous client's late response and clears old data on route change", async () => {
-    let resolveFirst!: (value: ClientDetailItem) => void;
-    const first = new Promise<ClientDetailItem>(resolve => { resolveFirst = resolve; });
-    vi.mocked(getClient).mockImplementation(id => id === 1 ? first : Promise.resolve(client(id)));
+  it("rejects a late B response after an A-to-B-to-A route change", async () => {
+    let resolveSecond!: (value: ClientDetailItem) => void;
+    const second = new Promise<ClientDetailItem>(resolve => { resolveSecond = resolve; });
+    vi.mocked(getClient).mockImplementation(id => id === 2 ? second : Promise.resolve(client(id)));
     open();
+    expect(await screen.findByText("קרן פנסיה א")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח ב" }));
-    expect(await screen.findByText("קרן פנסיה ב")).toBeInTheDocument();
-    await act(async () => { resolveFirst(client(1)); await first; });
-    expect(screen.queryByText("קרן פנסיה א")).toBeNull();
-    expect(screen.queryByText("לקוח א")).toBeNull();
-    expect(screen.getByText("קרן פנסיה ב")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח א" }));
+    expect(await screen.findByText("קרן פנסיה א")).toBeInTheDocument();
+    await act(async () => { resolveSecond(client(2)); await second; });
+    expect(screen.queryByText("קרן פנסיה ב")).toBeNull();
+    expect(screen.queryByText("לקוח ב")).toBeNull();
+    expect(screen.getByText("קרן פנסיה א")).toBeInTheDocument();
   });
   it("shows read-only supplementary counts from actual scoped GET responses", async () => {
     vi.mocked(getEmploymentRecords).mockResolvedValue([{

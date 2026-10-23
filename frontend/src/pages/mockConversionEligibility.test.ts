@@ -16,9 +16,16 @@ describe("V1-derived mock conversion warnings (not authoritative)", () => {
   it("rejects capital on post-2000 pension contributions", () => {
     expect(mockConversionRejection("תגמולי_עובד_אחרי_2000", "קרן פנסיה", "capital")).toMatch(/הון/);
   });
-  it("retains V1 product-specific investment/education exemptions and fails closed for unknowns", () => {
-    expect(mockConversionRejection("תגמולי_עובד_אחרי_2000", "גמל להשקעה", "capital")).toBeNull();
+  it("limits exact investment/education exceptions to recognized reward components", () => {
+    expect(mockConversionRejection("תגמולי_עובד_אחרי_2000", "קופת גמל להשקעה", "capital")).toBeNull();
+    expect(mockConversionRejection("תגמולי_מעביד_אחרי_2008_לא_משלמת", "קרן השתלמות", "capital")).toBeNull();
+    expect(mockConversionRejection("פיצויים_לאחר_התחשבנות", "קופת גמל להשקעה", "capital")).toMatch(/התאמת מקור/);
+    expect(mockConversionRejection("פיצויים_מעסיק_נוכחי", "education_fund", "pension")).toMatch(/התאמת מקור/);
+  });
+  it("fails closed for missing, ambiguous, substring-only and unknown product types", () => {
+    expect(mockConversionRejection("תגמולי_עובד_אחרי_2000", "", "capital")).toMatch(/התאמת מקור/);
+    expect(mockConversionRejection("תגמולי_עובד_אחרי_2000", "סוג מוצר לא ממופה", "capital")).toMatch(/התאמת מקור/);
+    expect(mockConversionRejection("תגמולי_עובד_אחרי_2000", "קרן השתלמות ישנה", "capital")).toMatch(/התאמת מקור/);
     expect(mockConversionRejection("unknown", "קרן פנסיה", "capital")).toMatch(/אין כלל/);
-    expect(mockConversionRejection("unknown", "קרן פנסיה", "unchanged")).toBeNull();
   });
 });

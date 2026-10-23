@@ -15,14 +15,14 @@ STATES = ("not_reviewed", "none", "recorded", "requires_reconciliation")
 
 
 def upgrade():
-    op.add_column("employment_records", sa.Column(
-        "exempt_grant_status", sa.String(32), nullable=False,
-        server_default="not_reviewed"))
-    op.create_check_constraint(
-        "ck_employment_exempt_grant_status",
-        "employment_records",
-        "exempt_grant_status IN ('not_reviewed', 'none', 'recorded', 'requires_reconciliation')",
-    )
+    with op.batch_alter_table("employment_records") as batch:
+        batch.add_column(sa.Column(
+            "exempt_grant_status", sa.String(32), nullable=False,
+            server_default="not_reviewed"))
+        batch.create_check_constraint(
+            "ck_employment_exempt_grant_status",
+            "exempt_grant_status IN ('not_reviewed', 'none', 'recorded', 'requires_reconciliation')",
+        )
     # Never infer 'none' from missing evidence. Existing duplicate grants stay intact.
     op.execute(sa.text("""
         UPDATE employment_records SET exempt_grant_status =
@@ -38,5 +38,6 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_constraint("ck_employment_exempt_grant_status", "employment_records", type_="check")
-    op.drop_column("employment_records", "exempt_grant_status")
+    with op.batch_alter_table("employment_records") as batch:
+        batch.drop_constraint("ck_employment_exempt_grant_status", type_="check")
+        batch.drop_column("exempt_grant_status")

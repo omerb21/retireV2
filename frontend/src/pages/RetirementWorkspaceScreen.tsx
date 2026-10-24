@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { mockConversionRejection } from "./mockConversionEligibility";
+import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
@@ -856,6 +857,7 @@ export function RetirementWorkspaceScreen() {
         </form>}
       </section>}
       {step === "scenario" && <section>
+        <ScenarioDraftPanel key={clientId} clientId={clientId} products={products} />
         <h1>תכנון תרחישים</h1>
         <p className="professional-workspace__boundary">
           שלב החיבור למנוע התרחישים עדיין לא בוצע. ההמרה הקנונית הקיימת ב־V2 מעדכנת יתרות אמת,

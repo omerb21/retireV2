@@ -10,8 +10,11 @@ from datetime import date
 from decimal import Decimal
 import hashlib
 import json
+import logging
 import unicodedata
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -157,6 +160,10 @@ def _signed_money(value: Decimal | None) -> str | None:
 
 
 def _resolve_product(source_kind: str, product_type: str) -> tuple[str, str]:
+    if not isinstance(source_kind, str) or source_kind not in {"manual", "imported"}:
+        raise ScenarioPermissionError("MISSING_CANONICAL_SOURCE", 409)
+    if not isinstance(product_type, str) or not product_type:
+        raise ScenarioPermissionError("MISSING_CANONICAL_SOURCE", 409)
     source_kind = unicodedata.normalize("NFC", source_kind)
     product_type = unicodedata.normalize("NFC", product_type)
     for known_kind, known_type, product_class, mapping_rule_id in _PRODUCT_MAPPINGS:
@@ -189,6 +196,11 @@ def _read_snapshot(
         raise ScenarioPermissionError(
             "PREVIEW_SOURCE_NOT_FOUND", 404, ["/path/client_id", "/product_id"],
         )
+    if (not isinstance(product.product_id, str) or not product.product_id
+        or not isinstance(product.source_identity, str) or not product.source_identity
+        or type(product.version) is not int or product.version <= 0
+        or product.client_id != client_id):
+        raise ScenarioPermissionError("MISSING_CANONICAL_SOURCE", 409)
     product_class, _mapping_rule_id = _resolve_product(product.source_kind, product.product_type)
     rows = db.scalars(select(PensionProductComponent).where(
         PensionProductComponent.product_id == product.product_id,
@@ -312,6 +324,7 @@ def preview(
     product_id: str,
     action: str,
     effective_date: date,
+    request_id: str = "unavailable",
 ) -> dict[str, Any]:
     """Execute one isolated read snapshot and destroy all owned resources."""
     _selected_ruleset(effective_date)
@@ -322,6 +335,7 @@ def preview(
     result: dict[str, Any] | None = None
     primary: BaseException | None = None
     cleanup_failed = False
+    cleanup_diagnostics: list[tuple[str, str]] = []
     try:
         connection = engine.connect()
         dialect = connection.dialect.name
@@ -346,28 +360,35 @@ def preview(
                     transaction.rollback()
                 elif connection.in_transaction():
                     connection.rollback()
-            except BaseException:
+            except BaseException as exc:
                 cleanup_failed = True
+                cleanup_diagnostics.append(("rollback", type(exc).__name__))
         if db is not None:
             try:
                 db.close()
-            except BaseException:
+            except BaseException as exc:
                 cleanup_failed = True
+                cleanup_diagnostics.append(("session_close", type(exc).__name__))
         if connection is not None:
             if cleanup_failed:
                 try:
                     connection.invalidate()
-                except BaseException:
-                    pass
+                except BaseException as exc:
+                    cleanup_diagnostics.append(("invalidate", type(exc).__name__))
             try:
                 connection.close()
-            except BaseException:
+            except BaseException as exc:
                 cleanup_failed = True
+                cleanup_diagnostics.append(("connection_close", type(exc).__name__))
                 try:
                     connection.invalidate()
-                except BaseException:
-                    pass
+                except BaseException as invalidate_exc:
+                    cleanup_diagnostics.append(("invalidate", type(invalidate_exc).__name__))
     if cleanup_failed:
+        logger.error(
+            "scenario_permission_preview_cleanup_failed",
+            extra={"request_id": request_id, "cleanup_failures": cleanup_diagnostics},
+        )
         raise ScenarioPermissionError("PREVIEW_TRANSACTION_CLEANUP_FAILED", 503)
     if primary is not None:
         if isinstance(primary, ScenarioPermissionError):

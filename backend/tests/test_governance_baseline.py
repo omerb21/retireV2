@@ -200,6 +200,8 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "frontend/src/components/ScenarioDraftPanel.tsx",
     "frontend/src/components/scenarioDraftEdit.ts",
     "frontend/src/components/scenarioDraftEdit.test.ts",
+    "frontend/src/api/scenarioDraftPermissionApi.ts",
+    "frontend/src/api/scenarioDraftPermissionApi.test.ts",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }
 

@@ -30,7 +30,7 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         with engine.begin() as connection:
             connection.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
         completed = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "e2f8a6c1d405"],
+            [sys.executable, "-m", "alembic", "upgrade", "f6a9c4d2e107"],
             cwd=BACKEND,
             env={**os.environ, "DATABASE_URL": postgres_url,
                  "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,

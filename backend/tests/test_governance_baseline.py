@@ -29,7 +29,6 @@ APPROVED_SLICE_1_MIGRATION_PATH = (
 APPROVED_LOCAL_UNTRACKED_PATHS = {
     "CURRENT_PROJECT_STATE.md",
     "_evidence/",
-    "dev-local-backups/",
     "specs/bootstraps/",
     "start_retire_v2_fixed.bat",
 }

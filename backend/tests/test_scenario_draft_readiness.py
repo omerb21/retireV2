@@ -19,10 +19,10 @@ class FakeDatabase:
 
 
 @pytest.mark.parametrize("versions,expected", [
-    (["e2f8a6c1d405"], True),
+    (["f6a9c4d2e107"], True),
     (["c4e8a2f6b731"], False),
     ([], False),
-    (["e2f8a6c1d405", "other-head"], False),
+    (["f6a9c4d2e107", "other-head"], False),
 ])
 def test_scenario_head_readiness_is_exact(monkeypatch, versions, expected):
     database = FakeDatabase(versions)

@@ -216,14 +216,16 @@ Resolver key is the exact pair `(source_kind, persisted product_type)` after Uni
 
 | `source_kind` | Exact persisted `product_type` | Proven source | `proposed_class` | Approval status / resolver result |
 | --- | --- | --- | --- | --- |
-| `imported` | `קרן פנסיה` | importer code `4` | `pension_fund` | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE` |
-| `imported` | `קופת גמל` | importer code `3` | `provident_fund` only | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE`; never infer investment provident |
-| `imported` | `פוליסת ביטוח חיים משולב חיסכון` | importer code `1` | `insurance_policy` candidate | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE` |
+| `imported` | `קרן פנסיה` | importer code `4` | `pension_fund` | `APPROVED` — owner classification 2026-10-24 |
+| `imported` | `קופת גמל` | importer code `3` | `provident_fund` only | `APPROVED` — owner classification 2026-10-24; never infer investment provident |
+| `imported` | `פוליסת ביטוח חיים משולב חיסכון` | importer code `1` | `insurance_policy` | `APPROVED` — owner classification 2026-10-24 |
 | `imported` | `פוליסת ביטוח חיים` | importer code `2` | ambiguous insurance/risk product | `AMBIGUOUS` → `AMBIGUOUS_PRODUCT_TYPE` |
 | `imported` | `פוליסת חיסכון טהור` | importer code `5` | unsupported until class is decided | `UNSUPPORTED` → `UNKNOWN_PRODUCT_TYPE` |
 | `imported` | `סוג מוצר לא ממופה` | explicit importer fallback | none | `UNSUPPORTED` → `UNKNOWN_PRODUCT_TYPE` |
 | `imported` | `סוג מוצר לא נמסר` | explicit importer fallback | none | `UNSUPPORTED` → `UNKNOWN_PRODUCT_TYPE` |
 | `manual` | `קופת גמל` | current manual-form default; still free text | `provident_fund` candidate | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE` |
+
+**Owner clarification 2026-10-24:** `pension_fund`, `provident_fund` and `insurance_policy` (for the three approved imported labels above) share the SAME base conversion permission matrix, governed by the actual canonical monetary component and its time/settlement classification; they are not three different legal conversion matrices. `education_fund` and `investment_provident_fund` are distinct product classes with distinct conversion treatment under O-01. This classification does NOT independently establish professional eligibility, tax treatment, a right to withdraw, or the meaning of any unsupported insurance-only label. Approval of the imported exact values does not automatically approve free-text manual source values, including the manual `קופת גמל` default; that separate provenance mapping remains pending.
 
 Every other manually entered string is outside the proven exact-value table and returns `AMBIGUOUS_PRODUCT_TYPE`; textual equality with an imported label does not transfer imported provenance. There are currently **no source-proven exact labels for `education_fund` or `investment_provident_fund` and no professionally approved resolver row**. O-01 remains intact: once an exact label/provenance pair is professionally approved, contribution rows may use its permission rule while positive severance rows remain `needs_source_reconciliation`. Adding an approved mapping requires a new immutable ruleset version and independent review; it never edits this table in place or falls through to `BASE_MATRIX`.
 

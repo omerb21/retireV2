@@ -17,6 +17,7 @@ class DraftWrite(BaseModel):
 
 class DraftDecisionWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    decision_id: str | None = Field(default=None, min_length=1, max_length=64)
     source_product_id: str = Field(min_length=1, max_length=64)
     source_component_id: str = Field(min_length=1, max_length=64)
     component_code: str

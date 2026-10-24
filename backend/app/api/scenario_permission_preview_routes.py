@@ -34,6 +34,7 @@ def permission_preview(
             product_id=payload.product_id,
             action=payload.action,
             effective_date=payload.effective_date,
+            request_id=getattr(request.state, "request_id", "unavailable"),
         )
         return JSONResponse(content=result, headers=NO_STORE)
     except preview_service.ScenarioPermissionError as exc:

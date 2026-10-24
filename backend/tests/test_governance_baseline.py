@@ -29,6 +29,7 @@ APPROVED_SLICE_1_MIGRATION_PATH = (
 APPROVED_LOCAL_UNTRACKED_PATHS = {
     "CURRENT_PROJECT_STATE.md",
     "_evidence/",
+    "dev-local-backups/",
     "specs/bootstraps/",
     "start_retire_v2_fixed.bat",
 }
@@ -182,6 +183,15 @@ APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS = {
     "backend/tests/test_retirement_monthly_income_gap.py",
     "backend/tests/test_retirement_monthly_income_gap_postgresql.py",
     "backend/tests/test_governance_baseline.py",
+}
+APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS = {
+    "backend/app/api/scenario_permission_preview_routes.py",
+    "backend/app/main.py",
+    "backend/app/schemas/scenario_permission_preview.py",
+    "backend/app/services/scenario_permission_preview_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_scenario_permission_preview.py",
+    "backend/tests/test_scenario_permission_preview_postgresql.py",
 }
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
@@ -617,6 +627,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_RETIREMENT_TARGET_INCOME_SOURCE_BASIS_PATHS,
         *APPROVED_COMPARABLE_MONTHLY_INCOME_PATHS,
         *APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS,
+        *APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
@@ -669,6 +680,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_RETIREMENT_TARGET_INCOME_ADMISSION_PATHS,
         *APPROVED_RETIREMENT_TARGET_INCOME_SOURCE_BASIS_PATHS,
         *APPROVED_COMPARABLE_MONTHLY_INCOME_PATHS,
+        *APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,

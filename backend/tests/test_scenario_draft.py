@@ -202,3 +202,59 @@ def test_production_actor_does_not_fallback_to_fake_identity():
         _actor(request)
     request.state.trusted_professional_actor = "verified-operator"
     assert _actor(request) == "verified-operator"
+
+
+def test_source_fingerprint_detects_balance_and_classification_change(env):
+    from app.models.pension_product import PensionProduct, PensionProductComponent
+    client, factory = env
+    with factory.begin() as db:
+        db.add(PensionProduct(
+            product_id="fp-product", client_id=1, source_kind="imported",
+            source_identity="fp-original", product_name="Fund",
+            product_type="קרן פנסיה", account_reference="fp-account",
+            version=1, created_by="test", updated_by="test",
+        ))
+        db.add(PensionProductComponent(
+            component_id="fp-component", product_id="fp-product",
+            component_code="תגמולי_עובד_עד_2000", balance=Decimal("300.00"),
+        ))
+    scenario = client.post("/api/clients/1/scenario-drafts", json={"name": "FP"}).json()
+    url = f"/api/clients/1/scenario-drafts/{scenario['scenario_id']}"
+    payload = {"name": "FP", "expected_version": 1, "decisions": [{
+        "source_product_id": "fp-product", "source_component_id": "fp-component",
+        "component_code": "תגמולי_עובד_עד_2000", "amount": "70.00",
+        "action": "pension", "effective_date": "2026-10-24",
+    }]}
+    saved = client.put(url, json=payload)
+    assert saved.status_code == 200, saved.text
+    original = saved.json()["decisions"][0]
+    assert len(original["source_fingerprint_at_review"]) == 64
+    assert original["validation_state"] == "unverified"
+    with factory.begin() as db:
+        db.get(PensionProductComponent, "fp-component").balance = Decimal("301.00")
+    stale = client.get(url).json()
+    assert stale["status"] == "needs_revalidation"
+    assert stale["decisions"][0]["decision_id"] == original["decision_id"]
+    assert stale["decisions"][0]["amount"] == "70.00"
+    with factory.begin() as db:
+        db.get(PensionProductComponent, "fp-component").balance = Decimal("300.00")
+        db.get(PensionProduct, "fp-product").product_type = "קופת גמל"
+    stale_type = client.get(url).json()
+    assert stale_type["decisions"][0]["validation_state"] == "needs_revalidation"
+    assert stale_type["decisions"][0]["decision_id"] == original["decision_id"]
+
+
+def test_missing_source_is_needs_revalidation_even_without_review_version(env):
+    client, _ = env
+    scenario = client.post("/api/clients/1/scenario-drafts", json={"name": "Missing"}).json()
+    url = f"/api/clients/1/scenario-drafts/{scenario['scenario_id']}"
+    response = client.put(url, json={"name": "Missing", "expected_version": 1, "decisions": [{
+        "source_product_id": "absent", "source_component_id": "absent-row",
+        "component_code": "תגמולי_עובד_עד_2000", "amount": "15.00",
+        "action": "capital_asset", "effective_date": "2026-10-24",
+    }]})
+    assert response.status_code == 200, response.text
+    decision = response.json()["decisions"][0]
+    assert decision["product_version_at_review"] is None
+    assert decision["validation_state"] == "needs_revalidation"
+    assert decision["amount"] == "15.00"

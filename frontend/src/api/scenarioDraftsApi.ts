@@ -21,7 +21,7 @@ export interface ScenarioDraft {
   decisions: ScenarioDraftDecision[];
   financial_validation: "not_evaluated";
 }
-export type DraftDecisionInput = Omit<ScenarioDraftDecision, "decision_id" | "validation_state">;
+export type DraftDecisionInput = Omit<ScenarioDraftDecision, "decision_id" | "validation_state"> & { decision_id?: string };
 async function request<T>(clientId: number, suffix: string, method = "GET", body?: unknown): Promise<T> {
   const response = await apiFetch(buildApiUrl(`/clients/${clientId}/scenario-drafts${suffix}`), {
     method, ...(body === undefined ? {} : {

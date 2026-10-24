@@ -81,6 +81,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       return;
     }
     const existing: DraftDecisionInput[] = active.decisions.map(item => ({
+      decision_id: item.decision_id,
       source_product_id: item.source_product_id,
       source_component_id: item.source_component_id,
       component_code: item.component_code, amount: item.amount,
@@ -107,6 +108,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   async function remove(index: number) {
     if (!active || active.status === "archived") return;
     const remaining = active.decisions.filter((_item, i) => i !== index).map(item => ({
+      decision_id: item.decision_id,
       source_product_id: item.source_product_id,
       source_component_id: item.source_component_id,
       component_code: item.component_code, amount: item.amount,
@@ -121,6 +123,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     event.preventDefault();
     if (!active || active.status === "archived" || !rename.trim()) return;
     const decisions: DraftDecisionInput[] = active.decisions.map(item => ({
+      decision_id: item.decision_id,
       source_product_id: item.source_product_id,
       source_component_id: item.source_component_id,
       component_code: item.component_code, amount: item.amount,

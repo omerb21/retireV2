@@ -49,8 +49,8 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     sourceSnapshotRef.current = sourceSnapshot;
     permissionEpoch.current += 1;
   }
-  const latestContext = useRef({ clientId, selected, products });
-  latestContext.current = { clientId, selected, products };
+  const latestContext = useRef({ clientId, selected, products, drafts });
+  latestContext.current = { clientId, selected, products, drafts };
   const active = drafts.find(item => item.scenario_id === selected) ?? null;
   useEffect(() => {
     setPermissions({});
@@ -238,6 +238,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
             const currentClient = clientId;
             const currentDecision = decision.decision_id;
             const currentScenario = active.scenario_id;
+            const originalDecision = JSON.stringify(decision);
             const expectedProduct = products.find(item => item.product_id === decision.source_product_id);
             const expectedComponent = expectedProduct?.conversion_components?.find(item => item.component_id === decision.source_component_id && item.component_code === decision.component_code);
             const epoch = ++permissionEpoch.current;
@@ -246,11 +247,20 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
             void previewDraftDecision(currentClient, decision)
               .then(component => {
                 const context = latestContext.current;
+                const currentDraft = context.drafts.find(item => item.scenario_id === currentScenario);
+                const currentDecisionRow = currentDraft?.decisions.find(item => item.decision_id === currentDecision);
                 const currentProduct = context.products.find(item => item.product_id === decision.source_product_id);
                 const currentComponent = currentProduct?.conversion_components?.find(item => item.component_id === decision.source_component_id && item.component_code === decision.component_code);
                 if (permissionEpoch.current !== epoch || context.clientId !== currentClient || context.selected !== currentScenario) return;
+                if (!currentDraft || currentDraft.status === "needs_revalidation" || currentDraft.status === "archived"
+                    || !currentDecisionRow || currentDecisionRow.validation_state === "needs_revalidation"
+                    || JSON.stringify(currentDecisionRow) !== originalDecision) {
+                  setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: "החלטת הטיוטה השתנתה — נדרשת בדיקה חדשה." } }));
+                  return;
+                }
                 if (!expectedProduct || !expectedComponent || !currentProduct || !currentComponent
-                    || currentProduct.version !== expectedProduct.version || component.preview_product_version !== expectedProduct.version || currentComponent.balance !== expectedComponent.balance
+                    || currentProduct.version !== expectedProduct.version || currentProduct.product_type !== expectedProduct.product_type || currentProduct.source_kind !== expectedProduct.source_kind
+                    || component.preview_product_version !== expectedProduct.version || currentComponent.balance !== expectedComponent.balance
                     || currentComponent.balance !== component.balance) {
                   setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: "נתוני המקור השתנו — יש לרענן את הטיוטה." } }));
                   return;

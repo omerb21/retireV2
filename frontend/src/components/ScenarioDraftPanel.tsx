@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
+import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComparison";
 import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
@@ -196,6 +197,26 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
         {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
       </button>
     </li>)}</ul>
+    {drafts.length > 0 && <section aria-label="השוואת חלופות טיוטה">
+      <h3>השוואת חלופות — תכנון בלבד</h3>
+      <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>
+      <table>
+        <thead><tr><th scope="col">חלופה</th><th scope="col">מצב</th><th scope="col">החלטות</th><th scope="col">מתוכנן לקצבה (₪)</th><th scope="col">מתוכנן להון (₪)</th><th scope="col">חסמים לתחקור</th></tr></thead>
+        <tbody>{drafts.map(draft => {
+          const summary = summarizeScenarioDraft(draft, products);
+          return <tr key={summary.scenarioId}>
+            <th scope="row">{summary.name}</th><td>{summary.status}</td><td>{summary.decisionCount}</td>
+            <td>{formatScenarioCents(summary.pensionCents)}</td><td>{formatScenarioCents(summary.capitalCents)}</td>
+            <td>{[
+              summary.missingSources ? `מקורות חסרים: ${summary.missingSources}` : null,
+              summary.overAllocatedSources ? `הקצאת יתר: ${summary.overAllocatedSources}` : null,
+              summary.staleDecisions || summary.status === "needs_revalidation" ? "דרוש אימות מקור" : null,
+              summary.invalidAmounts ? `סכומים לא תקינים: ${summary.invalidAmounts}` : null,
+            ].filter(Boolean).join(" · ") || "לא זוהו חריגות כמותיות; אין אישור מקצועי"}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </section>}
     {active && <div>
       <h3>{active.name}</h3>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>

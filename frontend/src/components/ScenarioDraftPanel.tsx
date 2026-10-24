@@ -98,6 +98,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       action: item.action, effective_date: item.effective_date,
     }));
     const decision: DraftDecisionInput = {
+      ...(editingDecisionId ? { decision_id: editingDecisionId } : {}),
       source_product_id: row.productId, source_component_id: row.componentId,
       component_code: row.code, amount, action, effective_date: effectiveDate,
     };

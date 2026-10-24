@@ -185,6 +185,7 @@ APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS = {
 }
 APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/alembic/versions/e2f8a6c1d405_scenario_drafts.py",
+    "backend/alembic/versions/f6a9c4d2e107_merge_scenario_heads.py",
     "backend/app/db/base.py",
     "backend/app/models/scenario_draft.py",
     "backend/app/schemas/scenario_draft.py",

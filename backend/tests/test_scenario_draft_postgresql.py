@@ -102,7 +102,38 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
             else:
                 raise AssertionError("stale version accepted")
             db.rollback()
+        # Two genuinely distinct database transactions contend on one version.
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        gate = Barrier(2)
+        def contender(label):
+            with factory() as db:
+                existing = service.read(db, 1, scenario_id)
+                assert existing["version"] == 2
+                gate.wait(timeout=10)
+                try:
+                    result = service.replace(
+                        db, 1, scenario_id,
+                        DraftReplace(name=label, expected_version=2, decisions=[decision]),
+                        label,
+                    )
+                    db.commit()
+                    return ("ok", result["version"])
+                except service.DraftError as exc:
+                    db.rollback()
+                    return (exc.code, None)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(contender, "writer-1")
+            second = pool.submit(contender, "writer-2")
+            outcomes = [first.result(timeout=25), second.result(timeout=25)]
+        assert sorted(outcomes) == [("SCENARIO_VERSION_CONFLICT", None), ("ok", 3)]
         with factory() as db:
-            assert service.read(db, 1, scenario_id)["version"] == 2
+            assert service.read(db, 1, scenario_id)["version"] == 3
+            assert len(service.read(db, 1, scenario_id)["decisions"]) == 1
+            assert db.scalar(text(
+                "SELECT count(*) FROM scenario_draft_revisions WHERE scenario_id = :id"
+            ), {"id": scenario_id}) == 3
+        with factory() as db:
+            assert service.read(db, 1, scenario_id)["version"] == 3
     finally:
         engine.dispose()

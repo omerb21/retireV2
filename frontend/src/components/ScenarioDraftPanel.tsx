@@ -37,9 +37,25 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: CheckedPermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
   const permissionEpoch = useRef(0);
+  // Invalidate already displayed permission evidence when the visible factual snapshot changes.
+  const sourceSnapshot = JSON.stringify(products.map(product => ({
+    id: product.product_id, version: product.version, type: product.product_type,
+    kind: product.source_kind, components: product.conversion_components?.map(component => ({
+      id: component.component_id, code: component.component_code, balance: component.balance,
+    })),
+  })));
+  const sourceSnapshotRef = useRef(sourceSnapshot);
+  if (sourceSnapshotRef.current !== sourceSnapshot) {
+    sourceSnapshotRef.current = sourceSnapshot;
+    permissionEpoch.current += 1;
+  }
   const latestContext = useRef({ clientId, selected, products });
   latestContext.current = { clientId, selected, products };
   const active = drafts.find(item => item.scenario_id === selected) ?? null;
+  useEffect(() => {
+    setPermissions({});
+    setCheckingPermission(null);
+  }, [sourceSnapshot]);
 
   async function reload(prefer?: string) {
     const list = await listScenarioDrafts(clientId);

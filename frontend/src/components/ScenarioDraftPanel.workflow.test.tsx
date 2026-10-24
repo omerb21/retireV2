@@ -33,7 +33,7 @@ const products = [{
   product_id: "p1", product_name: "Product", version: 1,
   conversion_components: [{ component_id: "c1", component_code: "תגמולי_עובד_עד_2000", balance: "100.00" }],
 }] as unknown as PensionProduct[];
-const allowed = { component_id: "c1", component_code: "תגמולי_עובד_עד_2000",
+const allowed = { preview_product_version: 1, component_id: "c1", component_code: "תגמולי_עובד_עד_2000",
   balance: "100.00", permission_status: "allowed", reason_code: "BASE_PERMISSION_ALLOWED", reason_he: "מותר" };
 function pending<T>() {
   let resolve!: (value: T) => void;

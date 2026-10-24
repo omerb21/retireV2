@@ -55,21 +55,21 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     }))
   );
   async function run(fn: () => Promise<ScenarioDraft>) {
-    if (busy) return;
+    if (busy) return false;
     setBusy(true);
     setError(null);
     try {
       const saved = await fn();
       if (saved.client_id !== clientId) throw Error("תוצאת שרת בהקשר לקוח שגוי.");
       await reload(saved.scenario_id);
-    } catch (cause) { setError(message(cause)); }
+      return true;
+    } catch (cause) { setError(message(cause)); return false; }
     finally { setBusy(false); }
   }
   async function create(event: FormEvent) {
     event.preventDefault();
     if (name.trim()) {
-      await run(() => createScenarioDraft(clientId, name.trim()));
-      setName("");
+      if (await run(() => createScenarioDraft(clientId, name.trim()))) setName("");
     }
   }
   async function addDecision(event: FormEvent) {
@@ -99,9 +99,10 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     const next = edited >= 0
       ? existing.map((item, i) => i === edited ? decision : item)
       : [...existing, decision];
-    await run(() => replaceScenarioDraft(clientId, active, next));
-    setEditingDecisionId(null);
-    setAmount("");
+    if (await run(() => replaceScenarioDraft(clientId, active, next))) {
+      setEditingDecisionId(null);
+      setAmount("");
+    }
   }
   async function remove(index: number) {
     if (!active || active.status === "archived") return;
@@ -111,9 +112,10 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       component_code: item.component_code, amount: item.amount,
       action: item.action, effective_date: item.effective_date,
     }));
-    await run(() => replaceScenarioDraft(clientId, active, remaining));
-    setEditingDecisionId(null);
-    setAmount("");
+    if (await run(() => replaceScenarioDraft(clientId, active, remaining))) {
+      setEditingDecisionId(null);
+      setAmount("");
+    }
   }
   async function renameActive(event: FormEvent) {
     event.preventDefault();
@@ -124,8 +126,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       component_code: item.component_code, amount: item.amount,
       action: item.action, effective_date: item.effective_date,
     }));
-    await run(() => replaceScenarioDraft(clientId, active, decisions, rename.trim()));
-    setRename("");
+    if (await run(() => replaceScenarioDraft(clientId, active, decisions, rename.trim()))) setRename("");
   }
   function beginEdit(decision: ScenarioDraft["decisions"][number]) {
     setEditingDecisionId(decision.decision_id);

@@ -98,3 +98,17 @@ it("rejects a late allowed result when product classification changes without ve
   await waitFor(() => expect(mocks.preview).toHaveBeenCalledTimes(1));
   expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull();
 });
+
+it("shows a read-only side-by-side summary for distinct saved scenarios", async () => {
+  const first = draft("comparison-a");
+  const second = draft("comparison-b");
+  second.decisions[0].amount = "70.00";
+  mocks.list.mockResolvedValue([first, second]);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const table = await screen.findByRole("table");
+  expect(table.textContent).toContain("comparison-a");
+  expect(table.textContent).toContain("comparison-b");
+  expect(table.textContent).toContain("30.00");
+  expect(table.textContent).toContain("70.00");
+  expect(table.textContent).toContain("אין אישור מקצועי");
+});

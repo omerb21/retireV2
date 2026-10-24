@@ -205,6 +205,8 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "frontend/src/components/ScenarioDraftPanel.workflow.test.tsx",
     "frontend/src/components/scenarioDraftComparison.ts",
     "frontend/src/components/scenarioDraftComparison.test.ts",
+    "frontend/src/api/retirementCalculationContextApi.ts",
+    "frontend/src/api/retirementCalculationContextApi.test.ts",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }
 

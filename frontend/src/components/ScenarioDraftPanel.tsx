@@ -37,6 +37,8 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: PermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
   const permissionEpoch = useRef(0);
+  const latestContext = useRef({ clientId, selected, products });
+  latestContext.current = { clientId, selected, products };
   const active = drafts.find(item => item.scenario_id === selected) ?? null;
 
   async function reload(prefer?: string) {
@@ -64,7 +66,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       setSelected(list[0]?.scenario_id ?? null);
     }).catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
-    return () => { mounted = false; };
+    return () => { mounted = false; permissionEpoch.current += 1; };
   }, [clientId]);
   const sources = products.flatMap(product =>
     (product.conversion_components ?? []).map(component => ({
@@ -219,11 +221,26 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
           onClick={() => {
             const currentClient = clientId;
             const currentDecision = decision.decision_id;
+            const currentScenario = active.scenario_id;
+            const expectedProduct = products.find(item => item.product_id === decision.source_product_id);
+            const expectedComponent = expectedProduct?.conversion_components?.find(item => item.component_id === decision.source_component_id && item.component_code === decision.component_code);
             const epoch = ++permissionEpoch.current;
             setCheckingPermission(currentDecision);
             setPermissions(old => { const next = { ...old }; delete next[currentDecision]; return next; });
             void previewDraftDecision(currentClient, decision)
-              .then(component => { if (permissionEpoch.current === epoch) setPermissions(old => ({ ...old, [currentDecision]: { status: "ready", component } })); })
+              .then(component => {
+                const context = latestContext.current;
+                const currentProduct = context.products.find(item => item.product_id === decision.source_product_id);
+                const currentComponent = currentProduct?.conversion_components?.find(item => item.component_id === decision.source_component_id && item.component_code === decision.component_code);
+                if (permissionEpoch.current !== epoch || context.clientId !== currentClient || context.selected !== currentScenario) return;
+                if (!expectedProduct || !expectedComponent || !currentProduct || !currentComponent
+                    || currentProduct.version !== expectedProduct.version || currentComponent.balance !== expectedComponent.balance
+                    || currentComponent.balance !== component.balance) {
+                  setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: "נתוני המקור השתנו — יש לרענן את הטיוטה." } }));
+                  return;
+                }
+                setPermissions(old => ({ ...old, [currentDecision]: { status: "ready", component } }));
+              })
               .catch(cause => { if (permissionEpoch.current === epoch) setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: message(cause) } })); })
               .finally(() => { if (permissionEpoch.current === epoch) setCheckingPermission(null); });
           }}>בדוק הרשאת בסיס (קריאה בלבד)</button>

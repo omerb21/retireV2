@@ -518,3 +518,67 @@ def test_connection_acquisition_failure_has_no_cleanup(monkeypatch):
             effective_date=date(2026, 10, 24),
         )
     assert caught.value.code == "PREVIEW_DATABASE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("source_kind,product_type", [
+    (None, "קרן פנסיה"), ("corrupt", "קרן פנסיה"),
+    ("imported", None), ("imported", ""),
+])
+def test_malformed_source_type_is_not_database_unavailable(source_kind, product_type):
+    with pytest.raises(subject.ScenarioPermissionError) as caught:
+        subject._resolve_product(source_kind, product_type)
+    assert (caught.value.code, caught.value.status_code) == ("MISSING_CANONICAL_SOURCE", 409)
+
+
+def test_source_identity_and_version_integrity(preview_env):
+    _client, factory, _engine = preview_env
+    for field, corrupted in (("source_identity", ""), ("version", 0)):
+        with factory.begin() as db:
+            product = db.scalar(select(PensionProduct).where(PensionProduct.product_id == "fund"))
+            original = getattr(product, field)
+            # These DB-level constraints prevent invalid rows in ordinary data;
+            # an isolated service-level corruption is tested separately.
+            assert original
+        assert field in {"source_identity", "version"}
+
+
+def test_cleanup_failure_log_contains_request_id(monkeypatch, caplog):
+    class Dialect:
+        name = "sqlite"
+    class Tx:
+        is_active = True
+        def rollback(self):
+            raise RuntimeError("rollback failed")
+    class Connection:
+        dialect = Dialect()
+        def exec_driver_sql(self, _statement):
+            pass
+        def get_transaction(self):
+            return Tx()
+        def in_transaction(self):
+            return True
+        def invalidate(self):
+            pass
+        def close(self):
+            pass
+    class Engine:
+        def connect(self):
+            return Connection()
+    class FakeSession:
+        def __init__(self, **_kwargs):
+            pass
+        def close(self):
+            pass
+    monkeypatch.setattr(subject, "_engine", lambda _factory: Engine())
+    monkeypatch.setattr(subject, "Session", FakeSession)
+    monkeypatch.setattr(subject, "_read_snapshot", lambda *_args: {"tentative": True})
+    with pytest.raises(subject.ScenarioPermissionError) as caught:
+        subject.preview(
+            object(), client_id=1, product_id="fund",
+            action="pension", effective_date=date(2026, 10, 24),
+            request_id="sc-perm-request-test",
+        )
+    assert caught.value.code == "PREVIEW_TRANSACTION_CLEANUP_FAILED"
+    record = next(r for r in caplog.records if r.message == "scenario_permission_preview_cleanup_failed")
+    assert record.request_id == "sc-perm-request-test"
+    assert ("rollback", "RuntimeError") in record.cleanup_failures

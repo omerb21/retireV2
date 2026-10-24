@@ -11,7 +11,7 @@ function message(error: unknown): string {
 }
 const exactAmount = (value: string): boolean => /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value) && !/^0+(?:\.0{1,2})?$/.test(value);
 function asCents(value: string): bigint | null {
-  if (!/^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,2})?$/.test(value)) return null;
+  if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value)) return null;
   const [whole, decimals = ""] = value.split(".");
   return BigInt(whole) * 100n + BigInt(decimals.padEnd(2, "0"));
 }

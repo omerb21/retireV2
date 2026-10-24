@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import hashlib
 import json
 from uuid import uuid4
 from sqlalchemy import select, update
@@ -32,6 +33,24 @@ def _scenario(db: Session, client_id: int, scenario_id: str) -> ScenarioDraft:
     return scenario
 
 
+
+def _source_digest(product: PensionProduct, component: PensionProductComponent) -> str:
+    """Draft staleness evidence only, not a permission or financial authorization."""
+    fields = {
+        "schema": "scenario-draft-source-v1",
+        "product_id": product.product_id,
+        "product_version": product.version,
+        "product_type": product.product_type,
+        "source_kind": product.source_kind,
+        "source_identity": product.source_identity,
+        "component_id": component.component_id,
+        "component_code": component.component_code,
+        "balance": format(component.balance, ".2f"),
+    }
+    payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _decision_json(row: ScenarioDraftDecision) -> dict:
     return {
         "decision_id": row.decision_id, "source_product_id": row.source_product_id,
@@ -52,7 +71,7 @@ def read(db: Session, client_id: int, scenario_id: str) -> dict:
         ScenarioDraftDecision.scenario_id == scenario.scenario_id
     ).order_by(ScenarioDraftDecision.decision_id)).all()
     output_decisions = [_decision_json(item) for item in decisions]
-    tracked = [item for item in output_decisions if item["product_version_at_review"] is not None]
+    tracked = output_decisions
     if tracked:
         product_ids = {item["source_product_id"] for item in tracked}
         products = {
@@ -71,9 +90,11 @@ def read(db: Session, client_id: int, scenario_id: str) -> dict:
         for item in tracked:
             product = products.get(item["source_product_id"])
             component = components.get(item["source_component_id"])
-            if (product is None or product.version != item["product_version_at_review"]
-                or component is None or component.product_id != item["source_product_id"]
-                or component.component_code != item["component_code"]):
+            if (product is None or component is None
+                or component.product_id != item["source_product_id"]
+                or component.component_code != item["component_code"]
+                or item["source_fingerprint_at_review"] is None
+                or _source_digest(product, component) != item["source_fingerprint_at_review"]):
                 item["validation_state"] = "needs_revalidation"
     return {
         "scenario_id": scenario.scenario_id, "client_id": scenario.client_id,
@@ -164,6 +185,7 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
             component_code=item.component_code, amount=item.amount,
             action=item.action, effective_date=item.effective_date,
             validation_state="unverified", product_version_at_review=version,
+            source_fingerprint_at_review=_source_digest(product, component) if component is not None else None,
         ))
     db.flush()
     return _revision(db, scenario, "replace", actor)

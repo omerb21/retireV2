@@ -77,7 +77,7 @@ def read(db: Session, client_id: int, scenario_id: str) -> dict:
                 item["validation_state"] = "needs_revalidation"
     return {
         "scenario_id": scenario.scenario_id, "client_id": scenario.client_id,
-        "name": scenario.name, "status": scenario.status, "version": scenario.version,
+        "name": scenario.name, "status": ("needs_revalidation" if scenario.status != "archived" and any(d["validation_state"] == "needs_revalidation" for d in output_decisions) else scenario.status), "version": scenario.version,
         "created_by": scenario.created_by, "updated_by": scenario.updated_by,
         "decisions": output_decisions,
         "financial_validation": "not_evaluated",

@@ -90,3 +90,28 @@ def test_changed_product_version_never_reuses_stale_source_evidence(monkeypatch)
     result = service.assess(FakeDb(scenario(), [row], {"p": product}, {"c": component}), 3, "s")
     assert "SOURCE_STALE" in [b["code"] for b in result["blockers"]]
     assert result["assessment_state"] == "blocked"
+
+
+def test_route_sets_postgres_read_only_snapshot_before_assessment(monkeypatch):
+    from app.api import scenario_draft_routes as routes
+    sequence = []
+    class RouteDb:
+        new = dirty = deleted = ()
+        def in_transaction(self): return False
+        def get_bind(self): return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        def execute(self, statement): sequence.append(str(statement))
+        def rollback(self): sequence.append("rollback")
+        @property
+        def no_autoflush(self):
+            from contextlib import nullcontext
+            return nullcontext()
+    def assess(_db, _client, _scenario):
+        sequence.append("assessment")
+        return {"assessment_state": "blocked"}
+    monkeypatch.setattr(routes.admission, "assess", assess)
+    response = routes.calculation_admission(SimpleNamespace(), "s", 3, RouteDb())
+    assert response.status_code == 200
+    assert sequence == [
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+        "assessment", "rollback",
+    ]

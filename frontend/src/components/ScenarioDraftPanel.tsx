@@ -14,6 +14,8 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [rename, setRename] = useState("");
+  const [editingDecisionId, setEditingDecisionId] = useState<string | null>(null);
   const [source, setSource] = useState("");
   const [amount, setAmount] = useState("");
   const [action, setAction] = useState<DraftDecisionInput["action"]>("pension");
@@ -33,6 +35,8 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     let mounted = true;
     setLoading(true);
     setError(null);
+    setEditingDecisionId(null);
+    setRename("");
     void listScenarioDrafts(clientId).then(list => {
       if (!mounted) return;
       if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
@@ -82,10 +86,21 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       component_code: item.component_code, amount: item.amount,
       action: item.action, effective_date: item.effective_date,
     }));
-    await run(() => replaceScenarioDraft(clientId, active, [...existing, {
+    const decision: DraftDecisionInput = {
       source_product_id: row.productId, source_component_id: row.componentId,
       component_code: row.code, amount, action, effective_date: effectiveDate,
-    }]));
+    };
+    const edited = editingDecisionId
+      ? active.decisions.findIndex(item => item.decision_id === editingDecisionId) : -1;
+    if (editingDecisionId && edited < 0) {
+      setError("ההחלטה השתנתה. יש לטעון מחדש.");
+      return;
+    }
+    const next = edited >= 0
+      ? existing.map((item, i) => i === edited ? decision : item)
+      : [...existing, decision];
+    await run(() => replaceScenarioDraft(clientId, active, next));
+    setEditingDecisionId(null);
     setAmount("");
   }
   async function remove(index: number) {
@@ -97,6 +112,28 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       action: item.action, effective_date: item.effective_date,
     }));
     await run(() => replaceScenarioDraft(clientId, active, remaining));
+    setEditingDecisionId(null);
+    setAmount("");
+  }
+  async function renameActive(event: FormEvent) {
+    event.preventDefault();
+    if (!active || active.status === "archived" || !rename.trim()) return;
+    const decisions: DraftDecisionInput[] = active.decisions.map(item => ({
+      source_product_id: item.source_product_id,
+      source_component_id: item.source_component_id,
+      component_code: item.component_code, amount: item.amount,
+      action: item.action, effective_date: item.effective_date,
+    }));
+    await run(() => replaceScenarioDraft(clientId, active, decisions, rename.trim()));
+    setRename("");
+  }
+  function beginEdit(decision: ScenarioDraft["decisions"][number]) {
+    setEditingDecisionId(decision.decision_id);
+    setSource(decision.source_product_id + "|" + decision.source_component_id);
+    setAmount(decision.amount);
+    setAction(decision.action);
+    setEffectiveDate(decision.effective_date);
+    setError(null);
   }
   return <section aria-label="חלופות שמורות בשרת">
     <h2>חלופות תכנון שמורות</h2>
@@ -112,7 +149,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     </form>
     <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
     <ul>{drafts.map(item => <li key={item.scenario_id}>
-      <button type="button" onClick={() => setSelected(item.scenario_id)} disabled={busy}>
+      <button type="button" onClick={() => { setSelected(item.scenario_id); setEditingDecisionId(null); setAmount(""); setRename(""); }} disabled={busy}>
         {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
       </button>
     </li>)}</ul>
@@ -120,6 +157,10 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       <h3>{active.name}</h3>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
       {active.status !== "archived" && <>
+        <form onSubmit={renameActive}>
+          <label>שינוי שם חלופה <input maxLength={255} value={rename} onChange={event => setRename(event.target.value)} placeholder={active.name}/></label>
+          <button type="submit" disabled={busy || !rename.trim()}>שמור שם</button>
+        </form>
         <button type="button" disabled={busy} onClick={() => void run(() => duplicateScenarioDraft(clientId, active.scenario_id, active.name + " — העתק"))}>שכפל חלופה</button>
         <button type="button" disabled={busy} onClick={() => void run(() => archiveScenarioDraft(clientId, active))}>העבר לארכיון</button>
         <form onSubmit={addDecision}>
@@ -135,12 +176,16 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
             <option value="capital_asset">הון — טיוטה</option>
           </select></label>
           <label>תאריך תכנון <input type="date" value={effectiveDate} onChange={event => setEffectiveDate(event.target.value)}/></label>
-          <button type="submit" disabled={busy || !source || !exactAmount(amount) || !effectiveDate}>שמור החלטה כטיוטה</button>
+          <button type="submit" disabled={busy || !source || !exactAmount(amount) || !effectiveDate}>{editingDecisionId ? "שמור עריכת טיוטה" : "שמור החלטה כטיוטה"}</button>
+          {editingDecisionId && <button type="button" onClick={() => { setEditingDecisionId(null); setAmount(""); }}>בטל עריכה</button>}
         </form>
       </>}
       <ul>{active.decisions.map((decision, index) => <li key={decision.decision_id}>
         {decision.component_code} — {decision.amount} ₪ — {decision.action === "pension" ? "לקצבה" : "להון"} — לא מאומת
-        {active.status !== "archived" && <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק החלטת טיוטה</button>}
+        {active.status !== "archived" && <>
+          <button disabled={busy} type="button" onClick={() => beginEdit(decision)}>ערוך</button>
+          <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק החלטת טיוטה</button>
+        </>}
       </li>)}</ul>
     </div>}
   </section>;

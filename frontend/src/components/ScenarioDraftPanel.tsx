@@ -10,6 +10,15 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : "אירעה שגיאה בשמירת הטיוטה.";
 }
 const exactAmount = (value: string): boolean => /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value) && !/^0+(?:\.0{1,2})?$/.test(value);
+function asCents(value: string): bigint | null {
+  if (!/^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,2})?$/.test(value)) return null;
+  const [whole, decimals = ""] = value.split(".");
+  return BigInt(whole) * 100n + BigInt(decimals.padEnd(2, "0"));
+}
+function displayCents(value: bigint): string {
+  const abs = value < 0n ? -value : value;
+  return (value < 0n ? "-" : "") + (abs / 100n).toString() + "." + (abs % 100n).toString().padStart(2, "0");
+}
 export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -51,6 +60,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       key: product.product_id + "|" + component.component_id,
       productId: product.product_id, componentId: component.component_id,
       code: component.component_code,
+      balance: component.balance,
       label: product.product_name + " — " + component.component_code,
     }))
   );
@@ -191,6 +201,22 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
           <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק החלטת טיוטה</button>
         </>}
       </li>)}</ul>
+      <h4>יתרות טיוטה לפי המקור שנטען</h4>
+      <p className="professional-workspace__boundary">
+        הנתונים מחושבים לתצוגה בלבד מתוך התיק שנטען כעת; אין כאן אימות מקור, הרשאה להמרה או אישור הקצאת יתר.
+      </p>
+      <ul>{[...new Set(active.decisions.map(item => item.source_product_id + "|" + item.source_component_id))].map(key => {
+        const entry = sources.find(item => item.key === key);
+        const base = entry ? asCents(entry.balance) : null;
+        const assigned = active.decisions.filter(item => item.source_product_id + "|" + item.source_component_id === key)
+          .reduce((sum, item) => sum + (asCents(item.amount) ?? 0n), 0n);
+        return <li key={key}>
+          {entry?.label ?? "מקור אינו נמצא עוד בתיק"}:
+          {" "}הוקצה בטיוטה {displayCents(assigned)} ₪;
+          {" "}יתרה זמינה לתצוגה {base === null ? "לא ידועה" : displayCents(base - assigned) + " ₪"}
+          {(base === null || assigned > base) && <strong role="alert"> — נדרש אימות מחדש; אין אישור להקצאה</strong>}
+        </li>;
+      })}</ul>
     </div>}
   </section>;
 }

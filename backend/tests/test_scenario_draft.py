@@ -82,3 +82,35 @@ def test_invalid_precision_rejected_without_draft_creation(env):
     })
     assert response.status_code == 422
     assert client.get(f"/api/clients/1/scenario-drafts/{ident}").json()["version"] == 1
+
+
+def test_rename_preserves_stable_decision_id_and_revision(env):
+    client, factory = env
+    created = client.post("/api/clients/1/scenario-drafts", json={"name":"טיוטה"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    row = {
+        "source_product_id":"test-source", "source_component_id":"test-row",
+        "component_code":"תגמולי_עובד_עד_2000", "amount":"123.45",
+        "action":"pension", "effective_date":"2026-10-24",
+    }
+    first = client.put(url, json={"name":"טיוטה","expected_version":1,"decisions":[row]})
+    assert first.status_code == 200, first.text
+    decision_id = first.json()["decisions"][0]["decision_id"]
+    renamed = client.put(url, json={
+        "name":"טיוטה שנערכה","expected_version":2,
+        "decisions":[{"decision_id":decision_id, **row}],
+    })
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "טיוטה שנערכה"
+    assert renamed.json()["decisions"][0]["decision_id"] == decision_id
+    forged = client.put(url, json={
+        "name":"לא תקין","expected_version":3,
+        "decisions":[{"decision_id":"foreign-decision-id", **row}],
+    })
+    assert (forged.status_code, forged.json()["code"]) == (422, "SCENARIO_DECISION_ID_MISMATCH")
+    assert client.get(url).json()["version"] == 3
+    with factory() as db:
+        revisions = db.scalars(select(ScenarioDraftRevision).where(
+            ScenarioDraftRevision.scenario_id == created["scenario_id"]
+        )).all()
+        assert len(revisions) == 3

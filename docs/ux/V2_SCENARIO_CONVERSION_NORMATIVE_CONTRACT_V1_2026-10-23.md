@@ -1,6 +1,6 @@
 # RETIRE V2 — Normative Scenario Conversion Contract V1
 
-**Status: DESIGN ONLY / NOT IMPLEMENTATION-AUTHORIZED / INDEPENDENT RE-REVIEW REQUIRED.**
+**Status: DESIGN ONLY / TECHNICAL CONTRACT REPAIRED / NOT IMPLEMENTATION-AUTHORIZED / INDEPENDENT RE-REVIEW REQUIRED.**
 **Authority:** owner decisions O-01…O-08 recorded in `SCENARIO_CONVERSION_OWNER_DECISION_REGISTER_2026-10-23.md`. O-01 is a clear professional product rule, but technical resolver/anomaly acceptance still requires evidence.
 **Precedence:** This file is the **sole normative proposed conversion scenario contract** as of this revision. `V2_SCENARIO_CONVERSION_ENFORCEMENT_CONTRACT_DRAFT_2026-10-23.md` §§1–23 and historical handoffs are **non-normative background evidence** when they disagree. Neither this file nor the historical draft authorizes implementation. A later signed, reviewed normative version can supersede this one explicitly.
 
@@ -15,36 +15,48 @@
 - **O-07:** Only the owner or expressly delegated professional approves financial rules. Preserve versions, effective dates, approval provenance and historical results; no automatic retroactive rewriting.
 - **O-08:** Missing evidence blocks only dependent actions, with specific missing datum, reason, producer/source and affected component/action.
 
-## B. Permission-only preview — narrow proposed contract, no eligibility conclusion
+## B. Permission-only preview — closed technical API contract, no eligibility conclusion
 
-Public request: `POST /scenario-conversions/permission-preview` **PROPOSED NAME ONLY**; it has no existing endpoint.
+The future endpoint is exactly `POST /api/clients/{client_id}/scenario-conversions/permission-preview`. It is a design contract only; the endpoint does not exist and is not authorized for implementation.
 
-Input (all strict typed): `client_id` is derived from authenticated route context/authorized server scope, not a trusted body claim; `product_id` identifies the selected server-owned product; `action` is exactly `pension | capital_asset`; `effective_date` is a date, with supported ruleset selected by server. No client-supplied balance, component classification, product type, tax classification, or caller identity is authority. Scenario identity is not needed for this read-only permission check.
+The closed request JSON has exactly three keys: `product_id` (nonempty server product identifier string), `action` (`pension | capital_asset`) and `effective_date` (`YYYY-MM-DD`). Extra keys, nulls and caller-supplied `client_id`, actor, balance, component, product-type, tax or ruleset fields are rejected. The path `client_id` is a positive integer. The server selects the ruleset; the browser cannot select or override it.
 
-Return strict envelope: `schema_version`, `preview_id` (opaque digest, not a stored draft), `product_id`, `product_version`, `client_scope_ref` (non-sensitive), `canonical_product_class`, `action`, `effective_date`, `ruleset_id`, `ruleset_digest`, `source_fingerprint`, `permission_status`, `professional_eligibility_status=not_evaluated`, `tax_status=not_evaluated`, `components` (exactly 11 rows), and `totals` (original classified, permitted, blocked and unresolved balances; no accepted-allocation residual in this stateless endpoint). No pension amount, tax, NPV, 161d determination or financial yield.
+The successful response is `SCENARIO_PERMISSION_PREVIEW_V1` and has exactly these top-level keys: `schema_version`, `preview_id`, `client_id`, `product_id`, `product_version`, `canonical_product_class`, `action`, `effective_date`, `ruleset_id`, `ruleset_version`, `ruleset_digest`, `source_fingerprint`, `overall_status`, `professional_eligibility_status`, `tax_status`, `components`, `totals`, `reconciliation`. `professional_eligibility_status` and `tax_status` are always `not_evaluated`. No pension amount, tax amount, NPV, 161d determination, yield or scenario-decision residual is returned.
 
-For **every one** of the 11 canonical codes, return canonical `component_code`, source persisted `component_id` (required and non-null in this first slice), exact decimal balance as **string**, `permission_status=allowed|blocked|needs_source_reconciliation|unknown`, `reason_code`, Hebrew explanation, and `applicable_rule_id`. The row remains visible even when its balance is zero, blocked or unknown. Missing canonical persisted rows cause an envelope-level `MISSING_CANONICAL_SOURCE` error rather than a synthetic zero/null component row. Zero is visible but not selectable for an allocation. Never conflate zero with permission. `blocked` may coexist with otherwise valid product status; `unknown` does not default to a general permission matrix.
+`components` is an array of exactly 11 persisted rows in the canonical `COMPONENT_CODES` order from `backend/app/models/pension_product.py`. Every row has exactly: `component_code` (canonical string), `component_id` (nonempty persisted string), `balance` (nonnegative exact two-decimal string), `permission_status` (`allowed | blocked | needs_source_reconciliation | unknown`), `reason_code` (nonempty stable string), `reason_he` (nonempty Hebrew presentation string) and `applicable_rule_id` (nonempty immutable ruleset rule identifier). Zero rows remain present. Missing, duplicated or noncanonical rows fail the whole envelope with `MISSING_CANONICAL_SOURCE`; no row is synthesized.
 
-**Closed action translation:** only `pension -> pension` and `capital_asset -> capital` for server matrix permission lookup. `leave_unallocated` is forbidden as input; residual is output only. Do not call `tax_for` to produce a tax result.
+The fixed component order is: `פיצויים_מעסיק_נוכחי`, `פיצויים_לאחר_התחשבנות`, `פיצויים_שלא_עברו_התחשבנות`, `פיצויים_ממעסיקים_קודמים_רצף_זכויות`, `פיצויים_ממעסיקים_קודמים_רצף_קצבה`, `תגמולי_עובד_עד_2000`, `תגמולי_עובד_אחרי_2000`, `תגמולי_עובד_אחרי_2008_לא_משלמת`, `תגמולי_מעביד_עד_2000`, `תגמולי_מעביד_אחרי_2000`, `תגמולי_מעביד_אחרי_2008_לא_משלמת`. A future component-set change requires a new schema version; it cannot silently alter V1.
 
-**Closed product resolver required BEFORE approving preview implementation:** product class must be determined from server-held values using an explicitly enumerated mapping table. The current `product_type.lower()` and substring matching are **not accepted** as a resolver. Map exact verified source values/aliases to canonical `pension_fund | insurance_policy | provident_fund | education_fund | investment_provident_fund` only when professional equivalence is established. The importer also provides savings-only insurance labels whose correct class is **unresolved**; neither a sixth class nor a financial permission may be inferred without review. Ambiguity/unknown/missing → `unknown_product_type` (no inferred BASE_MATRIX). An exact alias inventory from accepted source data is still missing; no guessed aliases are approved. For education/investment products, a positive row with a severance code → `needs_source_reconciliation` and no capital permission on that row.
+`totals` has exactly: `original_classified_balance`, `allowed_balance`, `blocked_balance`, `needs_source_reconciliation_balance`, `unknown_balance`, all nonnegative exact two-decimal strings. Each total is the exact sum of the visible rows in that status and the four status totals must equal `original_classified_balance`. There is no `residual`, `unallocated` or accepted-decision total in this permission-only endpoint.
+
+`reconciliation` is the unchanged factual output of the existing `reconcile` boundary and has exactly: `rewards_component_sum`, `severance_component_sum`, `product_component_sum` (exact two-decimal strings), plus `rewards_discrepancy`, `severance_discrepancy`, `product_discrepancy` (signed exact two-decimal strings or null when the corresponding reported total is absent). A discrepancy is never allocated, distributed or converted into a scenario residual.
+
+`overall_status` is derived from the 11 rows with this closed precedence: any `needs_source_reconciliation` → `needs_source_reconciliation`; otherwise any `unknown` → `unknown`; otherwise both `allowed` and `blocked` → `mixed`; otherwise any `allowed` → `allowed`; otherwise `blocked`. Balance zero does not remove a row or change its rule status.
+
+`preview_id` is the lowercase SHA-256 of canonical JSON with `schema="scenario-permission-preview-id-v1"`, `client_id`, `product_id`, `source_fingerprint`, `action`, `effective_date`, `ruleset_id`, `ruleset_version` and `ruleset_digest`, using §C serialization. It is deterministic evidence identity only, not a persisted scenario or authorization to save.
+
+The only action translation is `pension -> pension` and `capital_asset -> capital`. `leave_unallocated`, `unchanged` and all other values are invalid. Permission rules are read exclusively from the immutable permission ruleset in §O; `BASE_MATRIX`, `destinations()` and `tax_for()` are not fallback authorities for this endpoint.
+
+Product class is resolved only through the exact `source_kind` + persisted `product_type` table in §N. Rows that are not `APPROVED` never receive a canonical class or permissions. Ambiguous values fail with `AMBIGUOUS_PRODUCT_TYPE`; unknown, missing or unsupported values fail with `UNKNOWN_PRODUCT_TYPE`. A positive severance-coded row in an approved education/investment product remains a row-level `needs_source_reconciliation` anomaly and receives no capital permission.
 
 ### C. Canonical source fingerprint v1 — serialization protocol
 
 Purpose: detect whether factual monetary source and classification changed between previews. It is **not** a persistence authorization or historical evidence signature.
 
-Preimage is UTF-8 encoded canonical JSON (sorted keys, compact separators, `ensure_ascii=false`, Unicode NFC for strings), schema identifier `scenario-source-fingerprint-v1`. Fields: `schema`, `client_id` (integer), `product_id` (string), `product_version` (integer), `product_type` (literal persisted string), and `components` ordered in the **canonical COMPONENT_CODES sequence**, each object with `component_code`, persisted non-null `component_id` and `balance` as exact two-decimal currency string. Compute lowercase hexadecimal SHA-256 of exact UTF-8 bytes. Reject malformed/non-finite/negative money. This digest has no rule/evidence signature; keep `ruleset_digest` separate.
+Preimage is UTF-8 encoded canonical JSON (sorted keys, compact separators, `ensure_ascii=false`, Unicode NFC for strings), schema identifier `scenario-source-fingerprint-v1`. Fields: `schema`, `client_id` (integer), `product_id` (string), `product_version` (integer), `source_kind` (`manual | imported`), `product_type` (literal persisted string), and `components` ordered in the **canonical COMPONENT_CODES sequence**, each object with `component_code`, persisted non-null `component_id` and `balance` as exact two-decimal currency string. Compute lowercase hexadecimal SHA-256 of exact UTF-8 bytes. Reject malformed/non-finite/negative money. This digest has no rule/evidence signature; keep `ruleset_digest` separate.
 
 **Preview review digest v1 (design for later save):** a distinct SHA-256 over the source fingerprint plus exact action/effective date, ruleset ID/digest, evidence digests, all 11 row statuses/reason codes, exact selected component IDs/amount strings (sorted by canonical code), and full excluded component IDs/reasons (sorted by canonical code). Prefix/schema field `scenario-group-review-v1`; use the same canonical JSON serialization. Selection/exclusion/evidence/rule/source changes invalidate grouped acknowledgment. It is not calculated or accepted for save in the narrow preview phase.
 
-### D. Safety and status contract
+### D. Safety, errors and retry contract
 
 - Read-only permission preview must not insert/update/delete/commit any table; it must not invoke factual `canonical_component_conversion_service.preview`, `execute`, or `reverse`, and never POST to `/canonical-conversions`.
-- Authorize authenticated client ownership of product before disclosing classification/balances. Unknown scope → deny without leaking product existence. All read queries must use server-side client scope.
+- Require the verified single-operator session described in §L before disclosing data. Fetch product and its components with the conjunctive server-side predicate `PensionProduct.client_id == path client_id AND PensionProduct.product_id == request product_id`. A missing client, missing product and wrong-client product are indistinguishable `PREVIEW_SOURCE_NOT_FOUND` responses; do not leak whether the product exists under another client.
 - Permission says whether the base **destination** can be considered. `professional_eligibility_status` and `tax_status` always remain `not_evaluated` in this phase; O-06/O-08 professional dependency checks are not falsely claimed to be implemented.
 - Permission preview does not save or allocate, produce acknowledgment, mutate factual products, or return an accepted scenario decision. Mixed whole-plan output is **visibility**, not automatic subset execution.
 - Use existing `reconcile` for reported-vs-classified discrepancy; show discrepancy as separate field, never distribute it among components or residual.
-- A typed error schema (proposed): `error_code`, `reason_he`, `scope`, optional `component_code`, `retryable`. At minimum: `UNAUTHORIZED_CLIENT_SCOPE`, `UNKNOWN_PRODUCT_TYPE`, `AMBIGUOUS_PRODUCT_TYPE`, `UNKNOWN_ACTION`, `UNKNOWN_RULESET`, `MISSING_CANONICAL_SOURCE`, `STALE_SOURCE`, `NEEDS_SOURCE_RECONCILIATION`. Whether errors are envelope-level or per-row must be consistent and is subject to Work review.
+- Every route-owned failure uses the existing `RTDIR_TRANSPORT_ERROR_V1` shape exactly: `schema_version`, `code`, `message`, `field_paths`, `request_id`. Middleware-owned authentication, Origin and CSRF failures keep that same shape. Retryability is a deterministic property of `(HTTP status, code)`, not a second body schema: security/request/type/source-structure errors are non-retryable without corrected credentials or input; `STALE_SOURCE` is retryable only after a fresh preview; `PREVIEW_DATABASE_UNAVAILABLE` and `PREVIEW_TRANSACTION_CLEANUP_FAILED` are retryable after service recovery.
+- Exact route-owned mappings: malformed path/body or unknown action → `422 SCENARIO_PERMISSION_REQUEST_INVALID`; unresolved exact type → `422 UNKNOWN_PRODUCT_TYPE` or `422 AMBIGUOUS_PRODUCT_TYPE`; missing/duplicated/noncanonical source rows → `409 MISSING_CANONICAL_SOURCE`; absent client/product or wrong-client product → `404 PREVIEW_SOURCE_NOT_FOUND`; no unique approved ruleset for the effective date → `409 UNKNOWN_RULESET`; source/version changed during validation → `409 STALE_SOURCE`; unsupported production database or connection/read failure → `503 PREVIEW_DATABASE_UNAVAILABLE`; rollback/invalidation/close uncertainty → `503 PREVIEW_TRANSACTION_CLEANUP_FAILED`. Authentication remains the existing `401 SESSION_MISSING | SESSION_INVALID | SESSION_EXPIRED`; Origin and CSRF remain `403 ORIGIN_FORBIDDEN | CSRF_INVALID`.
+- `needs_source_reconciliation` is a successful row anomaly, not an HTTP error. Envelope errors return no component/totals payload. A successful response always returns all 11 real rows.
 
 ### E. Out of scope / future blocked save contract
 
@@ -63,7 +75,7 @@ No new `Scenario`, `ScenarioDecision`, `Allocation` or authority ledger has been
 9. Dedicated explicit verdict **permission-only preview design PASS/BLOCKED**, independent of **authoritative save BLOCKED**.
 10. No CI, DB recreation, deploy, migration or implementation without separate owner permission.
 
-**Current verdict remains CONTRACT=BLOCKED / PREVIEW=BLOCKED pending re-review / SAVE=BLOCKED / IMPLEMENTATION_NOT_AUTHORIZED.**
+**Current verdict: TECHNICAL_CONTRACT_REPAIR=COMPLETE; PRODUCT_MAPPING_APPROVAL=PARTIAL/PENDING (§N); INDEPENDENT_RE-REVIEW=PENDING; PREVIEW_IMPLEMENTATION=NOT_AUTHORIZED; SAVE=BLOCKED.**
 
 
 ## G. Source-verified implementation gap register (2026-10-23; design evidence, not approval)
@@ -72,7 +84,7 @@ The following findings were confirmed by direct GitHub source reads on the activ
 
 | ID | Verified source fact | Normative consequence / bounded remediation |
 | --- | --- | --- |
-| NCG-01 | `backend/app/models/pension_product.py` declares `PensionProduct.product_type` as unconstrained `String(255)`. `backend/app/schemas/pension_product.py` accepts it as `ShortText`. | Product class cannot be inferred from a database enum. Establish an evidence-backed inventory of *actually persisted and imported* values before publishing exact aliases. Unknown/ambiguous values remain unresolved, without BASE_MATRIX fallback. |
+| NCG-01 | `backend/app/models/pension_product.py` declares `PensionProduct.product_type` as unconstrained `String(255)`. `backend/app/schemas/pension_product.py` accepts it as `ShortText`. | Product class cannot be inferred from a database enum. The evidence-backed inventory and fail-closed result are now binding in §N. Unknown/ambiguous values remain unresolved, without BASE_MATRIX fallback. |
 | NCG-02 | `backend/app/services/canonical_conversion_matrix.py` lowercases `product_type` and applies substring detection of Hebrew and English education/investment fund tokens, otherwise returning the base matrix. It applies product-wide overrides without checking severance-coded rows. | New permission-only preview must not call this function unguarded for unknown classes, or treat an anomalous severance-coded balance as allowed. Define an independent closed type resolver and row-level anomaly treatment, reusing the canonical base **permissions** only where safe. |
 | NCG-03 | `backend/app/services/pension_product_service.py::product_response` currently publishes `conversion_components[].allowed_destinations` by calling `destinations`; the latter's values are tax classification labels as well as permission markers. | The existing factual product response must not be relabelled as scenario eligibility/tax authority. In the new preview return permission as a separate status with tax and professional eligibility always `not_evaluated`. Existing factual API remediation and O-02 tax-label correction require an isolated impact assessment. |
 | NCG-04 | `backend/app/services/pension_product_service.py::create_product` creates all 11 canonical component rows; `component_balances` rejects records missing any of the 11 or containing noncanonical codes. Each component has a persisted `component_id`. | A persisted product missing a canonical row is a source-integrity error, not a fabricated zero row or a `null` component ID. Keep all 11 positions in a structured error/diagnostic only when doing so cannot conceal data corruption; the normal successful preview has 11 real rows, including zero balances. |
@@ -89,12 +101,12 @@ The following findings were confirmed by direct GitHub source reads on the activ
 
 ### G2. Evidence gate before a Codex implementation brief
 
-- Inspect actual approved importer/normalization code and collect an alias inventory from **accepted source values**, including manually entered types. Do not infer that tokens found in code prove the full set of source labels.
-- Record an exact, enumerated alias-to-class mapping with unsupported aliases and ambiguity tests, including positive severance anomalies in education/investment products. Decide the handling of any additional real product class found in the source rather than forcing it into the five proposed classes.
+- The importer/manual-source inspection is complete for the code-proven values and is recorded in §N. Newly observed values must be added as explicit rows; tokens or substring matches never extend the inventory.
+- Professional approval must move an exact §N row to `APPROVED` through a new immutable §O artifact. Unsupported/ambiguous aliases and positive severance anomalies require the specified fail-closed tests. Any additional real product class is reviewed explicitly rather than forced into the five proposed classes.
 - Confirm the typed route's authentication/client scope, schema/error structure and existing reconciliation API before any read-only endpoint implementation.
 - Independently re-review this normative contract after the above evidence is added. The only candidate first implementation is a **permission-only, read-only** slice, subject to explicit authorization; authoritative scenario save and tax calculation remain blocked.
 
-**Status after this evidence update:** SOURCE-GAPS DOCUMENTED; CLOSED-ALIAS-INVENTORY=OPEN; INDEPENDENT_RE-REVIEW=OPEN; PERMISSION-PREVIEW IMPLEMENTATION=NOT_AUTHORIZED; SCENARIO-SAVE=BLOCKED. Documentation-only update, no CI required.
+**Status after SC-PERM-02:** SOURCE INVENTORY=CLOSED FOR CODE-PROVEN VALUES; PROFESSIONAL MAPPING APPROVAL=PENDING; INDEPENDENT_RE-REVIEW=OPEN; PERMISSION-PREVIEW IMPLEMENTATION=NOT_AUTHORIZED; SCENARIO-SAVE=BLOCKED. Documentation-only update, no CI required.
 
 
 ## H. Corrected source-type intake evidence (2026-10-23)
@@ -126,7 +138,7 @@ The raw numeric code is parsed by `_product_type` from `SUG-MUTZAR`, recorded in
 
 **Important distinction:** The original matrix's substring matching *can* match some persisted Hebrew strings (unlike the earlier inaccurate all-numeric assertion). It still does not provide closed, deterministic, evidence-backed type classification and still applies product-wide permission overrides to severance-coded anomalies. The gap remains real, but its mechanism is different from the previously reported one.
 
-**Acceptance gate:** verify the manual frontend inputs and source dictionaries, specify the treatment of insurance and savings policies, and establish an exact reviewed type mapping including unknown/missing values and positive severance anomalies. Independent Work re-review is still required. No preview implementation, scenario save, ruleset authority change, factual data rewrite, CI, migration or deployment is authorized by this documentation.
+**Acceptance gate:** the code-proven intake values and their deterministic unresolved/unsupported outcomes are closed in §N. Professional approval is still required for every proposed class, especially insurance/savings and any future education/investment exact value. Independent Work re-review is still required. No preview implementation, scenario save, factual data rewrite, CI, migration or deployment is authorized by this documentation.
 
 
 ## I. Manual-input/UI and unknown import values, verified follow-up (2026-10-23)
@@ -135,13 +147,13 @@ The raw numeric code is parsed by `_product_type` from `SUG-MUTZAR`, recorded in
 
 **Unknown-value source behavior:** `pension_product_import_service._prepare_batch` explicitly assigns `"סוג מוצר לא ממופה"` to unrecognized nonempty `SUG-MUTZAR` and `"סוג מוצר לא נמסר"` when missing. `ProductMetadata.product_type` accepts these nonempty strings; import subsequently builds a product from the resulting metadata. Therefore an unrecognized or missing source product type is **not automatically rejected by type validation**, and must not become eligible in scenario permission preview via fallback to the ordinary base matrix.
 
-**Closed-resolver candidate inventory (source-derived, not professionally accepted):** the five persisted mapped Hebrew labels in §H, plus the two explicit fallback labels as `unknown`. Imported `source_kind` is a discriminator. Manual `product_type` remains free text; no manual alias list may be fabricated. Both missing/unknown fallbacks produce an envelope-level `UNKNOWN_PRODUCT_TYPE` for the narrow preview. Preserve the original imported code through stored source evidence when reclassifying later, without changing factual product records.
+**Closed source inventory:** §N is the binding resolver table for the five persisted mapped Hebrew labels, the two explicit fallback labels and manual free text. Imported `source_kind` is a discriminator. Both missing/unknown fallbacks produce envelope-level `UNKNOWN_PRODUCT_TYPE`; manual free text remains ambiguous until an exact professionally approved mapping exists. Preserve original imported evidence when reclassifying later, without changing factual product records.
 
 **Reviewed-class mapping status:** `קרן פנסיה` is a strong candidate for `pension_fund`; `קופת גמל` is a candidate for `provident_fund` **only**, never evidence of `investment_provident_fund`; the three insurance/savings descriptions need professional subtype review. A sixth class, or a nonconvertible/unsupported status for savings-only products, may be required. No legal/financial permission follows merely from a display label.
 
 **Minimal acceptance tests to specify (design only):** all five importer labels, both fallback strings, unknown manually entered strings, type/name spoofing, changing source kind, an education/investment-fund severance-coded nonzero row, all 11 component rows with zeros, and client-isolation check. Verify that updating a balance in the current workspace preserves exact persisted product type. No CI run has established these test results.
 
-**Open gate:** authoritative manual type aliases and education/investment provident product identification are unresolved. Do not authorize Preview code or scenario save until an independently reviewed resolver policy is accepted.
+**Professional gate:** authoritative manual aliases and exact education/investment provident source identification remain pending professional approval. The technical resolver behavior for those cases is no longer ambiguous: fail closed under §N. Do not authorize Preview code or scenario save until the mappings and contract pass independent review.
 
 
 ## J. Verified actual manual pension-product screen (2026-10-23)
@@ -152,7 +164,7 @@ Source: `frontend/src/routes/AppRoutes.tsx` routes `/clients/:clientId/pension-p
 
 **Potential future UX improvement (not implementation-authorized):** supply a controlled professional type selector with an explicit unresolved/other option, and keep the original source description separately for audit and provenance. Changing the existing input or rewriting product records requires a distinct migration/compatibility and ownership review; do not implement as a side effect of the read-only preview.
 
-**Review status:** Closed mapping for education funds and investment provident funds is still unavailable from this source; no professional rule has been invented. Independent review of the updated contract remains outstanding. No CI, domain changes or deployment.
+**Review status:** Exact education/investment source mappings remain professionally unapproved; no professional rule has been invented. The technical result is deterministically `AMBIGUOUS_PRODUCT_TYPE` or `UNKNOWN_PRODUCT_TYPE` under §N. Independent review remains outstanding. No CI, domain changes or deployment.
 
 
 ## K. Authentication and strictly read-only source access evidence (2026-10-23)
@@ -172,23 +184,89 @@ Directly inspected `backend/app/main.py`, `backend/app/security/middleware.py`, 
 
 Direct source evidence from `backend/app/security/transport.py::validate_session`, `backend/app/security/session.py::issue/verify`, `backend/app/security/config.py::AuthConfig`, and `backend/app/api/auth_routes.py`: production session validation verifies the session token and stores `request.state.auth_session` and `request.state.trusted_professional_actor = payload["actor_id"]`. The session actor identity is bound to the single configured `AUTH_ACTOR_ID`. Inspected code does **not** implement independent planner-to-client memberships or per-client ACL roles.
 
-**Narrow acceptance boundary for read-only permission preview:** Authenticate via existing production middleware and require a verified session actor; scope product reads by both selected client ID and server-owned product ID. In the **existing single-operator deployment only**, a valid configured professional session may access that operator's client records, conditional on owner acceptance of that operational security model. Do not claim user-specific client membership exists. In future multi-operator deployments, fail closed until a dedicated client access authorization rule has been specified and independently approved.
+**Closed security boundary for this design:** production authentication is the existing configured single-operator model. The middleware-verified session actor must equal configured `AUTH_ACTOR_ID`; that actor represents the one professional workspace and may read that workspace's client records. There is no RBAC, planner role, tenant membership or principal-to-client membership contract in the current implementation, and this document does not invent one. Product disclosure is nevertheless scoped by the conjunctive path-client/product predicate in §D, so a product belonging to a different or nonexistent client is never returned.
 
-The preview API must not accept an actor identity from the request body, must not reimplement or bypass session validation, and must never authorize based solely on product name/type or `client_id` asserted by a browser. Production-like tests must exercise missing/invalid session, valid configured session with nonexistent or wrong-client product ID, and spoofed identity fields. Development bypass behavior is not production authorization evidence.
+The preview API must not accept an actor identity from the request body, must not reimplement or bypass session validation, and must never authorize based solely on product name/type or a browser body claim. Because the endpoint is `POST`, existing production middleware must validate exact Origin and CSRF after session validation. Production-like tests must exercise missing/invalid/expired session, wrong Origin, invalid CSRF, valid configured session with nonexistent or wrong-client product ID, and spoofed identity fields. Development bypass behavior is not production authorization evidence.
 
-This does not remove the separate source-snapshot read consistency and zero-write design gate (§K), or product-type resolver gate (§H/J), nor does it authorize an implementation. **Preview review remains BLOCKED pending independent assessment.**
+This is intentionally limited to the current single-operator deployment. A future multi-operator deployment must fail closed until a separate independently accepted access model exists. This security closure does not authorize implementation or claim multi-user isolation.
 
 
-## M. Concrete zero-write snapshot design candidate (2026-10-23; NOT IMPLEMENTED)
+## M. Binding zero-write snapshot contract (2026-10-24; NOT IMPLEMENTED)
 
 Source evidence: `backend/app/db/session.py` configures SQLAlchemy `Session(autocommit=False, autoflush=False)` via `sessionmaker`; `pension_product_service.lock_client` is a deliberate *write-coordination* boundary and **must remain unchanged** for factual mutations. Production configuration requires a PostgreSQL URL. A new preview must not use `current_products`, existing `detail` route, or `lock_client` because they may acquire writer locks and, on SQLite, issue UPDATE.
 
-**Candidate PostgreSQL read protocol for later independent review:** use a dedicated short-lived transaction with `REPEATABLE READ READ ONLY` established **before its first SQL statement**, read client/product/component data under the same snapshot with server-side client scoping, and close it without committing a mutation. No `SELECT FOR UPDATE`, advisory transaction lock, ORM flush, source audit, or call to conversion APIs. Treat source absence, structural defects and wrong-client product as errors; include component IDs and product version in fingerprint. Use documented SQLAlchemy transaction/isolation configuration rather than issuing `SET TRANSACTION` after a prior implicit transaction has started.
+**PostgreSQL protocol:** each preview owns a new dedicated SQLAlchemy `Connection` and a new `Session` bound only to that connection; it must not receive or reuse the request's ordinary dependency Session. Before the first SQL statement, apply SQLAlchemy connection execution options `isolation_level="REPEATABLE READ"` and `postgresql_readonly=True`, then explicitly begin one transaction. Within it, execute the conjunctive client/product read and the ordered 11-component read, ruleset selection and fingerprint construction. No `SELECT FOR UPDATE`, advisory lock, ORM mutation, flush, commit, source audit or conversion-service call is permitted. The database read-only mode is mandatory enforcement, not merely an application convention.
 
-**SQLite test protocol:** ensure a single consistent read snapshot with a read transaction selected according to SQLite's actual transaction initiation/isolation semantics; do not assume that `autoflush=False` or SQLAlchemy session creation alone guarantees a database snapshot. No writer reservation and no UPDATE allowed. Validate with concurrent writer tests. SQLite is a test/development capability, not an excuse to weaken production consistency.
+**Transaction termination:** on every success, professional block or technical failure after transaction ownership begins, call rollback exactly once. Then close the Session and Connection. A pre-connection failure has no owned transaction and therefore no rollback. A failure after connection acquisition but before/while begin must inspect actual transaction state and roll back if SQLAlchemy/PostgreSQL created one. Never return a preview until rollback and close completed successfully.
+
+**Cleanup failure:** retain the actually acquired Connection. If rollback fails, attempt `Connection.invalidate()` on that retained object, close the Session and connection, and return `503 PREVIEW_TRANSACTION_CLEANUP_FAILED`; this cleanup failure takes precedence over a tentative success, row block or earlier technical exception because transaction outcome is no longer trusted. Invalidation or close failure keeps the same public code, is logged against `request_id`, and permanently prevents reuse of that Session/Connection. If rollback succeeds, preserve the original route failure mapping. No automatic retry occurs inside the route.
+
+**SQLite test protocol (not production equivalence):** use a separate dedicated connection and Session, issue an explicit read `BEGIN` before the first SELECT, perform every source read through that connection, rollback and close. Capture SQL and reject UPDATE/INSERT/DELETE/DDL, `BEGIN IMMEDIATE`, `BEGIN EXCLUSIVE` and writer-reservation helpers. A two-connection test must prove that one preview cannot combine product/version from one state with components from another; if the configured SQLite mode cannot demonstrate that invariant, mark the SQLite concurrency case unsupported rather than weakening PostgreSQL requirements. SQLite evidence cannot satisfy PostgreSQL isolation/read-only acceptance.
 
 **Validation:** Capture executed SQL and assert zero DML/DDL or write-capable lock statements; concurrent factual product update cannot yield product/version from one revision and components from another; follow-up stale fingerprint is detectable. A permission preview never allocates or persists results; its response is informational.
 
-**API method security:** proposed `POST` endpoint is an unsafe method, so production `RTDIRSecurityMiddleware` will require both exact Origin and CSRF token despite the endpoint having zero database writes. Do not bypass origin/CSRF to make the read-only operation easier. Consider GET only as a separately versioned API design decision if the input/response shape supports it.
+**API method security:** the binding endpoint is `POST`, so production `RTDIRSecurityMiddleware` requires both exact Origin and CSRF token despite the endpoint having zero database writes. Do not bypass origin/CSRF. There is no GET alternative in this contract version.
 
-**Review gate:** This is a bounded implementation design candidate, not evidence of tested transaction behavior and not permission to code or run CI. The independent review must choose the exact safe SQLAlchemy pattern and verify its behavior on PostgreSQL and SQLite.
+**Review gate:** This is the selected contract, not evidence that it has been implemented or database-tested. Future authorization must test connection options before first SQL, database-enforced read-only behavior, concurrent snapshots, all termination paths, cleanup precedence and permanent non-reuse. No CI or database run is authorized by this documentation task.
+
+
+## N. Binding product resolver inventory
+
+Resolver key is the exact pair `(source_kind, persisted product_type)` after Unicode NFC normalization only. No trimming, lowercasing, substring matching, product-name inference or alias expansion is permitted. `source_kind` outside `manual | imported` is invalid source structure. The table below is exhaustive for source values proven by the inspected code; `proposed_class` is not an approval.
+
+| `source_kind` | Exact persisted `product_type` | Proven source | `proposed_class` | Approval status / resolver result |
+| --- | --- | --- | --- | --- |
+| `imported` | `קרן פנסיה` | importer code `4` | `pension_fund` | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE` |
+| `imported` | `קופת גמל` | importer code `3` | `provident_fund` only | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE`; never infer investment provident |
+| `imported` | `פוליסת ביטוח חיים משולב חיסכון` | importer code `1` | `insurance_policy` candidate | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE` |
+| `imported` | `פוליסת ביטוח חיים` | importer code `2` | ambiguous insurance/risk product | `AMBIGUOUS` → `AMBIGUOUS_PRODUCT_TYPE` |
+| `imported` | `פוליסת חיסכון טהור` | importer code `5` | unsupported until class is decided | `UNSUPPORTED` → `UNKNOWN_PRODUCT_TYPE` |
+| `imported` | `סוג מוצר לא ממופה` | explicit importer fallback | none | `UNSUPPORTED` → `UNKNOWN_PRODUCT_TYPE` |
+| `imported` | `סוג מוצר לא נמסר` | explicit importer fallback | none | `UNSUPPORTED` → `UNKNOWN_PRODUCT_TYPE` |
+| `manual` | `קופת גמל` | current manual-form default; still free text | `provident_fund` candidate | `PENDING_PROFESSIONAL_APPROVAL` → `AMBIGUOUS_PRODUCT_TYPE` |
+
+Every other manually entered string is outside the proven exact-value table and returns `AMBIGUOUS_PRODUCT_TYPE`; textual equality with an imported label does not transfer imported provenance. There are currently **no source-proven exact labels for `education_fund` or `investment_provident_fund` and no professionally approved resolver row**. O-01 remains intact: once an exact label/provenance pair is professionally approved, contribution rows may use its permission rule while positive severance rows remain `needs_source_reconciliation`. Adding an approved mapping requires a new immutable ruleset version and independent review; it never edits this table in place or falls through to `BASE_MATRIX`.
+
+
+## O. Binding immutable permission-ruleset artifact
+
+The future server loads an immutable, append-only artifact with `schema="scenario-permission-ruleset-v1"`. The artifact has exactly: `schema`, `ruleset_id` (stable nonempty string), `ruleset_version` (positive integer), `status` (`approved` only for selection), `effective_from` (`YYYY-MM-DD`), `effective_until` (exclusive date or null), `approved_by_actor_id`, `approval_record_id`, `predecessor_digest` (64 lowercase hex or null for first version), `product_mappings`, and `component_rules`.
+
+`product_mappings` contains only §N rows whose status has become `APPROVED`, ordered by UTF-8 bytes of `source_kind` then exact `product_type`; each has exactly `source_kind`, `product_type`, `canonical_product_class` and `mapping_rule_id`. `component_rules` contains exactly 11 entries in canonical component order. Each entry has exactly `rule_id`, `component_code`, `applicable_product_classes`, and `actions`; `actions` has exactly `pension` and `capital_asset`, each with `permission_status=allowed|blocked` and a stable `reason_code`. Professional-evidence dependencies may only be recorded as `not_evaluated` metadata in a later accepted schema; this permission artifact cannot claim eligibility.
+
+The V1 permission rows are fixed below. `standard` means `pension_fund | insurance_policy | provident_fund`. `special capital` applies only to genuine contribution rows for an approved `education_fund | investment_provident_fund`. `A` means `allowed`, `B` means `blocked`.
+
+| Canonical component | Standard `pension` | Standard `capital_asset` | Special `pension` | Special `capital_asset` |
+| --- | --- | --- | --- | --- |
+| `פיצויים_מעסיק_נוכחי` | B | B | positive balance → reconciliation | positive balance → reconciliation |
+| `פיצויים_לאחר_התחשבנות` | A | A | positive balance → reconciliation | positive balance → reconciliation |
+| `פיצויים_שלא_עברו_התחשבנות` | B | B | positive balance → reconciliation | positive balance → reconciliation |
+| `פיצויים_ממעסיקים_קודמים_רצף_זכויות` | B | B | positive balance → reconciliation | positive balance → reconciliation |
+| `פיצויים_ממעסיקים_קודמים_רצף_קצבה` | A | B | positive balance → reconciliation | positive balance → reconciliation |
+| `תגמולי_עובד_עד_2000` | A | A | A | A |
+| `תגמולי_עובד_אחרי_2000` | A | B | A | A |
+| `תגמולי_עובד_אחרי_2008_לא_משלמת` | A | B | A | A |
+| `תגמולי_מעביד_עד_2000` | A | A | A | A |
+| `תגמולי_מעביד_אחרי_2000` | A | B | A | A |
+| `תגמולי_מעביד_אחרי_2008_לא_משלמת` | A | B | A | A |
+
+The stable V1 reasons are `BASE_PERMISSION_ALLOWED` for standard A, `BASE_PERMISSION_BLOCKED` for standard B, `PRODUCT_CONTRIBUTION_CAPITAL_ALLOWED` for the special capital A, and `SOURCE_SEVERANCE_PRODUCT_MISMATCH` for every positive special-product severance row. A zero special-product severance row uses its standard A/B rule but remains nonselectable because its amount is zero. No row uses or serializes `exempt`, `taxable` or `capital_gains` as a permission result.
+
+Tax labels and `tax_for()` results are forbidden in the artifact and cannot determine permission. The approved O-02 tax decision remains recorded but is not emitted or evaluated by Permission Preview.
+
+Ruleset selection is server-only: select the unique immutable `approved` version whose half-open interval contains request `effective_date`. Zero or multiple matches fail `UNKNOWN_RULESET`; no newest-version, current-date or `BASE_MATRIX` fallback is allowed. Historical previews retain their exact ruleset ID/version/digest and are not silently reevaluated.
+
+`ruleset_digest` is lowercase SHA-256 over UTF-8 canonical JSON of the whole artifact except no digest field is present in its own preimage: Unicode NFC strings, sorted object keys, compact separators, `ensure_ascii=false`, no floats, arrays in the orders fixed above. Approval is bound to this digest. Any content change creates a new version, approval record and digest; approved artifacts are never mutated.
+
+
+## P. SC-PERM-02 closure register
+
+| Finding | Contract status | Binding location | Remaining boundary |
+| --- | --- | --- | --- |
+| `SC-PERM-01-001` product resolver | `CLOSED` technically | §§B, N | Exact professional mapping approvals remain pending; unresolved rows fail closed. |
+| `SC-PERM-01-002` immutable ruleset | `CLOSED` | §§B, O | Artifact implementation and independent acceptance are not authorized. |
+| `SC-PERM-01-003` zero-write snapshot | `CLOSED` | §M | PostgreSQL/SQLite execution evidence is future implementation acceptance, not part of this docs-only repair. |
+| `SC-PERM-01-004` API envelope | `CLOSED` | §§B, D | Endpoint does not exist and remains unauthorized. |
+| Single-operator security boundary | `CLOSED` for current deployment | §§D, L | Multi-operator RBAC/client membership is absent and not claimed. |
+
+Technical closure means the contract no longer offers competing implementation choices. It does not mean Preview exists, passed GPT Work review or is authorized. Permission Preview remains blocked specifically by professional approval of resolver mappings, independent contract acceptance and explicit implementation authorization. Authoritative scenario decisions/save remain a separate blocked package.

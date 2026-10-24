@@ -183,6 +183,21 @@ APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS = {
     "backend/tests/test_retirement_monthly_income_gap_postgresql.py",
     "backend/tests/test_governance_baseline.py",
 }
+APPROVED_SCENARIO_DRAFT_PATHS = {
+    "backend/alembic/versions/e2f8a6c1d405_scenario_drafts.py",
+    "backend/app/db/base.py",
+    "backend/app/models/scenario_draft.py",
+    "backend/app/schemas/scenario_draft.py",
+    "backend/app/services/scenario_draft_service.py",
+    "backend/app/api/scenario_draft_routes.py",
+    "backend/app/main.py",
+    "backend/tests/test_scenario_draft.py",
+    "backend/tests/test_governance_baseline.py",
+    "frontend/src/api/scenarioDraftsApi.ts",
+    "frontend/src/components/ScenarioDraftPanel.tsx",
+    "frontend/src/pages/RetirementWorkspaceScreen.tsx",
+}
+
 APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS = {
     "backend/app/api/scenario_permission_preview_routes.py",
     "backend/app/main.py",
@@ -626,6 +641,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_RETIREMENT_TARGET_INCOME_SOURCE_BASIS_PATHS,
         *APPROVED_COMPARABLE_MONTHLY_INCOME_PATHS,
         *APPROVED_RETIREMENT_MONTHLY_INCOME_GAP_PATHS,
+        *APPROVED_SCENARIO_DRAFT_PATHS,
         *APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
@@ -679,6 +695,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_RETIREMENT_TARGET_INCOME_ADMISSION_PATHS,
         *APPROVED_RETIREMENT_TARGET_INCOME_SOURCE_BASIS_PATHS,
         *APPROVED_COMPARABLE_MONTHLY_INCOME_PATHS,
+        *APPROVED_SCENARIO_DRAFT_PATHS,
         *APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,

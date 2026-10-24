@@ -52,14 +52,14 @@ def test_create_edit_reload_copy_and_client_isolation(env):
     assert result.status_code == 200, result.text
     assert result.json()["version"] == 2
     assert result.json()["decisions"][0]["amount"] == "10.25"
-    assert result.json()["decisions"][0]["validation_state"] == "unverified"
+    assert result.json()["decisions"][0]["validation_state"] == "needs_revalidation"
     assert client.get(url).json()["decisions"][0]["amount"] == "10.25"
     assert client.get(f"/api/clients/2/scenario-drafts/{ident}").status_code == 404
     assert client.get("/api/clients/2/scenario-drafts").json() == []
     assert client.put(url, json=payload).json()["code"] == "SCENARIO_VERSION_CONFLICT"
     copied = client.post(url + "/duplicate", json={"name":"חלופה ב"})
     assert copied.status_code == 200 and copied.json()["scenario_id"] != ident
-    assert copied.json()["decisions"][0]["validation_state"] == "unverified"
+    assert copied.json()["decisions"][0]["validation_state"] == "needs_revalidation"
     archived = client.post(url + "/archive", json={"expected_version":2})
     assert archived.status_code == 200 and archived.json()["status"] == "archived"
     assert client.put(url, json={**payload,"expected_version":3}).status_code == 409

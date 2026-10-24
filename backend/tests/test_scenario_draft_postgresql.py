@@ -46,6 +46,19 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         )).upper()
         assert "NUMERIC(20, 2)" in amount_type
 
+        with engine.connect() as connection:
+            connection.execute(text(f"SET ROLE {APPLICATION_ROLE}"))
+            for table in ("scenario_drafts", "scenario_draft_decisions", "scenario_draft_revisions"):
+                assert connection.scalar(text(
+                    "SELECT has_table_privilege(current_user, :tbl, 'SELECT')"
+                ), {"tbl": table})
+            assert not connection.scalar(text(
+                "SELECT has_table_privilege(current_user, 'scenario_draft_revisions', 'UPDATE')"
+            ))
+            assert not connection.scalar(text(
+                "SELECT has_table_privilege(current_user, 'scenario_draft_revisions', 'DELETE')"
+            ))
+            connection.rollback()
         factory = sessionmaker(bind=engine, autoflush=False)
         with factory.begin() as db:
             db.add(Client(client_id=1, display_name="Synthetic A", id_number="scenario-pg-a"))

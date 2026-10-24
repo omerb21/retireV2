@@ -12,7 +12,12 @@ router = APIRouter(prefix="/api/clients/{client_id}/scenario-drafts", tags=["sce
 
 
 def _actor(request: Request) -> str:
-    return str(getattr(request.state, "trusted_professional_actor", "development"))
+    actor = getattr(request.state, "trusted_professional_actor", None)
+    if isinstance(actor, str) and actor:
+        return actor
+    if not request.app.state.auth_config.production:
+        return "local-development-only"
+    raise service.DraftError("AUTHENTICATION_REQUIRED", 401)
 
 
 def _run(request, db, fn):

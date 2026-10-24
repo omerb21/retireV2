@@ -97,7 +97,7 @@ def test_postgresql_migration_trigger_privileges_transactions_and_concurrency(po
                 "SELECT version(), current_database(), current_user, session_user"
             )).one()
             print("PG_EVIDENCE_SERVER", server_version_num, *connection_identity, sep="|")
-        assert migrate(postgres_url, "heads").strip() == "c4e8a2f6b731 (head)"
+        assert migrate(postgres_url, "heads").strip() == "e2f8a6c1d405 (head)"
         columns = {item["name"]: item for item in inspect(engine).get_columns(subject.Decision.__tablename__)}
         assert set(columns) == {
             "decision_id", "client_id", "source_id", "source_kind", "decision_version",

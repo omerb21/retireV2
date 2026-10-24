@@ -4,6 +4,8 @@ Revision ID: e2f8a6c1d405
 Revises: c4e8a2f6b731
 """
 from alembic import op
+import os
+import re
 import sqlalchemy as sa
 
 revision = "e2f8a6c1d405"
@@ -68,6 +70,20 @@ def upgrade():
         sa.UniqueConstraint("scenario_id", "version", name="uq_scenario_draft_revision_version"),
     )
     op.create_index("ix_scenario_draft_revisions_scenario_id", "scenario_draft_revisions", ["scenario_id"])
+
+
+    if op.get_bind().dialect.name == "postgresql":
+        role = os.environ.get("CRTISBA_APPLICATION_DB_ROLE")
+        if not role or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", role) is None:
+            raise RuntimeError("CRTISBA_APPLICATION_DB_ROLE must be a valid explicit PostgreSQL role")
+        quoted = op.get_bind().dialect.identifier_preparer.quote_identifier(role)
+        for table, rights in (
+            ("scenario_drafts", "SELECT, INSERT, UPDATE"),
+            ("scenario_draft_decisions", "SELECT, INSERT, DELETE"),
+            ("scenario_draft_revisions", "SELECT, INSERT"),
+        ):
+            op.execute(f"REVOKE ALL PRIVILEGES ON TABLE {table} FROM {quoted}")
+            op.execute(f"GRANT {rights} ON TABLE {table} TO {quoted}")
 
 
 def downgrade():

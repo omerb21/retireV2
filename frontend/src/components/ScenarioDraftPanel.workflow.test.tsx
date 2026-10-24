@@ -110,7 +110,7 @@ it("shows a read-only side-by-side summary for distinct saved scenarios", async 
   expect(table.textContent).toContain("comparison-b");
   expect(table.textContent).toContain("30.00");
   expect(table.textContent).toContain("70.00");
-  expect(table.textContent).toContain("אין אישור מקצועי");
+  expect(table.textContent).toContain("מקצועי: זכאות, מס והרשאת ביצוע — לא נבדקו");
 });
 
 it("opens the selected scenario from comparison without altering saved data", async () => {

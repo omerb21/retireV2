@@ -63,6 +63,36 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         with factory.begin() as db:
             db.add(Client(client_id=1, display_name="Synthetic A", id_number="scenario-pg-a"))
             db.add(Client(client_id=2, display_name="Synthetic B", id_number="scenario-pg-b"))
+        # Perform real DML as the restricted runtime role, not just privilege introspection.
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            try:
+                connection.execute(text(f"SET LOCAL ROLE {APPLICATION_ROLE}"))
+                connection.execute(text("""
+                    INSERT INTO scenario_drafts
+                    (scenario_id, client_id, name, status, version, created_by, updated_by)
+                    VALUES ('role-proof', 1, 'proof', 'draft', 1, 'actor', 'actor')
+                """))
+                connection.execute(text(
+                    "UPDATE scenario_drafts SET name='changed' WHERE scenario_id='role-proof'"
+                ))
+                connection.execute(text("""
+                    INSERT INTO scenario_draft_decisions
+                    (decision_id, scenario_id, source_product_id, source_component_id,
+                     component_code, amount, action, effective_date, validation_state)
+                    VALUES ('role-row', 'role-proof', 'synthetic', 'synthetic-row',
+                            'תגמולי_עובד_עד_2000', 1.25, 'pension', DATE '2026-10-24', 'unverified')
+                """))
+                connection.execute(text("""
+                    INSERT INTO scenario_draft_revisions
+                    (revision_id, scenario_id, version, action, snapshot_json, actor)
+                    VALUES ('role-revision', 'role-proof', 1, 'create', '{}', 'actor')
+                """))
+                connection.execute(text(
+                    "DELETE FROM scenario_draft_decisions WHERE decision_id='role-row'"
+                ))
+            finally:
+                transaction.rollback()
         with factory.begin() as db:
             created = service.create(db, 1, "חלופה א", "test-actor")
         scenario_id = created["scenario_id"]

@@ -197,6 +197,8 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/tests/test_governance_baseline.py",
     "frontend/src/api/scenarioDraftsApi.ts",
     "frontend/src/components/ScenarioDraftPanel.tsx",
+    "frontend/src/components/scenarioDraftEdit.ts",
+    "frontend/src/components/scenarioDraftEdit.test.ts",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }
 

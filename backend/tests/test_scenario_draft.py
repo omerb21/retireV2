@@ -148,3 +148,57 @@ def test_draft_writes_never_modify_factual_tables(env):
     for forbidden in ("PENSION_PRODUCTS", "PENSION_PRODUCT_COMPONENTS",
                       "CANONICAL_CONVERSIONS", "CAPITAL_ASSET", "CANONICAL_PENSIONS"):
         assert all(forbidden not in statement for statement in writes), writes
+
+
+def test_real_source_version_change_marks_read_stale_without_overwriting_decisions(env):
+    from app.models.pension_product import PensionProduct, PensionProductComponent
+    client, factory = env
+    with factory.begin() as db:
+        db.add(PensionProduct(
+            product_id="real-source-1", client_id=1, source_kind="imported",
+            source_identity="real-identity-1", product_name="Synthetic fund",
+            product_type="קרן פנסיה", account_reference="test-account",
+            version=1, created_by="test", updated_by="test",
+        ))
+        db.add(PensionProductComponent(
+            component_id="real-row-1", product_id="real-source-1",
+            component_code="תגמולי_עובד_עד_2000", balance=Decimal("200.00"),
+        ))
+    created = client.post("/api/clients/1/scenario-drafts", json={"name":"מקור אמת"})
+    assert created.status_code == 200
+    ident = created.json()["scenario_id"]
+    url = f"/api/clients/1/scenario-drafts/{ident}"
+    saved = client.put(url, json={
+        "name":"מקור אמת", "expected_version":1, "decisions":[{
+            "source_product_id":"real-source-1", "source_component_id":"real-row-1",
+            "component_code":"תגמולי_עובד_עד_2000", "amount":"100.00",
+            "action":"pension", "effective_date":"2026-10-24",
+        }],
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["decisions"][0]["product_version_at_review"] == 1
+    assert saved.json()["decisions"][0]["validation_state"] == "unverified"
+    with factory.begin() as db:
+        db.get(PensionProduct, "real-source-1").version = 2
+    updated = client.get(url)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["status"] == "needs_revalidation"
+    assert updated.json()["decisions"][0]["validation_state"] == "needs_revalidation"
+    assert updated.json()["decisions"][0]["amount"] == "100.00"
+    with factory() as db:
+        assert db.get(PensionProductComponent, "real-row-1").balance == Decimal("200.00")
+        assert db.get(ScenarioDraft, ident).status == "draft"
+
+
+def test_production_actor_does_not_fallback_to_fake_identity():
+    from types import SimpleNamespace
+    from app.api.scenario_draft_routes import _actor
+    from app.services.scenario_draft_service import DraftError
+    request = SimpleNamespace(
+        state=SimpleNamespace(),
+        app=SimpleNamespace(state=SimpleNamespace(auth_config=SimpleNamespace(production=True))),
+    )
+    with pytest.raises(DraftError, match="AUTHENTICATION_REQUIRED"):
+        _actor(request)
+    request.state.trusted_professional_actor = "verified-operator"
+    assert _actor(request) == "verified-operator"

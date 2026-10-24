@@ -85,3 +85,16 @@ it("expires a displayed allowed preview when the canonical source snapshot chang
   await waitFor(() => expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull());
   expect(screen.getByText(/טרם נבדקה/)).toBeTruthy();
 });
+
+it("rejects a late allowed result when product classification changes without version bump", async () => {
+  mocks.list.mockResolvedValue([draft("classification")]);
+  const deferred = pending<typeof allowed>();
+  mocks.preview.mockReturnValue(deferred.promise);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByRole("button", { name: /בדוק הרשאת בסיס/ }));
+  const changed = products.map(product => ({ ...product, product_type: "קופת גמל" }));
+  view.rerender(<ScenarioDraftPanel clientId={1} products={changed} />);
+  deferred.resolve(allowed);
+  await waitFor(() => expect(mocks.preview).toHaveBeenCalledTimes(1));
+  expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull();
+});

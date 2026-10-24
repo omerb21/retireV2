@@ -6,7 +6,7 @@ from decimal import Decimal
 from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
-from app.models.pension_product import COMPONENT_CODES
+from app.models.pension_product import COMPONENT_CODES, ExactMoney
 
 class ScenarioDraft(Base):
     __tablename__ = "scenario_drafts"
@@ -37,7 +37,7 @@ class ScenarioDraftDecision(Base):
     source_product_id: Mapped[str] = mapped_column(String(64), nullable=False)
     source_component_id: Mapped[str] = mapped_column(String(64), nullable=False)
     component_code: Mapped[str] = mapped_column(String(128), nullable=False)
-    amount: Mapped[Decimal] = mapped_column(Numeric(20,2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(ExactMoney(), nullable=False)
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     effective_date: Mapped[date] = mapped_column(Date, nullable=False)
     validation_state: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified")

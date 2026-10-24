@@ -230,38 +230,263 @@ Resolver key is the exact pair `(source_kind, persisted product_type)` after Uni
 Every other manually entered string is outside the proven exact-value table and returns `AMBIGUOUS_PRODUCT_TYPE`; textual equality with an imported label does not transfer imported provenance. There are currently **no source-proven exact labels for `education_fund` or `investment_provident_fund` and no professionally approved resolver row**. O-01 remains intact: once an exact label/provenance pair is professionally approved, contribution rows may use its permission rule while positive severance rows remain `needs_source_reconciliation`. Adding an approved mapping requires a new immutable ruleset version and independent review; it never edits this table in place or falls through to `BASE_MATRIX`.
 
 
-## O. Binding immutable permission-ruleset artifact
+## O. First immutable permission ruleset — bounded pension-product slice (owner effective date 2026-10-24)
 
-The future server loads an immutable, append-only artifact with `schema="scenario-permission-ruleset-v1"`. The artifact has exactly: `schema`, `ruleset_id` (stable nonempty string), `ruleset_version` (positive integer), `status` (`approved` only for selection), `effective_from` (`YYYY-MM-DD`), `effective_until` (exclusive date or null), `approved_by_actor_id`, `approval_record_id`, `predecessor_digest` (64 lowercase hex or null for first version), `product_mappings`, `component_rules`, and `source_integrity_overlays`.
+**Design-only candidate pending independent acceptance and separate implementation authorization.** The owner expressly approved `2026-10-24` as the effective date of the FIRST VERSION OF THE SYSTEM RULESET, **not** as the date of a change in law. The owner also approved exact imported labels for `pension_fund`, `provident_fund`, and `insurance_policy` (§N). The approval of product grouping/effective date is not an independent technical review, nor a live rule activation.
 
-`product_mappings` contains only §N rows whose status has become `APPROVED`, ordered by UTF-8 bytes of `source_kind` then exact `product_type`; each has exactly `source_kind`, `product_type`, `canonical_product_class` and `mapping_rule_id`. `component_rules` contains exactly 11 entries in canonical component order. Each entry has exactly `rule_id`, `component_code`, `applicable_product_classes`, and `actions`; `actions` has exactly `pension` and `capital_asset`, each with `permission_status=allowed|blocked` and a stable `reason_code`. Professional-evidence dependencies may only be recorded as `not_evaluated` metadata in a later accepted schema; this permission artifact cannot claim eligibility.
+**Exactly one V1 artifact:** The following JSON object is the canonical first version. `status: "approved"` denotes the proposed artifact's target status **after** independent review and authorized activation; its presence in this design document alone is not permission to load or execute it. `approved_by_actor_id: "github:omerb21"` identifies the user-provided owner decision provenance in the GitHub context, **not** the deployment `AUTH_ACTOR_ID`, and must not be used for runtime authentication. `approval_record_id` denotes the recorded owner decisions rather than a financial/tax certification. The precise values are contract constants, not implementer-selected defaults.
 
-The V1 permission rows are fixed below. `standard` means `pension_fund | insurance_policy | provident_fund`. `special capital` applies only to genuine contribution rows for an approved `education_fund | investment_provident_fund`. `A` means `allowed`, `B` means `blocked`.
+```json
+{
+  "schema": "scenario-permission-ruleset-v1",
+  "ruleset_id": "retire-v2-permission-standard-20261024",
+  "ruleset_version": 1,
+  "status": "approved",
+  "effective_from": "2026-10-24",
+  "effective_until": null,
+  "approved_by_actor_id": "github:omerb21",
+  "approval_record_id": "owner-decisions-20261023-and-20261024",
+  "predecessor_digest": null,
+  "product_mappings": [
+    {
+      "source_kind": "imported",
+      "product_type": "פוליסת ביטוח חיים משולב חיסכון",
+      "canonical_product_class": "insurance_policy",
+      "mapping_rule_id": "map-imported-01"
+    },
+    {
+      "source_kind": "imported",
+      "product_type": "קופת גמל",
+      "canonical_product_class": "provident_fund",
+      "mapping_rule_id": "map-imported-03"
+    },
+    {
+      "source_kind": "imported",
+      "product_type": "קרן פנסיה",
+      "canonical_product_class": "pension_fund",
+      "mapping_rule_id": "map-imported-04"
+    }
+  ],
+  "component_rules": [
+    {
+      "rule_id": "standard-component-01",
+      "component_code": "פיצויים_מעסיק_נוכחי",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-02",
+      "component_code": "פיצויים_לאחר_התחשבנות",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-03",
+      "component_code": "פיצויים_שלא_עברו_התחשבנות",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-04",
+      "component_code": "פיצויים_ממעסיקים_קודמים_רצף_זכויות",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-05",
+      "component_code": "פיצויים_ממעסיקים_קודמים_רצף_קצבה",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-06",
+      "component_code": "תגמולי_עובד_עד_2000",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-07",
+      "component_code": "תגמולי_עובד_אחרי_2000",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-08",
+      "component_code": "תגמולי_עובד_אחרי_2008_לא_משלמת",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-09",
+      "component_code": "תגמולי_מעביד_עד_2000",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-10",
+      "component_code": "תגמולי_מעביד_אחרי_2000",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    },
+    {
+      "rule_id": "standard-component-11",
+      "component_code": "תגמולי_מעביד_אחרי_2008_לא_משלמת",
+      "applicable_product_classes": [
+        "pension_fund",
+        "insurance_policy",
+        "provident_fund"
+      ],
+      "actions": {
+        "pension": {
+          "permission_status": "allowed",
+          "reason_code": "BASE_PERMISSION_ALLOWED"
+        },
+        "capital_asset": {
+          "permission_status": "blocked",
+          "reason_code": "BASE_PERMISSION_BLOCKED"
+        }
+      }
+    }
+  ],
+  "source_integrity_overlays": []
+}
+```
 
-| Canonical component | Standard `pension` | Standard `capital_asset` | Special `pension` | Special `capital_asset` |
-| --- | --- | --- | --- | --- |
-| `פיצויים_מעסיק_נוכחי` | B | B | positive balance → reconciliation | positive balance → reconciliation |
-| `פיצויים_לאחר_התחשבנות` | A | A | positive balance → reconciliation | positive balance → reconciliation |
-| `פיצויים_שלא_עברו_התחשבנות` | B | B | positive balance → reconciliation | positive balance → reconciliation |
-| `פיצויים_ממעסיקים_קודמים_רצף_זכויות` | B | B | positive balance → reconciliation | positive balance → reconciliation |
-| `פיצויים_ממעסיקים_קודמים_רצף_קצבה` | A | B | positive balance → reconciliation | positive balance → reconciliation |
-| `תגמולי_עובד_עד_2000` | A | A | A | A |
-| `תגמולי_עובד_אחרי_2000` | A | B | A | A |
-| `תגמולי_עובד_אחרי_2008_לא_משלמת` | A | B | A | A |
-| `תגמולי_מעביד_עד_2000` | A | A | A | A |
-| `תגמולי_מעביד_אחרי_2000` | A | B | A | A |
-| `תגמולי_מעביד_אחרי_2008_לא_משלמת` | A | B | A | A |
+**Golden digest:** `SHA-256 = f3bd4c4bfe1fa07c96a7687dc99b756deb8de2f79083e05a74642b6b5d58800b`. Preimage: the exact artifact above with recursive object keys sorted lexicographically, Unicode NFC strings, compact JSON separators `,` and `:`, UTF-8 encoding, `ensure_ascii=false`, no floats, and array order preserved as written. The artifact includes no digest field. This constant must be asserted using a golden test before implementation acceptance. The ruleset ID/version/digest and approval record are immutable for this proposed V1.
 
-**Binding interpretation of special-product anomalies:** `component_rules[].actions` encodes only the base `allowed | blocked` permission for each product class and destination; it does not encode source-integrity anomalies. After exact product-class resolution (§N), but before forming the response, the preview applies a deterministic source-integrity overlay: if the resolved class is `education_fund` or `investment_provident_fund` and a severance-coded row has a strictly positive balance, that row's response `permission_status` is `needs_source_reconciliation` for either destination, its `reason_code` is `SOURCE_SEVERANCE_PRODUCT_MISMATCH`, and its `applicable_rule_id` is the immutable identifier of the overlay rule included in the same approved ruleset artifact. This override neither creates a third `component_rules[].actions` permission value nor modifies the persisted product. At zero balance, no anomaly overlay is applied; use the class-specific base rule but the zero row is not selectable. Every overlay rule must have an immutable ID and be serialized in the ruleset digest. For clarity, the artifact also includes an exact `source_integrity_overlays` array (one entry for this rule in V1), with fields `rule_id`, `canonical_product_classes` (the two special classes), `component_codes` (the five canonical severance codes), `trigger` (`positive_balance`), `response_status` (`needs_source_reconciliation`), and `reason_code` (`SOURCE_SEVERANCE_PRODUCT_MISMATCH`). The overlay is evaluated before `overall_status` and `totals`, and never grants an otherwise denied permission.
+**Scope and deterministic operation:** Only the three `imported` mappings in the artifact are eligible to resolve. No manual alias, no special education/investment product, no unsupported policy, no fallback to `BASE_MATRIX`. `component_rules` lists all 11 canonical component codes, with one immutable `rule_id` per row and two actions. All three product classes use precisely the same permissions for the same component/action. `allowed` denotes ONLY basic permission; professional eligibility and tax stay `not_evaluated`. `source_integrity_overlays=[]` for V1; special-product severance anomaly overlays and special-product permissions are **outside the V1 artifact**. The discussion of special classes in earlier historical sections is prospective policy only, not a V1 rule to serialize. A later distinct artifact version, independently accepted, may introduce those mappings, component rules and overlays without mutating V1.
 
-The stable V1 reasons are `BASE_PERMISSION_ALLOWED` for standard A, `BASE_PERMISSION_BLOCKED` for standard B, and `PRODUCT_CONTRIBUTION_CAPITAL_ALLOWED` for the special capital A; source-integrity overlay reasons are specified separately above. No row uses or serializes `exempt`, `taxable` or `capital_gains` as a permission result.
-
-Tax labels and `tax_for()` results are forbidden in the artifact and cannot determine permission. The approved O-02 tax decision remains recorded but is not emitted or evaluated by Permission Preview.
-
-Ruleset selection is server-only: select the unique immutable `approved` version whose half-open interval contains request `effective_date`. Zero or multiple matches fail `UNKNOWN_RULESET`; no newest-version, current-date or `BASE_MATRIX` fallback is allowed. Historical previews retain their exact ruleset ID/version/digest and are not silently reevaluated.
-
-`ruleset_digest` is lowercase SHA-256 over UTF-8 canonical JSON of the whole artifact except no digest field is present in its own preimage: Unicode NFC strings, sorted object keys, compact separators, `ensure_ascii=false`, no floats, arrays in the orders fixed above. Approval is bound to this digest. Any content change creates a new version, approval record and digest; approved artifacts are never mutated.
-
+**Selection:** The server selects the unique immutable artifact with `status="approved"` and `effective_from <= effective_date < effective_until` (a null `effective_until` means no upper bound). For this single first artifact, a request date before `2026-10-24` produces `409 UNKNOWN_RULESET`; dates from `2026-10-24` forward are in the proposed interval, conditional on later authorized activation. No guessed legal effective date, historical fallback, latest-version fallback, or silent activation is permitted. Zero or multiple applicable approved artifacts fail closed with `UNKNOWN_RULESET`. Every future version requires an immutable new artifact, new approval provenance, and golden digest; prior preview identities remain bound to their source/ruleset fingerprints.
 
 ## P. SC-PERM-02 closure register
 

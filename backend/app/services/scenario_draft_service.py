@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
+from app.models.pension_product import PensionProduct, PensionProductComponent
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
 
 
@@ -50,11 +51,35 @@ def read(db: Session, client_id: int, scenario_id: str) -> dict:
     decisions = db.scalars(select(ScenarioDraftDecision).where(
         ScenarioDraftDecision.scenario_id == scenario.scenario_id
     ).order_by(ScenarioDraftDecision.decision_id)).all()
+    output_decisions = [_decision_json(item) for item in decisions]
+    tracked = [item for item in output_decisions if item["product_version_at_review"] is not None]
+    if tracked:
+        product_ids = {item["source_product_id"] for item in tracked}
+        products = {
+            p.product_id: p
+            for p in db.scalars(select(PensionProduct).where(
+                PensionProduct.client_id == client_id, PensionProduct.product_id.in_(product_ids)
+            ))
+        }
+        component_ids = {item["source_component_id"] for item in tracked}
+        components = {
+            c.component_id: c
+            for c in db.scalars(select(PensionProductComponent).where(
+                PensionProductComponent.component_id.in_(component_ids)
+            ))
+        }
+        for item in tracked:
+            product = products.get(item["source_product_id"])
+            component = components.get(item["source_component_id"])
+            if (product is None or product.version != item["product_version_at_review"]
+                or component is None or component.product_id != item["source_product_id"]
+                or component.component_code != item["component_code"]):
+                item["validation_state"] = "needs_revalidation"
     return {
         "scenario_id": scenario.scenario_id, "client_id": scenario.client_id,
         "name": scenario.name, "status": scenario.status, "version": scenario.version,
         "created_by": scenario.created_by, "updated_by": scenario.updated_by,
-        "decisions": [_decision_json(item) for item in decisions],
+        "decisions": output_decisions,
         "financial_validation": "not_evaluated",
     }
 
@@ -115,14 +140,30 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     for item in existing:
         db.delete(item)
     db.flush()
+    product_ids = {item.source_product_id for item in payload.decisions}
+    products = {
+        p.product_id: p
+        for p in db.scalars(select(PensionProduct).where(
+            PensionProduct.client_id == client_id, PensionProduct.product_id.in_(product_ids)
+        ))
+    } if product_ids else {}
     for item in payload.decisions:
+        product = products.get(item.source_product_id)
+        # Capture source version only when a canonical row really exists.
+        # It is a staleness anchor, NEVER a professional approval.
+        component = db.scalar(select(PensionProductComponent).where(
+            PensionProductComponent.product_id == item.source_product_id,
+            PensionProductComponent.component_id == item.source_component_id,
+            PensionProductComponent.component_code == item.component_code,
+        )) if product is not None else None
+        version = product.version if component is not None else None
         db.add(ScenarioDraftDecision(
             decision_id=item.decision_id or uuid4().hex, scenario_id=scenario_id,
             source_product_id=item.source_product_id,
             source_component_id=item.source_component_id,
             component_code=item.component_code, amount=item.amount,
             action=item.action, effective_date=item.effective_date,
-            validation_state="unverified",
+            validation_state="unverified", product_version_at_review=version,
         ))
     db.flush()
     return _revision(db, scenario, "replace", actor)

@@ -36,7 +36,7 @@ from sqlalchemy import text
 
 load_all_models()
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-EXPECTED_ALEMBIC_HEAD = "e2f8a6c1d405"
+EXPECTED_ALEMBIC_HEAD = "f6a9c4d2e107"
 
 
 def _pointer(location: tuple[object, ...]) -> str:

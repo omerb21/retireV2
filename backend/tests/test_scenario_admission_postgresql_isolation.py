@@ -5,6 +5,7 @@ No production credentials. Creates and drops one dedicated probe table.
 """
 import os
 import uuid
+from urllib.parse import urlsplit
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -13,6 +14,10 @@ from sqlalchemy import create_engine, text
 @pytest.mark.skipif(not os.getenv("SCENARIO_TEST_POSTGRES_URL"), reason="dedicated PostgreSQL test URL not supplied")
 def test_two_connections_hold_repeatable_read_only_snapshot_under_concurrent_change():
     url = os.environ["SCENARIO_TEST_POSTGRES_URL"]
+    parsed = urlsplit(url)
+    # This test intentionally performs DDL; never use the application DB or remote servers.
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.path != "/retire_v2_scenario_test":
+        pytest.fail("A dedicated LOCAL retire_v2_scenario_test database is required; never point this test at retire_v2")
     engine = create_engine(url, isolation_level="READ COMMITTED")
     if engine.dialect.name != "postgresql":
         pytest.fail("SCENARIO_TEST_POSTGRES_URL must point to PostgreSQL")

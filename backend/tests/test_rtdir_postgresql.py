@@ -120,7 +120,7 @@ def test_postgresql_migration_schema_parent_head_and_downgrade(rtdir_postgres_ur
     _alembic(rtdir_postgres_url, "upgrade", "a2b8c5e1f309")
     _alembic(rtdir_postgres_url, "upgrade", "b3c9d6f2a410")
     assert _alembic(rtdir_postgres_url, "current").startswith("b3c9d6f2a410")
-    assert _alembic(rtdir_postgres_url, "heads") == "e2f8a6c1d405 (head)"
+    assert _alembic(rtdir_postgres_url, "heads") == "f6a9c4d2e107 (head)"
     with psycopg2.connect(rtdir_postgres_url) as db, db.cursor() as cursor:
         assert db.server_version // 10000 == 16
         cursor.execute("""

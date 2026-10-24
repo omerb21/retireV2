@@ -258,3 +258,42 @@ def test_missing_source_is_needs_revalidation_even_without_review_version(env):
     assert decision["product_version_at_review"] is None
     assert decision["validation_state"] == "needs_revalidation"
     assert decision["amount"] == "15.00"
+
+
+def test_mid_replace_insert_failure_rolls_back_version_decisions_and_revisions(env):
+    from sqlalchemy import event
+    client, factory = env
+    scenario = client.post("/api/clients/1/scenario-drafts", json={"name":"Rollback"}).json()
+    url = f"/api/clients/1/scenario-drafts/{scenario['scenario_id']}"
+    base = {
+        "source_product_id":"test", "source_component_id":"old",
+        "component_code":"תגמולי_עובד_עד_2000", "amount":"10.00",
+        "action":"pension", "effective_date":"2026-10-24",
+    }
+    before = client.put(url, json={"name":"Rollback", "expected_version":1, "decisions":[base]}).json()
+    original = before["decisions"]
+    engine = factory.kw["bind"]
+    def inject(_conn, _cursor, statement, _params, _context, _many):
+        if statement.lstrip().upper().startswith("INSERT INTO SCENARIO_DRAFT_DECISIONS"):
+            raise RuntimeError("injected insert failure")
+    event.listen(engine, "before_cursor_execute", inject)
+    try:
+        with pytest.raises(RuntimeError, match="injected insert failure"):
+            with factory.begin() as db:
+                from app.schemas.scenario_draft import DraftReplace
+                from app.services import scenario_draft_service as service
+                service.replace(db, 1, scenario["scenario_id"], DraftReplace(
+                    name="Changed", expected_version=2, decisions=[
+                        {**base, "amount":"20.00", "source_component_id":"new"},
+                    ],
+                ), "test")
+    finally:
+        event.remove(engine, "before_cursor_execute", inject)
+    after = client.get(url).json()
+    assert after["name"] == "Rollback"
+    assert after["version"] == 2
+    assert after["decisions"] == original
+    with factory() as db:
+        assert len(db.scalars(select(ScenarioDraftRevision).where(
+            ScenarioDraftRevision.scenario_id == scenario["scenario_id"]
+        )).all()) == 2

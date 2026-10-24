@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.schemas.scenario_draft import DraftWrite, DraftReplace, DraftVersion
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
+from app.services import scenario_calculation_admission_service as admission
 
 router = APIRouter(prefix="/api/clients/{client_id}/scenario-drafts", tags=["scenario-drafts"])
 
@@ -47,6 +48,18 @@ def list_scenarios(request: Request, client_id: int = Path(gt=0), db: Session = 
 def get_scenario(request: Request, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
     try:
         return JSONResponse(content=service.read(db, client_id, scenario_id), headers=NO_STORE)
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/calculation-admission")
+def calculation_admission(request: Request, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
+    try:
+        with db.no_autoflush:
+            result = admission.assess(db, client_id, scenario_id)
+        return JSONResponse(content=result, headers=NO_STORE)
     except service.DraftError as exc:
         return error(request, exc.status, exc.code)
     finally:

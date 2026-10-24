@@ -192,6 +192,7 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/app/api/scenario_draft_routes.py",
     "backend/app/main.py",
     "backend/tests/test_scenario_draft.py",
+    "backend/tests/test_scenario_draft_postgresql.py",
     "backend/tests/test_governance_baseline.py",
     "frontend/src/api/scenarioDraftsApi.ts",
     "frontend/src/components/ScenarioDraftPanel.tsx",

@@ -10,6 +10,7 @@ import sys
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
+from app.db.base import load_all_models
 from app.models.client import Client
 from app.models.scenario_draft import ScenarioDraftDecision
 from app.schemas.scenario_draft import DraftDecisionWrite, DraftReplace
@@ -23,6 +24,7 @@ APPLICATION_ROLE = "scenario_draft_test_app"
 def test_postgresql_draft_migration_and_cas(postgres_url):
     # postgres_url fixture creates a fresh disposable PostgreSQL 16 instance.
     # Never read the caller's DATABASE_URL; only the fixture URL is used.
+    load_all_models()
     engine = create_engine(postgres_url)
     try:
         with engine.begin() as connection:

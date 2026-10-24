@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
-import { previewDraftDecision, type PermissionComponent } from "../api/scenarioDraftPermissionApi";
+import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
   replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
@@ -34,7 +34,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: PermissionComponent; error?: string }>>({});
+  const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: CheckedPermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
   const permissionEpoch = useRef(0);
   const latestContext = useRef({ clientId, selected, products });
@@ -234,7 +234,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
                 const currentComponent = currentProduct?.conversion_components?.find(item => item.component_id === decision.source_component_id && item.component_code === decision.component_code);
                 if (permissionEpoch.current !== epoch || context.clientId !== currentClient || context.selected !== currentScenario) return;
                 if (!expectedProduct || !expectedComponent || !currentProduct || !currentComponent
-                    || currentProduct.version !== expectedProduct.version || currentComponent.balance !== expectedComponent.balance
+                    || currentProduct.version !== expectedProduct.version || component.preview_product_version !== expectedProduct.version || currentComponent.balance !== expectedComponent.balance
                     || currentComponent.balance !== component.balance) {
                   setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: "נתוני המקור השתנו — יש לרענן את הטיוטה." } }));
                   return;

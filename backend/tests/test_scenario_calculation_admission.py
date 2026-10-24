@@ -69,3 +69,24 @@ def test_present_source_still_requires_permissions_tax_and_professional_admissio
     assert "PROFESSIONAL_ELIGIBILITY_NOT_EVALUATED" in codes
     assert "TAX_NOT_EVALUATED" in codes
     assert result["financial_result"] is None
+
+
+def test_two_decisions_share_component_balance_and_block_aggregate_overallocation(monkeypatch):
+    rows = [decision("d1", "60.01"), decision("d2", "40.00")]
+    product = SimpleNamespace(product_id="p", version=1)
+    component = SimpleNamespace(component_id="c", balance=Decimal("100.00"))
+    monkeypatch.setattr(service, "_source_digest", lambda _p, _c: "known")
+    result = service.assess(FakeDb(scenario(), rows, {"p": product}, {"c": component}), 3, "s")
+    assert [b["code"] for b in result["blockers"]].count("SOURCE_OVERALLOCATED") == 1
+    assert result["scenario_version"] == 4
+    assert result["financial_result"] is None
+
+
+def test_changed_product_version_never_reuses_stale_source_evidence(monkeypatch):
+    row = decision()
+    product = SimpleNamespace(product_id="p", version=2)
+    component = SimpleNamespace(component_id="c", balance=Decimal("100.00"))
+    monkeypatch.setattr(service, "_source_digest", lambda _p, _c: "known")
+    result = service.assess(FakeDb(scenario(), [row], {"p": product}, {"c": component}), 3, "s")
+    assert "SOURCE_STALE" in [b["code"] for b in result["blockers"]]
+    assert result["assessment_state"] == "blocked"

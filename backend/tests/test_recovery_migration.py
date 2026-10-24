@@ -56,7 +56,7 @@ def test_ambiguous_authority_aborts_before_schema_or_version_change(tmp_path):
 
 def test_single_head_and_online_preflight_required(tmp_path):
     path = tmp_path / "empty.db"
-    assert alembic(path, "heads").stdout.strip() == "e2f8a6c1d405 (head)"
+    assert alembic(path, "heads").stdout.strip() == "f6a9c4d2e107 (head)"
     result = alembic(path, "upgrade", f"{PARENT}:{HEAD}", "--sql", check=False)
     assert result.returncode != 0
     assert "CANONICAL_CUTOVER_REQUIRES_ONLINE_PREFLIGHT" in result.stderr

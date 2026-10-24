@@ -114,3 +114,37 @@ def test_rename_preserves_stable_decision_id_and_revision(env):
             ScenarioDraftRevision.scenario_id == created["scenario_id"]
         )).all()
         assert len(revisions) == 3
+
+
+def test_draft_writes_never_modify_factual_tables(env):
+    """Capture exact SQL writes; only scenario-owned tables may be mutated."""
+    from sqlalchemy import event
+    client, factory = env
+    executed: list[str] = []
+    engine = factory.kw["bind"]
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        executed.append(statement.upper())
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        created = client.post("/api/clients/1/scenario-drafts", json={"name":"תרחיש"})
+        assert created.status_code == 200, created.text
+        scenario = created.json()
+        changed = client.put(f"/api/clients/1/scenario-drafts/{scenario['scenario_id']}", json={
+            "name":"תרחיש", "expected_version":1, "decisions":[{
+                "source_product_id":"demo", "source_component_id":"component-demo",
+                "component_code":"תגמולי_עובד_עד_2000", "amount":"10.00",
+                "action":"pension", "effective_date":"2026-10-24",
+            }],
+        })
+        assert changed.status_code == 200, changed.text
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    writes = [line for line in executed if line.lstrip().startswith(("INSERT ", "UPDATE ", "DELETE "))]
+    assert writes
+    for statement in writes:
+        assert any(name in statement for name in (
+            "SCENARIO_DRAFTS", "SCENARIO_DRAFT_DECISIONS", "SCENARIO_DRAFT_REVISIONS",
+        )), statement
+    for forbidden in ("PENSION_PRODUCTS", "PENSION_PRODUCT_COMPONENTS",
+                      "CANONICAL_CONVERSIONS", "CAPITAL_ASSET", "CANONICAL_PENSIONS"):
+        assert all(forbidden not in statement for statement in writes), writes

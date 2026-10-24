@@ -13,6 +13,7 @@ export interface ScenarioPermissionPreview {
   schema_version: "SCENARIO_PERMISSION_PREVIEW_V1";
   client_id: number;
   product_id: string;
+  product_version: number;
   action: ScenarioDraftDecision["action"];
   effective_date: string;
   overall_status: string;
@@ -22,11 +23,14 @@ export interface ScenarioPermissionPreview {
   source_fingerprint: string;
   ruleset_digest: string;
 }
+export interface CheckedPermissionComponent extends PermissionComponent {
+  preview_product_version: number;
+}
 
 export async function previewDraftDecision(
   clientId: number,
   decision: ScenarioDraftDecision,
-): Promise<PermissionComponent> {
+): Promise<CheckedPermissionComponent> {
   const response = await apiFetch(
     buildApiUrl(`/clients/${clientId}/scenario-conversions/permission-preview`),
     { method: "POST", headers: { "Content-Type": "application/json" },
@@ -57,5 +61,8 @@ export async function previewDraftDecision(
   if (matching.length !== 1) {
     throw new Error("רכיב המקור חסר או השתנה; נדרש אימות מחדש.");
   }
-  return matching[0];
+  if (!Number.isInteger(result.product_version) || result.product_version < 1) {
+    throw new Error("גרסת מוצר המקור בתשובת ההרשאות אינה תקינה.");
+  }
+  return { ...matching[0], preview_product_version: result.product_version };
 }

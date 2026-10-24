@@ -112,3 +112,15 @@ it("shows a read-only side-by-side summary for distinct saved scenarios", async 
   expect(table.textContent).toContain("70.00");
   expect(table.textContent).toContain("אין אישור מקצועי");
 });
+
+it("opens the selected scenario from comparison without altering saved data", async () => {
+  mocks.list.mockResolvedValue([draft("compare-one"), draft("compare-two")]);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
+  const buttons = Array.from(comparison.querySelectorAll("button"));
+  expect(buttons).toHaveLength(2);
+  fireEvent.click(buttons[1]);
+  expect(screen.getByRole("heading", { name: "compare-two" })).toBeTruthy();
+  expect(buttons[1].getAttribute("aria-current")).toBe("true");
+  expect(mocks.list).toHaveBeenCalledTimes(1);
+});

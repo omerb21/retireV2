@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
+import { readRetirementCalculationContext, type RetirementCalculationContext } from "../api/retirementCalculationContextApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComparison";
 import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
@@ -35,6 +36,9 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [calculationContext, setCalculationContext] = useState<RetirementCalculationContext | null>(null);
+  const [calculationContextError, setCalculationContextError] = useState<string | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
   const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: CheckedPermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
   const permissionEpoch = useRef(0);
@@ -82,6 +86,8 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     setError(null);
     setEditingDecisionId(null);
     setRename("");
+    setCalculationContext(null);
+    setCalculationContextError(null);
     permissionEpoch.current += 1;
     setPermissions({});
     setCheckingPermission(null);
@@ -188,6 +194,21 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     setEffectiveDate(decision.effective_date);
     setError(null);
   }
+  async function showCalculationContext() {
+    if (contextLoading) return;
+    setContextLoading(true);
+    setCalculationContext(null);
+    setCalculationContextError(null);
+    try {
+      const result = await readRetirementCalculationContext(clientId);
+      if (latestContext.current.clientId !== clientId) return;
+      setCalculationContext(result);
+    } catch (cause) {
+      if (latestContext.current.clientId === clientId) setCalculationContextError(message(cause));
+    } finally {
+      if (latestContext.current.clientId === clientId) setContextLoading(false);
+    }
+  }
   return <section aria-label="חלופות שמורות בשרת">
     <h2>חלופות תכנון שמורות</h2>
     <p className="professional-workspace__boundary">
@@ -206,6 +227,21 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
         {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
       </button>
     </li>)}</ul>
+    <section aria-label="מוכנות חישוב התיק הקיים">
+      <h3>מוכנות מנועי החישוב — תיק קיים</h3>
+      <p className="professional-workspace__boundary">זו בדיקה לקריאה בלבד של בסיס התיק הנוכחי, ולא חישוב עבור אחת החלופות. לא ניתן עדיין להסיק ממנה קצבה, הון או פער הכנסה של חלופה.</p>
+      <button type="button" disabled={contextLoading} onClick={() => void showCalculationContext()}>בדוק מוכנות בסיס התיק</button>
+      {calculationContextError && <p role="alert">{calculationContextError}</p>}
+      {calculationContext && <div>
+        <p>נתוני תכנון: {calculationContext.planning_input_ready ? "מוכנים בבסיס התיק" : "אינם מוכנים"}</p>
+        <p>יעד פרישה: {calculationContext.retirement_target_date ?? "לא נקבע"} — {calculationContext.retirement_target_ready ? "מוכן" : "לא מוכן"}</p>
+        <p>חסמי תיק: {calculationContext.blocking_facts.length}</p>
+        {calculationContext.blocking_facts.length > 0 && <ul>{calculationContext.blocking_facts.map((item, index) =>
+          <li key={index}>{item.source_id ?? "כללי"}: {item.code}</li>
+        )}</ul>}
+        <p>מוכנות בסיס התיק אינה הרשאה לחשב תרחיש שמור או לבצע המרה כספית.</p>
+      </div>}
+    </section>
     {drafts.length > 0 && <section aria-label="השוואת חלופות טיוטה">
       <h3>השוואת חלופות — תכנון בלבד</h3>
       <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>

@@ -207,14 +207,15 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       </>}
       <ul>{active.decisions.map((decision, index) => <li key={decision.decision_id}>
         {decision.component_code} — {decision.amount} ₪ — {decision.action === "pension" ? "לקצבה" : "להון"} — לא מאומת
-        {" "}— הרשאת בסיס: {permissions[decision.decision_id]?.status === "ready"
+        {" "}— הרשאת בסיס: {(active.status === "needs_revalidation" || decision.validation_state === "needs_revalidation") ? "מקור השתנה — אימות מחדש נדרש"
+          : permissions[decision.decision_id]?.status === "ready"
           ? permissions[decision.decision_id].component?.permission_status === "allowed" ? "מותר לפי מטריצת בסיס בלבד"
           : permissions[decision.decision_id].component?.permission_status === "blocked" ? "חסום לפי מטריצת בסיס"
           : "נדרש בירור מקור או כלל"
           : permissions[decision.decision_id]?.status === "error"
           ? permissions[decision.decision_id].error
           : "טרם נבדקה"}
-        {" "}<button type="button" disabled={busy || checkingPermission !== null}
+        {" "}<button type="button" disabled={busy || checkingPermission !== null || active.status === "needs_revalidation" || decision.validation_state === "needs_revalidation"}
           onClick={() => {
             const currentClient = clientId;
             const currentDecision = decision.decision_id;

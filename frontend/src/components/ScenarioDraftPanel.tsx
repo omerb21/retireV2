@@ -58,6 +58,15 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     setCheckingPermission(null);
   }, [sourceSnapshot]);
 
+  function selectScenario(id: string) {
+    permissionEpoch.current += 1;
+    setPermissions({});
+    setCheckingPermission(null);
+    setSelected(id);
+    setEditingDecisionId(null);
+    setAmount("");
+    setRename("");
+  }
   async function reload(prefer?: string) {
     const list = await listScenarioDrafts(clientId);
     if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
@@ -193,7 +202,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     </form>
     <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
     <ul>{drafts.map(item => <li key={item.scenario_id}>
-      <button type="button" onClick={() => { permissionEpoch.current += 1; setPermissions({}); setCheckingPermission(null); setSelected(item.scenario_id); setEditingDecisionId(null); setAmount(""); setRename(""); }} disabled={busy}>
+      <button type="button" onClick={() => selectScenario(item.scenario_id)} disabled={busy}>
         {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
       </button>
     </li>)}</ul>
@@ -201,18 +210,17 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       <h3>השוואת חלופות — תכנון בלבד</h3>
       <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>
       <table>
-        <thead><tr><th scope="col">חלופה</th><th scope="col">מצב</th><th scope="col">החלטות</th><th scope="col">מתוכנן לקצבה (₪)</th><th scope="col">מתוכנן להון (₪)</th><th scope="col">חסמים לתחקור</th></tr></thead>
+        <thead><tr><th scope="col">חלופה</th><th scope="col">ניווט</th><th scope="col">מצב</th><th scope="col">החלטות</th><th scope="col">מתוכנן לקצבה (₪)</th><th scope="col">מתוכנן להון (₪)</th><th scope="col">חסמים לתחקור</th></tr></thead>
         <tbody>{drafts.map(draft => {
           const summary = summarizeScenarioDraft(draft, products);
           return <tr key={summary.scenarioId}>
-            <th scope="row">{summary.name}</th><td>{summary.status}</td><td>{summary.decisionCount}</td>
+            <th scope="row">{summary.name}</th><td><button type="button" disabled={busy} aria-current={selected === summary.scenarioId ? "true" : undefined} onClick={() => selectScenario(summary.scenarioId)}>הצג החלטות</button></td><td>{summary.status}</td><td>{summary.decisionCount}</td>
             <td>{formatScenarioCents(summary.pensionCents)}</td><td>{formatScenarioCents(summary.capitalCents)}</td>
-            <td>{[
-              summary.missingSources ? `מקורות חסרים: ${summary.missingSources}` : null,
-              summary.overAllocatedSources ? `הקצאת יתר: ${summary.overAllocatedSources}` : null,
-              summary.staleDecisions || summary.status === "needs_revalidation" ? "דרוש אימות מקור" : null,
-              summary.invalidAmounts ? `סכומים לא תקינים: ${summary.invalidAmounts}` : null,
-            ].filter(Boolean).join(" · ") || "לא זוהו חריגות כמותיות; אין אישור מקצועי"}</td>
+            <td>
+              <div>מקור: {summary.missingSources ? `חסרים ${summary.missingSources}` : "לא זוהו מקורות חסרים"}; {summary.staleDecisions || summary.status === "needs_revalidation" ? "נדרש אימות מחדש" : "לא דווח על התיישנות"}</div>
+              <div>כמותי: {summary.overAllocatedSources ? `הקצאות יתר ${summary.overAllocatedSources}` : "לא זוהתה הקצאת יתר"}; {summary.invalidAmounts ? `סכומים שגויים ${summary.invalidAmounts}` : "סכומים תקינים בתצוגה"}</div>
+              <div>מקצועי: זכאות, מס והרשאת ביצוע — לא נבדקו</div>
+            </td>
           </tr>;
         })}</tbody>
       </table>

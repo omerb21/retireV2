@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.db.session import get_db
 from app.schemas.scenario_draft import DraftWrite, DraftReplace, DraftVersion
@@ -57,6 +58,13 @@ def get_scenario(request: Request, scenario_id: str, client_id: int = Path(gt=0)
 @router.get("/{scenario_id}/calculation-admission")
 def calculation_admission(request: Request, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
     try:
+        # The isolation statement MUST precede any SELECT in this transaction.
+        # Unsupported DBs fail closed rather than silently weakening snapshot semantics.
+        if db.in_transaction() or db.new or db.dirty or db.deleted:
+            return error(request, 409, "SCENARIO_ADMISSION_REQUIRES_FRESH_TRANSACTION")
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "SCENARIO_ADMISSION_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
         with db.no_autoflush:
             result = admission.assess(db, client_id, scenario_id)
         return JSONResponse(content=result, headers=NO_STORE)

@@ -43,7 +43,7 @@ def tables(path: Path) -> set[str]:
 
 
 def test_pkg013_is_single_additive_head() -> None:
-    assert run("sqlite:///:memory:", "heads").stdout.strip() == "e2f8a6c1d405 (head)"
+    assert run("sqlite:///:memory:", "heads").stdout.strip() == "f6a9c4d2e107 (head)"
 
 
 def test_pkg013_upgrade_downgrade_reupgrade_is_bounded(tmp_path: Path) -> None:

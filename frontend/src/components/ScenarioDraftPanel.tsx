@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
+import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
   replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
@@ -97,11 +98,10 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       component_code: item.component_code, amount: item.amount,
       action: item.action, effective_date: item.effective_date,
     }));
-    const decision: DraftDecisionInput = {
-      ...(editingDecisionId ? { decision_id: editingDecisionId } : {}),
+    const decision: DraftDecisionInput = preserveEditedDecisionId({
       source_product_id: row.productId, source_component_id: row.componentId,
       component_code: row.code, amount, action, effective_date: effectiveDate,
-    };
+    }, editingDecisionId);
     const edited = editingDecisionId
       ? active.decisions.findIndex(item => item.decision_id === editingDecisionId) : -1;
     if (editingDecisionId && edited < 0) {

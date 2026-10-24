@@ -108,12 +108,16 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     existing = db.scalars(select(ScenarioDraftDecision).where(
         ScenarioDraftDecision.scenario_id == scenario_id
     )).all()
+    known_ids = {item.decision_id for item in existing}
+    supplied_ids = [item.decision_id for item in payload.decisions if item.decision_id is not None]
+    if len(supplied_ids) != len(set(supplied_ids)) or not set(supplied_ids).issubset(known_ids):
+        raise DraftError("SCENARIO_DECISION_ID_MISMATCH", 422)
     for item in existing:
         db.delete(item)
     db.flush()
     for item in payload.decisions:
         db.add(ScenarioDraftDecision(
-            decision_id=uuid4().hex, scenario_id=scenario_id,
+            decision_id=item.decision_id or uuid4().hex, scenario_id=scenario_id,
             source_product_id=item.source_product_id,
             source_component_id=item.source_component_id,
             component_code=item.component_code, amount=item.amount,

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { previewDraftDecision, type PermissionComponent } from "../api/scenarioDraftPermissionApi";
@@ -36,13 +36,16 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
   const [loading, setLoading] = useState(true);
   const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: PermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
+  const permissionEpoch = useRef(0);
   const active = drafts.find(item => item.scenario_id === selected) ?? null;
 
   async function reload(prefer?: string) {
     const list = await listScenarioDrafts(clientId);
     if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
     setDrafts(list);
+    permissionEpoch.current += 1;
     setPermissions({});
+    setCheckingPermission(null);
     setSelected(current => prefer ?? (list.some(item => item.scenario_id === current) ? current : list[0]?.scenario_id ?? null));
   }
   useEffect(() => {
@@ -51,7 +54,9 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     setError(null);
     setEditingDecisionId(null);
     setRename("");
+    permissionEpoch.current += 1;
     setPermissions({});
+    setCheckingPermission(null);
     void listScenarioDrafts(clientId).then(list => {
       if (!mounted) return;
       if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
@@ -169,7 +174,7 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
     </form>
     <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
     <ul>{drafts.map(item => <li key={item.scenario_id}>
-      <button type="button" onClick={() => { setSelected(item.scenario_id); setEditingDecisionId(null); setAmount(""); setRename(""); }} disabled={busy}>
+      <button type="button" onClick={() => { permissionEpoch.current += 1; setPermissions({}); setCheckingPermission(null); setSelected(item.scenario_id); setEditingDecisionId(null); setAmount(""); setRename(""); }} disabled={busy}>
         {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
       </button>
     </li>)}</ul>
@@ -213,12 +218,13 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
           onClick={() => {
             const currentClient = clientId;
             const currentDecision = decision.decision_id;
+            const epoch = ++permissionEpoch.current;
             setCheckingPermission(currentDecision);
             setPermissions(old => { const next = { ...old }; delete next[currentDecision]; return next; });
             void previewDraftDecision(currentClient, decision)
-              .then(component => setPermissions(old => ({ ...old, [currentDecision]: { status: "ready", component } })))
-              .catch(cause => setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: message(cause) } })))
-              .finally(() => setCheckingPermission(null));
+              .then(component => { if (permissionEpoch.current === epoch) setPermissions(old => ({ ...old, [currentDecision]: { status: "ready", component } })); })
+              .catch(cause => { if (permissionEpoch.current === epoch) setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: message(cause) } })); })
+              .finally(() => { if (permissionEpoch.current === epoch) setCheckingPermission(null); });
           }}>בדוק הרשאת בסיס (קריאה בלבד)</button>
         {active.status !== "archived" && <>
           <button disabled={busy} type="button" onClick={() => beginEdit(decision)}>ערוך</button>

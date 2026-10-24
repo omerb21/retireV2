@@ -68,3 +68,20 @@ it("renders blocked permission even when the product-level preview is mixed", as
   await screen.findByText(/חסום לפי מטריצת בסיס/);
   expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull();
 });
+
+it("expires a displayed allowed preview when the canonical source snapshot changes", async () => {
+  mocks.list.mockResolvedValue([draft("source-update")]);
+  mocks.preview.mockResolvedValue(allowed);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByRole("button", { name: /בדוק הרשאת בסיס/ }));
+  await screen.findByText(/מותר לפי מטריצת בסיס בלבד/);
+  const changed = products.map(product => ({
+    ...product, version: product.version + 1,
+    conversion_components: product.conversion_components?.map(component => ({
+      ...component, balance: "101.00",
+    })),
+  }));
+  view.rerender(<ScenarioDraftPanel clientId={1} products={changed} />);
+  await waitFor(() => expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull());
+  expect(screen.getByText(/טרם נבדקה/)).toBeTruthy();
+});

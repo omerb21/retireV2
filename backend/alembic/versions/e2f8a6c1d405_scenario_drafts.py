@@ -35,7 +35,7 @@ def upgrade():
         sa.Column("source_product_id", sa.String(64), nullable=False),
         sa.Column("source_component_id", sa.String(64), nullable=False),
         sa.Column("component_code", sa.String(128), nullable=False),
-        sa.Column("amount", sa.Numeric(20, 2), nullable=False),
+        sa.Column("amount", sa.String(22).with_variant(sa.Numeric(20, 2), "postgresql"), nullable=False),
         sa.Column("action", sa.String(16), nullable=False),
         sa.Column("effective_date", sa.Date(), nullable=False),
         sa.Column("validation_state", sa.String(32), nullable=False),

@@ -17,6 +17,10 @@ from app.models.client import Client
 from app.models.pension_product import PensionProduct, PensionProductComponent
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
+from app.models.canonical_conversion import batches, conversions, allocations, pensions
+from app.models.retirement_facts import CapitalAsset, RetirementTimingWorkIntention
+from app.models.client_profile import ClientProfile
+from app.models.employment_record import EmploymentRecord
 from app.services.scenario_draft_service import _source_evidence
 from app.services.scenario_pension_source_bridge_service import build_pension_source_bridge_snapshot
 
@@ -62,6 +66,9 @@ def test_real_canonical_manual_source_in_shared_snapshot():
             Client.__table__, PensionProduct.__table__,
             PensionProductComponent.__table__, ScenarioDraft.__table__,
             ScenarioDraftDecision.__table__, CanonicalManualPensionSource.__table__,
+            batches, conversions, allocations, pensions,
+            CapitalAsset.__table__, RetirementTimingWorkIntention.__table__,
+            ClientProfile.__table__, EmploymentRecord.__table__,
         )
         with scoped.begin() as conn:
             Base.metadata.create_all(conn, tables=tables)

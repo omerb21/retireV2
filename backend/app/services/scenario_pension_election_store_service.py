@@ -42,7 +42,27 @@ def replace_elections(db: Session, client_id: int, scenario_id: str,
             company_name=item.company_name, option_name=item.option_name,
         ))
     db.flush()
-    return _revision(db, scenario, "replace_pension_elections", actor)
+    # Persist the full versioned election state in audit history, independently
+    # of the stable draft read DTO. No professional/execution admission.
+    election_audit = [
+        {
+            "decision_id": item.decision_id,
+            "scenario_version": scenario.version,
+            "pension_start_date": item.pension_start_date.isoformat(),
+            "target_year": item.target_year,
+            "survivors_option": item.survivors_option,
+            "spouse_age_diff": item.spouse_age_diff,
+            "coefficient_selection": item.coefficient_selection,
+            "company_name": item.company_name,
+            "option_name": item.option_name,
+            "authority_state": "NOT_EVALUATED",
+        }
+        for item in sorted(payload.elections, key=lambda i: i.decision_id)
+    ]
+    return _revision(
+        db, scenario, "replace_pension_elections", actor,
+        audit_extra={"pension_elections": election_audit},
+    )
 
 
 def current_elections(db: Session, client_id: int, scenario_id: str) -> list[dict]:

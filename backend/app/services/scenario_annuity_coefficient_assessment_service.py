@@ -28,7 +28,7 @@ def assess_coefficient_candidate(*, identity: dict, product: dict,
     def reject(code):
         return {**base, "blockers": [code]}
 
-    if not all(type(arg) is dict for arg in (identity, product, profile, pension_options)):
+    # SC-05 has no authenticated DB-owned coefficient lookup authority.\n    # Deliberately refuse all caller-supplied proof maps before catalog access.\n    return reject("COEFFICIENT_LOOKUP_NOT_AUTHORIZED")\n\n    if not all(type(arg) is dict for arg in (identity, product, profile, pension_options)):
         return reject("INVALID_ASSESSMENT_INPUT")
     if (type(identity.get("client_id")) is not int or identity["client_id"] <= 0
             or not isinstance(identity.get("scenario_id"), str) or not identity["scenario_id"]

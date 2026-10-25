@@ -3,6 +3,7 @@
 No canonical producer mocks; isolated schema in dedicated local test DB.
 """
 from datetime import date, timezone
+from types import SimpleNamespace
 from decimal import Decimal
 import os
 import uuid
@@ -28,7 +29,7 @@ from app.services.scenario_draft_service import _source_evidence
 from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
 from app.schemas.scenario_draft import DraftReplace, DraftDecisionWrite
 from app.services.scenario_draft_service import replace, DraftError
-from app.services.scenario_coefficient_professional_review_store_service import append_database_derived_documentary_review
+from app.services.scenario_coefficient_professional_review_store_service import append_authenticated_serializable_review
 from app.services.scenario_coefficient_review_context_service import derive_documentary_review_context
 from app.services.scenario_coefficient_professional_review_contract import validate_documentary_review
 
@@ -148,16 +149,25 @@ def test_database_derived_professional_review_staleness_real_postgresql():
                 "spouse_age_diff": 0, "coefficient_selection": "catalog_candidate",
             })
         factory = sessionmaker(bind=scoped, expire_on_commit=False)
-        with factory() as db, db.begin():
+        trusted_request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(
+                auth_config=SimpleNamespace(production=True))),
+            state=SimpleNamespace(
+                trusted_professional_actor="trusted-test-actor",
+                auth_session={"actor_id": "trusted-test-actor"}),
+        )
+        with factory() as db:
             original = derive_documentary_review_context(
                 db, client_id=7, scenario_id="s", decision_id="d")
-            saved = append_database_derived_documentary_review(
-                db, client_id=7, scenario_id="s", decision_id="d",
-                authenticated_actor="trusted-test-actor", review_reference="case-1",
-                decision="reviewed_for_candidate")
-            assert saved["review_state"] == "RECORDED_NOT_AUTHORIZED"
-            assert saved["execution_allowed"] is False
-            assert saved["coefficient_candidate"] is None
+            db.rollback()
+        saved = append_authenticated_serializable_review(
+            factory, request=trusted_request, client_id=7, scenario_id="s",
+            decision_id="d", review_reference="case-1",
+            decision="reviewed_for_candidate")
+        assert saved["review_state"] == "RECORDED_NOT_AUTHORIZED"
+        assert saved["execution_allowed"] is False
+        assert saved["coefficient_candidate"] is None
+        with factory() as db:
             records = db.scalars(select(ScenarioCoefficientProfessionalReview)).all()
             assert len(records) == 1
             stored = records[0]
@@ -165,6 +175,18 @@ def test_database_derived_professional_review_staleness_real_postgresql():
             assert stored.inventory_fingerprint == original["inventory_fingerprint"]
             assert stored.source_fingerprint == original["source_fingerprint"]
             assert stored.record_fingerprint == saved["review_fingerprint"]
+            db.rollback()
+        forged_request = SimpleNamespace(
+            app=trusted_request.app,
+            state=SimpleNamespace(
+                trusted_professional_actor="forged",
+                auth_session={"actor_id": "trusted-test-actor"}),
+        )
+        with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED"):
+            append_authenticated_serializable_review(
+                factory, request=forged_request, client_id=7, scenario_id="s",
+                decision_id="d", review_reference="case-forged",
+                decision="reviewed_for_candidate")
         with factory() as db, db.begin():
             # A profile fact change invalidates the documentary review without
             # silently granting coefficient authority or bumping draft version.

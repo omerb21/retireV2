@@ -27,9 +27,9 @@ def context():
 def test_anonymous_actor_rejected_without_database_touch():
     db = Mock()
     with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED"):
-        store.append_documentary_review(db, client_id=7, scenario_id="s",
+        store._append_documentary_review(db, client_id=7, scenario_id="s",
             expected=context(), authenticated_actor="", review_reference="ref",
-            decision="reviewed_for_candidate")
+            decision="reviewed_for_candidate", _capability=store._DERIVED_CONTEXT_CAPABILITY)
     db.assert_not_called()
 
 
@@ -38,9 +38,9 @@ def test_stale_version_rejected_before_write(monkeypatch):
                         SimpleNamespace(version=4, status="draft"))
     db = Mock()
     with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_CONTEXT_STALE"):
-        store.append_documentary_review(db, client_id=7, scenario_id="s",
+        store._append_documentary_review(db, client_id=7, scenario_id="s",
             expected=context(), authenticated_actor="trusted-professional",
-            review_reference="ref", decision="reviewed_for_candidate")
+            review_reference="ref", decision="reviewed_for_candidate", _capability=store._DERIVED_CONTEXT_CAPABILITY)
     db.add.assert_not_called()
 
 
@@ -50,12 +50,22 @@ def test_valid_documentary_evidence_remains_inert(monkeypatch):
     db = Mock()
     db.scalar.return_value = SimpleNamespace(
         source_product_id="p", source_component_id="c")
-    result = store.append_documentary_review(db, client_id=7, scenario_id="s",
+    result = store._append_documentary_review(db, client_id=7, scenario_id="s",
         expected=context(), authenticated_actor="trusted-professional",
-        review_reference="ref", decision="reviewed_for_candidate")
+        review_reference="ref", decision="reviewed_for_candidate", _capability=store._DERIVED_CONTEXT_CAPABILITY)
     assert result["review_state"] == "RECORDED_NOT_AUTHORIZED"
     assert result["execution_allowed"] is False
     assert result["coefficient_candidate"] is None
     assert result["financial_result"] is None
     assert db.add.call_count == 1
     assert db.flush.call_count == 1
+
+
+def test_legacy_direct_writer_is_denied():
+    db = Mock()
+    with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_DERIVED_CONTEXT_REQUIRED"):
+        store._append_documentary_review(
+            db, client_id=7, scenario_id="s", expected=context(),
+            authenticated_actor="trusted-professional", review_reference="ref",
+            decision="reviewed_for_candidate")
+    db.add.assert_not_called()

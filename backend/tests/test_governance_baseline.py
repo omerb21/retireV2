@@ -235,6 +235,7 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/tests/test_scenario_pension_election_contract.py",
     "backend/app/models/scenario_draft_pension_election.py",
     "backend/app/services/scenario_pension_election_store_service.py",
+    "backend/tests/test_scenario_pension_election_store.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

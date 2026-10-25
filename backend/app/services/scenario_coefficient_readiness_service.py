@@ -79,16 +79,22 @@ def assess_documentary_readiness(factory, *, client_id: int, scenario_id: str,
         ).order_by(Review.created_at, Review.review_id)).all()
         if not rows:
             return _blocked("DOCUMENTARY_REVIEW_MISSING")
-        results = [validate_documentary_review(_record(row), expected) for row in rows]
+        # A mixed set of matching and invalid evidence is not a clean review
+        # state. Fail closed rather than silently selecting a favorable row.
+        try:
+            results = [validate_documentary_review(_record(row), expected) for row in rows]
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return _blocked("DOCUMENTARY_REVIEW_STALE_OR_INVALID")
         matched = [
-            (row, result) for row, result in zip(rows, results)
+            row for row, result in zip(rows, results)
             if result["state"] == "DOCUMENTARY_REVIEW_MATCHED_NOT_AUTHORIZED"
         ]
         if not matched:
             return _blocked("DOCUMENTARY_REVIEW_STALE_OR_INVALID")
-        # Any matching rejection prevents an optimistic readiness conclusion.
-        if any(row.decision == "rejected" for row, _ in matched):
+        if any(row.decision == "rejected" for row in matched):
             return _blocked("DOCUMENTARY_REVIEW_REJECTED")
+        if len(matched) != len(rows):
+            return _blocked("DOCUMENTARY_REVIEW_CONFLICT_OR_INVALID")
         return {
             **_blocked("PROFESSIONAL_ADMISSION_NOT_AUTHORIZED"),
             "state": "UNRESOLVED",

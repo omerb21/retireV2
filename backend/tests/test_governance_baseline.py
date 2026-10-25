@@ -218,6 +218,7 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/tests/test_scenario_engine_compatibility.py",
     "backend/app/services/scenario_snapshot_candidate_service.py",
     "backend/tests/test_scenario_snapshot_candidate.py",
+    "backend/tests/test_scenario_snapshot_candidate_postgresql.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

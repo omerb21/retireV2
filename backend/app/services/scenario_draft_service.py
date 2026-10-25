@@ -4,12 +4,15 @@ from __future__ import annotations
 from decimal import Decimal
 import hashlib
 import json
+import unicodedata
 from uuid import uuid4
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
-from app.models.pension_product import PensionProduct, PensionProductComponent
+from app.models.pension_product import (
+    COMPONENT_CODES, PensionProduct, PensionProductComponent,
+)
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
 
 
@@ -34,21 +37,69 @@ def _scenario(db: Session, client_id: int, scenario_id: str) -> ScenarioDraft:
 
 
 
-def _source_digest(product: PensionProduct, component: PensionProductComponent) -> str:
-    """Draft staleness evidence only, not a permission or financial authorization."""
+def _canonical_json(value: dict) -> str:
+    def normalize(item):
+        if isinstance(item, str):
+            return unicodedata.normalize("NFC", item)
+        if isinstance(item, dict):
+            return {normalize(key): normalize(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [normalize(child) for child in item]
+        return item
+    return json.dumps(
+        normalize(value), ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False,
+    )
+
+
+def _source_evidence(product: PensionProduct, component: PensionProductComponent) -> dict:
+    """Return the closed database-derived source preimage plus its digest.
+
+    The digest is a staleness identity only.  Callers must first prove that the
+    product belongs to the addressed client and that the component belongs to
+    that product; a digest supplied by a browser is never source evidence.
+    """
+    values = (
+        product.product_id, product.product_type, product.source_kind,
+        product.source_identity, component.product_id, component.component_id,
+        component.component_code,
+    )
+    if (
+        type(product.client_id) is not int or product.client_id <= 0
+        or type(product.version) is not int or product.version <= 0
+        or not all(isinstance(value, str) and value for value in values)
+        or product.source_kind not in {"manual", "imported"}
+        or component.component_code not in COMPONENT_CODES
+        or component.product_id != product.product_id
+        or not isinstance(component.balance, Decimal)
+        or not component.balance.is_finite() or component.balance < 0
+        or component.balance.as_tuple().exponent < -2
+    ):
+        raise DraftError("SCENARIO_SOURCE_EVIDENCE_INVALID", 409)
     fields = {
         "schema": "scenario-draft-source-v1",
+        "client_id": product.client_id,
         "product_id": product.product_id,
         "product_version": product.version,
         "product_type": product.product_type,
         "source_kind": product.source_kind,
         "source_identity": product.source_identity,
+        "component_product_id": component.product_id,
         "component_id": component.component_id,
         "component_code": component.component_code,
         "balance": format(component.balance, ".2f"),
     }
-    payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return {
+        **fields,
+        "source_fingerprint": hashlib.sha256(
+            _canonical_json(fields).encode("utf-8"),
+        ).hexdigest(),
+    }
+
+
+def _source_digest(product: PensionProduct, component: PensionProductComponent) -> str:
+    """Database-derived draft staleness identity, never permission authority."""
+    return _source_evidence(product, component)["source_fingerprint"]
 
 
 def _decision_json(row: ScenarioDraftDecision) -> dict:

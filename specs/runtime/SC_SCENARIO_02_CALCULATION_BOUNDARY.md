@@ -38,3 +38,33 @@ Status: **DESIGN ONLY / NOT IMPLEMENTED**. This is a conservative integration co
 ## Next implementation gate
 
 Build a narrow backend read-only **scenario admission assessment** first, returning structured blockers and snapshot identities, with PostgreSQL isolation and negative tests. Only after this passes should any existing calculation engine be adapted behind a compatible adapter. Avoid claiming scenario-specific results until the adapted input is independently verified.
+
+## Verified SC-03 remediation boundary (2026-10-25)
+
+SC-03 implements evidence and compatibility boundaries only; it does **not**
+authorize or execute a scenario calculation.
+
+- The inert manifest binds every decision to `ruleset_digest_at_review` and
+  `permission_preview_id_at_review`, and binds its source evidence to the
+  canonical client/product/component identity, product version and balance.
+  The source fingerprint has a closed, independently recomputable preimage.
+- The public snapshot owner derives both the manifest and candidate from one
+  dedicated PostgreSQL `REPEATABLE READ, READ ONLY` transaction. An external
+  manifest is only a claim and must exactly match the independently derived
+  database manifest. Cleanup failures fail closed and invalidate the retained
+  connection where possible.
+- Engine compatibility names the actual callable contracts for pension target
+  execution, capital projection and RMIGA. Structural input compatibility is
+  reported separately from permission admission, professional eligibility and
+  tax; it never invokes an engine.
+- Manifest and candidate schemas are closed. Exact built-in types, canonical
+  dates and money, source ownership, fingerprints, and cross-client isolation
+  are validated. A coherently rehashed caller mapping is rejected when it does
+  not match the database snapshot.
+- Every manifest, compatibility assessment and candidate keeps
+  `execution_allowed=false`; planning snapshots, financial results and
+  professional authority remain `NOT_EVALUATED`.
+
+Focused local and PostgreSQL 16 tests verify the above boundary. Independent
+GPT Work delta acceptance remains required before any later calculation
+adapter or execution package may begin.

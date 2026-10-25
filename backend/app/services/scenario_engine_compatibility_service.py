@@ -1,80 +1,293 @@
-"""SC-03B: fail-closed engine contract compatibility for inert draft manifests.
+"""SC-03B exact, non-executing compatibility map for accepted engines.
 
-This is a static interface gate. It cannot admit computation, call an engine,
-or manufacture canonical planning/permission/tax authority.
+Structural callable compatibility is reported separately from professional
+admission, permission and tax. This module never invokes a financial engine.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
+from inspect import Parameter, signature
 
-MANIFEST_VERSION = "SCENARIO_INERT_MANIFEST_V1"
+from sqlalchemy.orm import Session
+
+from app.services import capital_projection_execution_service as capital
+from app.services import pension_target_date_execution_service as pension
+from app.services import retirement_monthly_income_gap_service as gap
+from app.services.scenario_input_manifest_service import (
+    ManifestValidationError, validate_inert_manifest,
+)
+
+
 ENGINE_CONTRACTS = {
     "pension_target_date": {
-        "requires": ("scenario_planning_snapshot", "scenario_planning_fingerprint",
-                     "retirement_target_authority", "complete_pension_source_coverage",
-                     "pension_temporal_authority", "scenario_execution_identity"),
+        "callable": pension.execute_from_planning_result,
+        "callable_path": (
+            "app.services.pension_target_date_execution_service."
+            "execute_from_planning_result"
+        ),
+        "parameters": (
+            "planning_result", "source_id",
+            "supplied_planning_calculation_input_fingerprint",
+            "supplied_monthly_basis_semantic_fingerprint",
+            "supplied_monthly_basis_source_fingerprint",
+            "supplied_temporal_semantic_fingerprint",
+            "supplied_temporal_source_fingerprint",
+        ),
+        "parameter_kinds": (
+            "POSITIONAL_OR_KEYWORD", "POSITIONAL_OR_KEYWORD",
+            "KEYWORD_ONLY", "KEYWORD_ONLY", "KEYWORD_ONLY", "KEYWORD_ONLY",
+            "KEYWORD_ONLY",
+        ),
+        "scenario_adapter_requirements": (
+            "verified_scenario_planning_result", "verified_pension_source_identity",
+            "verified_monthly_basis_authority", "verified_temporal_authority",
+        ),
     },
     "capital_projection": {
-        "requires": ("scenario_planning_snapshot", "scenario_planning_fingerprint",
-                     "retirement_target_authority", "capital_projection_basis_admission",
-                     "complete_capital_source_coverage", "scenario_execution_identity"),
+        "callable": capital.execute,
+        "callable_path": "app.services.capital_projection_execution_service.execute",
+        "parameters": ("client_id", "plan", "authority"),
+        "parameter_kinds": (
+            "POSITIONAL_OR_KEYWORD", "POSITIONAL_OR_KEYWORD",
+            "POSITIONAL_OR_KEYWORD",
+        ),
+        "scenario_adapter_requirements": (
+            "verified_scenario_plan", "verified_capital_projection_basis_authority",
+            "complete_capital_source_coverage",
+        ),
     },
     "monthly_income_gap": {
-        "requires": ("scenario_planning_snapshot", "scenario_planning_fingerprint",
-                     "retirement_target_authority", "comparable_income_authority",
-                     "confirmed_income_target_authority", "scenario_execution_identity"),
+        "callable": gap.assess,
+        "callable_path": "app.services.retirement_monthly_income_gap_service.assess",
+        "parameters": ("db", "request"),
+        "parameter_kinds": ("POSITIONAL_OR_KEYWORD", "POSITIONAL_OR_KEYWORD"),
+        "scenario_adapter_requirements": (
+            "fresh_rmiga_session", "verified_scenario_planning_fingerprint",
+            "verified_retirement_target_date",
+        ),
     },
 }
 
 
-def assess_engine_compatibility(manifest: Mapping) -> dict:
-    """Return explicit blockers. Never derive readiness from caller-provided claims."""
-    if not isinstance(manifest, Mapping) or manifest.get("schema_version") != MANIFEST_VERSION:
+def _actual_parameter_contract(engine: str) -> tuple[tuple[str, str, bool], ...]:
+    parameters = signature(ENGINE_CONTRACTS[engine]["callable"]).parameters.values()
+    return tuple(
+        (item.name, item.kind.name, item.default is Parameter.empty)
+        for item in parameters
+    )
+
+
+def _signature_current(engine: str) -> bool:
+    contract = ENGINE_CONTRACTS[engine]
+    expected = tuple(zip(
+        contract["parameters"], contract["parameter_kinds"],
+        (True for _item in contract["parameters"]),
+    ))
+    return _actual_parameter_contract(engine) == expected
+
+
+def _sha(value: object) -> bool:
+    return capital.is_fingerprint(value)
+
+
+def _pension_shape(payload: Mapping) -> bool:
+    if set(payload) != set(ENGINE_CONTRACTS["pension_target_date"]["parameters"]):
+        return False
+    planning = payload.get("planning_result")
+    source_id = payload.get("source_id")
+    if not isinstance(planning, Mapping) or not isinstance(source_id, str) or not source_id:
+        return False
+    if not isinstance(planning.get("pension_inputs"), list):
+        return False
+    source = next((item for item in planning["pension_inputs"]
+                   if isinstance(item, Mapping) and item.get("source_id") == source_id), None)
+    monthly = source.get("monthly_amount_basis") if source is not None else None
+    temporal = source.get("temporal_authority") if source is not None else None
+    target = planning.get("retirement_target")
+    return (
+        source is not None
+        and _sha(planning.get("planning_calculation_input_fingerprint"))
+        and isinstance(target, Mapping)
+        and isinstance(target.get("retirement_target_date"), str)
+        and type(target.get("retirement_target_ready")) is bool
+        and isinstance(monthly, Mapping)
+        and isinstance(monthly.get("authority_kind"), str)
+        and isinstance(monthly.get("base_amount_representation"), Mapping)
+        and _sha(monthly.get("base_amount_semantic_fingerprint"))
+        and _sha(monthly.get("base_amount_source_fingerprint"))
+        and type(monthly.get("basis_authority_ready")) is bool
+        and type(monthly.get("basis_blockers")) is list
+        and isinstance(temporal, Mapping)
+        and isinstance(temporal.get("temporal_authority_kind"), str)
+        and _sha(temporal.get("temporal_semantic_fingerprint"))
+        and _sha(temporal.get("temporal_source_fingerprint"))
+        and type(temporal.get("temporal_authority_ready")) is bool
+        and type(temporal.get("temporal_blockers")) is list
+        and all(_sha(payload.get(field)) for field in (
+            "supplied_planning_calculation_input_fingerprint",
+            "supplied_monthly_basis_semantic_fingerprint",
+            "supplied_monthly_basis_source_fingerprint",
+            "supplied_temporal_semantic_fingerprint",
+            "supplied_temporal_source_fingerprint",
+        ))
+    )
+
+
+def _capital_shape(payload: Mapping) -> bool:
+    if set(payload) != set(ENGINE_CONTRACTS["capital_projection"]["parameters"]):
+        return False
+    plan, authority = payload.get("plan"), payload.get("authority")
+    target = plan.get("retirement_target") if isinstance(plan, Mapping) else None
+    sources = authority.get("covered_capital_sources") if isinstance(authority, Mapping) else None
+    capitals = plan.get("capital_inputs") if isinstance(plan, Mapping) else None
+    common = (
+        type(payload.get("client_id")) is int and payload["client_id"] > 0
+        and isinstance(plan, Mapping) and isinstance(authority, Mapping)
+        and type(capitals) is list and isinstance(target, Mapping)
+        and type(plan.get("planning_input_ready")) is bool
+        and type(target.get("retirement_target_ready")) is bool
+        and isinstance(target.get("retirement_target_date"), str)
+        and isinstance(plan.get("planning_base_date"), str)
+        and _sha(plan.get("planning_calculation_input_fingerprint"))
+        and authority.get("contract_version") == capital.basis.CONTRACT
+        and type(sources) is list
+        and type(authority.get("covered_source_count")) is int
+        and authority.get("covered_source_count") == len(sources)
+        and type(authority.get("projection_basis_ready")) is bool
+        and type(authority.get("aggregate_blockers")) is list
+        and _sha(authority.get("projection_basis_admission_fingerprint"))
+        and _sha(authority.get("planning_calculation_input_fingerprint"))
+        and authority.get("client_id") == payload["client_id"]
+        and authority.get("planning_calculation_input_fingerprint")
+        == plan.get("planning_calculation_input_fingerprint")
+        and authority.get("retirement_target_date") == target.get("retirement_target_date")
+        and authority.get("planning_base_date") == plan.get("planning_base_date")
+    )
+    if not common or len(capitals) != len(sources):
+        return False
+    capital_fields = {
+        "id", "client_id", "source_id", "lifecycle_status",
+        "known_value_amount", "value_as_of_date",
+    }
+    source_fields = {
+        "source_id", "capital_asset_id", "projection_basis_source_readiness",
+        "known_value_amount", "source_semantic_fingerprint",
+        "economic_projection_start_date", "value_as_of_date",
+        "retirement_target_date", "projection_timing_context_fingerprint",
+        "compounding_convention", "day_count_convention", "blockers",
+        "projection_basis_decision", "projection_basis_decision_fingerprint",
+        "projection_basis_source_admission_fingerprint",
+    }
+    return all(
+        isinstance(capital_item, Mapping) and capital_fields <= set(capital_item)
+        and isinstance(source, Mapping) and source_fields <= set(source)
+        and type(source.get("projection_basis_source_readiness")) is bool
+        and type(source.get("blockers")) is list
+        for capital_item, source in zip(capitals, sources)
+    )
+
+
+def _gap_shape(payload: Mapping) -> bool:
+    if set(payload) != set(ENGINE_CONTRACTS["monthly_income_gap"]["parameters"]):
+        return False
+    db = payload.get("db")
+    if not isinstance(db, Session):
+        return False
+    try:
+        if db.in_transaction() or db.new or db.dirty or db.deleted:
+            return False
+        if db.get_bind().dialect.name not in {"postgresql", "sqlite"}:
+            return False
+    except BaseException:
+        return False
+    try:
+        gap._validated_request(payload.get("request"))
+    except gap.RMIGAContractError:
+        return False
+    return True
+
+
+_SHAPE_VALIDATORS = {
+    "pension_target_date": _pension_shape,
+    "capital_projection": _capital_shape,
+    "monthly_income_gap": _gap_shape,
+}
+
+
+def assess_engine_input_shape(engine: str, payload: object) -> dict:
+    """Validate actual callable shape without calling an engine or admitting it."""
+    if engine not in ENGINE_CONTRACTS or type(payload) is not dict:
+        return {
+            "structural_state": "INCOMPATIBLE",
+            "execution_allowed": False,
+            "admission_state": "NOT_EVALUATED",
+            "blockers": ["ENGINE_INPUT_SHAPE_INVALID"],
+        }
+    contract = ENGINE_CONTRACTS[engine]
+    signature_current = _signature_current(engine)
+    structurally_valid = signature_current and _SHAPE_VALIDATORS[engine](payload)
+    return {
+        "engine": engine,
+        "callable_path": contract["callable_path"],
+        "callable_parameters": list(contract["parameters"]),
+        "structural_state": (
+            "STRUCTURALLY_COMPATIBLE_NOT_ADMITTED" if structurally_valid
+            else "INCOMPATIBLE"
+        ),
+        "execution_allowed": False,
+        "admission_state": "NOT_EVALUATED",
+        "permission_state": "NOT_ADMITTED",
+        "professional_eligibility_state": "NOT_EVALUATED",
+        "tax_state": "NOT_EVALUATED",
+        "blockers": ([] if structurally_valid else ["ENGINE_INPUT_SHAPE_INVALID"]),
+    }
+
+
+def assess_engine_compatibility(manifest: object) -> dict:
+    """Map the inert manifest to exact engine adapter gaps; never call engines."""
+    try:
+        manifest = validate_inert_manifest(manifest)
+    except ManifestValidationError:
         return {
             "schema_version": "SCENARIO_ENGINE_COMPATIBILITY_V1",
             "compatibility_state": "BLOCKED",
             "execution_allowed": False,
             "engines": {},
-            "blockers": ["SCENARIO_MANIFEST_SCHEMA_INVALID"],
+            "blockers": ["SCENARIO_MANIFEST_INVALID"],
         }
-    integrity = manifest.get("execution_allowed") is False and manifest.get("planning_snapshot") is None
-    integrity = integrity and manifest.get("financial_result") is None
-    integrity = integrity and manifest.get("authority_state") == "NOT_EVALUATED"
-    integrity = integrity and isinstance(manifest.get("manifest_fingerprint"), str)
-    common = [] if integrity else ["SCENARIO_MANIFEST_INERT_CONTRACT_INVALID"]
-    if manifest.get("scenario_status") != "draft":
+    common = []
+    if manifest["scenario_status"] != "draft":
         common.append("SCENARIO_STATUS_NOT_DRAFT")
-    decisions = manifest.get("decisions")
-    if not isinstance(decisions, list) or not decisions:
+    if not manifest["decisions"]:
         common.append("SCENARIO_DECISIONS_EMPTY_OR_INVALID")
-    elif any(not isinstance(d, Mapping) or d.get("source") is None for d in decisions):
+    elif any(item["source"] is None for item in manifest["decisions"]):
         common.append("SCENARIO_SOURCE_EVIDENCE_INCOMPLETE")
-    # The inert manifest cannot certify canonical source coverage or authority.
-    # Every engine remains blocked even if a caller inserts counterfeit keys.
     engines = {}
     for engine, contract in ENGINE_CONTRACTS.items():
-        blockers = list(common) + [
-            "MISSING_VERIFIED_" + field.upper() for field in contract["requires"]
-        ]
-        blockers += [
+        blockers = [
+            *common,
+            *("MISSING_" + item.upper() for item in contract["scenario_adapter_requirements"]),
             "PERMISSION_NOT_ADMITTED",
             "PROFESSIONAL_ELIGIBILITY_NOT_EVALUATED",
             "TAX_NOT_EVALUATED",
         ]
         engines[engine] = {
-            "compatibility_state": "BLOCKED",
+            "callable_path": contract["callable_path"],
+            "callable_parameters": list(contract["parameters"]),
+            "structural_state": "SCENARIO_ADAPTER_MISSING",
+            "admission_state": "NOT_EVALUATED",
             "execution_allowed": False,
             "result": None,
-            "missing_verified_contract_fields": list(contract["requires"]),
+            "missing_verified_adapter_fields": list(contract["scenario_adapter_requirements"]),
             "blockers": blockers,
         }
     return {
         "schema_version": "SCENARIO_ENGINE_COMPATIBILITY_V1",
         "compatibility_state": "BLOCKED",
         "execution_allowed": False,
-        "scenario_id": manifest.get("scenario_id"),
-        "scenario_version": manifest.get("scenario_version"),
-        "manifest_fingerprint": manifest.get("manifest_fingerprint"),
+        "scenario_id": manifest["scenario_id"],
+        "scenario_version": manifest["scenario_version"],
+        "manifest_fingerprint": manifest["manifest_fingerprint"],
         "engines": engines,
-        "blockers": common + ["NO_SCENARIO_ENGINE_ADMISSION_CONTRACT"],
+        "blockers": [*common, "NO_SCENARIO_ENGINE_ADMISSION_CONTRACT"],
     }

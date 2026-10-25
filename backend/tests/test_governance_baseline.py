@@ -225,6 +225,7 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/app/services/scenario_pension_source_bridge_service.py",
     "backend/tests/test_scenario_pension_source_bridge.py",
     "backend/tests/test_scenario_pension_source_bridge_postgresql.py",
+    "backend/tests/test_scenario_pension_source_bridge_real_postgresql.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

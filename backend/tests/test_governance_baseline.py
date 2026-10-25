@@ -249,6 +249,8 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/app/services/scenario_coefficient_professional_review_store_service.py",
     "backend/tests/test_scenario_coefficient_professional_review_store.py",
     "backend/tests/test_scenario_professional_review_store_real_postgresql.py",
+    "backend/app/services/scenario_coefficient_review_context_service.py",
+    "backend/tests/test_scenario_coefficient_review_db_boundary.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

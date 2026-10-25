@@ -2,7 +2,7 @@
 
 No canonical producer mocks; isolated schema in dedicated local test DB.
 """
-from datetime import date
+from datetime import date, timezone
 from decimal import Decimal
 import os
 import uuid
@@ -180,7 +180,7 @@ def test_database_derived_professional_review_staleness_real_postgresql():
                 "schema_version": "SCENARIO_COEFFICIENT_REVIEW_V1",
                 **{k: getattr(record, k) for k in original},
                 "professional_actor_id": record.professional_actor_id,
-                "reviewed_at": record.reviewed_at.isoformat(),
+                "reviewed_at": record.reviewed_at.astimezone(timezone.utc).isoformat(),
                 "review_reference": record.review_reference,
                 "decision": record.decision,
                 "record_fingerprint": record.record_fingerprint,

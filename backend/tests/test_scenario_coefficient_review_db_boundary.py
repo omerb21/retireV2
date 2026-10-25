@@ -36,7 +36,7 @@ def test_only_internal_projection_provides_identity(monkeypatch):
     monkeypatch.setattr(
         "app.services.scenario_coefficient_review_context_service.derive_documentary_review_context",
         project)
-    monkeypatch.setattr(store, "append_documentary_review", save)
+    monkeypatch.setattr(store, "_append_documentary_review", save)
     result = store.append_database_derived_documentary_review(
         Mock(), client_id=7, scenario_id="s", decision_id="d",
         authenticated_actor="trusted-professional", review_reference="ref",

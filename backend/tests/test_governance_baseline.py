@@ -221,6 +221,7 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/tests/test_scenario_snapshot_candidate_postgresql.py",
     "backend/app/services/scenario_planning_coverage_service.py",
     "backend/tests/test_scenario_planning_coverage.py",
+    "backend/tests/test_scenario_planning_coverage_postgresql.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

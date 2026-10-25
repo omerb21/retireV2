@@ -4,6 +4,10 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.db.base import load_all_models
+
+load_all_models()
+
 from app.services import scenario_coefficient_professional_review_store_service as store
 from app.services.scenario_draft_service import DraftError
 

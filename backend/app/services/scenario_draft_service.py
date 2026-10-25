@@ -6,7 +6,7 @@ import hashlib
 import json
 import unicodedata
 from uuid import uuid4
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
@@ -14,6 +14,7 @@ from app.models.pension_product import (
     COMPONENT_CODES, PensionProduct, PensionProductComponent,
 )
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
+from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 
 
 class DraftError(RuntimeError):
@@ -209,6 +210,8 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     supplied_ids = [item.decision_id for item in payload.decisions if item.decision_id is not None]
     if len(supplied_ids) != len(set(supplied_ids)) or not set(supplied_ids).issubset(known_ids):
         raise DraftError("SCENARIO_DECISION_ID_MISMATCH", 422)
+    # Any changed decision set invalidates all existing pension elections.
+    db.execute(delete(ScenarioDraftPensionElection).where(ScenarioDraftPensionElection.scenario_id == scenario_id))
     for item in existing:
         db.delete(item)
     db.flush()

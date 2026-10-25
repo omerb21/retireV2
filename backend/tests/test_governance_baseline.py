@@ -211,6 +211,7 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/app/api/scenario_draft_routes.py",
     "backend/tests/test_scenario_calculation_admission.py",
     "backend/tests/test_scenario_admission_postgresql_isolation.py",
+    "backend/tests/test_scenario_admission_postgresql_tables.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

@@ -165,8 +165,11 @@ def list_drafts(db: Session, client_id: int) -> list[dict]:
     return [read(db, client_id, scenario_id) for scenario_id in ids]
 
 
-def _revision(db: Session, scenario: ScenarioDraft, action: str, actor: str) -> dict:
+def _revision(db: Session, scenario: ScenarioDraft, action: str, actor: str, *,
+              audit_extra: dict | None = None) -> dict:
     snapshot = read(db, scenario.client_id, scenario.scenario_id)
+    if audit_extra is not None:
+        snapshot = {**snapshot, **audit_extra}
     db.add(ScenarioDraftRevision(
         revision_id=uuid4().hex, scenario_id=scenario.scenario_id,
         version=scenario.version, action=action, actor=actor,

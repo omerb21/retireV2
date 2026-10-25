@@ -80,15 +80,21 @@ def _append_documentary_review(
     }
 
 
+_AUTHENTICATED_WRITE_CAPABILITY = object()
+
+
 def append_database_derived_documentary_review(
     db: Session, *, client_id: int, scenario_id: str, decision_id: str,
     authenticated_actor: str, review_reference: str, decision: str,
+    _capability: object = None,
 ) -> dict:
     """Trusted internal writer: independently derive provenance in this transaction.
 
     The caller MUST control authenticated_actor using verified server session
     state. This is documentary evidence, not coefficient/calculation permission.
     """
+    if _capability is not _AUTHENTICATED_WRITE_CAPABILITY:
+        raise DraftError("PROFESSIONAL_REVIEW_AUTHENTICATED_ENTRYPOINT_REQUIRED", 403)
     from app.services.scenario_coefficient_review_context_service import (
         derive_documentary_review_context,
     )
@@ -143,4 +149,5 @@ def append_authenticated_serializable_review(
                     db, client_id=client_id, scenario_id=scenario_id,
                     decision_id=decision_id, authenticated_actor=actor,
                     review_reference=review_reference, decision=decision,
+                    _capability=_AUTHENTICATED_WRITE_CAPABILITY,
                 )

@@ -47,9 +47,11 @@ def test_real_scenario_admission_keeps_snapshot_under_concurrent_version_change(
             for table in tables:
                 table.create(setup, checkfirst=False)
 
-            client = Client(display_name="Isolation fixture", id_number="test-" + uuid.uuid4().hex[:20])
+            # Seed with SQLAlchemy Core: ORM construction here would configure
+            # unrelated Client relationships outside this deliberately narrow fixture.
             setup.execute(Client.__table__.insert().values(
-                client_id=900010, display_name=client.display_name, id_number=client.id_number
+                client_id=900010, display_name="Isolation fixture",
+                id_number="test-" + uuid.uuid4().hex[:20],
             ))
             setup.execute(PensionProduct.__table__.insert().values(
                 product_id="sc02b-product", client_id=900010, source_kind="manual",
@@ -61,7 +63,6 @@ def test_real_scenario_admission_keeps_snapshot_under_concurrent_version_change(
                 component_id="sc02b-component", product_id="sc02b-product",
                 component_code=COMPONENT_CODES[5], balance=Decimal("100.00"),
             ))
-            product = setup.execute(text("SELECT 1")).scalar_one()
             # Use the same canonical source digest as the production draft service.
             with Session(bind=setup, autoflush=False) as seed_session:
                 from sqlalchemy import select

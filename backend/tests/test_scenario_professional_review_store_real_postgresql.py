@@ -28,7 +28,7 @@ from app.services.scenario_draft_service import _source_evidence
 from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
 from app.schemas.scenario_draft import DraftReplace, DraftDecisionWrite
 from app.services.scenario_draft_service import replace, DraftError
-from app.services.scenario_coefficient_professional_review_store_service import append_documentary_review
+from app.services import scenario_coefficient_professional_review_store_service as store
 
 load_all_models()
 
@@ -145,10 +145,10 @@ def test_professional_review_append_only_real_postgresql():
         # Documentary persistence only: this supplied context is NOT an
         # authoritative source projection and must not be exposed by an API.
         with factory() as db, db.begin():
-            saved = append_documentary_review(
+            saved = store._append_documentary_review(
                 db, client_id=7, scenario_id="s", expected=context,
                 authenticated_actor="trusted-test-actor", review_reference="case-1",
-                decision="reviewed_for_candidate")
+                decision="reviewed_for_candidate", _capability=store._DERIVED_CONTEXT_CAPABILITY)
             assert saved["review_state"] == "RECORDED_NOT_AUTHORIZED"
             assert saved["execution_allowed"] is False
             assert saved["financial_result"] is None
@@ -164,18 +164,18 @@ def test_professional_review_append_only_real_postgresql():
             db.rollback()
         with factory() as db:
             with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED"):
-                append_documentary_review(db, client_id=7, scenario_id="s",
+                store._append_documentary_review(db, client_id=7, scenario_id="s",
                     expected=context, authenticated_actor="",
-                    review_reference="case-2", decision="rejected")
+                    review_reference="case-2", decision="rejected", _capability=store._DERIVED_CONTEXT_CAPABILITY)
             db.rollback()
         with factory() as db, db.begin():
             db.execute(ScenarioDraft.__table__.update().where(
                 ScenarioDraft.scenario_id == "s").values(version=2))
         with factory() as db:
             with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_CONTEXT_STALE"):
-                append_documentary_review(db, client_id=7, scenario_id="s",
+                store._append_documentary_review(db, client_id=7, scenario_id="s",
                     expected=context, authenticated_actor="trusted-test-actor",
-                    review_reference="case-3", decision="reviewed_for_candidate")
+                    review_reference="case-3", decision="reviewed_for_candidate", _capability=store._DERIVED_CONTEXT_CAPABILITY)
             db.rollback()
             assert db.scalar(select(func.count()).select_from(ScenarioCoefficientProfessionalReview)) == 1
     finally:

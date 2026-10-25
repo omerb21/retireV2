@@ -19,6 +19,9 @@ def test_verified_draft_still_has_no_coefficient_authority(monkeypatch):
             calls.append("profile")
             return SimpleNamespace(birth_date=None, gender=None)
         def scalars(self, statement):
+            if "scenario_draft_pension_elections" in str(statement):
+                calls.append("elections")
+                return []
             calls.append("products")
             return [SimpleNamespace(product_id="p", product_type="קרן פנסיה",
                                     version=1, start_date=None)]
@@ -27,11 +30,11 @@ def test_verified_draft_still_has_no_coefficient_authority(monkeypatch):
         return _snapshot_extension(DB(), pair)
     monkeypatch.setattr(subject, "build_manifest_candidate_snapshot", fake_owner)
     result = subject.build_coefficient_input_inventory(object(), client_id=7, scenario_id="s")
-    assert calls == ["profile", "products"]
+    assert calls == ["profile", "products", "elections"]
     assert result["inventory_state"] == "UNRESOLVED"
     entry = result["entries"][0]
     assert entry["state"] == "UNRESOLVED"
-    assert "SCENARIO_PENSION_ELECTION_MISSING" in entry["blockers"]
+    assert "SCENARIO_PENSION_ELECTION_MISSING_OR_STALE" in entry["blockers"]
     assert "SCENARIO_COEFFICIENT_PERMISSION_NOT_EVALUATED" in entry["blockers"]
     assert result["execution_allowed"] is False
     assert result["financial_result"] is None

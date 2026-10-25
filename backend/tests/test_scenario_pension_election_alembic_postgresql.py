@@ -43,7 +43,7 @@ def _dependency_closure(*tables):
     return list(result)
 
 
-def test_upgrade_downgrade_on_disposable_postgresql_schema():
+def test_upgrade_downgrade_on_disposable_postgresql_schema(monkeypatch):
     engine = create_engine(_local_url())
     if engine.dialect.name != "postgresql":
         pytest.fail("PostgreSQL required")
@@ -59,6 +59,7 @@ def test_upgrade_downgrade_on_disposable_postgresql_schema():
         with engine.begin() as conn:
             conn.execute(text(f'CREATE SCHEMA "{schema}"'))
         with scoped.begin() as conn:
+            monkeypatch.setenv("CRTISBA_APPLICATION_DB_ROLE", conn.execute(text("SELECT current_user")).scalar_one())
             conn.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
             Base.metadata.create_all(conn, tables=_dependency_closure(Client.__table__, ScenarioDraft.__table__))
             original_op = module.op

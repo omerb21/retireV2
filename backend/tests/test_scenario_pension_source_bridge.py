@@ -59,3 +59,43 @@ def test_malformed_lineage_blocks():
     pair, sources = sample()
     sources[0]["provenance"]["allocations"] = [{"source_component_id": "c"}]
     assert reconcile(pair, sources)["bridge_state"] == "BLOCKED"
+
+
+def test_public_bridge_uses_same_snapshot_session(monkeypatch):
+    from app.services import scenario_pension_source_bridge_service as bridge
+    from app.services import scenario_snapshot_candidate_service as owner
+    from app.services import professional_source_snapshot_service as canonical
+    pair, sources = sample()
+    shared_session = object()
+    observed = []
+
+    def fake_owner(factory, *, client_id, scenario_id, _snapshot_extension):
+        observed.append(("owner", factory, client_id, scenario_id))
+        return _snapshot_extension(shared_session, pair)
+
+    def fake_snapshot(db, client_id, *, as_of):
+        observed.append(("canonical", db, client_id))
+        return {"pension_sources": sources}
+
+    monkeypatch.setattr(owner, "build_manifest_candidate_snapshot", fake_owner)
+    monkeypatch.setattr(canonical, "_snapshot", fake_snapshot)
+    factory = object()
+    result = bridge.build_pension_source_bridge_snapshot(
+        factory, client_id=7, scenario_id="s",
+    )
+    assert observed == [("owner", factory, 7, "s"), ("canonical", shared_session, 7)]
+    assert result["bridge_state"] == "UNRESOLVED"
+    assert result["execution_allowed"] is False
+
+
+def test_public_bridge_does_not_fallback_after_snapshot_failure(monkeypatch):
+    import pytest
+    from app.services import scenario_pension_source_bridge_service as bridge
+    from app.services import scenario_snapshot_candidate_service as owner
+
+    def failed(*args, **kwargs):
+        raise owner.ScenarioSnapshotError("SCENARIO_SNAPSHOT_DATABASE_UNAVAILABLE")
+
+    monkeypatch.setattr(owner, "build_manifest_candidate_snapshot", failed)
+    with pytest.raises(owner.ScenarioSnapshotError):
+        bridge.build_pension_source_bridge_snapshot(object(), client_id=7, scenario_id="s")

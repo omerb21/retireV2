@@ -3,6 +3,7 @@
 No canonical producer mocks; isolated schema in dedicated local test DB.
 """
 from datetime import date
+import json
 from decimal import Decimal
 import os
 import uuid
@@ -145,6 +146,16 @@ def test_atomic_pension_election_store_real_postgresql():
         with SessionFactory() as db, db.begin():
             result = replace_elections(db, 7, "s", payload, "test")
             assert result["version"] == 2
+            revision = db.scalar(select(ScenarioDraftRevision).where(
+                ScenarioDraftRevision.scenario_id == "s",
+                ScenarioDraftRevision.version == 2))
+            assert revision is not None
+            audit = json.loads(revision.snapshot_json)
+            assert len(audit["pension_elections"]) == 1
+            assert audit["pension_elections"][0]["decision_id"] == "d"
+            assert audit["pension_elections"][0]["scenario_version"] == 2
+            assert audit["pension_elections"][0]["pension_start_date"] == "2040-01-01"
+            assert audit["pension_elections"][0]["authority_state"] == "NOT_EVALUATED"
             current = current_elections(db, 7, "s")
             assert len(current) == 1
             assert current[0]["decision_id"] == "d"

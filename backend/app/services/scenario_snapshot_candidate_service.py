@@ -131,6 +131,7 @@ def _build_pair_in_snapshot(
     client_id: int,
     scenario_id: str,
     claimed_manifest: object | None,
+    snapshot_extension=None,
 ) -> dict:
     authoritative = build_inert_manifest(db, client_id, scenario_id)
     if claimed_manifest is not None and not _claimed_manifest_matches(
@@ -139,7 +140,10 @@ def _build_pair_in_snapshot(
         candidate = _invalid(["MANIFEST_DATABASE_MISMATCH"])
     else:
         candidate = _partition_verified_manifest(authoritative)
-    return {"manifest": authoritative, "candidate": candidate}
+    pair = {"manifest": authoritative, "candidate": candidate}
+    if snapshot_extension is not None:
+        return snapshot_extension(db, pair)
+    return pair
 
 
 def _engine(factory: sessionmaker[Session]) -> Engine:
@@ -155,6 +159,7 @@ def build_manifest_candidate_snapshot(
     client_id: int,
     scenario_id: str,
     claimed_manifest: object | None = None,
+    _snapshot_extension=None,
 ) -> dict:
     """Own one PostgreSQL snapshot and derive Manifest + Candidate within it."""
     if (
@@ -179,7 +184,7 @@ def build_manifest_candidate_snapshot(
         transaction = connection.begin()
         db = Session(bind=connection, autoflush=False, expire_on_commit=False)
         result = _build_pair_in_snapshot(
-            db, client_id, scenario_id, claimed_manifest,
+            db, client_id, scenario_id, claimed_manifest, _snapshot_extension,
         )
     except BaseException as exc:
         primary = exc

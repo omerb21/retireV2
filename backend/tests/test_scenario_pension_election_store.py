@@ -1,6 +1,14 @@
 """SC-05C: writer must reject stale versions and non-pension decisions."""
 from datetime import date
 from types import SimpleNamespace
+
+
+class ScalarRows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def all(self):
+        return self.rows
 import pytest
 
 from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
@@ -36,8 +44,8 @@ def test_non_pension_decision_rejected_before_version_bump(monkeypatch):
                         pytest.fail("unexpected version bump"))
     class DB:
         def scalars(self, *_):
-            return [SimpleNamespace(decision_id="d", action="capital_asset",
-                                    effective_date=date(2030, 1, 1))]
+            return ScalarRows([SimpleNamespace(decision_id="d", action="capital_asset",
+                                    effective_date=date(2030, 1, 1))])
     with pytest.raises(DraftError, match="SCENARIO_PENSION_DECISION_MISMATCH"):
         store.replace_elections(DB(), 7, "s", payload(), "test")
 
@@ -49,7 +57,7 @@ def test_pension_start_before_effective_date_rejected(monkeypatch):
                         pytest.fail("unexpected version bump"))
     class DB:
         def scalars(self, *_):
-            return [SimpleNamespace(decision_id="d", action="pension",
-                                    effective_date=date(2041, 1, 1))]
+            return ScalarRows([SimpleNamespace(decision_id="d", action="pension",
+                                    effective_date=date(2041, 1, 1))])
     with pytest.raises(DraftError, match="SCENARIO_PENSION_START_BEFORE_EFFECTIVE_DATE"):
         store.replace_elections(DB(), 7, "s", payload(), "test")

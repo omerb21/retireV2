@@ -243,6 +243,9 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/tests/test_scenario_coefficient_gate_bridge.py",
     "backend/app/services/scenario_coefficient_professional_review_contract.py",
     "backend/tests/test_scenario_coefficient_professional_review_contract.py",
+    "backend/app/models/scenario_coefficient_professional_review.py",
+    "backend/alembic/versions/c5e019a47d62_professional_coefficient_reviews.py",
+    "backend/tests/test_scenario_professional_review_alembic_postgresql.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

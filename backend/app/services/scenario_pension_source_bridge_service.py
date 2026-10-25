@@ -87,3 +87,21 @@ def reconcile_pension_source_identities(pair: object, pension_sources: object) -
         "execution_allowed": False, "planning_snapshot": None,
         "financial_result": None, "authority_state": "NOT_EVALUATED",
     }
+
+
+def build_pension_source_bridge_snapshot(factory, *, client_id: int, scenario_id: str) -> dict:
+    """Read source lineage inside the DB owner's exact scenario transaction."""
+    from datetime import date
+    from app.services.professional_source_snapshot_service import _snapshot
+    from app.services.scenario_snapshot_candidate_service import build_manifest_candidate_snapshot
+
+    def within_snapshot(db, pair):
+        # _snapshot is SELECT-only and must NOT invoke begin_read: its caller
+        # already holds the PostgreSQL repeatable-read, read-only transaction.
+        evidence = _snapshot(db, client_id, as_of=date.min)
+        return reconcile_pension_source_identities(pair, evidence["pension_sources"])
+
+    return build_manifest_candidate_snapshot(
+        factory, client_id=client_id, scenario_id=scenario_id,
+        _snapshot_extension=within_snapshot,
+    )

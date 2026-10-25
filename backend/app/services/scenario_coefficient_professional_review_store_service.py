@@ -104,3 +104,43 @@ def append_database_derived_documentary_review(
         authenticated_actor=authenticated_actor, review_reference=review_reference,
         decision=decision, _capability=_DERIVED_CONTEXT_CAPABILITY,
     )
+
+
+def append_authenticated_serializable_review(
+    factory, *, request, client_id: int, scenario_id: str,
+    decision_id: str, review_reference: str, decision: str,
+) -> dict:
+    """Private production-only orchestration with authenticated actor and DB ownership.
+
+    No public route is registered. Owns SERIALIZABLE write transaction from its
+    first SQL statement. A caller must never pass a pre-used ORM Session.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.engine import Engine
+
+    auth_config = getattr(getattr(request, "app", None), "state", None)
+    auth_config = getattr(auth_config, "auth_config", None)
+    state = getattr(request, "state", None)
+    verified_session = getattr(state, "auth_session", None)
+    actor = getattr(state, "trusted_professional_actor", None)
+    if (auth_config is None or getattr(auth_config, "production", None) is not True
+            or type(verified_session) is not dict
+            or type(actor) is not str or not actor
+            or actor != verified_session.get("actor_id")):
+        raise DraftError("PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED", 403)
+    if not isinstance(factory, sessionmaker):
+        raise DraftError("PROFESSIONAL_REVIEW_POSTGRESQL_REQUIRED", 503)
+    engine = factory.kw.get("bind")
+    if not isinstance(engine, Engine) or engine.dialect.name != "postgresql":
+        raise DraftError("PROFESSIONAL_REVIEW_POSTGRESQL_REQUIRED", 503)
+    with factory() as db:
+        # Caller-owned sessions and transaction state never cross this boundary.
+        with db.begin():
+            db.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+            with db.no_autoflush:
+                return append_database_derived_documentary_review(
+                    db, client_id=client_id, scenario_id=scenario_id,
+                    decision_id=decision_id, authenticated_actor=actor,
+                    review_reference=review_reference, decision=decision,
+                )

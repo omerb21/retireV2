@@ -90,40 +90,54 @@ def _sha(value: object) -> bool:
     return capital.is_fingerprint(value)
 
 
+def _sha_or_none(value: object) -> bool:
+    return value is None or _sha(value)
+
+
+def _optional_pension_authority(
+    value: object, kind_field: str, blocker_field: str,
+) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, Mapping):
+        return False
+    kind = value.get(kind_field)
+    blockers = value.get(blocker_field)
+    return (
+        (kind is None or isinstance(kind, str))
+        and (
+            blockers is None
+            or type(blockers) is list
+            and all(isinstance(blocker, str) for blocker in blockers)
+        )
+    )
+
+
 def _pension_shape(payload: Mapping) -> bool:
     if set(payload) != set(ENGINE_CONTRACTS["pension_target_date"]["parameters"]):
         return False
     planning = payload.get("planning_result")
     source_id = payload.get("source_id")
-    if not isinstance(planning, Mapping) or not isinstance(source_id, str) or not source_id:
+    if not isinstance(planning, Mapping) or not isinstance(source_id, str):
         return False
-    if not isinstance(planning.get("pension_inputs"), list):
+    sources = planning.get("pension_inputs", [])
+    if type(sources) is not list or not all(isinstance(item, Mapping) for item in sources):
         return False
-    source = next((item for item in planning["pension_inputs"]
-                   if isinstance(item, Mapping) and item.get("source_id") == source_id), None)
+    matches = [item for item in sources if item.get("source_id") == source_id]
+    source = matches[0] if len(matches) == 1 else None
     monthly = source.get("monthly_amount_basis") if source is not None else None
     temporal = source.get("temporal_authority") if source is not None else None
     target = planning.get("retirement_target")
     return (
-        source is not None
-        and _sha(planning.get("planning_calculation_input_fingerprint"))
-        and isinstance(target, Mapping)
-        and isinstance(target.get("retirement_target_date"), str)
-        and type(target.get("retirement_target_ready")) is bool
-        and isinstance(monthly, Mapping)
-        and isinstance(monthly.get("authority_kind"), str)
-        and isinstance(monthly.get("base_amount_representation"), Mapping)
-        and _sha(monthly.get("base_amount_semantic_fingerprint"))
-        and _sha(monthly.get("base_amount_source_fingerprint"))
-        and type(monthly.get("basis_authority_ready")) is bool
-        and type(monthly.get("basis_blockers")) is list
-        and isinstance(temporal, Mapping)
-        and isinstance(temporal.get("temporal_authority_kind"), str)
-        and _sha(temporal.get("temporal_semantic_fingerprint"))
-        and _sha(temporal.get("temporal_source_fingerprint"))
-        and type(temporal.get("temporal_authority_ready")) is bool
-        and type(temporal.get("temporal_blockers")) is list
-        and all(_sha(payload.get(field)) for field in (
+        (target is None or isinstance(target, Mapping))
+        and _sha_or_none(planning.get("planning_calculation_input_fingerprint"))
+        and _optional_pension_authority(
+            monthly, "authority_kind", "basis_blockers",
+        )
+        and _optional_pension_authority(
+            temporal, "temporal_authority_kind", "temporal_blockers",
+        )
+        and all(_sha_or_none(payload.get(field)) for field in (
             "supplied_planning_calculation_input_fingerprint",
             "supplied_monthly_basis_semantic_fingerprint",
             "supplied_monthly_basis_source_fingerprint",

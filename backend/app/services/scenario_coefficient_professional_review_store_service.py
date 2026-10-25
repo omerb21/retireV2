@@ -73,3 +73,29 @@ def append_documentary_review(
         "financial_result": None, "planning_snapshot": None,
         "authority_state": "NOT_EVALUATED",
     }
+
+
+def append_database_derived_documentary_review(
+    db: Session, *, client_id: int, scenario_id: str, decision_id: str,
+    authenticated_actor: str, review_reference: str, decision: str,
+) -> dict:
+    """Trusted internal writer: independently derive provenance in this transaction.
+
+    The caller MUST control authenticated_actor using verified server session
+    state. This is documentary evidence, not coefficient/calculation permission.
+    """
+    from app.services.scenario_coefficient_review_context_service import (
+        derive_documentary_review_context,
+    )
+    # Validate actor before initiating any evidence reads.
+    if (not isinstance(authenticated_actor, str) or not authenticated_actor.strip()
+            or authenticated_actor == "local-development-only"
+            or len(authenticated_actor) > 128):
+        raise DraftError("PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED", 403)
+    expected = derive_documentary_review_context(
+        db, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id)
+    return append_documentary_review(
+        db, client_id=client_id, scenario_id=scenario_id, expected=expected,
+        authenticated_actor=authenticated_actor, review_reference=review_reference,
+        decision=decision,
+    )

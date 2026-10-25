@@ -16,12 +16,17 @@ from app.services.scenario_draft_service import DraftError, _scenario
 from app.services.scenario_input_manifest_service import _fingerprint
 
 
-def append_documentary_review(
+_DERIVED_CONTEXT_CAPABILITY = object()
+
+
+def _append_documentary_review(
     db: Session, *, client_id: int, scenario_id: str,
     expected: dict, authenticated_actor: str, review_reference: str,
-    decision: str,
+    decision: str, _capability: object = None,
 ) -> dict:
     """Record immutable evidence; NEVER confer coefficient/execution authority."""
+    if _capability is not _DERIVED_CONTEXT_CAPABILITY:
+        raise DraftError("PROFESSIONAL_REVIEW_DERIVED_CONTEXT_REQUIRED", 403)
     if (not isinstance(authenticated_actor, str)
             or not authenticated_actor.strip()
             or authenticated_actor == "local-development-only"
@@ -94,8 +99,8 @@ def append_database_derived_documentary_review(
         raise DraftError("PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED", 403)
     expected = derive_documentary_review_context(
         db, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id)
-    return append_documentary_review(
+    return _append_documentary_review(
         db, client_id=client_id, scenario_id=scenario_id, expected=expected,
         authenticated_actor=authenticated_actor, review_reference=review_reference,
-        decision=decision,
+        decision=decision, _capability=_DERIVED_CONTEXT_CAPABILITY,
     )

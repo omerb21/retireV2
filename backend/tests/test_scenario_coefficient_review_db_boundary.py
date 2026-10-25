@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 """SC-05E secure entrypoint cannot accept externally supplied provenance."""
 from unittest.mock import Mock
 import pytest
@@ -43,3 +44,18 @@ def test_only_internal_projection_provides_identity(monkeypatch):
         decision="reviewed_for_candidate")
     assert [name for name, _ in calls] == ["projection", "store"]
     assert result["execution_allowed"] is False
+
+
+def test_authenticated_transaction_entrypoint_rejects_forged_actor_without_sql():
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_config=SimpleNamespace(production=True))),
+        state=SimpleNamespace(
+            auth_session={"actor_id": "real-professional"},
+            trusted_professional_actor="forged-professional"),
+    )
+    with pytest.raises(DraftError, match="PROFESSIONAL_REVIEW_AUTHENTICATED_ACTOR_REQUIRED"):
+        store.append_authenticated_serializable_review(
+            Mock(), request=request, client_id=7, scenario_id="s",
+            decision_id="d", review_reference="r",
+            decision="reviewed_for_candidate")

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 from app.models.client_profile import ClientProfile
+from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.pension_product import PensionProduct
 from app.services.scenario_input_manifest_service import _fingerprint
 from app.services.scenario_snapshot_candidate_service import build_manifest_candidate_snapshot
@@ -24,6 +25,8 @@ def build_coefficient_input_inventory(factory, *, client_id: int, scenario_id: s
                 select(PensionProduct).where(PensionProduct.client_id == client_id)
             )
         }
+        elections = {e.decision_id: e for e in db.scalars(select(ScenarioDraftPensionElection).where(
+            ScenarioDraftPensionElection.scenario_id == scenario_id))}
         entries = []
         for row in manifest["decisions"]:
             if row["action"] != "pension":
@@ -45,12 +48,19 @@ def build_coefficient_input_inventory(factory, *, client_id: int, scenario_id: s
                 "ביטוח מנהלים" in product.product_type or "insurance" in product.product_type.lower()
             ):
                 missing.append("INSURANCE_GENERATION_DATE_REQUIRED")
-            # The draft stores effective_date, not pension_start_date or a
-            # scenario-approved pension election; do not reuse current facts.
-            missing.extend([
-                "SCENARIO_PENSION_ELECTION_MISSING",
-                "SCENARIO_COEFFICIENT_PERMISSION_NOT_EVALUATED",
-            ])
+            election = elections.get(row["decision_id"])
+            election_current = (
+                identity_ok and election is not None
+                and election.scenario_version == manifest["scenario_version"]
+                and election.pension_start_date.isoformat() >= row["effective_date"]
+                and election.coefficient_selection in ("catalog_candidate", "manual_review_required")
+                and bool(election.survivors_option and election.survivors_option.strip())
+                and type(election.target_year) is int
+                and type(election.spouse_age_diff) is int
+            )
+            if not election_current:
+                missing.append("SCENARIO_PENSION_ELECTION_MISSING_OR_STALE")
+            missing.append("SCENARIO_COEFFICIENT_PERMISSION_NOT_EVALUATED")
             entries.append({
                 "decision_id": row["decision_id"],
                 "product_id": row["product_id"],
@@ -58,6 +68,7 @@ def build_coefficient_input_inventory(factory, *, client_id: int, scenario_id: s
                 "state": "BLOCKED" if not identity_ok else "UNRESOLVED",
                 "blockers": sorted(set(missing)),
                 "coefficient_candidate": None,
+                "election_state": "CURRENT_DRAFT_NOT_ADMITTED" if election_current else "MISSING_OR_STALE",
             })
         identity = {
             "schema_version": "SCENARIO_COEFFICIENT_INPUT_INVENTORY_V1",

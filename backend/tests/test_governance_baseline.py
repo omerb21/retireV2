@@ -236,6 +236,8 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/app/models/scenario_draft_pension_election.py",
     "backend/app/services/scenario_pension_election_store_service.py",
     "backend/tests/test_scenario_pension_election_store.py",
+    "backend/tests/test_scenario_pension_election_store_real_postgresql.py",
+    "backend/alembic/versions/b7c5e1a90342_scenario_pension_elections.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

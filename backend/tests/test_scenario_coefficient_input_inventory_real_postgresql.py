@@ -16,6 +16,7 @@ from app.db.base import Base, load_all_models
 from app.models.client import Client
 from app.models.pension_product import PensionProduct, PensionProductComponent, PensionProductAuditEvent
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
+from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
 from app.models.canonical_pension_temporal_decision import CanonicalPensionTemporalDecision
 from app.models.canonical_conversion import batches, conversions, allocations, pensions
@@ -66,7 +67,7 @@ def test_real_coefficient_inventory_in_shared_snapshot():
         tables = _dependent_tables(
             Client.__table__, PensionProduct.__table__, PensionProductAuditEvent.__table__,
             PensionProductComponent.__table__, ScenarioDraft.__table__,
-            ScenarioDraftDecision.__table__, CanonicalManualPensionSource.__table__,
+            ScenarioDraftDecision.__table__, ScenarioDraftPensionElection.__table__, CanonicalManualPensionSource.__table__,
             batches, conversions, allocations, pensions,
             CanonicalPensionTemporalDecision.__table__,
             CapitalAsset.__table__, RetirementTimingWorkIntention.__table__,
@@ -142,7 +143,7 @@ def test_real_coefficient_inventory_in_shared_snapshot():
         assert first["inventory_state"] == "UNRESOLVED"
         assert first["entries"][0]["state"] == "UNRESOLVED"
         assert "EXPLICIT_PROFILE_FACTS_REQUIRED" in first["entries"][0]["blockers"]
-        assert "SCENARIO_PENSION_ELECTION_MISSING" in first["entries"][0]["blockers"]
+        assert "SCENARIO_PENSION_ELECTION_MISSING_OR_STALE" in first["entries"][0]["blockers"]
         assert "SCENARIO_COEFFICIENT_PERMISSION_NOT_EVALUATED" in first["entries"][0]["blockers"]
         assert first["execution_allowed"] is False
         assert first["financial_result"] is None
@@ -157,14 +158,27 @@ def test_real_coefficient_inventory_in_shared_snapshot():
             })
         refreshed = build_coefficient_input_inventory(factory, client_id=7, scenario_id="s")
         assert "EXPLICIT_PROFILE_FACTS_REQUIRED" not in refreshed["entries"][0]["blockers"]
-        assert "SCENARIO_PENSION_ELECTION_MISSING" in refreshed["entries"][0]["blockers"]
+        assert "SCENARIO_PENSION_ELECTION_MISSING_OR_STALE" in refreshed["entries"][0]["blockers"]
         assert refreshed["inventory_state"] == "UNRESOLVED"
         assert refreshed["inventory_fingerprint"] != first["inventory_fingerprint"]
+        with scoped.begin() as conn:
+            conn.execute(ScenarioDraftPensionElection.__table__.insert(), {
+                "election_id": "e1", "scenario_id": "s", "decision_id": "d",
+                "scenario_version": 1, "pension_start_date": date(2040, 1, 1),
+                "target_year": 2040, "survivors_option": "תקנוני",
+                "spouse_age_diff": 0, "coefficient_selection": "catalog_candidate",
+            })
+        selected = build_coefficient_input_inventory(factory, client_id=7, scenario_id="s")
+        assert selected["entries"][0]["election_state"] == "CURRENT_DRAFT_NOT_ADMITTED"
+        assert "SCENARIO_PENSION_ELECTION_MISSING_OR_STALE" not in selected["entries"][0]["blockers"]
+        assert "SCENARIO_COEFFICIENT_PERMISSION_NOT_EVALUATED" in selected["entries"][0]["blockers"]
+        assert selected["execution_allowed"] is False
         with scoped.begin() as conn:
             conn.execute(ScenarioDraft.__table__.update().where(
                 ScenarioDraft.scenario_id == "s").values(version=2))
         versioned = build_coefficient_input_inventory(factory, client_id=7, scenario_id="s")
         assert versioned["scenario_version"] == 2
+        assert versioned["entries"][0]["election_state"] == "MISSING_OR_STALE"
         assert versioned["inventory_fingerprint"] != refreshed["inventory_fingerprint"]
     finally:
         with engine.begin() as conn:

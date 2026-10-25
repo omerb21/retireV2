@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base, load_all_models
 from app.models.client import Client
-from app.models.pension_product import PensionProduct, PensionProductComponent
+from app.models.pension_product import PensionProduct, PensionProductComponent, PensionProductAuditEvent
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
 from app.models.canonical_conversion import batches, conversions, allocations, pensions
@@ -63,7 +63,7 @@ def test_real_canonical_manual_source_in_shared_snapshot():
         with engine.begin() as conn:
             conn.execute(text(f'CREATE SCHEMA "{schema}"'))
         tables = _dependent_tables(
-            Client.__table__, PensionProduct.__table__,
+            Client.__table__, PensionProduct.__table__, PensionProductAuditEvent.__table__,
             PensionProductComponent.__table__, ScenarioDraft.__table__,
             ScenarioDraftDecision.__table__, CanonicalManualPensionSource.__table__,
             batches, conversions, allocations, pensions,
@@ -168,6 +168,14 @@ def test_real_canonical_manual_source_in_shared_snapshot():
                 "amount": Decimal("40.00"), "source_balance_before": Decimal("140.00"),
                 "source_balance_after": Decimal("100.00"),
                 "tax_treatment": "taxable", "matrix_version": "test-matrix",
+            })
+            # Monthly basis authority requires one matching conversion audit event.
+            conn.execute(PensionProductAuditEvent.__table__.insert(), {
+                "event_id": "audit-conversion-1", "client_id": 7,
+                "product_id": "p", "action": "conversion", "version": 1,
+                "snapshot": {"statement_date": None,
+                             "operation": {"batch_id": "batch-1"}},
+                "actor": "integration-test",
             })
             conn.execute(pensions.insert(), {
                 "pension_destination_id": "destination-1", "client_id": 7,

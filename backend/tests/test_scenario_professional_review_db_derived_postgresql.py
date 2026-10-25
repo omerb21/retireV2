@@ -176,6 +176,19 @@ def test_database_derived_professional_review_staleness_real_postgresql():
             assert stored.source_fingerprint == original["source_fingerprint"]
             assert stored.record_fingerprint == saved["review_fingerprint"]
             db.rollback()
+        # SC-06A: read-only readiness sees the documentary review but never
+        # confers professional admission or invokes a coefficient lookup.
+        from app.services.scenario_coefficient_readiness_service import (
+            assess_documentary_readiness,
+        )
+        readiness = assess_documentary_readiness(
+            factory, client_id=7, scenario_id="s", decision_id="d")
+        assert readiness["state"] == "UNRESOLVED"
+        assert readiness["documentary_review_state"] == "MATCHED_NOT_AUTHORIZED"
+        assert readiness["execution_allowed"] is False
+        assert readiness["coefficient_candidate"] is None
+        assert readiness["financial_result"] is None
+        assert readiness["planning_snapshot"] is None
         forged_request = SimpleNamespace(
             app=trusted_request.app,
             state=SimpleNamespace(

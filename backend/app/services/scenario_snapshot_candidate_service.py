@@ -183,9 +183,12 @@ def build_manifest_candidate_snapshot(
         )
         transaction = connection.begin()
         db = Session(bind=connection, autoflush=False, expire_on_commit=False)
-        result = _build_pair_in_snapshot(
-            db, client_id, scenario_id, claimed_manifest, _snapshot_extension,
-        )
+        if _snapshot_extension is None:
+            result = _build_pair_in_snapshot(db, client_id, scenario_id, claimed_manifest)
+        else:
+            result = _build_pair_in_snapshot(
+                db, client_id, scenario_id, claimed_manifest, _snapshot_extension,
+            )
     except BaseException as exc:
         primary = exc
     finally:

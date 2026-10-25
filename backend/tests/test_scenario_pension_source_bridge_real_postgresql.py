@@ -71,6 +71,9 @@ def test_real_canonical_manual_source_in_shared_snapshot():
             ClientProfile.__table__, EmploymentRecord.__table__,
         )
         with scoped.begin() as conn:
+            # Canonical conversion DDL guards use unqualified CREATE TRIGGER
+            # statements. Resolve those names within this isolated test schema.
+            conn.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
             Base.metadata.create_all(conn, tables=tables)
             conn.execute(Client.__table__.insert(), {
                 "client_id": 7, "display_name": "Real Registry Synthetic",

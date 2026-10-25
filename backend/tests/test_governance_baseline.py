@@ -228,6 +228,8 @@ APPROVED_SCENARIO_DRAFT_PATHS = {
     "backend/tests/test_scenario_pension_source_bridge_real_postgresql.py",
     "backend/app/services/scenario_annuity_coefficient_assessment_service.py",
     "backend/tests/test_scenario_annuity_coefficient_assessment.py",
+    "backend/app/services/scenario_coefficient_input_inventory_service.py",
+    "backend/tests/test_scenario_coefficient_input_inventory.py",
     "specs/runtime/SC_SCENARIO_02_CALCULATION_BOUNDARY.md",
     "frontend/src/pages/RetirementWorkspaceScreen.tsx",
 }

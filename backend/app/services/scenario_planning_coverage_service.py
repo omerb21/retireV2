@@ -106,3 +106,25 @@ def inventory_from_authoritative_pair(pair: object) -> dict:
         "financial_result": None,
         "authority_state": "NOT_EVALUATED",
     }
+
+
+def build_planning_coverage_snapshot(
+    factory,
+    *,
+    client_id: int,
+    scenario_id: str,
+) -> dict:
+    """Public DB-owned D3 entrypoint; accepts identities, never a caller pair.
+
+    Existing snapshot owner generates source evidence in one PostgreSQL RR/RO
+    transaction. The inventory is a pure, inert post-processing step on the
+    detached verified pair; no second DB read or independent transaction.
+    """
+    from app.services.scenario_snapshot_candidate_service import (
+        build_manifest_candidate_snapshot,
+    )
+
+    pair = build_manifest_candidate_snapshot(
+        factory, client_id=client_id, scenario_id=scenario_id,
+    )
+    return inventory_from_authoritative_pair(pair)

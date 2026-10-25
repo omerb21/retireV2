@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from app.db.base import load_all_models
 from app.models.client import Client
 from app.models.pension_product import PensionProduct, PensionProductComponent, COMPONENT_CODES
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
@@ -34,6 +35,7 @@ def _engine():
 
 
 def test_real_scenario_admission_keeps_snapshot_under_concurrent_version_change():
+    load_all_models()  # Register related ORM classes before querying canonical rows.
     engine = _engine()
     schema = "sc02b_" + uuid.uuid4().hex[:16]
     tables = [

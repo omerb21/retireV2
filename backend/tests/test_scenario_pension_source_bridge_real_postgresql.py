@@ -145,6 +145,54 @@ def test_real_canonical_manual_source_in_shared_snapshot():
         assert first["planning_snapshot"] is None
         assert any("CANONICAL_MANUAL_PENSION_SOURCES" in query for query in queries)
         assert not any(query.startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP")) for query in queries)
+        # Read a complete, persisted pension-conversion lineage through the
+        # real canonical registry; it must stay historical, never admitted.
+        with scoped.begin() as conn:
+            conn.execute(batches.insert(), {
+                "batch_id": "batch-1", "client_id": 7, "source_product_id": "p",
+                "destination_type": "pension", "matrix_version": "test-matrix",
+                "idempotency_key": "test-batch-1", "request_fingerprint": "a"*64,
+                "expected_product_version": 1, "status": "completed",
+                "effective_date": date(2026, 9, 1), "actor": "integration-test",
+                "result": {},
+            })
+            conn.execute(conversions.insert(), {
+                "conversion_id": "conversion-1", "client_id": 7, "batch_id": "batch-1",
+                "destination_type": "pension", "tax_treatment": "taxable",
+                "converted_amount": Decimal("40.00"), "status": "active", "version": 1,
+            })
+            conn.execute(allocations.insert(), {
+                "allocation_id": "allocation-1", "conversion_id": "conversion-1",
+                "source_product_id": "p", "source_component_id": "c",
+                "component_code_snapshot": COMPONENT_CODES[0],
+                "amount": Decimal("40.00"), "source_balance_before": Decimal("140.00"),
+                "source_balance_after": Decimal("100.00"),
+                "tax_treatment": "taxable", "matrix_version": "test-matrix",
+            })
+            conn.execute(pensions.insert(), {
+                "pension_destination_id": "destination-1", "client_id": 7,
+                "conversion_id": "conversion-1", "name": "Synthetic conversion",
+                "description": "Historical converted component",
+                "converted_balance": Decimal("40.00"),
+                "effective_date": date(2026, 9, 1),
+                "pension_start_date": date(2040, 1, 1),
+                "annuity_factor_text": "200", "coefficient_source": "test-fixture",
+                "coefficient_source_keys": {}, "coefficient_notes": "",
+                "coefficient_catalog_version": "fixture",
+                "coefficient_fallback_used": False,
+                "monthly_numerator": "40.00", "monthly_denominator": "200",
+                "monthly_display_amount": Decimal("0.20"),
+                "tax_treatment": "taxable", "status": "active", "version": 1,
+            })
+        historical = build_pension_source_bridge_snapshot(factory, client_id=7, scenario_id="s")
+        assert historical["bridge_state"] == "UNRESOLVED"
+        assert historical["entries"][0]["historical_conversion_source_ids"] == ["conversion:destination-1"]
+        assert historical["entries"][0]["reconciliation_state"] == "UNRESOLVED"
+        assert historical["entries"][0]["trace_note"] == "HISTORICAL_CONVERSION_NOT_CURRENT_SCENARIO_AUTHORITY"
+        assert historical["execution_allowed"] is False
+        assert historical["financial_result"] is None
+        assert historical["planning_snapshot"] is None
+        assert historical["bridge_fingerprint"] != first["bridge_fingerprint"]
         with scoped.begin() as conn:
             conn.execute(ScenarioDraft.__table__.update().where(ScenarioDraft.scenario_id == "s").values(version=2))
         updated = build_pension_source_bridge_snapshot(factory, client_id=7, scenario_id="s")

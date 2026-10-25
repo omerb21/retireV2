@@ -4,6 +4,8 @@ Revision ID: c5e019a47d62
 Revises: b7c5e1a90342
 """
 from alembic import op
+import os
+import re
 import sqlalchemy as sa
 
 revision = "c5e019a47d62"
@@ -45,6 +47,14 @@ def upgrade():
     )
     op.create_index("ix_scenario_coefficient_professional_reviews_scenario_id",
                     "scenario_coefficient_professional_reviews", ["scenario_id"])
+    if op.get_bind().dialect.name == "postgresql":
+        role = os.environ.get("CRTISBA_APPLICATION_DB_ROLE")
+        if not role or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", role) is None:
+            raise RuntimeError("CRTISBA_APPLICATION_DB_ROLE must be a valid explicit PostgreSQL role")
+        quoted = op.get_bind().dialect.identifier_preparer.quote_identifier(role)
+        op.execute(f"REVOKE ALL PRIVILEGES ON TABLE scenario_coefficient_professional_reviews FROM {quoted}")
+        op.execute(f"GRANT SELECT, INSERT ON TABLE scenario_coefficient_professional_reviews TO {quoted}")
+
 
 
 def downgrade():

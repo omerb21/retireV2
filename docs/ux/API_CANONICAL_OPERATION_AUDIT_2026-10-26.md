@@ -60,3 +60,22 @@ A new test `backend/tests/test_api_business_operation_inventory.py` enumerates a
 **Potential overlap needing an explicit future agent decision:** `POST /api/clients/{client_id}/grants` creates a grant without an employment period link, whereas `POST /api/clients/{client_id}/employment-records/{employment_record_id}/grants` creates a grant attached atomically to a verified **ended** employment period. These are not equivalent contracts. The professional workspace should prefer the latter when a period is selected; a future MCP catalog must not advertise both as interchangeable 'create grant' operations. No existing API deletion or behavior change is authorized by this audit.
 
 **MCP guardrail:** do not automatically expose every mutating OpenAPI route as an agent tool. Explicitly select one action per professional business intent; tag historical, preview, archive, direct-entry and context-linked variants according to what they actually do. A route inventory is a change-detection control, not a replacement for business contract ownership.
+
+## Semantic producer follow-up — grants and historical employment (2026-10-26)
+
+Inspected actual handlers in `backend/app/api/clients_routes.py` (rather than comparing paths alone):
+
+| Professional intent | Existing route | Distinction / MCP rule |
+| --- | --- | --- |
+| Record an ended employment period and its exempt grant in one operation | `POST /api/clients/{client_id}/historical-employment-settlements` | Atomic creation of an EmploymentRecord and optional linked Grant. **Preferred when the period does not yet exist.** |
+| Record exempt grant for an **existing** ended period | `POST /api/clients/{client_id}/employment-records/{employment_record_id}/grants` | Validates period status, dates and existing linked grant. **Preferred when an ended period is already selected.** |
+| Record a grant when no verified period can yet be linked | `POST /api/clients/{client_id}/grants` | Creates an **unlinked** Grant. Does not set a period's exempt-grant status. **Fallback only; never present as equivalent to linked creation.** |
+| Attach an existing unlinked grant to verified ended employment | `POST /api/clients/{client_id}/grants/{grant_id}/employment-link` | Explicit identity and date checks, prevents different-period relink or duplicate linked grant. **Reconciliation operation, not grant creation.** |
+
+**Finding:** These four routes can produce related grant data, but they are different transactional intents. Their coexistence is not by itself proof of the V1 failure pattern. The underlying grant-row construction is repeated across handlers: a **maintenance/consistency risk**, not yet evidence of two contradictory active calculation engines. Do not create an extra business API or delete a supported fallback merely to make the endpoint count smaller.
+
+**Agent catalog rule:** expose `record_historical_employment_with_grant` or `record_grant_for_existing_period` according to the state of the historical employment, not both as generic `create_grant`. Treat unlinked entry as a deliberately separate incomplete-data action; link is reconciliation. Future tests should assert equivalent field mapping where appropriate and preserve different constraints.
+
+**Other reviewed boundaries:** `scenario-drafts` is the sole hypothetical scenario persistence service; `canonical-conversions` is the factual balance-changing service; `m06` and `m09` do not register mutation routes. `PUT /retirement-planning-input/target-date` and `PUT /retirement-income-readiness/target` address date vs monthly income amount respectively; single-item and batch `pension-products` updates share `_update_locked`.
+
+**What has NOT been proven:** semantic uniqueness of fixation entrypoints, all capital/income supplemental writers, archived vs replacement financial producers, and any future agent binding. Structural route-inventory 3/3 PASS protects change visibility, **not** a certificate that all V2 business operations are duplicate-free.

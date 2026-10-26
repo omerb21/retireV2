@@ -56,3 +56,15 @@ def test_fixation_calculation_has_single_discoverable_agent_operation():
     ]
     assert len(registered) == 1
     assert registered[0].include_in_schema is False
+
+
+def test_health_probes_remain_callable_but_are_not_mcp_operations():
+    app = create_app()
+    schema = app.openapi()
+    for path in ("/health", "/healthz/live", "/healthz/ready"):
+        assert path not in schema["paths"]
+        routes = [route for route in app.routes
+                  if isinstance(route, APIRoute) and route.path == path]
+        assert len(routes) == 1
+        assert {"GET", "HEAD"} <= routes[0].methods
+        assert routes[0].include_in_schema is False

@@ -78,3 +78,19 @@ This adds source facts, **not** authorization. Inspected: `app/models/scenario_d
 - Confirm or reject *no-growth static current-balance pension illustration*, with exact disclosure and valuation date sourced from factual evidence.
 - Confirm or reject *one authenticated planner factor admission per decision and scenario version*, with a mandatory factor source/option reference and explicit invalidation.
 - Request one **READ ONLY** independent review of this actual code-derived contract, especially the non-existent `decision_revision` field, two serializer contracts, election-identity reuse and valuation-date evidence. Any mandatory extra DB field or canonical extension requires a separate owner-authorized implementation slice. No code change from this update.
+
+
+## Valuation-date admission correction: existing product statement date (2026-10-26)
+
+**Direct code facts:** `PensionProduct.statement_date` is a nullable DB date on the existing source product. `ScenarioDraftDecision.effective_date` is a separate proposed action date. `ScenarioDraftPensionElection.pension_start_date` is intended annuity start. `ScenarioDraftService._source_evidence()` hashes product ID, version, product type/source identity and the component balance; **does not directly hash `statement_date`**. `scenario_input_manifest_service.SOURCE_FIELDS` is a strict closed set that likewise excludes statement date; changing that set to fit Stage 6 would disturb the previously accepted inert Manifest schema and is **not** recommended in this package.
+
+**Minimal proposed date authority (requires independent design approval):**
+- Read `PensionProduct.statement_date` from the same validated `PensionProduct` selected by `client_id`, `source_product_id` and source version, inside the same PostgreSQL `REPEATABLE READ READ ONLY` snapshot as decision, component, election, coefficient and professional admission. Do not trust dates supplied by frontend.
+- Require `statement_date IS NOT NULL` for static present-balance illustration. Reject if `statement_date > pension_start_date` or `statement_date > retirement_target_date`, if applicable. If component balance date granularity differs from product statement date, require an explicit source proof; product `statement_date` is **not automatically sufficient** for all derived balances.
+- Bind `statement_date` in the *new* scenario-specific **monthly source fingerprint preimage**, temporal source fingerprint and scenario planning input identity, beside product version, balance, normalized factor, option and approval. Set `base_amount_effective_date=statement_date` and `temporal_origin_date=statement_date` only once the same-time basis is established. This ensures date changes invalidate authority even if a source-product version is accidentally unchanged.
+- `temporal_kind="none"`, `annual_rate=null`, `rate_basis=null` are code-valid *shapes*, not an owner-approved no-growth policy. The payout date only selects age/option applicability; the result is a static current-balance illustration, not a forecast.
+- A new derived scenario identity may combine current accepted Manifest fingerprint with separately recomputed product statement-date evidence. Do not extend Manifest `SOURCE_FIELDS` or fabricate a factual pension source. This keeps historical SC-03 contracts inert and intact.
+
+**Test obligations:** null date; future date; date after pension start; changed date without balance/version mutation; stale date-specific manual approval; different date in source and temporal basis; source product reused across clone; source value and payment target unexpectedly mixed. All BLOCK before executor access if source date authority is unresolved.
+
+**Scope note:** If valuation-date policy is not explicitly accepted by owner and independently reviewed, `STAGE6_IMPLEMENTATION`, coefficient lookup and financial execution remain `NOT_AUTHORIZED`.

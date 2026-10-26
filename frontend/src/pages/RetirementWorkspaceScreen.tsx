@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { mockConversionRejection } from "./mockConversionEligibility";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
@@ -21,7 +20,6 @@ const FIXED_CODES: Array<[string, string, "פיצויים" | "תגמולים"]> 
 ];
 type Step = "client" | "portfolio" | "supplement" | "scenario" | "results";
 type Selection = { productId: string; code: string };
-type ScenarioMockDecision = { id: number; source: string; amount: string; action: "pension" | "capital" };
 type Draft = { productId: string; version: number; components: Record<string, string> };
 type ReadState =
   | { state: "loading" }
@@ -47,30 +45,6 @@ function money(value: string | null | undefined): string {
   const fraction = (parts[3] ?? "").replace(/0+$/, "");
   return parts[1] + integer + (fraction ? "." + fraction : "");
 }
-function mockAmountInCents(value: string): bigint | null {
-  if (!/^(0|[1-9][0-9]*)(?:[.][0-9]{1,2})?$/.test(value)) return null;
-  const [whole, fraction = ""] = value.split(".");
-  return BigInt(whole) * 100n + BigInt((fraction + "00").slice(0, 2));
-}
-function mockNominalAmount(decisions: ScenarioMockDecision[], action: ScenarioMockDecision["action"]): string {
-  const total = decisions.filter(item => item.action === action)
-    .reduce((sum, item) => sum + (mockAmountInCents(item.amount) ?? 0n), 0n);
-  return money((total / 100n).toString() + "." + (total % 100n).toString().padStart(2, "0"));
-}
-function mockResidualAmount(decisions: ScenarioMockDecision[], products: PensionProduct[]): string | null {
-  const sources = [...new Set(decisions.map(item => item.source))];
-  if (sources.length === 0) return null;
-  const total = sources.reduce((sum, source) => {
-    const [productId, code] = source.split("|");
-    const product = products.find(item => item.product_id === productId);
-    const original = product?.components[code] == null ? null : mockAmountInCents(product.components[code]);
-    if (original == null) return sum;
-    const allocated = decisions.filter(item => item.source === source)
-      .reduce((sourceSum, item) => sourceSum + (mockAmountInCents(item.amount) ?? 0n), 0n);
-    return sum + original - allocated;
-  }, 0n);
-  return money((total / 100n).toString() + "." + (total % 100n).toString().padStart(2, "0"));
-}
 function completeAmount(value: string): boolean {
   return /^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$/.test(value);
 }
@@ -90,14 +64,7 @@ export function RetirementWorkspaceScreen() {
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
-  const [mockAlternatives, setMockAlternatives] = useState<Array<{ id: number; name: string; decisions: ScenarioMockDecision[] }>>([]);
-  const [mockActiveId, setMockActiveId] = useState<number | null>(null);
-  const [mockSource, setMockSource] = useState("");
-  const [mockPlanId, setMockPlanId] = useState<string | null>(null);
-  const [mockAmount, setMockAmount] = useState("");
-  const [mockError, setMockError] = useState<string | null>(null);
-  const [mockEditingDecisionId, setMockEditingDecisionId] = useState<number | null>(null);
-  const [mockAction, setMockAction] = useState<ScenarioMockDecision["action"]>("pension");
+  const [chosenComponent, setChosenComponent] = useState<{ productId: string; componentCode: string } | null>(null);
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
@@ -132,14 +99,7 @@ export function RetirementWorkspaceScreen() {
     grantSaveGeneration.current += 1;
     setRead({ state: "loading" });
     setStep("portfolio");
-    setMockAlternatives([]);
-    setMockActiveId(null);
-    setMockSource("");
-    setMockPlanId(null);
-    setMockAmount("");
-    setMockError(null);
-    setMockEditingDecisionId(null);
-    setMockAction("pension");
+    setChosenComponent(null);
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
@@ -474,33 +434,16 @@ export function RetirementWorkspaceScreen() {
     setError(null);
     setStep(next);
   }
-  function startMockScenarioFromSelection() {
+  function openSavedScenarioFromSelection() {
     if (selection.length !== 1 || draft !== null || saveState === "saving") return;
     const item = selection[0];
-    const raw = products.find(product => product.product_id === item.productId)?.components[item.code];
-    const cents = raw == null ? null : mockAmountInCents(raw);
-    if (cents == null || cents <= 0n) {
-      setError("למעבר להדמיית תכנון יש לבחור רכיב יחיד עם יתרה חיובית.");
+    const product = products.find(row => row.product_id === item.productId);
+    const source = product?.components[item.code];
+    if (!source || !/^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,2})?$/.test(source) || !/[1-9]/.test(source)) {
+      setError("יש לבחור רכיב יחיד עם יתרה חיובית.");
       return;
     }
-    setMockPlanId(null);
-    setMockSource(item.productId + "|" + item.code);
-    setMockAmount("");
-    setMockError(null);
-    switchStep("scenario");
-  }
-  function previewWholePlan(productId: string) {
-    if (draft !== null || saveState === "saving") return;
-    const product = products.find(item => item.product_id === productId);
-    if (!product) return;
-    const first = FIXED_CODES.find(([code]) => {
-      const value = product.components[code];
-      return value != null && (mockAmountInCents(value) ?? 0n) > 0n;
-    });
-    setMockPlanId(productId);
-    setMockSource(first ? productId + "|" + first[0] : "");
-    setMockAmount("");
-    setMockError(null);
+    setChosenComponent({ productId: item.productId, componentCode: item.code });
     switchStep("scenario");
   }
   function toggleCell(productId: string, code: string) {
@@ -509,51 +452,6 @@ export function RetirementWorkspaceScreen() {
       ? prev.filter(item => !(item.productId === productId && item.code === code))
       : [...prev, { productId, code }]);
     setError(null);
-  }
-  function saveMockDecision() {
-    if (!mockSource || mockActiveId === null) return;
-    const [productId, code] = mockSource.split("|");
-    const sourceProduct = products.find(item => item.product_id === productId);
-    const ruleError = mockConversionRejection(code, sourceProduct?.product_type ?? "", mockAction);
-    if (ruleError) {
-      setMockError("החלטת UX-MOCK נחסמה: " + ruleError + " זו אינה הכרעה מקצועית מחייבת.");
-      return;
-    }
-    const sourceValue = sourceProduct?.components[code];
-    const limit = sourceValue == null ? null : mockAmountInCents(sourceValue);
-    const amount = mockAmountInCents(mockAmount);
-    const active = mockAlternatives.find(item => item.id === mockActiveId);
-    const allocated = (active?.decisions ?? [])
-      .filter(item => item.source === mockSource && item.id !== mockEditingDecisionId)
-      .reduce((total, item) => total + (mockAmountInCents(item.amount) ?? 0n), 0n);
-    if (limit == null || amount == null || amount <= 0n || allocated + amount > limit) {
-      setMockError("יש להזין סכום חיובי שאינו חורג מיתרת הרכיב הזמינה בהדמיה.");
-      return;
-    }
-    setMockError(null);
-    setMockAlternatives(prev => prev.map(item => {
-      if (item.id !== mockActiveId) return item;
-      if (mockEditingDecisionId !== null) {
-        return { ...item, decisions: item.decisions.map(decision => decision.id === mockEditingDecisionId
-          ? { ...decision, source: mockSource, amount: mockAmount, action: mockAction }
-          : decision) };
-      }
-      return { ...item, decisions: [...item.decisions, {
-        id: Math.max(0, ...item.decisions.map(decision => decision.id)) + 1,
-        source: mockSource,
-        amount: mockAmount,
-        action: mockAction,
-      }] };
-    }));
-    setMockEditingDecisionId(null);
-    setMockAmount("");
-  }
-  function startMockDecisionEdit(decision: ScenarioMockDecision) {
-    setMockEditingDecisionId(decision.id);
-    setMockSource(decision.source);
-    setMockAmount(decision.amount);
-    setMockAction(decision.action);
-    setMockError(null);
   }
   function startCorrection() {
     const productId = uniqueProductSelection(selection);
@@ -705,13 +603,7 @@ export function RetirementWorkspaceScreen() {
           <p>תיקון כמה רכיבים באותו מוצר נשמר בפעולה אחת עם בקרת גרסה. שינוי הסיווג אינו המרה.</p>
           <div className="professional-workspace__actions">
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={startCorrection}>תיקון יתרות נבחרות</button>
-            <button type="button" disabled={selection.length !== 1 || draft !== null || saveState === "saving"} onClick={startMockScenarioFromSelection}>העבר רכיב להדמיית תרחיש (ללא שמירה)</button>
-            <label>תוכנית מלאה להדמיה
-              <select aria-label="בחר תוכנית שלמה להדמיה" defaultValue="" disabled={draft !== null || saveState === "saving"} onChange={event => { if (event.target.value) previewWholePlan(event.target.value); event.target.value = ""; }}>
-                <option value="">בחר תוכנית — סקירה בלבד</option>
-                {products.map(product => <option key={product.product_id} value={product.product_id}>{product.product_name} — {product.account_reference ?? "ללא מספר חשבון"}</option>)}
-              </select>
-            </label>
+            <button type="button" disabled={selection.length !== 1 || draft !== null || saveState === "saving"} onClick={openSavedScenarioFromSelection}>העבר רכיב לחלופה שמורה</button>
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={() => setSelection([])}>בטל בחירה</button>
             <Link to={"/clients/" + clientId + "/pension-products"}>ייבוא מסלקה ופרטי מוצר מורחבים</Link>
           </div>
@@ -857,181 +749,14 @@ export function RetirementWorkspaceScreen() {
         </form>}
       </section>}
       {step === "scenario" && <section>
-        <ScenarioDraftPanel key={clientId} clientId={clientId} products={products} />
         <h1>תכנון תרחישים</h1>
-        <p className="professional-workspace__boundary">
-          שלב החיבור למנוע התרחישים עדיין לא בוצע. ההמרה הקנונית הקיימת ב־V2 מעדכנת יתרות אמת,
-          ולכן היא לא תופעל מכאן בתור החלטת תרחיש.
-        </p>
-        <section aria-label="התנסות בתכנון תרחיש מקומי">
-          <h2>התנסות במסע התכנון — זיכרון דפדפן בלבד</h2>
-          <p>החלטות אלו הן הדמיית אינטראקציה זמנית. הן אינן נשמרות בשרת, אינן מחשבות מס או קצבה, ויימחקו ביציאה מתיק הלקוח או ברענון הדף.</p>
-          <button type="button" onClick={() => {
-            const id = Math.max(0, ...mockAlternatives.map(item => item.id)) + 1;
-            setMockAlternatives(prev => [...prev, { id, name: "חלופת בדיקה " + id, decisions: [] }]);
-            setMockActiveId(id);
-          }}>צור חלופת הדמיה</button>
-          {mockAlternatives.length > 0 && <label>חלופה פעילה
-            <select value={mockActiveId ?? ""} onChange={event => {
-              setMockActiveId(Number(event.target.value));
-              setMockEditingDecisionId(null);
-              setMockAmount("");
-              setMockError(null);
-            }}>
-              {mockAlternatives.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>}
-          {mockPlanId && (() => {
-            const product = products.find(item => item.product_id === mockPlanId);
-            if (!product) return null;
-            return <section aria-label="סקירת רכיבי תוכנית שלמה">
-              <h3>תוכנית נבחרת לסקירה: {product.product_name}</h3>
-              <p className="professional-workspace__boundary">זוהי בחירה של תוכנית שלמה לסקירת מקורות בלבד. לא בוצעה המרה גורפת או החלטה אוטומטית; כל רכיב נשאר מסווג בנפרד.</p>
-              <ul>{FIXED_CODES.filter(([code]) => (mockAmountInCents(product.components[code] ?? "") ?? 0n) > 0n).map(([code, label]) =>
-                <li key={code}>{label} — {money(product.components[code])} ₪
-                  <button type="button" onClick={() => { setMockPlanId(null); setMockSource(product.product_id + "|" + code); setMockAmount(""); setMockError(null); }}>בחר רכיב לתכנון</button>
-                </li>)}</ul>
-            </section>;
-          })()}
-          {mockActiveId !== null && <div>
-            <label>רכיב כספי לדוגמה
-              <select value={mockSource} onChange={event => { setMockPlanId(null); setMockSource(event.target.value); setMockAmount(""); setMockError(null); }}>
-                <option value="">בחר מקור</option>
-                {products.flatMap(item => FIXED_CODES.filter(([code]) => {
-                  const value = item.components[code];
-                  return value != null && /^[0-9]+(?:[.][0-9]+)?$/.test(value) && !/^0+(?:[.]0+)?$/.test(value);
-                }).map(([code, label]) => <option key={item.product_id + "|" + code} value={item.product_id + "|" + code}>
-                  {item.product_name} — {label} ({money(item.components[code])} ₪)
-                </option>))}
-              </select>
-            </label>
-            <label>כיוון החלטה בהדמיה
-              <select value={mockAction} onChange={event => setMockAction(event.target.value as ScenarioMockDecision["action"])}>
-                <option value="pension">ייעוד לקצבה</option>
-                <option value="capital">ייעוד להון</option>
-              </select>
-            </label>
-            {mockSource && (() => {
-              const [productId, code] = mockSource.split("|");
-              const source = products.find(item => item.product_id === productId)?.components[code];
-              const original = source == null ? null : mockAmountInCents(source);
-              const assigned = (mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? [])
-                .filter(item => item.source === mockSource)
-                .reduce((total, item) => total + (mockAmountInCents(item.amount) ?? 0n), 0n);
-              const displayCents = (amount: bigint) => money((amount / 100n).toString() + "." + (amount % 100n).toString().padStart(2, "0"));
-              return <p aria-label="מצב יתרה בהדמיה">
-                יתרת מקור: <strong>{source == null ? "לא זמינה" : money(source)} ₪</strong>
-                {" · "}הוקצה בחלופה: <strong>{displayCents(assigned)} ₪</strong>
-                {" · "}נותר להקצאה: <strong>{original == null ? "לא זמין" : displayCents(original - assigned) + " ₪"}</strong>
-              </p>;
-            })()}
-            <label>סכום להחלטת הדמיה (₪)
-              <input inputMode="decimal" value={mockAmount} onChange={event => { setMockAmount(event.target.value); setMockError(null); }} placeholder="למשל 25000.00" />
-            </label>
-            {mockError && <p role="alert" style={{ border: "2px solid #b42318", backgroundColor: "#fff1f0", color: "#881c15", padding: "12px", fontWeight: 700, borderRadius: "6px" }}>⚠ {mockError}</p>}
-            <button type="button" disabled={!mockSource} onClick={saveMockDecision}>
-              {mockEditingDecisionId === null ? "הוסף החלטת הדמיה" : "שמור שינוי בהחלטת הדמיה"}
-            </button>
-            {mockEditingDecisionId !== null && <button type="button" onClick={() => {
-              setMockEditingDecisionId(null);
-              setMockAmount("");
-              setMockError(null);
-            }}>בטל עריכת החלטה</button>}
-            <h3>החלטות בדיקה בחלופה</h3>
-            <ul>
-              {(mockAlternatives.find(item => item.id === mockActiveId)?.decisions ?? []).map(decision =>
-                <li key={decision.id}>
-                  {(() => { const [productId, code] = decision.source.split("|"); const item = products.find(row => row.product_id === productId); return item ? item.product_name + " — " + (FIXED_CODES.find(row => row[0] === code)?.[1] ?? "רכיב לא זמין") : "מקור לא זמין"; })()} — {decision.action === "pension" ? "ייעוד לקצבה" : "ייעוד להון"} — {money(decision.amount)} ₪ (הדמיה בלבד)
-                  <button type="button" onClick={() => startMockDecisionEdit(decision)}>ערוך החלטת הדמיה</button>
-                  <button type="button" onClick={() => setMockAlternatives(prev => prev.map(item => item.id === mockActiveId
-                    ? { ...item, decisions: item.decisions.filter(row => row.id !== decision.id) } : item))}>בטל החלטת הדמיה</button>
-                </li>)}
-            </ul>
-            <button type="button" onClick={() => {
-              const source = mockAlternatives.find(item => item.id === mockActiveId);
-              if (!source) return;
-              const id = Math.max(0, ...mockAlternatives.map(item => item.id)) + 1;
-              setMockAlternatives(prev => [...prev, { id, name: source.name + " — העתק", decisions: source.decisions.map(row => ({ ...row })) }]);
-              setMockActiveId(id);
-              setMockEditingDecisionId(null);
-              setMockAmount("");
-            }}>שכפל חלופת הדמיה</button>
-            <button type="button" onClick={() => {
-              const remaining = mockAlternatives.filter(item => item.id !== mockActiveId);
-              setMockAlternatives(remaining);
-              setMockActiveId(remaining[0]?.id ?? null);
-              setMockEditingDecisionId(null);
-              setMockAmount("");
-            }}>מחק חלופת הדמיה</button>
-          </div>}
-        </section>
-        <h2>לוח עבודה לתרחישים — המחשת UX, ללא שמירה</h2>
-        <div className="professional-workspace__scenario-preview" aria-label="תצוגה תכנונית ללא נתוני תרחיש אמיתיים">
-          <section>
-            <h3>חלופות להשוואה</h3>
-            <table><thead><tr><th scope="col">חלופה</th><th scope="col">תפקיד בתהליך</th><th scope="col">מצב</th></tr></thead>
-              <tbody>
-                <tr><th scope="row">מצב בסיס</th><td>צילום מצב עובדתי להשוואה</td><td>טרם הופק</td></tr>
-                <tr><th scope="row">חלופה חדשה</th><td>החלטות עצמאיות שאינן משנות יתרות מקור</td><td>טרם נוצרה</td></tr>
-                <tr><th scope="row">חלופה להשוואה</th><td>בחירת החלטות אחרות או העתקת חלופה</td><td>טרם נוצרה</td></tr>
-              </tbody>
-            </table>
-          </section>
-          <section>
-            <h3>מהלך עבודה לכל חלופה</h3>
-            <ol>
-              <li>בחירת מקור עובדתי מאומת מתוך התיק הפנסיוני או הנתונים המשלימים.</li>
-              <li>הגדרת החלטת הקצאה זמנית לקצבה או להון. היתרה שלא הוקצתה מוצגת כשארית מחושבת ואינה החלטה כספית נפרדת.</li>
-              <li>צפייה בהחלטות, תיקון או ביטול — בלי לשנות את המקור ובלי להשפיע על חלופה אחרת.</li>
-              <li>הפעלה נפרדת של מנוע חישוב מורשה, ופסילת תוצאה שהתיישנה בעקבות שינוי נתוני אמת.</li>
-            </ol>
-          </section>
-        </div>
-        <p className="professional-workspace__boundary">השלבים לעיל הם אפיון UX בלבד: אין כפתורי פעולה מדומים, אין כתיבה למסד ואין חישוב מס או קצבה.</p>
+        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent} />
+        <p className="professional-workspace__boundary">חלופות נשמרות בשרת בנפרד מיתרות התיק. אין עדיין חישוב קצבה, מס או תוצאות כספיות לתרחיש.</p>
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
-        <p className="professional-workspace__boundary">
-          אין עדיין השוואת חלופות מחושבת בממשק זה. לא יוצגו מספרי קצבה, פטורים, מס או NPV שלא חושבו ואושרו במנוע V2.
-        </p>
-        <h2>השוואת חלופות הדמיה — ללא תוצאות כספיות</h2>
-        <div className="professional-workspace__ledger" role="region" aria-label="מבנה השוואת חלופות ללא תוצאות" tabIndex={0}>
-          <table>
-            <thead><tr><th scope="col">מדד</th><th scope="col">מצב בסיס</th>
-              {mockAlternatives.map(item => <th key={item.id} scope="col">{item.name}</th>)}
-            </tr></thead>
-            <tbody>
-              <tr><th scope="row">החלטות הדמיה</th><td>לא נוצר</td>
-                {mockAlternatives.map(item => <td key={item.id}>{item.decisions.length} החלטות זמניות</td>)}
-              </tr>
-              <tr><th scope="row">סכום קרן שיועד לקצבה בהדמיה (לא קצבה חודשית)</th><td>לא חושב</td>
-                {mockAlternatives.map(item => <td key={item.id}>{mockNominalAmount(item.decisions, "pension")} ₪</td>)}
-              </tr>
-              <tr><th scope="row">סכום קרן שיועד להון בהדמיה (לא משיכה מאושרת)</th><td>לא חושב</td>
-                {mockAlternatives.map(item => <td key={item.id}>{mockNominalAmount(item.decisions, "capital")} ₪</td>)}
-              </tr>
-              <tr><th scope="row">יתרה לא מוקצית במקורות שנבחרו (יתרת מקור פחות הקצאות)</th><td>לא נבחר מקור</td>
-                {mockAlternatives.map(item => <td key={item.id}>{(() => { const residual = mockResidualAmount(item.decisions, products); return residual === null ? "לא נבחר מקור" : residual + " ₪"; })()}</td>)}
-              </tr>
-              <tr><th scope="row">פירוט החלטות</th><td>אין</td>
-                {mockAlternatives.map(item => <td key={item.id}>
-                  {item.decisions.length === 0 ? "אין החלטות" :
-                    <ul>{item.decisions.map(decision => <li key={decision.id}>
-                      {(() => { const [productId, code] = decision.source.split("|"); const product = products.find(row => row.product_id === productId); return (product?.product_name ?? "מקור לא זמין") + " — " + (FIXED_CODES.find(row => row[0] === code)?.[1] ?? "רכיב לא זמין"); })()}
-                      {" · "}{money(decision.amount)} ₪ {" · "}{decision.action === "pension" ? "ייעוד לקצבה" : "ייעוד להון"}
-                    </li>)}</ul>}
-                </td>)}
-              </tr>
-              {["מועד פרישה", "קצבה חודשית", "משיכות הוניות", "מסים ופטורים", "הנחות ומקורות", "עדכניות תוצאה"].map(label =>
-                <tr key={label}><th scope="row">{label}</th><td>לא חושב</td>
-                  {mockAlternatives.map(item => <td key={item.id}>לא חושב</td>)}
-                </tr>)}
-            </tbody>
-          </table>
-        </div>
-        <p className="professional-workspace__boundary">שמות החלופות והחלטות ההדמיה מוצגים מהזיכרון המקומי בלבד. אין כאן השוואה פיננסית מחושבת, שמירה או אישור מקצועי.</p>
-        <p>בעתיד כל תוצאה תציג את ההחלטות, הבסיס המקצועי ומועד החישוב. שינוי בנתוני המקור ידרוש אימות מחודש ולא יוצג כתוצאה מעודכנת.</p>
-        <p className="professional-workspace__boundary">אין עדיין תרחישים מחושבים להצגה או אישור מקצועי של ההשוואה.</p>
+        <p className="professional-workspace__boundary">השוואת הקצאות הטיוטה השמורות מוצגת להלן. אין עדיין תוצאות קצבה, מס, הון נזיל או NPV מחושבות.</p>
+        <ScenarioDraftPanel clientId={clientId} products={products} />
         <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
       </section>}
     </div>

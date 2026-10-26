@@ -48,3 +48,7 @@
 Reviewed both target service implementations. The retirement target date and desired monthly retirement income are **different professional facts**, not duplicate implementations of the same action. Preserve both APIs. The saved-scenario editor and mock local editor were consolidated in frontend; the owner-reported test run on the accepted UX delta was 25/25 PASS, while API registration collision tests reported 2/2 PASS. These tests **do not certify complete semantic API uniqueness** across every domain. New focused canonical-ID handoff oracle was added and awaits a local run.
 
 **Remaining audit limitation:** this is an inventory of HTTP route registrations and selected core producer implementations, not yet an exhaustive call-graph of all backend and frontend functions. Do not claim system-wide duplicate-free status or MCP readiness based on it.
+
+## PostgreSQL acceptance extension — pending local execution
+
+The existing isolated PostgreSQL 16 test `backend/tests/test_scenario_draft_postgresql.py::test_postgresql_draft_migration_and_cas` now additionally exercises persisted duplicate, clone-only edit, two-scenario read comparison, original archive, and distinct-client separation. This reuses the existing disposable `postgres_url` fixture and migration path, without creating an API, schema, mock store, or a second scenario system. **No PASS claim until the owner runs it.**

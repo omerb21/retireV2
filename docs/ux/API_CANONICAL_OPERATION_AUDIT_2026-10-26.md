@@ -99,3 +99,21 @@ Three monitoring routes (`GET/HEAD /health`, `/healthz/live`, `/healthz/ready`) 
 - Financial scenario engine/cashflow adapter and coefficient lookup remain **NOT AUTHORIZED**; no route has been re-enabled by this audit.
 
 This is a grounded endpoint-level classification, **not** a complete proof of identical numerical output across fixation preview and saved-run paths; preserve both distinct professional intents while retaining one underlying approved calculation engine.
+
+## Computation producer review — execution versus archives (2026-10-26)
+
+Reviewed concrete implementations `fixation_service`, `m06_conversion_service`, `m09_cashflow_service`, `m10_comparison_service`, `capital_projection_execution_service`, `pension_target_date_execution_service`, and `retirement_target_date_comparable_monthly_income_service`, plus corresponding API routers.
+
+| Outcome | Executable owner / role | Authority finding |
+| --- | --- | --- |
+| Fixation calculation | `fixation_service.calculate_fixation_payload` -> `app.engines.fixation_engine.calculate_fixation` | One observed engine for client-context calculation; `run_fixation` persists a separately admitted run. |
+| Canonical pre-retirement capital projection | `capital_projection_execution_service` -> `capital_projection_execution_numeric.calculate` | Read-only capital projection, served through `GET /retirement-planning-input/capital-projection`; not the pension monthly-income producer. |
+| Per-source pension at target date | `pension_target_date_execution_service.execute_source` (plus wrappers) | Per-source read-only date/amount execution; distinct from aggregated comparable monthly-income authority. |
+| Comparable monthly income at target date | `retirement_target_date_comparable_monthly_income_service.assess` | Canonical **comparison basis** aggregate, depends on target-income source basis; not a cashflow scenario engine. |
+| Historical conversions | `m06_conversion_service` | Still contains private `_calculate` for historical integrity, but registered `m06_conversion_routes` are GET archive reads only. |
+| Historical cashflow | `m09_cashflow_service.execute_run` remains defined | **Important dormant code risk:** a historical executable service function still exists even though the registered `m09_cashflow_routes` expose GET archive records only. No currently exposed POST execution was found; a future caller could inadvertently resurrect legacy calculation if access is not controlled. |
+| Historical comparison | `m10_comparison_service.compare_runs` remains defined | **Important dormant code risk:** `m10_comparison_routes` has no active endpoint, but callable service code remains. Do not relabel this as a supported current comparison engine. |
+
+**Actionable control:** future MCP and HTTP publication decisions must be based on an explicitly reviewed operation owner, **never** on automatically discovered Python functions, historical service names, or every OpenAPI GET. No new scenario/cashflow adapter or authorization has been granted. Dormant services should stay isolated and not be imported into new professional workflows without a separate admission decision.
+
+**Boundary of evidence:** reviewed service code and current route registration; a repository-wide static/dynamic import-call graph and equivalence tests across every calculation path were not executed. Therefore do **not** claim complete absence of internal duplicate producers.

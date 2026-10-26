@@ -439,8 +439,10 @@ export function RetirementWorkspaceScreen() {
     const item = selection[0];
     const product = products.find(row => row.product_id === item.productId);
     const source = product?.components[item.code];
-    if (!source || !/^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,2})?$/.test(source) || !/[1-9]/.test(source)) {
-      setError("יש לבחור רכיב יחיד עם יתרה חיובית.");
+    const component = product?.conversion_components?.find(row => row.component_code === item.code);
+    if (!source || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(source)
+        || !/[1-9]/.test(source) || !component || component.balance !== source) {
+      setError("הרכיב אינו זמין לתכנון חלופה שמורה. יש לרענן את נתוני המוצר.");
       return;
     }
     setChosenComponent({ productId: item.productId, componentCode: item.code });

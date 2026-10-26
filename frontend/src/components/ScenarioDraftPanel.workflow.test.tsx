@@ -187,11 +187,18 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   fireEvent.click(await screen.findByRole("button", { name: "שכפל חלופה" }));
   await waitFor(() => expect(revisions).toHaveLength(2));
   expect(revisions[0].decisions[0].amount).toBe("35.00");
+  // The cloned draft is selected after duplication; removing its decision
+  // must preserve the original and survive a fresh server-backed reload.
+  await screen.findByRole("heading", { name: "חלופה מקורית — העתק" });
+  fireEvent.click(screen.getByRole("button", { name: "מחק החלטת טיוטה" }));
+  await waitFor(() => expect(revisions[1].decisions).toHaveLength(0));
+  expect(revisions[0].decisions).toHaveLength(1);
+  expect(revisions[0].decisions[0].amount).toBe("35.00");
   const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
   expect(comparison.textContent).toContain("חלופה מקורית — העתק");
   expect(comparison.textContent).toContain("35.00");
   expect(mocks.create).toHaveBeenCalledTimes(1);
-  expect(mocks.replace).toHaveBeenCalledTimes(2);
+  expect(mocks.replace).toHaveBeenCalledTimes(3);
   expect(mocks.duplicate).toHaveBeenCalledTimes(1);
   view.unmount();
   render(<ScenarioDraftPanel clientId={1} products={products} />);

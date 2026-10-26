@@ -5,12 +5,12 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import type { PensionProduct } from "../api/pensionProductsApi";
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), preview: vi.fn(),
+  list: vi.fn(), preview: vi.fn(), create: vi.fn(), replace: vi.fn(), duplicate: vi.fn(),
 }));
 vi.mock("../api/scenarioDraftsApi", () => ({
   listScenarioDrafts: mocks.list,
-  createScenarioDraft: vi.fn(), duplicateScenarioDraft: vi.fn(),
-  replaceScenarioDraft: vi.fn(), archiveScenarioDraft: vi.fn(),
+  createScenarioDraft: mocks.create, duplicateScenarioDraft: mocks.duplicate,
+  replaceScenarioDraft: mocks.replace, archiveScenarioDraft: vi.fn(),
 }));
 vi.mock("../api/scenarioDraftPermissionApi", () => ({
   previewDraftDecision: mocks.preview,
@@ -135,4 +135,67 @@ it("prefills the canonical component ID from the ledger selection without creati
     expect(choices.some(select => select.value === "p1|c1")).toBe(true);
   });
   expect(mocks.list).toHaveBeenCalledTimes(1);
+});
+
+it("uses one versioned saved-draft API for create, allocation, edit, clone and comparison", async () => {
+  let revisions: ScenarioDraft[] = [];
+  let counter = 0;
+  const copy = (item: ScenarioDraft): ScenarioDraft => ({
+    ...item, decisions: item.decisions.map(decision => ({ ...decision })),
+  });
+  mocks.list.mockImplementation(async () => revisions.map(copy));
+  mocks.create.mockImplementation(async (clientId: number, name: string) => {
+    const item = { ...draft("new-" + ++counter), client_id: clientId, name, version: 1, decisions: [] };
+    revisions.push(item);
+    return copy(item);
+  });
+  mocks.replace.mockImplementation(async (clientId: number, existing: ScenarioDraft, decisions: ScenarioDraft["decisions"]) => {
+    expect(clientId).toBe(1);
+    const index = revisions.findIndex(item => item.scenario_id === existing.scenario_id);
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(existing.version).toBe(revisions[index].version);
+    revisions[index] = {
+      ...revisions[index], version: existing.version + 1,
+      decisions: decisions.map((item, position) => ({
+        ...item, decision_id: item.decision_id ?? "added-" + position,
+        validation_state: "unverified" as const,
+      })),
+    };
+    return copy(revisions[index]);
+  });
+  mocks.duplicate.mockImplementation(async (_clientId: number, id: string, name: string) => {
+    const original = revisions.find(item => item.scenario_id === id)!;
+    const result = { ...copy(original), scenario_id: "clone-" + ++counter, name, version: 1 };
+    revisions.push(result);
+    return copy(result);
+  });
+  const view = render(<ScenarioDraftPanel clientId={1} products={products}
+    initialSource={{ productId: "p1", componentCode: "תגמולי_עובד_עד_2000" }} />);
+  fireEvent.change(screen.getByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "חלופה מקורית" } });
+  fireEvent.click(screen.getByRole("button", { name: "צור ושמור חלופה" }));
+  await screen.findByRole("heading", { name: "חלופה מקורית" });
+  const source = screen.getByRole("combobox", { name: "רכיב מתוך התיק" });
+  expect(source).toHaveValue("p1|c1");
+  fireEvent.change(screen.getByRole("textbox", { name: "סכום מתוכנן (₪)" }), { target: { value: "25.00" } });
+  fireEvent.change(screen.getByLabelText("תאריך תכנון"), { target: { value: "2026-10-26" } });
+  fireEvent.click(screen.getByRole("button", { name: "שמור החלטה כטיוטה" }));
+  await waitFor(() => expect(revisions[0].decisions[0]?.amount).toBe("25.00"));
+  fireEvent.click(await screen.findByRole("button", { name: "ערוך" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "סכום מתוכנן (₪)" }), { target: { value: "35.00" } });
+  fireEvent.click(screen.getByRole("button", { name: "שמור עריכת טיוטה" }));
+  await waitFor(() => expect(revisions[0].decisions[0]?.amount).toBe("35.00"));
+  fireEvent.click(await screen.findByRole("button", { name: "שכפל חלופה" }));
+  await waitFor(() => expect(revisions).toHaveLength(2));
+  expect(revisions[0].decisions[0].amount).toBe("35.00");
+  const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
+  expect(comparison.textContent).toContain("חלופה מקורית — העתק");
+  expect(comparison.textContent).toContain("35.00");
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).toHaveBeenCalledTimes(2);
+  expect(mocks.duplicate).toHaveBeenCalledTimes(1);
+  view.unmount();
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  await screen.findByRole("button", { name: /חלופה מקורית — גרסה/ });
+  expect((await screen.findByRole("region", { name: "השוואת חלופות טיוטה" })).textContent)
+    .toContain("חלופה מקורית — העתק");
 });

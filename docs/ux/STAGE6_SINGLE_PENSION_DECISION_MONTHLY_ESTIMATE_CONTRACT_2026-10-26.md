@@ -63,3 +63,20 @@ At **current branch HEAD** (do not rely on older reviewed SHAs), inspect the rea
 5. Testable scoped verdict `PASS_DESIGN_ONLY` or `BLOCKED`, conditions and specific next owner choices. **Even PASS_DESIGN_ONLY is not a deployment, execution, or code authorization.**
 
 **Release flags unchanged:** `STAGE_6_IMPLEMENTATION=NOT_AUTHORIZED`; `COEFFICIENT_LOOKUP=NOT_AUTHORIZED`; `FINANCIAL_CALCULATION=NOT_AUTHORIZED`; `SCENARIO_CALCULATION_ADAPTER=NOT_AUTHORIZED`; `PRODUCTION_DEPLOYMENT=NOT_AUTHORIZED`.
+
+
+## 2026-10-26 research direction: cross-fund generic coefficient feasibility
+
+Owner furnished a Phoenix 2020 password/locked Excel binary pension calculator (`.xlsb`) and hypothesizes that new pension-fund coefficients are identical or sufficiently close across fund managers. **This is a hypothesis, not a verified acceptance result.** The file package is a valid XLSB archive with two binary sheets and VBA; its internal table/calculation values were not reliably decoded or numerically validated in this inspection.
+
+Official Menora January 2026 pension rules include age/birth-year/sex, survivors and guarantee option coefficient annexes (e.g. for male born 1960 retiring at 67, 60% surviving-spouse pension and 120-month guarantee, published example coefficient 190.20 under the annex's spouse-age and fee assumptions). Harel official regulations describe an analogous dimension model. **No matched Phoenix-versus-other-fund point comparison has yet been validated.** Do not assert equality or make Phoenix universally authoritative on this basis.
+
+Research acceptance before adopting a single reusable pension-fund model:
+- Decode/independently execute and document the Phoenix file's actual coefficient selection and year/assumption version; do not execute embedded VBA macros blindly.
+- Match fund *and* regulation vintage, comprehensive/general fund, male/female, birth years and retirement dates, spouse age/sex and gap, survivors 30/60/100%, guarantees 0/60/120/180/240 where supported, and pensioner management-fee assumptions. Use published official annexes from multiple managers and compare a prespecified matrix, not just cherry-picked examples.
+- Report absolute coefficient differences, relative differences, and resulting monthly pension differences per 1m NIS allocation. Declare and owner-approve a materiality tolerance before concluding `GENERIC_ACCEPTED`.
+- If differences are material or scenario-dependent, maintain provider-specific versioned official tables in the **existing** coefficient service with generic planning fallback distinctly labelled. If immaterial, allow a **validated cross-fund planning approximation** distinctly labelled, not a contractual or official fund-specific quotation.
+- Manual decision-scoped coefficient editing remains mandatory in either outcome.
+- Prioritize manager-insurance policy/generation-specific factor source research after the cross-fund test, without presupposing the result.
+
+Research/contract status: **CROSS_FUND_EQUIVALENCE=UNVERIFIED**; `COEFFICIENT_LOOKUP=NOT_AUTHORIZED`; `STAGE_6_IMPLEMENTATION=NOT_AUTHORIZED`. No financial execution, CI, merge or deployment approved.

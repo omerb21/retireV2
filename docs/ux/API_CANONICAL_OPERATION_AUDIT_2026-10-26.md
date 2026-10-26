@@ -23,7 +23,7 @@
 | Permission-only scenario conversion preview | `POST /api/clients/{client_id}/scenario-conversions/permission-preview` | Distinct from executing canonical conversion and distinct from editing draft |
 | View historical conversion | `GET /api/clients/{client_id}/m06/*` | Archive-only read, not a second conversion writer |
 | View archived cashflow/comparison | `GET /api/clients/{client_id}/m09/*`, sealed `m10` | Archive-only or sealed; no live scenario financial calculation |
-| Planning base date and retirement target | `/retirement-planning-input/target-date` vs `/retirement-income-readiness/target` | **Needs semantic ownership comparison**: likely different concepts; do not merge based on route similarity |
+| Planning base date and retirement target | `/retirement-planning-input/target-date` vs `/retirement-income-readiness/target` | **Confirmed separate concepts:** `retirement-planning-input/target-date` writes the planned retirement **date** via `retirement_target_service.set_target` and `PlanningInputDecision`; `retirement-income-readiness/target` writes the desired **monthly income amount**, basis and price reference via `retirement_monthly_income_target_service.confirm`. Distinct input facts, not duplicate producers |
 | Fixation validation vs calculation vs saving | `/fixation/validate`, `/fixation/calculate`, `/fixation/save` | Different lifecycle operations, no proven duplicate |
 | Retirement readiness context | `GET /retirement-income-readiness/context` | Separate read model of planning input, not necessarily second writer |
 | Professional review/readiness | Internal SC-05/06 services | No public review execution API; financial admission/lookup prohibited |
@@ -32,7 +32,7 @@
 
 - `backend/tests/test_api_route_ownership_contract.py` introduced to reject exact or equivalent-param method+path duplicates at FastAPI registration. This is an **HTTP collision test only**; it does not prove semantic uniqueness of distinct endpoints.
 - For future MCP, define a canonical action catalogue with one action per business intent and explicit separation of `read`, `factual write`, `draft write`, `preview`, `historical read`, and `financial execute`. Never expose prototype or archive operations as an alternative way to perform an active action.
-- Remaining review tasks: pension single-product PUT and multi-product `save-selected` **verified as shared `_update_locked` producer**; still trace base retirement target date vs monthly income target and all frontend write call sites. Do not certify absence of every semantic duplicate until these are resolved.
+- Remaining review tasks: pension single-product PUT and multi-product `save-selected` **verified as shared `_update_locked` producer**; retirement date vs monthly-income target **confirmed distinct facts/producers**; all frontend write call sites and remaining non-scenario domains still require operation ownership review. Do not certify absence of every semantic duplicate until these are resolved.
 
 ## Next bounded implementation
 
@@ -42,3 +42,9 @@
 4. Focused TS/Vite + backend route contract tests; one realistic synthetic-client walkthrough. One independent Work gate for the substantive UX consolidation, not per commit.
 
 **No canonical fact mutation by scenario actions.** No approval chains, migrations, CI, merge or deploy authorization.
+
+## Audit follow-up (26 October)
+
+Reviewed both target service implementations. The retirement target date and desired monthly retirement income are **different professional facts**, not duplicate implementations of the same action. Preserve both APIs. The saved-scenario editor and mock local editor were consolidated in frontend; the owner-reported test run on the accepted UX delta was 25/25 PASS, while API registration collision tests reported 2/2 PASS. These tests **do not certify complete semantic API uniqueness** across every domain. New focused canonical-ID handoff oracle was added and awaits a local run.
+
+**Remaining audit limitation:** this is an inventory of HTTP route registrations and selected core producer implementations, not yet an exhaustive call-graph of all backend and frontend functions. Do not claim system-wide duplicate-free status or MCP readiness based on it.

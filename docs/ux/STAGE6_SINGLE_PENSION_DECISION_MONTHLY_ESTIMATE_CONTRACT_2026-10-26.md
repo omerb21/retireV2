@@ -80,3 +80,19 @@ Research acceptance before adopting a single reusable pension-fund model:
 - Prioritize manager-insurance policy/generation-specific factor source research after the cross-fund test, without presupposing the result.
 
 Research/contract status: **CROSS_FUND_EQUIVALENCE=UNVERIFIED**; `COEFFICIENT_LOOKUP=NOT_AUTHORIZED`; `STAGE_6_IMPLEMENTATION=NOT_AUTHORIZED`. No financial execution, CI, merge or deployment approved.
+
+
+## Focused code-level acceptance addendum: canonical exact-ratio reuse (2026-10-26)
+
+**Finding, verified from branch code (not Work acceptance):**
+`backend/app/services/pension_monthly_basis_service.py` already has `manual()` that maps a *current factual manual pension source* in `input_mode=calculated` to `authority_kind=manual_balance_ratio`, `base_amount_representation={representation_kind:exact_ratio,numerator:balance,denominator:annuity_factor}` and computes semantic/source fingerprints. The separate existing pension target-date engine accepts `manual_balance_ratio` / `persisted_conversion_ratio` exact ratios. **No new arithmetic producer is justified.**
+
+**Boundary:** `manual()` reads `ManualPensionSource` provenance, requires current factual DB ownership and returns source-specific fingerprints. A saved hypothetical decision is **not** that source. Do not create or modify a factual manual pension source, destination, conversion, product balance or audit row just to get a valid ratio; do not pass forged `source_id`, fingerprints or `basis_authority_ready` values. `scenario_annuity_coefficient_assessment_service` presently returns `BLOCKED / COEFFICIENT_LOOKUP_NOT_AUTHORIZED` regardless of input. `scenario_calculation_admission_service.assess` likewise blocks financial results.
+
+**Narrow independent-review question:** Can the exact existing canonical ratio **representation and fingerprint semantics** be reused for a scenario-derived, source-bound `amount / approved_factor`, without impersonating `ManualPensionSource` or introducing a second monthly-basis producer? If no accepted original producer currently admits that hypothetical basis, classify **CALCULATION_CONTRACT / PROFESSIONAL_DECISION = BLOCKED**; propose the minimum canonical extension boundary, with identified acceptance owner. Merely borrowing JSON syntax or performing Decimal division cannot confer admission.
+
+**Insurance-factor evidence gate:** For pre-2001 insurance contracts, historical cohort averages are not admission. Check original program, policy edition, tranche, contracted retirement option, factor representation (divisor versus pension-per-10,000), proof of contract guarantee and document page. For verified modern insurer XLSX tables, check program marketing interval, rider/deposit limitations and benefit guarantee. Treat `MANUAL_PROFESSIONAL_OVERRIDE` as decision-scoped and explicit, not as a modification of a factual source. A fund-specific or policy-specific quote may supersede a table only when intentionally selected.
+
+**Regression-focused negative checks:** single read-only source snapshot; decision/version and source-tranche mismatch; materialized factual-pension-source spoof; copied sibling manual override; altered divisor or retirement date retaining old fingerprints; use of `fallback 200`; historical inverse-unit confusion; no calls to conversion mutation, M09/M10, tax, fixation, projection or cashflow when admission blocked.
+
+**Acceptance route unchanged:** independent Work READ ONLY on current branch, then explicit owner implementation approval only after contract PASS. No new governance layer, CI, merge or deploy.

@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
+vi.mock("../components/ScenarioDraftPanel", () => ({
+  ScenarioDraftPanel: ({ initialSource }: { initialSource?: { productId: string; componentCode: string } | null }) =>
+    <section aria-label="עורך חלופות שמורות">{initialSource ? initialSource.productId + "|" + initialSource.componentCode : "חלופות שמורות"}</section>,
+}));
 
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(),
@@ -131,161 +135,24 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(within(region).getByText("100")).toBeInTheDocument();
   });
 
-  it("does not write any balance or call conversions from scenario and results navigation", async () => {
+  it("shows only the canonical saved scenario editor and never the browser-only mock", async () => {
     open();
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
     fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
-    expect(screen.getByText(/ההמרה הקנונית הקיימת ב־V2 מעדכנת יתרות אמת/))
-      .toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "לוח עבודה לתרחישים — המחשת UX, ללא שמירה" })).toBeInTheDocument();
-    expect(screen.getAllByText("טרם נוצרה")).toHaveLength(2);
+    expect(screen.getByRole("region", { name: "עורך חלופות שמורות" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "צור חלופת הדמיה" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
-    expect(screen.getByText(/לא יוצגו מספרי קצבה/)).toBeInTheDocument();
-    const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
-    expect(within(comparison).getAllByText("לא חושב")).toHaveLength(8);
+    expect(screen.getByRole("region", { name: "עורך חלופות שמורות" })).toBeInTheDocument();
+    expect(screen.queryByText(/חלופת בדיקה 1/)).not.toBeInTheDocument();
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
-  it("previews a whole pension plan without merging its monetary classifications or writing", async () => {
-    open();
-    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
-    fireEvent.change(screen.getByRole("combobox", { name: "בחר תוכנית שלמה להדמיה" }), { target: { value: "p1" } });
-    const plan = screen.getByRole("region", { name: "סקירת רכיבי תוכנית שלמה" });
-    expect(within(plan).getByText(/פיצויים מעסיק נוכחי/)).toBeInTheDocument();
-    expect(within(plan).getByText(/פיצויים לאחר התחשבנות/)).toBeInTheDocument();
-    expect(within(plan).getAllByRole("button", { name: "בחר רכיב לתכנון" })).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
-    fireEvent.click(within(plan).getAllByRole("button", { name: "בחר רכיב לתכנון" })[1]);
-    expect(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" })).toHaveValue("p1|פיצויים_לאחר_התחשבנות");
-    expect(screen.queryByRole("region", { name: "סקירת רכיבי תוכנית שלמה" })).not.toBeInTheDocument();
-    expect(savePensionProduct).not.toHaveBeenCalled();
-  });
-
-  it("hands off one factual ledger component to the transient scenario preview without writing", async () => {
+  it("passes a selected ledger source to the saved scenario editor without changing actual balances", async () => {
     open();
     const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
     fireEvent.click(within(ledger).getByRole("button", { name: "פיצויים מעסיק נוכחי — קרן פנסיה א" }));
-    fireEvent.click(screen.getByRole("button", { name: "העבר רכיב להדמיית תרחיש (ללא שמירה)" }));
-    expect(screen.getByRole("heading", { name: "תכנון תרחישים" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
-    expect(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" })).toHaveValue("p1|פיצויים_מעסיק_נוכחי");
-    expect(savePensionProduct).not.toHaveBeenCalled();
-  });
-
-  it("blocks a forbidden capital action for current-employer severance in the mock", async () => {
-    open();
-    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
-    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
-    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
-      target: { value: "p1|פיצויים_מעסיק_נוכחי" },
-    });
-    fireEvent.change(screen.getByRole("combobox", { name: "כיוון החלטה בהדמיה" }), {
-      target: { value: "capital" },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), {
-      target: { value: "40.00" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("החלטת UX-MOCK נחסמה");
-    expect(screen.getByRole("alert")).toHaveTextContent("אינה הכרעה מקצועית מחייבת");
-    expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();
-    expect(savePensionProduct).not.toHaveBeenCalled();
-  });
-
-  it("keeps mock scenario decisions transient and never saves them to financial APIs", async () => {
-    open();
-    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
-    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
-    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
-    expect(screen.getByRole("option", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "השארה ללא שינוי" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
-      target: { value: "p1|פיצויים_לאחר_התחשבנות" },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "40.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
-    expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
-    expect(screen.getByLabelText("מצב יתרה בהדמיה")).toHaveTextContent("10");
-
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "20.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("יתרת הרכיב");
-
-    fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
-    expect(screen.getByRole("option", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
-    const preview = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
-    expect(within(preview).getByRole("columnheader", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
-    expect(within(preview).getByRole("columnheader", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
-    expect(within(preview).getAllByText(/40(?:[.]00)? ₪/).length).toBeGreaterThanOrEqual(2);
-    expect(within(preview).getAllByText(/10(?:[.]00)? ₪/).length).toBeGreaterThanOrEqual(2);
-    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
-    expect(screen.getByRole("button", { name: "בטל החלטת הדמיה" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "בטל החלטת הדמיה" }));
-    expect(screen.queryByRole("button", { name: "בטל החלטת הדמיה" })).not.toBeInTheDocument();
-    expect(savePensionProduct).not.toHaveBeenCalled();
-  });
-
-  it("cancels decision editing and selects a remaining alternative after deleting the active copy", async () => {
-    open();
-    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
-    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
-    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "רכיב כספי לדוגמה" }), {
-      target: { value: "p1|פיצויים_לאחר_התחשבנות" },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "20.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
-    fireEvent.click(screen.getByRole("button", { name: "ערוך החלטת הדמיה" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "30.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "בטל עריכת החלטה" }));
-    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "שמור שינוי בהחלטת הדמיה" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
-    expect(screen.getByRole("combobox", { name: "חלופה פעילה" })).toHaveValue("2");
-    fireEvent.click(screen.getByRole("button", { name: "מחק חלופת הדמיה" }));
-    expect(screen.getByRole("combobox", { name: "חלופה פעילה" })).toHaveValue("1");
-    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
-  });
-
-  it("completes a two-alternative planner journey, edits the copy, compares it, and returns without losing context", async () => {
-    open();
-    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
-    fireEvent.click(within(ledger).getByRole("button", { name: "פיצויים לאחר התחשבנות — קרן פנסיה א" }));
-    fireEvent.click(screen.getByRole("button", { name: "העבר רכיב להדמיית תרחיש (ללא שמירה)" }));
-    fireEvent.click(screen.getByRole("button", { name: "צור חלופת הדמיה" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "כיוון החלטה בהדמיה" }), { target: { value: "pension" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "20.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "הוסף החלטת הדמיה" }));
-    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "שכפל חלופת הדמיה" }));
-    fireEvent.click(screen.getByRole("button", { name: "ערוך החלטת הדמיה" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "כיוון החלטה בהדמיה" }), { target: { value: "capital" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "סכום להחלטת הדמיה (₪)" }), { target: { value: "30.00" } });
-    fireEvent.click(screen.getByRole("button", { name: "שמור שינוי בהחלטת הדמיה" }));
-    expect(screen.getByText(/ייעוד להון — 30/)).toBeInTheDocument();
-
-    const activeAlternative = screen.getByRole("combobox", { name: "חלופה פעילה" });
-    fireEvent.change(activeAlternative, { target: { value: "1" } });
-    expect(screen.getByText(/ייעוד לקצבה — 20/)).toBeInTheDocument();
-    fireEvent.change(activeAlternative, { target: { value: "2" } });
-    expect(screen.getByText(/ייעוד להון — 30/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
-    const comparison = screen.getByRole("region", { name: "מבנה השוואת חלופות ללא תוצאות" });
-    expect(within(comparison).getByRole("columnheader", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
-    expect(within(comparison).getByRole("columnheader", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
-    expect(within(comparison).getByText(/20(?:[.]00)? ₪ · ייעוד לקצבה/)).toBeInTheDocument();
-    expect(within(comparison).getByText(/30(?:[.]00)? ₪ · ייעוד להון/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "2. תיק פנסיוני" }));
-    expect(screen.getByRole("region", { name: "טבלת רכיבים נגללת" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
-    expect(screen.getByRole("option", { name: "חלופת בדיקה 1" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "חלופת בדיקה 1 — העתק" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "העבר רכיב לחלופה שמורה" }));
+    expect(screen.getByRole("region", { name: "עורך חלופות שמורות" })).toHaveTextContent("p1|פיצויים_מעסיק_נוכחי");
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 

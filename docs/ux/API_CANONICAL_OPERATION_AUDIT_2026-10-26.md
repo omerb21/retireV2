@@ -117,3 +117,11 @@ Reviewed concrete implementations `fixation_service`, `m06_conversion_service`, 
 **Actionable control:** future MCP and HTTP publication decisions must be based on an explicitly reviewed operation owner, **never** on automatically discovered Python functions, historical service names, or every OpenAPI GET. No new scenario/cashflow adapter or authorization has been granted. Dormant services should stay isolated and not be imported into new professional workflows without a separate admission decision.
 
 **Boundary of evidence:** reviewed service code and current route registration; a repository-wide static/dynamic import-call graph and equivalence tests across every calculation path were not executed. Therefore do **not** claim complete absence of internal duplicate producers.
+
+## Legacy execution reactivation guard — 2026-10-26
+
+Reviewed imports in `m09_scenario_subject_service.py`, `m10_comparison_service.py`, and the active scenario compatibility/admission/snapshot services. `m09_scenario_subject_service` still imports internal M09 primitives; `m10_comparison_service` still imports M09/M09-subject evidence and helpers. These are **legacy internal dependencies**, not evidence that current scenario workflows execute either engine. Current scenario compatibility works with capital projection, pension target-date execution and retirement income gap instead of the historical M09/M10 comparison service.
+
+Added a narrowly scoped AST regression gate in `test_api_route_ownership_contract.py`: new API routes may not import `m09_cashflow_service`, `m09_scenario_subject_service`, or `m10_comparison_service` directly, whether through `from ... import`, `import ...`, or `from app.services import ...`. The existing archive routers are exceptions, because they expose archived evidence. This is preventive: **it does not detect transitive calls, dynamic imports, or calls from other services**. Avoid treating this as a whole-repository proof.
+
+No historical algorithm was deleted; no adapter/calculation was authorized. Local focused test execution is pending.

@@ -43,3 +43,23 @@
 - Master merge, production deploy or full CI.
 
 **Next implementation rule:** modify the UX in a cohesive bounded patch with focused tests, rather than another long chain of provenance/backend packages. Do not claim this diagnostic note is a passed frontend change.
+
+## Stage 5 closure and Stage 6 existing-engine handoff — 2026-10-26
+
+**Stage 5 evidence:** 9/9 `ScenarioDraftPanel.workflow.test.tsx` UI component tests passed, including source handoff, create, allocation, edit, duplicate, removal on clone, comparison and remount with server API mocks. 2/2 `test_scenario_draft_postgresql.py` tests passed with isolated PostgreSQL 16; the second exercised actual FastAPI HTTP routes, separate client isolation, optimistic concurrency, save/edit/duplicate/delete-decision, and a new HTTP client loading the persisted state. This is **not** a live browser E2E run; do not claim otherwise. No financial result was evaluated.
+
+**Stage 6 scope (planning only; no execution authority):** reuse existing canonical producers, not M09/M10 historical engines and not a new financial calculation engine.
+
+| Existing producer | Current input/authority | What the saved scenario does NOT yet supply |
+| --- | --- | --- |
+| `pension_target_date_execution_service.execute_from_planning_result` | Verified planning-result/source and monthly-basis plus temporal fingerprints | Verified scenario-specific planning result, source and authority bindings |
+| `capital_projection_execution_service.execute` | Verified capital plan and source projection basis | Authorized per-scenario capital plan, full source coverage and source-basis authority |
+| `retirement_monthly_income_gap_service.assess` | Fresh session and verified target-date/planning fingerprints | Admitted scenario-target and comparison context |
+| `fixation_service.calculate_fixation_payload` → `fixation_engine` | Independent client-specific tax/fixation admission | No automatic authority to perform fixation calculations from a scenario decision |
+| `scenario_engine_compatibility_service.assess_engine_compatibility` | Read-only signature and inert manifest compatibility | Explicitly returns `execution_allowed=False`, `SCENARIO_ADAPTER_MISSING`, `NO_SCENARIO_ENGINE_ADMISSION_CONTRACT`; it does NOT run financial engines |
+| `scenario_calculation_admission_service.assess` | Read-only actual draft and canonical product sources | Returns `assessment_state=blocked`, `financial_result=None` and permission/professional/tax blockers |
+| `scenario_snapshot_candidate_service` and scenario coefficient review services | Evidence-only database-owned snapshot/review artifacts | Explicitly inert, no coefficient/cashflow/scenario execution permission |
+
+**Decision / independent acceptance input:** before any Stage 6 implementation, the independent professional acceptance route must specify exactly which existing producer can execute on which verified scenario inputs; whether allocations to pension vs capital are professionally admissible, the coefficient lookup authority, date/price/tax context, source balances and over-allocation handling, dependency/fingerprint freshness, the permitted output semantics, and fail-closed behavior. It must determine how the current inert manifest becomes a verified adapter input **without changing canonical source facts**. No existing acceptance package is reopened and no SC-06B supersession workflow is reinstated.
+
+**Boundary:** Stage 6 financial execution, scenario adapter, coefficient lookup and deployment remain `NOT_AUTHORIZED`. The central development conversation may maintain UX and write read-only scoped tests, but cannot self-approve financial logic or substantive architecture. Do not treat structural compatibility as permission to calculate.

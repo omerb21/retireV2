@@ -125,3 +125,9 @@ Reviewed imports in `m09_scenario_subject_service.py`, `m10_comparison_service.p
 Added a narrowly scoped AST regression gate in `test_api_route_ownership_contract.py`: new API routes may not import `m09_cashflow_service`, `m09_scenario_subject_service`, or `m10_comparison_service` directly, whether through `from ... import`, `import ...`, or `from app.services import ...`. The existing archive routers are exceptions, because they expose archived evidence. This is preventive: **it does not detect transitive calls, dynamic imports, or calls from other services**. Avoid treating this as a whole-repository proof.
 
 No historical algorithm was deleted; no adapter/calculation was authorized. Local focused test execution is pending.
+
+## Transitive service dependency audit gate (2026-10-26)
+
+Added `backend/tests/test_legacy_execution_reachability.py`. It parses every Python module in `backend/app` with `ast`, builds an internal Python module dependency graph for `import app.services... `, `from app.services import ...`, and `from app.services.module import ...` patterns (also within functions), and runs reachability from every non-archive `app.api.*_routes` module. It fails with the exact import chain if a live API module can reach `m09_cashflow_service`, `m09_scenario_subject_service` or `m10_comparison_service`. Archive API modules are intentionally excluded as historical evidence readers. No runtime handlers, old numerical engines, tax logic or authorization decisions were altered.
+
+**Limitations:** the analysis is conservative module-level import reachability, not a true runtime function-level call graph; it does not resolve dynamic imports, arbitrary string-based reflection or runtime plugin loading. It does not establish semantic equality of all numerical producers. Run locally alongside the existing API inventory tests before recording PASS.

@@ -43,6 +43,12 @@ function product(id = 1): PensionProduct {
       "פיצויים_מעסיק_נוכחי": "100.00",
       "פיצויים_לאחר_התחשבנות": "50.00",
     },
+    conversion_components: [
+      { component_id: "c1", component_code: "פיצויים_מעסיק_נוכחי",
+        balance: "100.00", allowed_destinations: {} },
+      { component_id: "c2", component_code: "פיצויים_לאחר_התחשבנות",
+        balance: "50.00", allowed_destinations: {} },
+    ],
     reconciliation: {
       rewards_component_sum: "0.00", severance_component_sum: "150.00",
       product_component_sum: "150.00", product_discrepancy: "0.00",

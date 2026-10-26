@@ -84,3 +84,34 @@ def test_openapi_operation_ids_are_unique_for_agent_discovery():
                 "second": (method, path),
             }
             identifiers[operation_id] = (method, path)
+
+
+def test_legacy_execution_services_cannot_be_imported_by_api_routes():
+    """A future route must not resurrect sealed M09/M10 execution services."""
+    import ast
+    from pathlib import Path
+
+    api_dir = Path(__file__).resolve().parents[1] / "app" / "api"
+    blocked = {
+        "app.services.m09_cashflow_service",
+        "app.services.m09_scenario_subject_service",
+        "app.services.m10_comparison_service",
+    }
+    allowed_archives = {"m09_cashflow_routes.py", "m10_comparison_routes.py"}
+    violations = []
+    for file in sorted(api_dir.glob("*_routes.py")):
+        if file.name in allowed_archives:
+            continue
+        tree = ast.parse(file.read_text(encoding="utf-8"), filename=str(file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in blocked:
+                violations.append((file.name, node.lineno, node.module))
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in blocked:
+                        violations.append((file.name, node.lineno, alias.name))
+            if isinstance(node, ast.ImportFrom) and node.module == "app.services":
+                for alias in node.names:
+                    if "app.services." + alias.name in blocked:
+                        violations.append((file.name, node.lineno, alias.name))
+    assert not violations, violations

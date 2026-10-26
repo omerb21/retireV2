@@ -124,3 +124,15 @@ it("opens the selected scenario from comparison without altering saved data", as
   expect(buttons[1].getAttribute("aria-current")).toBe("true");
   expect(mocks.list).toHaveBeenCalledTimes(1);
 });
+
+it("prefills the canonical component ID from the ledger selection without creating a second draft mechanism", async () => {
+  mocks.list.mockResolvedValue([draft("saved")]);
+  render(<ScenarioDraftPanel clientId={1} products={products}
+    initialSource={{ productId: "p1", componentCode: "תגמולי_עובד_עד_2000" }} />);
+  await screen.findByRole("button", { name: /saved — גרסה/ });
+  await waitFor(() => {
+    const choices = Array.from(document.querySelectorAll("select"));
+    expect(choices.some(select => select.value === "p1|c1")).toBe(true);
+  });
+  expect(mocks.list).toHaveBeenCalledTimes(1);
+});

@@ -146,3 +146,169 @@ The preceding historical candidate preimages and open-owner-decision description
 7. Issue a definitive `PASS_DESIGN_ONLY` or `BLOCKED` **for contract completeness**, not claim code is implemented. For BLOCKED, give only the smallest unresolved technical additions. Do not reopen owner D6 decisions.
 
 **Reviewer access:** READ ONLY; no CI, no code changes, no migrations, no PR/merge/deploy. Owner's delegation does not waive independent technical acceptance. Existing authorization flags remain NOT_AUTHORIZED until separate acceptance.
+
+
+# NORMATIVE ADDENDUM N1 — Stage 6 Phase-1 schema contract (2026-10-26)
+
+**Precedence:** This addendum supersedes all prior "candidate" preimages, draft success-envelope prose, invented \`decision_revision\`, and "owner decision pending" statements in this document. Product decisions D6-01–D6-04 stand. This specifies **future** code boundaries and is NOT proof that producers exist today. Design independent PASS remains required before implementation. New schema constants below are proposed binding names, not existing Python constants.
+
+## N1.0 Closed conventions and source snapshot
+
+- One PostgreSQL REPEATABLE READ READ ONLY snapshot, owned by existing \`scenario_snapshot_candidate_service.build_manifest_candidate_snapshot\` and a narrowly reviewed internal extension callback. Never accept user-provided manifest, fingerprints, factor admission, planner identity or source date as authority.
+- Required DB facts: client ID, active draft scenario/version, one decision ID/action=\`pension\`/amount (>0, canonical NIS two decimals), source product ID/version, component ID/code and sufficient balance, product \`statement_date\` (verified source-valuation date), current source digest and manifest/partition digests, saved election for same scenario version and target pension date, option fingerprint, one authenticated approval and its revision.
+- Every identifier is non-empty and bounded by existing DB type, every date is canonical YYYY-MM-DD, every factor is positive finite decimal string normalized without exponent or trailing redundant zeros by \`pension_monthly_basis_service.factor\`. No floats, null for non-null fields, user-supplied version, duplicated source, default date or factor. Statement date must not postdate election start. Missing source-date provenance blocks.
+- Exact source ID: \`scenario-decision:\${scenario_id}:\${decision_id}\`. IDs are DB-owned and cannot contain colon; this delimiter constraint must be validated or the source ID encoded injectively with an explicitly versioned encoding. **Chosen encoding:** UTF-8 percent-encoding of each ID's colon and percent using uppercase %3A and %25, in that order (percent first then colon), and reject malformed ID length. Format \`scenario-decision:<escaped-scenario-id>:<escaped-decision-id>\`; collision checks are mandatory. Do not reuse \`manual:\` or \`conversion:\`.
+- Coefficient phase-1 is \`MANUAL_PROFESSIONAL_OVERRIDE\` exclusively; neither generic nor company lookup is attempted. It may be clearly tagged \`INSURER_QUOTE\`, \`POLICY_CONTRACT\` or \`PLANNER_ASSUMPTION\` as evidence type; the latter is explicitly an assumption, not a guaranteed insurer benefit.
+- All hashes lowercase 64-character hex SHA-256. **Closed field sets**: object preimage has exactly the keys enumerated below; arrays (if any) have documented order. Null is a JSON null, not an absent key. Field-name alphabetical ordering for canonical JSON is established by the respective canonical owner. Each candidate is recomputed from source database facts, not client-supplied hash claims. All recognized evidence and labels are strings except strict integer IDs/versions where indicated and boolean state.
+
+## N1.1 Five authoritative fingerprints — closed schemas
+
+**Hash M1 (monthly semantic).** Owner \`pension_monthly_basis_service.semantic\`; serializer \`pension_monthly_basis_service.canonical_bytes\`; contract tag \`canonical-pension-monthly-amount-basis-semantic-v1\`. Exactly:
+\`\`\`json
+{"contract_version":"canonical-pension-monthly-amount-basis-semantic-v1","authority_kind":"scenario_decision_balance_ratio","base_amount_representation":{"representation_kind":"exact_ratio","numerator":"1000000.00","denominator":"200"},"base_amount_effective_date":"2026-09-30"}
+\`\`\`
+Example strings are illustrative, never defaults. \`numerator\` = DB decision amount formatted 2 decimals; \`denominator\` = approved factor exact string; effective date = verified product statement date. All non-null. Reuse existing \`semantic(kind,representation,effective_date)\` exactly with new kind, do not insert scenario IDs here.
+
+**Hash M2 (monthly source).** Owner: approved **scenario branch** inside \`pension_monthly_basis_service\`; serializer \`canonical_bytes\`; contract tag \`canonical-scenario-pension-monthly-source-v1\`. Exactly this closed-key preimage (ordered here semantically; canonical serializer sorts keys):
+\`\`\`
+{
+ "contract_version":"canonical-scenario-pension-monthly-source-v1",
+ "source_id":"scenario-decision:<escaped-scenario-id>:<escaped-decision-id>",
+ "source_kind":"scenario_decision",
+ "client_id":1,"scenario_id":"...","scenario_version":1,"decision_id":"...",
+ "manifest_fingerprint":"<sha256>","partition_fingerprint":"<sha256>",
+ "source_product_id":"...","source_product_version":1,
+ "source_component_id":"...","component_code":"...",
+ "source_fingerprint":"<sha256>","amount":"1000000.00",
+ "statement_date":"2026-09-30",
+ "election_fingerprint":"<sha256>",
+ "professional_admission_revision":1,
+ "professional_admission_fingerprint":"<sha256>",
+ "monthly_semantic_fingerprint":"<M1>"
+}
+\`\`\`
+All fields required and non-null. \`source_fingerprint\` is existing DB-derived draft source digest, not the new M2. A change to source valuation date, balance, coefficient, option, admission or draft version changes M2. Coefficient value/source/option are covered through the admission fingerprint and M1; source/election context is covered by existing underlying digests.
+
+**Hash T1 (temporal semantic).** Owner \`pension_temporal_basis_service.semantic_fingerprint\`; serializer the same \`pension_monthly_basis_service.canonical_bytes\`; contract tag \`canonical-pension-temporal-indexation-semantic-v1\`. Exactly:
+\`\`\`json
+{"contract_version":"canonical-pension-temporal-indexation-semantic-v1","temporal_authority_kind":"none","temporal_origin_date":"2026-09-30","annual_rate":null,"rate_basis":null}
+\`\`\`
+All keys mandatory; exactly two JSON nulls. Date is verified statement date. \`none\` means factor 1, no CPI/indexation, interest or future contribution. Never send \`"0"\` instead of null. Retirement target is not embedded in T1.
+
+**Hash T2 (temporal source).** Owner proposed scenario-owned extension inside \`pension_temporal_basis_service\`; serializer \`canonical_bytes\`; tag \`canonical-scenario-pension-temporal-source-v1\`. Exactly:
+\`\`\`
+{
+ "contract_version":"canonical-scenario-pension-temporal-source-v1",
+ "source_id":"scenario-decision:<escaped-scenario-id>:<escaped-decision-id>",
+ "source_kind":"scenario_decision","client_id":1,
+ "scenario_id":"...","scenario_version":1,"decision_id":"...",
+ "statement_date":"2026-09-30","retirement_target_date":"2027-09-30",
+ "monthly_source_fingerprint":"<M2>","temporal_semantic_fingerprint":"<T1>",
+ "professional_admission_fingerprint":"<sha256>"
+}
+\`\`\`
+No null fields. Target is election's pension start; it cannot precede statement date. This new source hash is **not** \`manual()\`'s factual source hash.
+
+**Hash P1 (scenario planning calculation input).** Owner proposed \`planning_input_service.scenario_decision_calculation_identity\` (canonical extension, not new parallel producer); serializer **\`planning_input_service.fingerprint\`**, which applies \`serialize\` and sorted compact JSON; tag \`canonical-scenario-pension-planning-calculation-input-v1\`. Exactly:
+\`\`\`
+{
+ "contract":"canonical-scenario-pension-planning-calculation-input-v1",
+ "client_id":1,"scenario_id":"...","scenario_version":1,
+ "decision_id":"...","source_id":"scenario-decision:<escaped-scenario-id>:<escaped-decision-id>",
+ "manifest_fingerprint":"<sha256>","partition_fingerprint":"<sha256>",
+ "source_fingerprint":"<sha256>","statement_date":"2026-09-30",
+ "amount":"1000000.00","action":"pension",
+ "election_fingerprint":"<sha256>",
+ "retirement_target_date":"2027-09-30",
+ "monthly_semantic_fingerprint":"<M1>","monthly_source_fingerprint":"<M2>",
+ "temporal_semantic_fingerprint":"<T1>","temporal_source_fingerprint":"<T2>",
+ "professional_admission_revision":1,
+ "professional_admission_fingerprint":"<sha256>",
+ "ruleset_digest":"<sha256>",
+ "permission_admission_fingerprint":"<sha256>"
+}
+\`\`\`
+All fields non-null, \`ruleset_digest\` and permission admission must be verified **current approved** evidence from existing source/permission owner. A preview ID is not permission; if no source of a current permission-admission fingerprint is accepted in reviewed code, P1 is BLOCKED rather than fabricated. This P1 is distinct from factual \`retirement_target_service.extend_read\`'s \`planning_calculation_input_fingerprint\`, which must remain unchanged. \`source_id\`, target, scenario version and M1/M2/T1/T2 enforce specific decision binding. The planning owner is the only writer/producer of this hash; PTE consumes and compares, never creates authority from a supplied fingerprint.
+
+**Integer types**: \`client_id\`, \`scenario_version\`, \`source_product_version\`, \`professional_admission_revision\` are JSON integers >0. Everything else above is a string except T1 nulls. The five hash preimages have no optional keys. Any literal \`<...>\` is a placeholder that must be replaced with a current validated fact; it cannot enter production.
+
+## N1.2 One-source planning result / PTE call
+
+Contract \`SCENARIO_PENSION_PLANNING_RESULT_V1\`, owned by canonical planning extension and derived inside the single DB snapshot. Closed top-level key set:
+\`\`\`
+{
+ "contract_version":"SCENARIO_PENSION_PLANNING_RESULT_V1",
+ "client_id":1,"scenario_id":"...","scenario_version":1,"decision_id":"...",
+ "planning_calculation_input_fingerprint":"<P1>",
+ "retirement_target":{"retirement_target_date":"2027-09-30","retirement_target_ready":true},
+ "pension_inputs":[{
+   "source_id":"scenario-decision:<escaped-scenario-id>:<escaped-decision-id>",
+   "pension_start_date":"2027-09-30",
+   "currency":"ILS",
+   "monthly_amount_basis":{
+     "contract_version":"canonical-pension-monthly-amount-basis-v1",
+     "source_id":"scenario-decision:<escaped-scenario-id>:<escaped-decision-id>",
+     "source_kind":"scenario_decision",
+     "authority_kind":"scenario_decision_balance_ratio",
+     "base_amount_representation":{"representation_kind":"exact_ratio","numerator":"1000000.00","denominator":"200"},
+     "base_amount_effective_date":"2026-09-30",
+     "basis_authority_ready":true,"basis_blockers":[],
+     "base_amount_semantic_fingerprint":"<M1>","base_amount_source_fingerprint":"<M2>"
+   },
+   "temporal_authority":{
+     "contract_version":"canonical-pension-temporal-indexation-basis-v1",
+     "source_id":"scenario-decision:<escaped-scenario-id>:<escaped-decision-id>",
+     "source_kind":"scenario_decision","temporal_authority_kind":"none",
+     "temporal_origin_date":"2026-09-30","annual_rate":null,"rate_basis":null,
+     "temporal_authority_ready":true,"temporal_blockers":[],
+     "temporal_semantic_fingerprint":"<T1>","temporal_source_fingerprint":"<T2>"
+   }
+ }]
+}
+\`\`\`
+The source array has exactly one item and its identity must match the addressed saved pension decision, never an injected factual \`manual:\` or \`conversion:\` source. All fields mandatory; \`basis_blockers\` and \`temporal_blockers\` are empty arrays in READY, null permitted only where shown. \`execution_allowed\` is NOT a caller-controlled input field. This new source authority kind must be added through **separate approved canonical PTE contract change**; present PTE rejects it.
+
+Prior to calling \`execute_from_planning_result\`, require current accepted professional and permission admission, exact source/election/date and all five DB-produced fingerprints; then pass P1/M1/M2/T1/T2 as \`supplied_...\` exactly. PTE's current identity comparison proves producer-consumer equality *only if* planning snapshot genuinely owns and recomputes them. If unrelated canonical/global retirement target differs, do not override scenario election. Surface \`SCENARIO_GLOBAL_TARGET_CONFLICT\` as decision blocker under this conservative phase-1 policy.
+
+## N1.3 One-planner professional factor admission
+
+Contract \`SCENARIO_PENSION_FACTOR_ADMISSION_V1\`, owned by a **new narrowly scoped persistence row for an authenticated scenario decision** (not SC-06A; requires separately authorized migration after design PASS).
+
+- Unique logical key: \`(client_id,scenario_id,decision_id,admission_revision)\`. Physical row ID may be UUID; only one admitted **current revision** per decision+scenario version is selectable. Append-only immutable rows; revising supersedes old revision rather than mutating history. Transactional CAS checks scenario version, current source/election fingerprints, max revision and currently authenticated planner. Concurrent approvals: one succeeds, other conflicts.
+- Closed admission fingerprint preimage \`SCENARIO_PENSION_FACTOR_ADMISSION_FINGERPRINT_V1\`, SHA-256 with **\`pension_monthly_basis_service.canonical_bytes\`**:
+\`\`\`
+{
+ "contract_version":"SCENARIO_PENSION_FACTOR_ADMISSION_FINGERPRINT_V1",
+ "client_id":1,"scenario_id":"...","scenario_version":1,"decision_id":"...",
+ "admission_revision":1,"manifest_fingerprint":"<sha256>",
+ "source_fingerprint":"<sha256>","election_fingerprint":"<sha256>",
+ "source_product_id":"...","source_component_id":"...","component_code":"...",
+ "amount":"1000000.00","statement_date":"2026-09-30",
+ "pension_start_date":"2027-09-30",
+ "factor_value":"200","factor_original_representation":"DIVISOR",
+ "factor_evidence_type":"PLANNER_ASSUMPTION",
+ "factor_evidence_reference":"<nonempty string>",
+ "survivors_option":"<current election exact value>","spouse_age_diff":0,
+ "payout_option_name":"<nonempty string>",
+ "actor_id":"<authenticated session principal>",
+ "acknowledged_at_utc":"2026-10-26T17:00:00.000000Z"
+}
+\`\`\`
+All fields required, non-null. \`spouse_age_diff\` may be any bounded integer accepted by original election contract; original factor representation in Phase-1 is \`DIVISOR\` only. Other formats require separate verified normalization. Evidence type enumerated: \`INSURER_QUOTE\`, \`POLICY_CONTRACT\`, \`PLANNER_ASSUMPTION\`; the UI displays each accurately. \`factor_evidence_reference\` and \`payout_option_name\` are nonempty free-form professional notes constrained to safe lengths. Actor ID comes from authenticated server session, not posted input. Exact selected option is bound via election fingerprint and copied details. UTC timestamp uses fixed six fractional digits and Z.
+- On clone: copy neither current admission nor its revision/authorization state. New scenario requires new approval. Any change to scenario version, source facts/date, decision amount, factor, election/option, target, current ruleset or permission evidence makes old admission unusable. Maintain immutable record for audit, but return BLOCKED. Do not treat matching SC-06A documentary review as equivalent to admission.
+
+**Important security binding:** because rule/permission changes must invalidate approvals, the actual admission record must additionally bind \`ruleset_digest\` and \`permission_admission_fingerprint\` from current authoritative permission ownership. These are **two mandatory string fields in the closed preimage above**, immediately following \`election_fingerprint\`. An implementation or reviewer must apply this explicit amendment when treating the displayed object as normative. Missing current permission proof -> BLOCK; never invent approval authority from \`permission_preview_id_at_review\`.
+
+## N1.4 Closed result envelopes and fail-closed order
+
+Schema \`STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1\`; both states use exactly these top-level keys (null where indicated):
+\`schema_version,client_id,scenario_id,scenario_version,decision_id,source_id,result_state,execution_allowed,blockers,coefficient_provenance,professional_admission_fingerprint,planning_calculation_input_fingerprint,monthly_basis_semantic_fingerprint,monthly_basis_source_fingerprint,temporal_semantic_fingerprint,temporal_source_fingerprint,pte_source_execution_fingerprint,pte_source_result_fingerprint,monthly_estimate_gross_ils,retirement_target_date,statement_date,result_fingerprint\`.
+
+- BLOCKED: \`result_state="BLOCKED"\`, \`execution_allowed=false\`, \`blockers\` sorted unique nonempty strings, monetary output and PTE hashes NULL. The five identity fields, provenance and admission fingerprint are null if pre-admission; if formerly available but now stale they MUST also be null rather than displayed as current. Entity IDs may be safely populated from already validated route/DB context. Date fields null unless verified in same snapshot.
+- RESULT_READY: \`result_state="RESULT_READY"\`, \`execution_allowed=true\` (**result description, not a preauthorization bit**), \`blockers=[]\`; all IDs, provenance, admission, 5 identity fields, 2 PTE fingerprints, 2 dates and gross estimate string are non-null. \`monthly_estimate_gross_ils\` is PTE \`final_monthly_amount\` and must match PTE result (no recomputation); decimal exactly two digits.
+- \`coefficient_provenance\` in READY is exactly \`{source_level:"MANUAL_PROFESSIONAL_OVERRIDE",factor_value:"<canonical exact>",factor_evidence_type:"...",factor_evidence_reference:"...",payout_option_name:"...",admission_revision:<int>}\`. No 'guaranteed' implication from a planner assumption.
+- \`result_fingerprint\` is SHA-256 via **\`pension_monthly_basis_service.canonical_bytes\`** of \`{contract_version:"STAGE6_SINGLE_PENSION_DECISION_RESULT_FINGERPRINT_V1",result:<all other closed top-level fields excluding result_fingerprint>}\`. Always present in READY and BLOCKED; all strings and numbers typed as specified. The result is ephemeral/read-only; no new persisted financial result.
+- Execution order: validate route/auth -> read fresh authoritative snapshot -> check decision and balance allocation -> verify valuation date/election/target/ruleset/permission -> verify current admission and explicit factor -> canonical five fingerprints -> confirm one-source planning result -> call PTE **once** -> require PTE \`result_state="result_ready"\`, matching source ID, target, all five input identities, nonnull PTE execution/result fingerprints -> construct READY. Any failure before PTE means **zero PTE invocations** and a BLOCKED result. Failure at PTE remains BLOCKED; never reinterpret stale result as ready. No other financial engines, factual writes or auto coefficient lookups.
+- Test fixtures require same byte-for-byte hashes across producer/consumer (including Hebrew Unicode, control characters, null, nested dictionary key sort) and changed-value invalidation, historical inverse coefficient units, simultaneous admissions, cloned scenario, source date only edits, target conflicts and forged old approvals.
+
+**Acceptance gate:** reviewer checks all exact field sets and current ownership. The narrow Phase-1 design can pass only when an actual permission-admission owner is identified, or the gate is explicitly narrowed to an accepted professional authorization independent of the existing always-blocked general scenario assessor. No automatic bypass. This addendum itself remains DESIGN ONLY; no code, CI or deployment permitted.

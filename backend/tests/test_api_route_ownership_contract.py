@@ -68,3 +68,19 @@ def test_health_probes_remain_callable_but_are_not_mcp_operations():
         assert len(routes) == 1
         assert {"GET", "HEAD"} <= routes[0].methods
         assert routes[0].include_in_schema is False
+
+
+def test_openapi_operation_ids_are_unique_for_agent_discovery():
+    app = create_app()
+    identifiers = {}
+    for path, methods in app.openapi()["paths"].items():
+        for method, operation in methods.items():
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            operation_id = operation["operationId"]
+            assert operation_id not in identifiers, {
+                "duplicate_operation_id": operation_id,
+                "first": identifiers.get(operation_id),
+                "second": (method, path),
+            }
+            identifiers[operation_id] = (method, path)

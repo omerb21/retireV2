@@ -52,3 +52,11 @@ Reviewed both target service implementations. The retirement target date and des
 ## PostgreSQL acceptance extension — pending local execution
 
 The existing isolated PostgreSQL 16 test `backend/tests/test_scenario_draft_postgresql.py::test_postgresql_draft_migration_and_cas` now additionally exercises persisted duplicate, clone-only edit, two-scenario read comparison, original archive, and distinct-client separation. This reuses the existing disposable `postgres_url` fixture and migration path, without creating an API, schema, mock store, or a second scenario system. **No PASS claim until the owner runs it.**
+
+## Write-surface freeze and agent exposure policy (2026-10-26)
+
+A new test `backend/tests/test_api_business_operation_inventory.py` enumerates all current POST/PUT/PATCH/DELETE routes from the **registered FastAPI application** and compares them with an explicit reviewed baseline. This catches newly added, removed or renamed write-shaped routes, including differently named paths not detected by the route-collision test. **It does not prove semantic uniqueness by itself, and has not yet been executed locally.**
+
+**Potential overlap needing an explicit future agent decision:** `POST /api/clients/{client_id}/grants` creates a grant without an employment period link, whereas `POST /api/clients/{client_id}/employment-records/{employment_record_id}/grants` creates a grant attached atomically to a verified **ended** employment period. These are not equivalent contracts. The professional workspace should prefer the latter when a period is selected; a future MCP catalog must not advertise both as interchangeable 'create grant' operations. No existing API deletion or behavior change is authorized by this audit.
+
+**MCP guardrail:** do not automatically expose every mutating OpenAPI route as an agent tool. Explicitly select one action per professional business intent; tag historical, preview, archive, direct-entry and context-linked variants according to what they actually do. A route inventory is a change-detection control, not a replacement for business contract ownership.

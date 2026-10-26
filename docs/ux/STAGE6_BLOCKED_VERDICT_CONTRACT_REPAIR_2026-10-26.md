@@ -94,3 +94,22 @@ This adds source facts, **not** authorization. Inspected: `app/models/scenario_d
 **Test obligations:** null date; future date; date after pension start; changed date without balance/version mutation; stale date-specific manual approval; different date in source and temporal basis; source product reused across clone; source value and payment target unexpectedly mixed. All BLOCK before executor access if source date authority is unresolved.
 
 **Scope note:** If valuation-date policy is not explicitly accepted by owner and independently reviewed, `STAGE6_IMPLEMENTATION`, coefficient lookup and financial execution remain `NOT_AUTHORIZED`.
+
+
+## Planning-target identity exact owner and no-regression boundary (2026-10-26)
+
+Verified from `retirement_target_service.extend_read` and `planning_input_service.derive`:
+- Existing **factual** `planning_calculation_input_fingerprint` is computed as `planning_input_service.fingerprint({contract:"canonical-retirement-target-date-authority-v1",planning_input_fingerprint,retirement_target_decision_fingerprint,current_target_reference_fingerprint,retirement_target_ready,retirement_target_blockers})`.
+- `retirement_target_decision_fingerprint` hashes `{contract:"canonical-retirement-target-date-authority-v1",client_id,retirement_target_date,decision_provenance:"explicit_professional_retirement_target_date"}`.
+- The planning input hash itself is based on factual professional source snapshot, incomes/expenses/timings, client, planning base decision and pension income resolutions, **not** the hypothetical scenario decision. A copied factual planning fingerprint does NOT bind the saved scenario's selected amount, coefficient, election, version or source.
+- The existing target-reference fingerprint can change with factual client/timing or canonical pension-source facts. `retirement_target_service.references()` does not treat `ScenarioDraftPensionElection.pension_start_date` as factual canonical pension source. Never silently reinterpret it as one.
+- The proposed independent scenario route must derive a new, explicitly named scenario planning input identity **within canonical planning ownership** from the existing factual planning identity PLUS verified saved decision manifest, decision-specific source snapshot, selected coefficient/acknowledgment and election source. It must explicitly name whether target is the canonical `PlanningInputDecision.retirement_target_date` or scenario election `pension_start_date`; if these disagree, BLOCK rather than choose a hidden fallback. The independent reviewer must assess the smallest compatible canonical extension to PTE. Do not change the existing factual planning fingerprint in place.
+
+### Target/election negative evidence
+- Same scenario amount but updated `PlanningInputDecision` or target-reference facts => stale planning identity; prior approval invalid.
+- Altered election pension start without scenario version change => recompute `election_fingerprint` from DB; previous admission invalid.
+- An independently chosen scenario start date conflicting with global retirement target => explicit conflict blocker until rule adopted, not a silent current-year substitution.
+- Inconsistent serializer bytes between `planning_input_service.fingerprint` and `pension_monthly_basis_service.canonical_bytes` => derive each fingerprint only using its canonical owner, with cross-checkable fixtures.
+
+### Do-not-overclaim
+The code proves a safe closed basis for the *existing factual target*, not a scenario planning result. This completes the **code evidence reconciliation** for the specific fingerprint-origin gap but does **not** close Stage 6's CALCULATION_CONTRACT or PROFESSIONAL_DECISION blockers. No implementation, CI or deploy authorized.

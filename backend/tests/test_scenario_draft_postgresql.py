@@ -163,7 +163,46 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
             assert db.scalar(text(
                 "SELECT count(*) FROM scenario_draft_revisions WHERE scenario_id = :id"
             ), {"id": scenario_id}) == 3
+        # End-to-end persisted planner journey on actual isolated PostgreSQL:
+        # clone the existing scenario, change only the clone, compare saved data,
+        # archive the original and verify client isolation after a new session.
+        with factory.begin() as db:
+            cloned = service.duplicate(db, 1, scenario_id, "חלופה ב", "test-actor")
+        clone_id = cloned["scenario_id"]
+        assert clone_id != scenario_id
+        assert cloned["decisions"][0]["amount"] == "100.25"
+        clone_decision = DraftDecisionWrite(
+            source_product_id="synthetic-product",
+            source_component_id="synthetic-component",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("75.50"), action="capital_asset", effective_date="2026-10-25",
+        )
+        with factory.begin() as db:
+            clone_saved = service.replace(
+                db, 1, clone_id,
+                DraftReplace(name="חלופה ב", expected_version=cloned["version"],
+                             decisions=[clone_decision]), "test-actor",
+            )
+        assert clone_saved["decisions"][0]["amount"] == "75.50"
         with factory() as db:
-            assert service.read(db, 1, scenario_id)["version"] == 3
+            rows = service.list_drafts(db, 1)
+            by_id = {row["scenario_id"]: row for row in rows}
+            assert set(by_id) == {scenario_id, clone_id}
+            assert by_id[scenario_id]["decisions"][0]["amount"] == "100.25"
+            assert by_id[clone_id]["decisions"][0]["amount"] == "75.50"
+            assert by_id[clone_id]["decisions"][0]["action"] == "capital_asset"
+            assert service.list_drafts(db, 2) == []
+        with factory.begin() as db:
+            archived = service.archive(db, 1, scenario_id, 3, "test-actor")
+        assert archived["status"] == "archived"
+        with factory() as db:
+            assert service.read(db, 1, scenario_id)["status"] == "archived"
+            assert service.read(db, 1, clone_id)["status"] != "archived"
+            assert db.scalar(text(
+                "SELECT count(*) FROM scenario_draft_revisions WHERE scenario_id = :id"
+            ), {"id": scenario_id}) == 4
+            assert db.scalar(text(
+                "SELECT count(*) FROM scenario_draft_revisions WHERE scenario_id = :id"
+            ), {"id": clone_id}) == 3
     finally:
         engine.dispose()

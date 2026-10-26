@@ -271,7 +271,8 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
                 clone = ok(http.post(f"{root}/{scenario_id}/duplicate", json={"name": "Alternative"}))
                 assert clone["decisions"][0]["amount"] == "100.25"
                 clone_id = clone["scenario_id"]
-                changed = {**clone["decisions"][0], "action": "capital_asset", "amount": "80.00"}
+                changed = {key: clone["decisions"][0][key] for key in ("decision_id", "source_product_id", "source_component_id", "component_code", "effective_date")}
+                changed.update({"action": "capital_asset", "amount": "80.00"})
                 clone = ok(http.put(f"{root}/{clone_id}", json={
                     "name": "Alternative", "expected_version": clone["version"],
                     "decisions": [changed],

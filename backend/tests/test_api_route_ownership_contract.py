@@ -40,3 +40,19 @@ def test_scenario_draft_routes_are_distinct_from_real_balance_mutations():
     ]
     assert scenario_paths
     assert all("canonical-conversions" not in path for path in scenario_paths)
+
+
+def test_fixation_calculation_has_single_discoverable_agent_operation():
+    """Keep the legacy URL callable without exposing duplicate tool actions."""
+    app = create_app()
+    discovered = app.openapi()["paths"]
+    canonical = "/api/clients/{client_id}/fixation/calculate"
+    legacy = "/api/clients/{client_id}/fixation/validate"
+    assert "post" in discovered[canonical]
+    assert legacy not in discovered or "post" not in discovered[legacy]
+    registered = [
+        route for route in app.routes
+        if isinstance(route, APIRoute) and route.path == legacy and "POST" in route.methods
+    ]
+    assert len(registered) == 1
+    assert registered[0].include_in_schema is False

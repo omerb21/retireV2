@@ -316,11 +316,9 @@ export function calculateFixation(clientId: number, payload: FixationInputPayloa
   });
 }
 
+// Compatibility method name: both caller intents use the one canonical calculator.
 export function validateFixation(clientId: number, payload: FixationInputPayload): Promise<FixationResultResponse> {
-  return requestJson<FixationResultResponse>(`/clients/${clientId}/fixation/validate`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return calculateFixation(clientId, payload);
 }
 
 export function saveFixation(payload: SaveFixationPayload): Promise<SaveFixationResponse> {

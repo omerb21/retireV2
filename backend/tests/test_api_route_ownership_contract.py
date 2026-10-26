@@ -1,0 +1,42 @@
+"""Protect the single-planner API against overlapping operation registrations.
+
+This catches exact duplicate routes and equivalent path-parameter aliases
+before the API is used as a future agent/MCP action catalogue. It does not
+equate distinct domain operations merely because they share a verb.
+"""
+import re
+from collections import defaultdict
+
+from fastapi.routing import APIRoute
+from app.main import create_app
+
+
+def _shape(path: str) -> str:
+    # {client_id} and {id} still address the same HTTP resource.
+    return re.sub(r"\\{[^{}]+\\}", "{}", path)
+
+
+def test_no_duplicate_canonical_api_operation_registration():
+    app = create_app()
+    registered = defaultdict(list)
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
+            continue
+        for method in route.methods:
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            registered[(method, _shape(route.path))].append(route.endpoint.__qualname__)
+    duplicates = {str(key): handlers for key, handlers in registered.items()
+                  if len(handlers) != 1}
+    assert not duplicates, duplicates
+
+
+def test_scenario_draft_routes_are_distinct_from_real_balance_mutations():
+    app = create_app()
+    scenario_paths = [
+        route.path for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path.startswith("/api/clients/{client_id}/scenario-drafts")
+    ]
+    assert scenario_paths
+    assert all("canonical-conversions" not in path for path in scenario_paths)

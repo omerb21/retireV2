@@ -9,7 +9,7 @@ import {
   replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
 
-interface Props { clientId: number; products: PensionProduct[] }
+interface Props { clientId: number; products: PensionProduct[]; initialSource?: { productId: string; componentCode: string } | null }
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "אירעה שגיאה בשמירת הטיוטה.";
 }
@@ -23,7 +23,7 @@ function displayCents(value: bigint): string {
   const abs = value < 0n ? -value : value;
   return (value < 0n ? "-" : "") + (abs / 100n).toString() + "." + (abs % 100n).toString().padStart(2, "0");
 }
-export function ScenarioDraftPanel({ clientId, products }: Props) {
+export function ScenarioDraftPanel({ clientId, products, initialSource }: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -100,6 +100,15 @@ export function ScenarioDraftPanel({ clientId, products }: Props) {
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; permissionEpoch.current += 1; };
   }, [clientId]);
+  useEffect(() => {
+    if (!initialSource) return;
+    const product = products.find(item => item.product_id === initialSource.productId);
+    const component = product?.conversion_components?.find(
+      item => item.component_code === initialSource.componentCode,
+    );
+    if (!component) return;
+    setSource(initialSource.productId + "|" + component.component_id);
+  }, [initialSource, products]);
   const sources = products.flatMap(product =>
     (product.conversion_components ?? []).map(component => ({
       key: product.product_id + "|" + component.component_id,

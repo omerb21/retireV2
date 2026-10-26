@@ -131,3 +131,27 @@ No historical algorithm was deleted; no adapter/calculation was authorized. Loca
 Added `backend/tests/test_legacy_execution_reachability.py`. It parses every Python module in `backend/app` with `ast`, builds an internal Python module dependency graph for `import app.services... `, `from app.services import ...`, and `from app.services.module import ...` patterns (also within functions), and runs reachability from every non-archive `app.api.*_routes` module. It fails with the exact import chain if a live API module can reach `m09_cashflow_service`, `m09_scenario_subject_service` or `m10_comparison_service`. Archive API modules are intentionally excluded as historical evidence readers. No runtime handlers, old numerical engines, tax logic or authorization decisions were altered.
 
 **Limitations:** the analysis is conservative module-level import reachability, not a true runtime function-level call graph; it does not resolve dynamic imports, arbitrary string-based reflection or runtime plugin loading. It does not establish semantic equality of all numerical producers. Run locally alongside the existing API inventory tests before recording PASS.
+
+## Development ownership decision and closeout boundary — 2026-10-26
+
+The project owner adopted the following rules **within the existing development workflow**, not as a new governance package:
+
+1. Before any professional action, API, service, or persistence producer is added, identify its *business intent*, find the existing producer, and reuse it if suitable.
+2. Do not introduce competing producers for UI convenience, easier implementation or shortcuts.
+3. Distinguish genuine duplicate logic from compatibility aliases, batch/single granularity, different business facts, and inactive historical machinery; do not delete merely by similar naming.
+4. Central GPT development may implement bounded UX, focused tests and small fixes. Changes to professional authority, financial computations, or substantive architecture require independent acceptance through the already established route.
+5. The central GPT retains system-level responsibility for preventing duplication **but does not independently approve its own architectural changes**.
+6. Finish the present audit using existing tests, with no new governance package or parallel enforcement layer.
+7. Any correction must preserve client data, canonical authority, relevant consumers, and approved business behavior. Avoid unnecessary CI runs.
+
+**Verified evidence supplied by the owner:** eight targeted checks PASS on branch HEAD `b05a8fb467818f6818da67f9fa99361825d4b5d8`, including route uniqueness/inventory, discoverable OpenAPI operation ID uniqueness, and transitive static import reachability from active API routes to dormant M09/M10 services. The disposable PostgreSQL scenario draft lifecycle test PASS, frontend build PASS, and the scenario workspace focused tests PASS on their recorded earlier commits. These results must not be generalized to complete semantic or runtime uniqueness.
+
+### Closeout disposition (existing audit, not a new approval)
+
+- **Resolved and verified:** the browser-only mock scenario editor was removed in favor of persisted scenario drafts; fixation calculation `/validate` was a true duplicate *discoverable action*, so the frontend now calls the canonical `/calculate` and the compatibility route is excluded from OpenAPI.
+- **Distinct by intent and retained:** single vs atomic batch pension product updates; retirement *date* vs retirement *income target*; linked historical grant vs unlinked manual entry vs settlement creation/link reconciliation; review validation/conversion vs fixation calculation vs saved fixation run.
+- **Historical boundaries tested:** old M09/M10 execution is not registered as an active API and is not statically reachable by the import graph from active API roots in the test's scope. Archived read surfaces and historical functions are not deleted.
+- **Not approved by this review:** new coefficient execution, scenario financial adapter, changed calculation rules, deletion of dormant code, main merge or production deployment.
+- **Residual limitations:** import graph testing does not catch dynamic imports or runtime reflection; structural API checks do not prove two numerical functions semantically equivalent; not all user-visible workflows have been end-to-end exercised against production-like data. Therefore the evidence supports **closure of the identified duplicate-action remediation and its present regression gates**, not a permanent guarantee that all future mechanisms are free of duplication.
+
+**Normal development gate going forward:** every implementation change must name the existing business intent and canonical producer in its change description. If the producer is missing or authority would change, stop implementation and use the existing independent acceptance path; do not create an additional governance process. No more blanket duplicate-audit gates should be added without a concrete gap.

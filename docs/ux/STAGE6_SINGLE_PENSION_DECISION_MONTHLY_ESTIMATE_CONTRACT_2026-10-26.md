@@ -1,0 +1,63 @@
+# RETIRE V2 — Stage 6 single-decision monthly pension estimate: proposed acceptance contract
+
+**Status:** DESIGN ONLY / PENDING INDEPENDENT WORK READ-ONLY ACCEPTANCE. No calculation, coefficient lookup, adapter implementation, approval transition, CI, merge or deployment is authorized.
+**Branch:** `feature/professional-workspace-ux-first-20261022`.
+**Scope:** `SINGLE_PENSION_DECISION_TARGET_MONTHLY_ESTIMATE` for ONE `pension` decision in an existing saved draft, not an aggregated scenario.
+**Inputs:** owner decisions 2026-10-26 (V1 generic coefficient accepted for planning estimate with conspicuous provenance); Stage 5 handoff; prior Work Stage 6 BLOCKED verdict. Retain O-02 through O-08; O-01 classification remains verification-bound.
+
+## Owner coefficient decisions (P1 / P2)
+
+1. Product-family routing for *planning* estimates: manager insurance (`ביטוח מנהלים`) uses the V1 manager-insurance family; pension funds, provident funds, education funds and investment provident funds use the V1 pension-fund family. This is a **planning modelling convention**, not proof of product payout entitlement or legal/tax eligibility. Unknown/ambiguous product classification blocks the affected decision. Conflicting source classification (including severance-labelled education/investment provident funds) requires reconciliation, not a bypass.
+2. Prefer a specific, independently evidenced applicable provider/plan/policy coefficient where the exact product and pension option can be proven. For manager insurance, a documented **individual contractual guaranteed coefficient** must not be silently overwritten by a company/generation/general estimate. A company name by itself is insufficient.
+3. When no verified specific coefficient applies, the owner **permits the V1 generic family table only as an explicitly labelled planning estimate**. Display provenance as `V1_GENERIC_PLANNING_ASSUMPTION`; never label it a policy-guaranteed, provider-specific or legally payable pension. Do not silently switch between authority levels, and do not use an unaudited company-row match.
+4. A generic V1 table row must be **exactly selected and verifiable** against catalog version/hash and the applicable retirement age, sex, pension option, spouse-age difference, generation where relevant and any other required row keys. No inferred default age/sex, current-year substitution for historical/future target, max-row-ID heuristic across ambiguous rows, or exception suppression. If required keys or a unique row are unavailable, output no number with a blocker. `fallback_used=True`, `source=default|error` or synthetic coefficient `200` are unconditionally rejected even though V1's existing service currently returns them.
+5. This is not authorization to call `annuity_coefficient_service.coefficient`: the existing function currently uses permissive defaults, a max-ID pension row and 200 fallback. Future implementation must prove a fail-closed, source-bound selection **within the existing canonical coefficient ownership**; no parallel producer.
+
+## Narrow read-only input and professional admission (P3 / P5)
+
+- Server derives `client_id`, `scenario_id`, `scenario_version`, `decision_id`, `decision_version/identity`, `action=pension`, `source_product_id`, `source_component_id`, `component_code`, exact `amount`, effective/retirement dates, source product type, source balance/version/fingerprint, all competing allocations to the source, current permission/ruleset and coefficient provenance from one consistent PostgreSQL `REPEATABLE READ READ ONLY` snapshot. Caller supplies routing IDs only. Refuse cross-client or stale evidence.
+- Revalidate current action-specific permission and approved ruleset against precisely this decision, amount, source and date. No factual balance mutation, no draft-to-factual conversion. Unallocated remainder is derived by original balance minus all accepted draft allocations, never a new allocation.
+- Documentary `SC-06A`, inert manifest, compatibility shape, preview ID, and saved `validation_state` are **not** execution approvals. A professionally authenticated explicit admission for this exact decision and the complete fingerprints/assumptions remains a **proposed condition requiring independent acceptance**, not an existing authorization. Keep the single-planner UX; do not revive SC-06B or multi-approver machinery.
+- For each estimate identify a coefficient evidence tuple (catalog hash/version, family, unique row identifier and all resolved lookup keys, source level, and where applicable product-specific evidence/reference, applicability dates); bind it to the decision, source, amount, option, planned retirement date, and professional acknowledgment.
+- **Unresolved technical contract:** `pension_target_date_execution_service.execute_from_planning_result` does not accept a capital allocation or coefficient directly. It requires a verified scenario-specific `planning_result` with a unique `source_id`, `monthly_amount_basis` (accepted `entered_monthly_amount`, `manual_balance_ratio` or `persisted_conversion_ratio` representation), `temporal_authority`, target date and *five* current/supplied matching fingerprints (planning calculation input, monthly semantic/source, temporal semantic/source). Before implementing, independent review must verify which **existing approved canonical producer**, if any, can lawfully derive an `exact_ratio` monthly basis from the allocated capital and an approved coefficient and bind these fingerprints. Do not treat the arithmetic `amount / coefficient` as proof of monthly-basis authority. Do not manufacture a producer or claim a verified adapter merely because JSON shape matches.
+- If that provenance-preserving monthly-basis mapping is unsupported, the verdict must remain **BLOCKED** and the next smallest request is explicit professional owner decision plus separate independent review on that precise input authority. No implementation by workaround.
+
+## Result semantics (P4)
+
+Only *after* full admission and future independent PASS plus owner implementation authorization: one provisional **gross, nominal monthly estimate for the selected single pension decision at one verified retirement target date**, currency and calculation date identified; label `planning estimate / V1 generic` whenever generic. Display assumption/provenance and validity state. No tax, exempt/taxable classification calculation, 161d, actual pension entitlement, net benefit, capital realization, gap/NPV, aggregation or forecast from other decisions. Temporal policy (origin, valuation date, whether/what projection applies) must be explicitly source-backed; a target date alone is not a forecast method. **No numeric result at present.**
+
+Proposed non-executing envelope while blocked:
+```json
+{
+  "contract": "STAGE6_SINGLE_PENSION_DECISION_MONTHLY_ESTIMATE_PROPOSAL_V1",
+  "state": "BLOCKED",
+  "execution_allowed": false,
+  "coefficient_provenance": null,
+  "monthly_basis": null,
+  "financial_result": null,
+  "blockers": ["SCENARIO_MONTHLY_BASIS_AUTHORITY_NOT_ACCEPTED"]
+}
+```
+The envelope is design documentation, **not** a new API or implementation contract.
+
+## Negative acceptance tests (future, no CI here)
+
+1. Foreign client, missing/archived scenario, stale scenario/decision/source version or source digest, conflicting allocations, over-allocation and unknown product type all block the **dependent decision**.
+2. Reject non-pension action, invalid/negative/excess-precision amounts, source/component/code mismatches, unsupported product-class exception, severance anomaly, changed target date or option.
+3. Missing, duplicated, conflicting or out-of-applicability coefficient rows; wrong company/plan/generation; missing age/sex/option/spouse keys; incomplete catalog version/hash; stale row; any error; `fallback_used`, `default`, `error` or `200` fallback => no number.
+4. Distinguish a verified contractual factor, verified plan-specific factor and `V1_GENERIC_PLANNING_ASSUMPTION` in displayed provenance; no claim of provider-specific precision, pension entitlement or tax status from generic.
+5. Matching SC-06A documentary review, preview, structural engine compatibility or forged fingerprints alone still cannot execute. Failed admission must cause **zero** coefficient and financial engine calls.
+6. Require a unique approved scenario monthly-basis producer and bind all five engine fingerprints; altered coefficient, source, amount, option, target/temporal policy or ruleset invalidates the result; never show an old estimate as current.
+7. Exact `Decimal` representation/rounding tests; deterministic target-date conventions; no float-derived amount, unstated temporal growth, or derived financial number with missing evidence.
+8. PostgreSQL single consistent read-only snapshot, no DML, no canonical-conversions POST, no M09/M10, fixation, tax, capital, gap or NPV call; no new APIs, ACLs, migrations, privileges, CI or deploy.
+
+## Independent Work acceptance request (READ ONLY)
+
+At **current branch HEAD** (do not rely on older reviewed SHAs), inspect the real code and above contract, including `scenario_draft_service`, `scenario_input_manifest_service`, `scenario_snapshot_candidate_service`, `scenario_calculation_admission_service`, `annuity_coefficient_service`, `pension_monthly_basis_service`, `planning_input_service`, `pension_target_date_execution_service`, and the current coefficient catalog. Return:
+1. P1-P5 decision-to-contract traceability, separate owner-approved choices from unapproved technical assumptions.
+2. Exact product family mapping and which coefficient fields/rows V1 actually has, with missing keys and ambiguity, plus whether it can be safely selected without fallback.
+3. A verified **existing** canonical authority path from scenario capital decision + coefficient to a `monthly_amount_basis` admitted by the target executor, or precise `UNSUPPORTED_BY_EXISTING_CONTRACT` evidence. Do not propose new duplicate engines.
+4. Current admission gaps and five-fingerprint binding; blocker classification `SOURCE_EVIDENCE`, `PROFESSIONAL_DECISION`, `CALCULATION_CONTRACT`, `TECHNICAL_WIRING`.
+5. Testable scoped verdict `PASS_DESIGN_ONLY` or `BLOCKED`, conditions and specific next owner choices. **Even PASS_DESIGN_ONLY is not a deployment, execution, or code authorization.**
+
+**Release flags unchanged:** `STAGE_6_IMPLEMENTATION=NOT_AUTHORIZED`; `COEFFICIENT_LOOKUP=NOT_AUTHORIZED`; `FINANCIAL_CALCULATION=NOT_AUTHORIZED`; `SCENARIO_CALCULATION_ADAPTER=NOT_AUTHORIZED`; `PRODUCTION_DEPLOYMENT=NOT_AUTHORIZED`.

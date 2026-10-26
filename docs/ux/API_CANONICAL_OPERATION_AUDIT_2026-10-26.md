@@ -83,3 +83,19 @@ Inspected actual handlers in `backend/app/api/clients_routes.py` (rather than co
 ## Confirmed semantic duplication resolved — fixation calculation (2026-10-26)
 
 `POST /api/clients/{client_id}/fixation/validate` and `POST /api/clients/{client_id}/fixation/calculate` originally called **the same** `calculate_fixation_payload(... use_persisted_grants=True)` with the same request and result contracts. This was a real duplicate **discoverable operation**, not an independent calculation engine. Resolution: `calculate` is the canonical OpenAPI/agent operation; `validate` remains callable strictly as a compatibility alias with `include_in_schema=False`; frontend `validateFixation` delegates to `calculateFixation`, so normal frontend use issues only the canonical request. Added a registration/OpenAPI regression test. **Do not remove the compatibility route without a separate consumer impact audit.** No calculation, tax logic, schema or persisted results changed. Focused tests/build pending local verification.
+
+## Health operations removed from agent discovery (2026-10-26)
+
+Three monitoring routes (`GET/HEAD /health`, `/healthz/live`, `/healthz/ready`) previously generated duplicate GET/HEAD OpenAPI operation IDs. They remain registered and callable for operational monitoring but are now excluded from OpenAPI with `include_in_schema=False`. Added tests requiring their presence in router registration, absence from OpenAPI, and uniqueness of every discoverable OpenAPI operationId. This is a schema/catalog hygiene fix, not a change in readiness status or financial business processing. **Tests pending local run.**
+
+### Calculation / report ownership status
+
+- `POST /api/clients/{client_id}/fixation/calculate`: canonical client-context fixation calculation producer; legacy `/fixation/validate` invokes same calculator but is hidden from OpenAPI.
+- `POST /fixation/review/validate`: validation of **review input contract**, not the fixation calculation engine.
+- `POST /fixation/review/convert`: conversion of structured review into fixation engine input, not an executed financial calculation.
+- `POST /fixation/save`: persists a new fixation run (which includes a calculation), materially different from a non-persisted calculation.
+- `POST /api/clients/{client_id}/retirement-income-readiness/comparison`: compares target-income evidence; separate from the sealed `m10` general scenario comparison.
+- `m09` routes are archive reads only; `m10` router has no live operation.
+- Financial scenario engine/cashflow adapter and coefficient lookup remain **NOT AUTHORIZED**; no route has been re-enabled by this audit.
+
+This is a grounded endpoint-level classification, **not** a complete proof of identical numerical output across fixation preview and saved-run paths; preserve both distinct professional intents while retaining one underlying approved calculation engine.

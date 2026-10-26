@@ -2,7 +2,7 @@
 
 **Status: DESIGN DRAFT / NOT IMPLEMENTATION-AUTHORIZED**  
 **Predecessor:** SC-06A independent PASS, HEAD `1b1d6cf7e6b8363c37c995cab0b8d1f97c9aec1c`.  
-**Owner decision required:** explicit approval of how an old professional rejection can be superseded.  
+**Owner decision D-02 APPROVED (2026-10-26):** a verified professional may explicitly supersede a prior rejection after a fresh review, with a mandatory recorded rationale and immutable original rejection. Other lifecycle choices remain design-only.  
 **Scope:** distinguish immutable historical review evidence from currently applicable documentary evidence; **not** professional admission or permission to calculate.
 
 ## 1. Verified starting point
@@ -26,7 +26,7 @@
 3. Every transition needs a verified professional actor from the server-authenticated session, explicit reason, precise event identity and a dedicated PostgreSQL `SERIALIZABLE` write transaction. Never accept request-supplied actor or fingerprints as authority.
 4. Original and successor remain visible in history. A supersession is an additional event, not a mutation of their contents.
 5. No cycles, branching successors, duplicate active successors, ambiguous ordering or cross-provenance reuse. Conflicts, missing targets and malformed lifecycle events block readiness.
-6. A matching rejection stays blocking until an **explicitly authorized policy** describes if/how a subsequent review can supersede it; a new approval does not automatically cancel rejection.
+6. A matching rejection stays blocking until an **explicit, authenticated supersession event** records a fresh professional review, the successor decision and a mandatory professional rationale. The owner has approved this replacement principle (D-02). A new approval does not automatically cancel rejection.
 7. A source change invalidates prior **current applicability** without deleting evidence. An explicit successor after new source verification may become applicable only under an approved policy.
 8. All applicable/current resolution occurs inside **one** accepted SC-03 snapshot; never read lifecycle events and source facts in separate transactions.
 9. No coefficient lookup, no financial calculation, no scenario adapter, no API or deployment authorization.
@@ -68,13 +68,13 @@ A valid lifecycle chain never implies `execution_allowed=true`, an annuity facto
 
 **D-01 — When a source changes:** Can a new validated review explicitly replace the old historical review, or must both block pending manual reconciliation?
 
-**D-02 — Rejections:** Can a professional explicitly supersede a prior `rejected` review after fresh examination? If yes, is a reason and second explicit confirmation required?
+**D-02 — Rejections: APPROVED.** After a fresh examination, a verified professional may explicitly supersede a prior `rejected` review. Require an intentional authenticated action, a professional reason and an immutable link to the original rejection. A distinct second-person approval is **not required by this decision**; do not invent one. This still conveys documentary applicability only, not financial authority.
 
 **D-03 — Concurrency:** Is a strict single active chain per scenario decision sufficient, including multiple source versions, or is a separate reviewed-context identity required for each branch?
 
 **D-04 — UI:** Is the lifecycle managed solely as a professional audit action within the eventual workflow, with the chronology visible on demand?
 
-Default until decisions are approved: **preserve current SC-06A fail-closed behavior**.
+D-01, D-03 and D-04 remain proposed and not approved. Until the lifecycle contract is approved for implementation, **preserve current SC-06A fail-closed behavior**.
 
 ## 7. Acceptance plan for a future authorized package
 

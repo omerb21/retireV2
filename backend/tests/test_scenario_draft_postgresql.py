@@ -207,3 +207,104 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
             ), {"id": clone_id}) == 3
     finally:
         engine.dispose()
+
+
+def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(postgres_url):
+    """Full FastAPI HTTP handlers + real DB, without a browser or financial engine.
+
+    Independent fresh database from the existing disposable PostgreSQL fixture.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from app.security.config import AuthConfig
+    from app.db.session import get_db
+
+    load_all_models()
+    engine = create_engine(postgres_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
+        migration = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "b7c5e1a90342"],
+            cwd=BACKEND,
+            env={**os.environ, "DATABASE_URL": postgres_url,
+                 "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
+                 "PYTHONIOENCODING": "utf-8"},
+            capture_output=True, text=True, encoding="utf-8", timeout=180,
+        )
+        assert migration.returncode == 0, migration.stdout + migration.stderr
+        factory = sessionmaker(bind=engine, autoflush=False)
+        with factory.begin() as session:
+            session.add_all([
+                Client(client_id=101, display_name="Synthetic Planner A", id_number="http-synthetic-a"),
+                Client(client_id=102, display_name="Synthetic Planner B", id_number="http-synthetic-b"),
+            ])
+
+        app = create_app(AuthConfig(production=False))
+        def isolated_db():
+            with factory() as session:
+                yield session
+        app.dependency_overrides[get_db] = isolated_db
+        try:
+            with TestClient(app) as http:
+                root = "/api/clients/101/scenario-drafts"
+                other = "/api/clients/102/scenario-drafts"
+
+                def ok(response):
+                    assert response.status_code == 200, response.text
+                    return response.json()
+
+                original = ok(http.post(root, json={"name": "Original"}))
+                scenario_id = original["scenario_id"]
+                decision = {
+                    "source_product_id": "synthetic-product",
+                    "source_component_id": "synthetic-component",
+                    "component_code": "תגמולי_עובד_עד_2000",
+                    "amount": "100.25", "action": "pension",
+                    "effective_date": "2026-10-26",
+                }
+                original = ok(http.put(f"{root}/{scenario_id}", json={
+                    "name": "Original", "expected_version": original["version"],
+                    "decisions": [decision],
+                }))
+                assert original["decisions"][0]["amount"] == "100.25"
+                clone = ok(http.post(f"{root}/{scenario_id}/duplicate", json={"name": "Alternative"}))
+                assert clone["decisions"][0]["amount"] == "100.25"
+                clone_id = clone["scenario_id"]
+                changed = {**clone["decisions"][0], "action": "capital_asset", "amount": "80.00"}
+                clone = ok(http.put(f"{root}/{clone_id}", json={
+                    "name": "Alternative", "expected_version": clone["version"],
+                    "decisions": [changed],
+                }))
+                assert clone["decisions"][0]["action"] == "capital_asset"
+
+                stale = http.put(f"{root}/{clone_id}", json={
+                    "name": "Stale", "expected_version": clone["version"] - 1,
+                    "decisions": [changed],
+                })
+                assert stale.status_code == 409, stale.text
+
+                listed = ok(http.get(root))
+                assert {item["scenario_id"] for item in listed} == {scenario_id, clone_id}
+                assert next(item for item in listed if item["scenario_id"] == scenario_id)["decisions"][0]["amount"] == "100.25"
+                assert next(item for item in listed if item["scenario_id"] == clone_id)["decisions"][0]["amount"] == "80.00"
+                assert ok(http.get(other)) == []
+                assert http.get(f"{other}/{scenario_id}").status_code == 404
+
+                clone = ok(http.put(f"{root}/{clone_id}", json={
+                    "name": "Alternative", "expected_version": clone["version"],
+                    "decisions": [],
+                }))
+                assert clone["decisions"] == []
+                # Recreate the HTTP client to exercise a new request/session,
+                # akin to refreshing the SPA without relying on in-memory UI state.
+            with TestClient(app) as refreshed:
+                persisted = ok(refreshed.get(root))
+                assert len(persisted) == 2
+                assert next(item for item in persisted if item["scenario_id"] == scenario_id)["decisions"][0]["amount"] == "100.25"
+                assert next(item for item in persisted if item["scenario_id"] == clone_id)["decisions"] == []
+                assert all(item["financial_validation"] == "not_evaluated" for item in persisted)
+        finally:
+            app.dependency_overrides.clear()
+    finally:
+        engine.dispose()

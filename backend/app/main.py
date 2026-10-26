@@ -136,15 +136,15 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
             raise exc
         return error(request, 500, "INTERNAL_ERROR")
 
-    @app.api_route("/health", methods=["GET", "HEAD"])
+    @app.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)
     def health():
         return {"status": "ok"}
 
-    @app.api_route("/healthz/live", methods=["GET", "HEAD"])
+    @app.api_route("/healthz/live", methods=["GET", "HEAD"], include_in_schema=False)
     def live():
         return {"status": "ok"}
 
-    @app.api_route("/healthz/ready", methods=["GET", "HEAD"])
+    @app.api_route("/healthz/ready", methods=["GET", "HEAD"], include_in_schema=False)
     def ready():
         if config.production and not app.state.rate_limiter_ready:
             return JSONResponse(status_code=503, content={"status": "unavailable"})

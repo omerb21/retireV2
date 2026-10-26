@@ -110,3 +110,9 @@
 **Independent reviewer must next:** validate owner answers and produce a bounded, versioned input/admission/output/negative-test contract with citations, using current canonical producers only. Minimum checks: cross-client, stale/coherent rehash, preview/ruleset binding, amount/permission, missing factor and review, no engine call on failed gate, Decimal exactness, no DML, source integrity, deterministic invalidation, no M09/M10/fixation/tax calls. No new governance machinery, no CI, no implementation until PASS plus explicit owner authorization.
 
 **Status:** `STAGE_6_IMPLEMENTATION=NOT_AUTHORIZED`; `COEFFICIENT_LOOKUP=NOT_AUTHORIZED`; `FINANCIAL_CALCULATION=NOT_AUTHORIZED`; `SCENARIO_CALCULATION_ADAPTER=NOT_AUTHORIZED`; `PRODUCTION_DEPLOYMENT=NOT_AUTHORIZED`.
+
+### Source-code verification of coefficient lookup (central chat, NOT independent acceptance)
+
+Inspected `backend/app/services/annuity_coefficient_service.py` on the feature branch: the pension-fund catalog filter uses sex, retirement age, survivors option and spouse-age difference, then selects the maximum row `id`; company/plan/target-year are not part of that pension-fund row selection. The other product path has generation and conditional company-option matching. Both nonmatch and caught lookup errors return factor `200` with `fallback_used=True`. This existing behavior must **not** be used as scenario coefficient authority. `scenario_annuity_coefficient_assessment_service.assess_coefficient_candidate` explicitly returns `BLOCKED` / `COEFFICIENT_LOOKUP_NOT_AUTHORIZED`.
+
+**Implementation consequence:** neither a matching coefficient-catalog row nor a `fallback_used=False` response alone proves a professionally applicable, source-bound coefficient. Any future accepted slice must establish an explicit coefficient authority contract and reject unverified or fallback results. No code change or implicit owner approval is inferred from this observation.

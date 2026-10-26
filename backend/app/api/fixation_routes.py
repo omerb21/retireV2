@@ -172,7 +172,7 @@ def convert_fixation_review(payload: dict[str, Any]) -> dict[str, Any] | JSONRes
     return converted_payload
 
 
-@router.post("/clients/{client_id}/fixation/validate", response_model=FixationResult)
+# Legacy compatibility alias: same calculation producer as /calculate.\n# Exclude from generated OpenAPI/MCP catalogs to avoid duplicate agent actions.\n@router.post("/clients/{client_id}/fixation/validate", response_model=FixationResult, include_in_schema=False)
 def validate_fixation(
     client_id: int,
     payload: dict[str, Any],

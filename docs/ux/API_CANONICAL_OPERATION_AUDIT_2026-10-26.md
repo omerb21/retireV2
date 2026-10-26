@@ -17,7 +17,7 @@
 
 | User action | Canonical producer or status | Noncanonical path / risk |
 | --- | --- | --- |
-| Correct factual pension-product amounts | `PUT /api/clients/{client_id}/pension-products/{product_id}` | `POST /pension-products/save-selected` also writes selected facts: **requires separate semantic equivalence review**, not automatically deleted |
+| Correct factual pension-product amounts | `PUT /api/clients/{client_id}/pension-products/{product_id}` | `POST /pension-products/save-selected` is an atomic **multi-product batch** operation that calls the same `_update_locked` producer as single-product PUT after a version preflight. These are two granularities of one canonical write rule, **not two competing business engines** |
 | Create/edit/archive hypothetical scenario | `/api/clients/{client_id}/scenario-drafts` family | Browser-only mock editor **confirmed duplicate UX** |
 | Authoritative factual canonical conversion | `POST /api/clients/{client_id}/canonical-conversions` | Must never be a scenario-simulation producer |
 | Permission-only scenario conversion preview | `POST /api/clients/{client_id}/scenario-conversions/permission-preview` | Distinct from executing canonical conversion and distinct from editing draft |
@@ -32,7 +32,7 @@
 
 - `backend/tests/test_api_route_ownership_contract.py` introduced to reject exact or equivalent-param method+path duplicates at FastAPI registration. This is an **HTTP collision test only**; it does not prove semantic uniqueness of distinct endpoints.
 - For future MCP, define a canonical action catalogue with one action per business intent and explicit separation of `read`, `factual write`, `draft write`, `preview`, `historical read`, and `financial execute`. Never expose prototype or archive operations as an alternative way to perform an active action.
-- Remaining review tasks: trace implementations of pension `PUT` vs `save-selected`; base retirement target date vs monthly income target; all frontend call sites for writes. Do not certify absence of every semantic duplicate until these are resolved.
+- Remaining review tasks: pension single-product PUT and multi-product `save-selected` **verified as shared `_update_locked` producer**; still trace base retirement target date vs monthly income target and all frontend write call sites. Do not certify absence of every semantic duplicate until these are resolved.
 
 ## Next bounded implementation
 

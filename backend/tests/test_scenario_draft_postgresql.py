@@ -30,7 +30,7 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         with engine.begin() as connection:
             connection.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
         completed = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "f6a9c4d2e107"],
+            [sys.executable, "-m", "alembic", "upgrade", "b7c5e1a90342"],
             cwd=BACKEND,
             env={**os.environ, "DATABASE_URL": postgres_url,
                  "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
@@ -39,7 +39,8 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         )
         assert completed.returncode == 0, completed.stdout + completed.stderr
         inspector = inspect(engine)
-        assert {"scenario_drafts", "scenario_draft_decisions", "scenario_draft_revisions"} <= set(inspector.get_table_names())
+        assert {"scenario_drafts", "scenario_draft_decisions", "scenario_draft_revisions",
+                "scenario_draft_pension_elections"} <= set(inspector.get_table_names())
         amount_type = str(next(
             column["type"] for column in inspector.get_columns("scenario_draft_decisions")
             if column["name"] == "amount"

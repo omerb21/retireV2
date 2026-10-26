@@ -47,3 +47,23 @@ Pensuni (https://pensuni.com/?p=1067) describes male age 65 historical examples 
 2. Add explicit program mapping, policy issue date, applicable rider, deposit tranche and option evidence; compare 2026 effect only if source-specific adjustment authority is established.
 3. Stage 6 acceptance must authorize decision-scoped manual override (including insurer quote and spouse conditions), data-source selection, exact monthly basis producer and date binding before implementing any calculation.
 4. No duplicate producers or new regulatory approval workflows.
+
+
+## Re-audit of original Menora workbooks (2026-10-26)
+
+The following dates were **decoded as Excel serial dates directly from the user-uploaded XLSX 'רשימת תכניות' tabs**, not inferred from file labels:
+
+| program | first marketed | last marketed | conditions |
+|---|---|---|---|
+| 805 / 806 Merav | 2001-03-01 | 2004-01-01 | Original named Merav policy family; do not infer all pre-June-2001 annuity tracks identical |
+| 667 Status New | 2008-06-01 | 2009-04-01 | Requires relevant program/version |
+| 668 Status | 2009-05-01 | 2015-01-01 | Requires relevant program/version |
+| 671 Status continuation pension rider | 2010-02-01 | 2010-12-01 | Workbook note explicitly restricts to accumulated pension savings from tax year 2008 onward |
+| 225 Status combined | 2010-08-01 | 2013-01-01 | Workbook splits payment annuity / continuation 0.5% fee vs savings originally accumulated as capital 0.6% fee |
+| 672 annuity conversion continuation rider | 2010-02-01 | 2010-12-01 | Do not assert applies to pre-2001 balance without rider evidence |
+
+Numerical source assumptions in the workbook sheets: Merav technical rate 2.5%, fee included 0%, 180 guaranteed payments; Status 4%, 0.5%, 240; Status combined includes 4%, 0.5% and 0.6% separate sheets, 240 months. These source factors do **not** establish identical pension routes across policy issue years.
+
+**Current gap is now narrowly stated**: exact original-annex numerical factors for pre-2001 plans are not present in these uploaded Menora tables. Menora's [2005 official filing](https://www.gov.il/BlobFolder/dynamiccollectorresultitem/2005menoramivt/he/regulation_MNORA2005.pdf) identifies Status as successor to Adif from 2004, supporting the distinct historical family boundary, not a retroactive coefficient substitution. Official Clal [2020 filing](https://www.gov.il/BlobFolder/dynamiccollectorresultitem/2020clal/he/CLAL_420_1.pdf) cautions that pre-2013 alternative annuity routes may be set at retirement.
+
+**Research decision**: don't create a new service or manufacture 1970–2001 original tables from the generic V1 year bands. Store these source-proven exact policy code/period/rider conditions as lookup eligibility metadata for independent review. Stage 6 still BLOCKED.

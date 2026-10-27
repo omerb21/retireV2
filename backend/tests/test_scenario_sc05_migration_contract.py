@@ -12,9 +12,10 @@ def test_sc05_single_alembic_head_matches_production_readiness():
     config = Config()
     config.set_main_option("script_location", str(base / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["c5e019a47d62"]
+    assert scripts.get_heads() == ["d6f1a9c3b704"]
     assert EXPECTED_ALEMBIC_HEAD == scripts.get_current_head()
     assert scripts.get_revision("c5e019a47d62").down_revision == "b7c5e1a90342"
+    assert scripts.get_revision("d6f1a9c3b704").down_revision == "c5e019a47d62"
 
 
 def test_sc05_migrations_define_explicit_minimum_privileges():

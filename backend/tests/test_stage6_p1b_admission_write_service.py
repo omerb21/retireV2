@@ -4,8 +4,13 @@ from unittest.mock import patch
 import pytest
 
 from app.services.scenario_pension_factor_admission_write_service import (
-    save_factor_admission, PensionFactorWriteBlocked,
+    _save_factor_admission, _AUTHENTICATED_FACTOR_WRITE_CAPABILITY,
+    append_authenticated_serializable_factor_admission,
+    PensionFactorWriteBlocked,
 )
+from app.db.base import load_all_models
+
+load_all_models()
 
 class DB:
     def __init__(self, previous_revision=None, statement_date=None):
@@ -19,7 +24,7 @@ class DB:
         return True
     new=dirty=deleted=()
     def execute(self, stmt):
-        return SimpleNamespace(scalar_one=lambda: "repeatable read" if "isolation" in str(stmt) else "off")
+        return SimpleNamespace(scalar_one=lambda: "serializable" if "isolation" in str(stmt) else "off")
     def scalar(self, query):
         self._n+=1
         if self._n==1:
@@ -53,14 +58,12 @@ def call(db,**overrides):
         actor_id="authenticated-planner",factor_value="200",
         factor_evidence_type="PLANNER_ASSUMPTION",
         factor_evidence_reference="professional assumption",
-        payout_option_name="standard",
-        expected_manifest_fingerprint="a"*64,
-        expected_election_fingerprint="c"*64)
+        _capability=_AUTHENTICATED_FACTOR_WRITE_CAPABILITY)
     arguments.update(overrides)
     with patch("app.services.scenario_pension_factor_admission_write_service._derive_pension_action_permission_in_transaction",return_value=PERMISSION),patch(
          "app.services.scenario_pension_factor_admission_write_service.derive_documentary_review_context",return_value=REVIEW),patch(
          "app.services.scenario_pension_factor_admission_write_service.build_inert_manifest",return_value=MANIFEST):
-        return save_factor_admission(db,**arguments)
+        return _save_factor_admission(db,**arguments)
 
 def test_append_only_new_revision_is_not_executable():
     db=DB()
@@ -88,16 +91,10 @@ def test_bad_factor_rejected_before_append():
         call(db,factor_value="0")
     assert not db.added
 
-def test_wrong_expected_review_fingerprint_rejected():
+def test_direct_internal_call_without_capability_is_rejected():
     db=DB()
-    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_CONTEXT_STALE"):
-        call(db,expected_election_fingerprint="f"*64)
-    assert not db.added
-
-def test_mismatched_option_is_rejected():
-    db=DB()
-    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_OPTION_MISMATCH"):
-        call(db,payout_option_name="forged-option")
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_AUTHENTICATED_ENTRYPOINT_REQUIRED"):
+        call(db,_capability=None)
     assert not db.added
 
 def test_cas_rejects_competing_revision_before_any_write():
@@ -125,3 +122,19 @@ def test_payout_date_earlier_than_statement_fails_closed():
     with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_PAYOUT_BEFORE_STATEMENT"):
         call(db)
     assert not db.added
+
+
+def test_public_writer_requires_verified_session_actor_before_database_use():
+    request=SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_config=SimpleNamespace(production=True))),
+        state=SimpleNamespace(
+            trusted_professional_actor="forged",
+            auth_session={"actor_id":"trusted"}),
+    )
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_AUTHENTICATED_ACTOR_REQUIRED"):
+        append_authenticated_serializable_factor_admission(
+            object(),request=request,client_id=1,scenario_id="s",decision_id="d",
+            expected_scenario_version=2,expected_admission_revision=0,
+            factor_value="200",factor_evidence_type="PLANNER_ASSUMPTION",
+            factor_evidence_reference="professional assumption")

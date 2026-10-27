@@ -5,7 +5,7 @@ authorizes PTE execution or a pension conversion.
 """
 from datetime import datetime
 from sqlalchemy import (
-    CheckConstraint, DateTime, ForeignKey, Integer, String, Text,
+    CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text,
     UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,12 +15,24 @@ from app.db.base import Base
 class ScenarioPensionFactorAdmission(Base):
     __tablename__ = "scenario_pension_factor_admissions"
     __table_args__ = (
-        UniqueConstraint("scenario_id", "decision_id", "admission_revision",
+        UniqueConstraint("client_id", "scenario_id", "decision_id", "admission_revision",
                          name="uq_s6_factor_admission_revision"),
+        Index("ix_s6_factor_admission_current", "client_id", "scenario_id",
+              "decision_id", "admission_revision"),
         CheckConstraint("scenario_version > 0", name="ck_s6_factor_scenario_version"),
         CheckConstraint("admission_revision > 0", name="ck_s6_factor_revision"),
+        CheckConstraint("length(actor_id) BETWEEN 1 AND 128",
+                        name="ck_s6_factor_actor"),
         CheckConstraint("length(record_fingerprint) = 64",
                         name="ck_s6_factor_fingerprint_length"),
+        CheckConstraint("length(permission_admission_fingerprint) = 64",
+                        name="ck_s6_factor_permission_fingerprint_length"),
+        CheckConstraint("length(manifest_fingerprint) = 64",
+                        name="ck_s6_factor_manifest_fingerprint_length"),
+        CheckConstraint("length(source_fingerprint) = 64",
+                        name="ck_s6_factor_source_fingerprint_length"),
+        CheckConstraint("length(election_fingerprint) = 64",
+                        name="ck_s6_factor_election_fingerprint_length"),
     )
 
     admission_id: Mapped[str] = mapped_column(String(64), primary_key=True)

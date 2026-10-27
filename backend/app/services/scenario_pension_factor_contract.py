@@ -46,7 +46,8 @@ def validate_admission_preimage(value: dict) -> dict:
     for key in _INTS:
         if type(value[key]) is not int or value[key] <= 0:
             raise ValueError("ADMISSION_INTEGER_INVALID")
-    if type(value["spouse_age_diff"]) is not int:
+    if (type(value["spouse_age_diff"]) is not int
+            or not -100 <= value["spouse_age_diff"] <= 100):
         raise ValueError("ADMISSION_SPOUSE_DIFFERENCE_INVALID")
     for key in _HASHES:
         if type(value[key]) is not str or not _SHA.fullmatch(value[key]):

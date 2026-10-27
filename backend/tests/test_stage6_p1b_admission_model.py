@@ -4,7 +4,10 @@ from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAd
 from app.services.scenario_pension_factor_contract import (
     validate_admission_preimage, fingerprint_admission_preimage,
 )
+from app.db.base import load_all_models
 import pytest
+
+load_all_models()
 
 
 def sample():

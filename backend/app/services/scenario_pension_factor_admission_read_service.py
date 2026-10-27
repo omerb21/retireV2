@@ -18,6 +18,10 @@ from app.services.pension_monthly_basis_service import canonical_bytes
 from app.services.scenario_permission_preview_service import (
     derive_pension_action_permission_admission,
 )
+from app.services.scenario_coefficient_review_context_service import (
+    derive_documentary_review_context,
+)
+from app.services.scenario_input_manifest_service import build_inert_manifest
 
 
 class FactorAdmissionBlocked(RuntimeError):
@@ -39,8 +43,6 @@ def read_current_admission(
     """
     permission = derive_pension_action_permission_admission(
         db, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id)
-    from app.services.scenario_coefficient_review_context_service import derive_documentary_review_context
-    from app.services.scenario_input_manifest_service import build_inert_manifest
     from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
     from app.models.pension_product import PensionProduct
     review = derive_documentary_review_context(
@@ -56,7 +58,10 @@ def read_current_admission(
         ScenarioDraftPensionElection.scenario_id == scenario_id,
         ScenarioDraftPensionElection.decision_id == decision_id,
         ScenarioDraftPensionElection.scenario_version == manifest["scenario_version"]))
-    if product is None or product.statement_date is None or election is None:
+    if (product is None or product.statement_date is None or election is None
+            or election.coefficient_selection != "manual_review_required"
+            or not isinstance(election.option_name, str) or not election.option_name.strip()
+            or election.pension_start_date < product.statement_date):
         _block("FACTOR_CURRENT_CONTEXT_MISSING")
     current_context = {
         "scenario_version": manifest["scenario_version"],

@@ -458,7 +458,11 @@ def _derive_pension_action_permission_in_transaction(
         current_digest = ruleset_digest()
         if current_digest != RULESET_DIGEST:
             raise ScenarioPermissionError("PENSION_PERMISSION_RULESET_STALE", 409)
-        if row["ruleset_digest_at_review"] != current_digest:
+        # A stored preview is documentary only.  If a historical digest exists
+        # it must still be current, but its absence cannot replace (or prevent)
+        # this fresh in-snapshot rule evaluation.
+        if (row["ruleset_digest_at_review"] is not None
+                and row["ruleset_digest_at_review"] != current_digest):
             raise ScenarioPermissionError("PENSION_PERMISSION_RULESET_STALE", 409)
         product_class, _ = _resolve_product(source["source_kind"], source["product_type"])
         rules = [r for r in ruleset["component_rules"] if r["component_code"] == row["component_code"]]

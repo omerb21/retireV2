@@ -32,7 +32,7 @@ def sample_manifest(component_code, *, reviewed_digest=None, amount="100.00"):
             "decision_id": "d1", "action": "pension",
             "amount": amount, "effective_date": "2026-10-27",
             "component_code": component_code,
-            "ruleset_digest_at_review": reviewed_digest or permissions.ruleset_digest(),
+            "ruleset_digest_at_review": reviewed_digest,
             "source": {
                 "product_id": "p1", "product_version": 2,
                 "component_id": "c1", "source_fingerprint": "a" * 64,
@@ -59,6 +59,12 @@ def test_allowed_component_is_deterministic():
     assert one == two
     assert one["permission_status"] == "allowed"
     assert len(one["permission_admission_fingerprint"]) == 64
+
+
+def test_missing_documentary_preview_digest_does_not_replace_current_rules():
+    component = permissions.COMPONENT_CODES[1]
+    result = calculate(sample_manifest(component, reviewed_digest=None))
+    assert result["ruleset_digest"] == permissions.ruleset_digest()
 
 
 def test_blocked_component_never_gets_admission():

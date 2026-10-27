@@ -30,6 +30,7 @@ def test_valid_fingerprint_stable():
 @pytest.mark.parametrize("field,replacement", [
     ("factor_value","200.00"),("factor_value","0"),("factor_value","1e2"),
     ("amount","100.001"),("client_id",True),("ruleset_digest","x"),
+    ("spouse_age_diff",101),
     ("actor_id",""),("factor_original_representation","PER_10000"),
     ("pension_start_date","2025-01-01"),
     ("acknowledged_at_utc","2026-10-27T08:00:00Z"),

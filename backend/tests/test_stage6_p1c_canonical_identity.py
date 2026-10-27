@@ -72,6 +72,54 @@ def test_five_fingerprints_match_canonical_owners():
     assert one["pension_inputs"][0]["temporal_authority"]["annual_rate"] is None
 
 
+def test_five_fingerprints_match_independently_fixed_goldens():
+    src,monthly,temporal,planning=result()
+    assert monthly["monthly_semantic_fingerprint"] == (
+        "fad5c5ee6dd04d0566b01ddf409fae9d03a8a05d6180141a883d500295f6dba3")
+    assert monthly["monthly_source_fingerprint"] == (
+        "15994d59620f2ddcd523264d67a39e75e5e94360989e58c56f0a769cde02ed81")
+    assert temporal["temporal_semantic_fingerprint"] == (
+        "b62f0f0b8b88e814b75480ca0494d22eca2f4ee76d76ff78ede50d92853f8cfe")
+    assert temporal["temporal_source_fingerprint"] == (
+        "5407a9b4761781fa43841102e049bf16d1338c80518a2c203727e5cf066f696c")
+    assert scenario_decision_calculation_identity(planning)[
+        "planning_calculation_input_fingerprint"] == (
+            "a599428f8de8d513ba636467fb7a4fd8e0d7d95f169adf08eb077a0ed9e6edb7")
+
+
+def test_one_source_result_has_the_closed_n1_2_shape():
+    src,monthly,temporal,planning=result()
+    value=scenario_decision_one_source_planning_result(
+        facts=planning,monthly=monthly,temporal=temporal,
+        factor_value=src["factor_value"])
+    assert set(value) == {
+        "contract_version", "client_id", "scenario_id", "scenario_version",
+        "decision_id", "planning_calculation_input_fingerprint",
+        "retirement_target", "pension_inputs",
+    }
+    assert set(value["retirement_target"]) == {
+        "retirement_target_date", "retirement_target_ready",
+    }
+    pension=value["pension_inputs"][0]
+    assert set(pension) == {
+        "source_id", "pension_start_date", "currency",
+        "monthly_amount_basis", "temporal_authority",
+    }
+    assert set(pension["monthly_amount_basis"]) == {
+        "contract_version", "source_id", "source_kind", "authority_kind",
+        "base_amount_representation", "base_amount_effective_date",
+        "basis_authority_ready", "basis_blockers",
+        "base_amount_semantic_fingerprint", "base_amount_source_fingerprint",
+    }
+    assert set(pension["temporal_authority"]) == {
+        "contract_version", "source_id", "source_kind",
+        "temporal_authority_kind", "temporal_origin_date", "annual_rate",
+        "rate_basis", "temporal_authority_ready", "temporal_blockers",
+        "temporal_semantic_fingerprint", "temporal_source_fingerprint",
+    }
+    assert "execution_allowed" not in value
+
+
 @pytest.mark.parametrize("change", [
     {"factor_value":"201"},
     {"amount":"1000001.00"},
@@ -133,6 +181,33 @@ def test_cannot_forge_temporal_preimage_while_reusing_hash():
     with pytest.raises(ValueError,match="SCENARIO_PLANNING_TEMPORAL_SOURCE_INVALID"):
         scenario_decision_one_source_planning_result(
             facts=p,monthly=m,temporal=forged,factor_value=src["factor_value"])
+
+
+def test_cannot_coherently_rehash_monthly_preimage_against_different_p1_facts():
+    src,m,t,p=result()
+    forged_preimage={**m["monthly_source_preimage"],"source_fingerprint":"9"*64}
+    forged_hash=monthly_hash(forged_preimage)
+    forged={**m,"monthly_source_preimage":forged_preimage,
+            "monthly_source_fingerprint":forged_hash}
+    forged_facts={**p,"monthly_source_fingerprint":forged_hash}
+    with pytest.raises(ValueError,match="SCENARIO_PLANNING_MONTHLY_SOURCE_INVALID"):
+        scenario_decision_one_source_planning_result(
+            facts=forged_facts,monthly=forged,temporal=t,
+            factor_value=src["factor_value"])
+
+
+def test_cannot_coherently_rehash_temporal_preimage_against_different_p1_facts():
+    src,m,t,p=result()
+    forged_preimage={**t["temporal_source_preimage"],
+                     "professional_admission_fingerprint":"9"*64}
+    forged_hash=monthly_hash(forged_preimage)
+    forged={**t,"temporal_source_preimage":forged_preimage,
+            "temporal_source_fingerprint":forged_hash}
+    forged_facts={**p,"temporal_source_fingerprint":forged_hash}
+    with pytest.raises(ValueError,match="SCENARIO_PLANNING_TEMPORAL_SOURCE_INVALID"):
+        scenario_decision_one_source_planning_result(
+            facts=forged_facts,monthly=m,temporal=forged,
+            factor_value=src["factor_value"])
 
 
 def test_planning_uses_factual_and_scenario_serializers_independently():

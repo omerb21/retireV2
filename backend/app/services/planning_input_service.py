@@ -331,13 +331,52 @@ def scenario_decision_one_source_planning_result(*, facts: dict, monthly: dict,
     temporal_source=temporal["temporal_source_preimage"]
     if type(monthly_source) is not dict or type(temporal_source) is not dict:
         raise ValueError("SCENARIO_PLANNING_PREIMAGE_INVALID")
-    if monthly_source.get("source_id")!=facts["source_id"] or (
-            monthly_source.get("statement_date")!=facts["statement_date"]):
+    monthly_source_fields=frozenset((
+        "contract_version","source_id","source_kind","client_id","scenario_id",
+        "scenario_version","decision_id","manifest_fingerprint",
+        "partition_fingerprint","source_product_id","source_product_version",
+        "source_component_id","component_code","source_fingerprint","amount",
+        "statement_date","election_fingerprint","professional_admission_revision",
+        "professional_admission_fingerprint","monthly_semantic_fingerprint"))
+    temporal_source_fields=frozenset((
+        "contract_version","source_id","source_kind","client_id","scenario_id",
+        "scenario_version","decision_id","statement_date","retirement_target_date",
+        "monthly_source_fingerprint","temporal_semantic_fingerprint",
+        "professional_admission_fingerprint"))
+    if (set(monthly_source)!=monthly_source_fields
+            or monthly_source.get("contract_version")
+                !="canonical-scenario-pension-monthly-source-v1"
+            or monthly_source.get("source_kind")!="scenario_decision"):
         raise ValueError("SCENARIO_PLANNING_MONTHLY_SOURCE_INVALID")
-    if temporal_source.get("source_id")!=facts["source_id"] or (
-            temporal_source.get("statement_date")!=facts["statement_date"]) or (
-            temporal_source.get("retirement_target_date")!=facts["retirement_target_date"]) or (
-            temporal_source.get("monthly_source_fingerprint")!=facts["monthly_source_fingerprint"]):
+    monthly_bindings={
+        "source_id":"source_id","client_id":"client_id","scenario_id":"scenario_id",
+        "scenario_version":"scenario_version","decision_id":"decision_id",
+        "manifest_fingerprint":"manifest_fingerprint",
+        "partition_fingerprint":"partition_fingerprint",
+        "source_fingerprint":"source_fingerprint","amount":"amount",
+        "statement_date":"statement_date","election_fingerprint":"election_fingerprint",
+        "professional_admission_revision":"professional_admission_revision",
+        "professional_admission_fingerprint":"professional_admission_fingerprint",
+        "monthly_semantic_fingerprint":"monthly_semantic_fingerprint",
+    }
+    if any(monthly_source[source]!=facts[target]
+           for source,target in monthly_bindings.items()):
+        raise ValueError("SCENARIO_PLANNING_MONTHLY_SOURCE_INVALID")
+    if (set(temporal_source)!=temporal_source_fields
+            or temporal_source.get("contract_version")
+                !="canonical-scenario-pension-temporal-source-v1"
+            or temporal_source.get("source_kind")!="scenario_decision"):
+        raise ValueError("SCENARIO_PLANNING_TEMPORAL_SOURCE_INVALID")
+    temporal_bindings={
+        "source_id":"source_id","client_id":"client_id","scenario_id":"scenario_id",
+        "scenario_version":"scenario_version","decision_id":"decision_id",
+        "statement_date":"statement_date","retirement_target_date":"retirement_target_date",
+        "monthly_source_fingerprint":"monthly_source_fingerprint",
+        "temporal_semantic_fingerprint":"temporal_semantic_fingerprint",
+        "professional_admission_fingerprint":"professional_admission_fingerprint",
+    }
+    if any(temporal_source[source]!=facts[target]
+           for source,target in temporal_bindings.items()):
         raise ValueError("SCENARIO_PLANNING_TEMPORAL_SOURCE_INVALID")
     if canonical_monthly_semantic(
             "scenario_decision_balance_ratio",monthly["representation"],facts["statement_date"]

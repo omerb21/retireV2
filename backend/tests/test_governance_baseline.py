@@ -285,6 +285,16 @@ APPROVED_STAGE6_P1B_PATHS = {
     "backend/tests/test_scenario_sc05_migration_contract.py",
     "docs/ux/STAGE6_PHASE1_IMPLEMENTATION_DECISION_2026-10-27.md",
 }
+APPROVED_STAGE6_P1C_PATHS = {
+    "backend/app/services/pension_monthly_basis_service.py",
+    "backend/app/services/pension_temporal_basis_service.py",
+    "backend/app/services/planning_input_service.py",
+    "backend/app/services/scenario_snapshot_candidate_service.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_stage6_p1c_canonical_identity.py",
+    "backend/tests/test_stage6_p1c_snapshot_contract.py",
+    "backend/tests/test_stage6_p1c_postgresql.py",
+}
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
     "backend/app/schemas/fixation_contracts.py",
@@ -722,6 +732,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_SCENARIO_DRAFT_PATHS,
         *APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS,
         *APPROVED_STAGE6_P1B_PATHS,
+        *APPROVED_STAGE6_P1C_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
@@ -777,6 +788,7 @@ def _approved_tracked_change_paths() -> set[str]:
         *APPROVED_SCENARIO_DRAFT_PATHS,
         *APPROVED_SCENARIO_PERMISSION_PREVIEW_PATHS,
         *APPROVED_STAGE6_P1B_PATHS,
+        *APPROVED_STAGE6_P1C_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,
         *APPROVED_PACKAGE_1_PATHS,

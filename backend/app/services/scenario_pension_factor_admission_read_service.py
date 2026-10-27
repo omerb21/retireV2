@@ -30,18 +30,49 @@ def _block(code: str):
 
 def read_current_admission(
     db: Session, *, client_id: int, scenario_id: str, decision_id: str,
-    current_context: dict,
-) -> dict:
+ ) -> dict:
     """Reverify N1.3 against DB-derived decision/election/date context.
 
-    current_context MUST be produced by trusted caller in same snapshot.
-    It is not an API request payload and must not be accepted from a browser.
+    All current identities are independently derived from PostgreSQL within the
+    caller's snapshot; there is no caller-supplied current_context.
     Returns no financial result.
     """
     permission = derive_pension_action_permission_admission(
         db, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id)
-    if not isinstance(current_context, dict):
+    from app.services.scenario_coefficient_review_context_service import derive_documentary_review_context
+    from app.services.scenario_input_manifest_service import build_inert_manifest
+    from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
+    from app.models.pension_product import PensionProduct
+    review = derive_documentary_review_context(
+        db, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id)
+    manifest = build_inert_manifest(db, client_id, scenario_id)
+    decision = next((d for d in manifest["decisions"] if d["decision_id"] == decision_id), None)
+    if decision is None or decision["source"] is None:
+        _block("FACTOR_CURRENT_DECISION_INVALID")
+    product = db.scalar(select(PensionProduct).where(
+        PensionProduct.client_id == client_id,
+        PensionProduct.product_id == decision["product_id"]))
+    election = db.scalar(select(ScenarioDraftPensionElection).where(
+        ScenarioDraftPensionElection.scenario_id == scenario_id,
+        ScenarioDraftPensionElection.decision_id == decision_id,
+        ScenarioDraftPensionElection.scenario_version == manifest["scenario_version"]))
+    if product is None or product.statement_date is None or election is None:
         _block("FACTOR_CURRENT_CONTEXT_MISSING")
+    current_context = {
+        "scenario_version": manifest["scenario_version"],
+        "manifest_fingerprint": manifest["manifest_fingerprint"],
+        "source_fingerprint": decision["source"]["source_fingerprint"],
+        "election_fingerprint": review["election_fingerprint"],
+        "source_product_id": decision["product_id"],
+        "source_component_id": decision["component_id"],
+        "component_code": decision["component_code"],
+        "amount": decision["amount"],
+        "statement_date": product.statement_date.isoformat(),
+        "pension_start_date": election.pension_start_date.isoformat(),
+        "survivors_option": election.survivors_option,
+        "spouse_age_diff": election.spouse_age_diff,
+        "payout_option_name": election.option_name,
+    }
     rows = db.scalars(select(ScenarioPensionFactorAdmission).where(
         ScenarioPensionFactorAdmission.client_id == client_id,
         ScenarioPensionFactorAdmission.scenario_id == scenario_id,

@@ -30,7 +30,7 @@ class DB:
             return SimpleNamespace(
                 coefficient_selection="manual_review_required",
                 pension_start_date=__import__("datetime").date(2027,9,30),
-                survivors_option="60%",spouse_age_diff=0)
+                survivors_option="60%",spouse_age_diff=0,option_name="standard")
         raise AssertionError("unexpected query")
     def add(self, row):
         self.added.append(row)
@@ -90,4 +90,10 @@ def test_wrong_expected_review_fingerprint_rejected():
     db=DB()
     with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_CONTEXT_STALE"):
         call(db,expected_election_fingerprint="f"*64)
+    assert not db.added
+
+def test_mismatched_option_is_rejected():
+    db=DB()
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_OPTION_MISMATCH"):
+        call(db,payout_option_name="forged-option")
     assert not db.added

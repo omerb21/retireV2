@@ -321,3 +321,65 @@ For Phase 1, preserve the exact N1 P1 and factor-admission permission fields as 
 **Delta gate status = BLOCKED_PENDING_PERMISSION_AUTHORITY**. All four new N1 objects are explicit design proposals; independent review must verify their referential integrity, source-date binding and exact hash bytes, and also resolve this remaining permission provenance gate. The manager's delegated decisions close the **product scope**, not implementation or permission authority. Do not request another product decision from the owner.
 
 **Acceptance gate:** reviewer checks all exact field sets and current ownership. The narrow Phase-1 design can pass only when an actual permission-admission owner is identified, or the gate is explicitly narrowed to an accepted professional authorization independent of the existing always-blocked general scenario assessor. No automatic bypass. This addendum itself remains DESIGN ONLY; no code, CI or deployment permitted.
+
+
+## N1.6 SCENARIO_PENSION_ACTION_PERMISSION_ADMISSION_V1 — normative permission authority
+
+**Precedence:** N1.6 replaces N1.5's unresolved permission-owner statement as a **design contract**. It does not claim that the current code already produces permission admission. N1.1–N1.4 remain unchanged; this is the single missing producer contract. Stage 6 remains NOT_AUTHORIZED until independent delta acceptance.
+
+### Owner and scope
+
+The existing permission rule owner, `scenario_permission_preview_service`, owns the immutable `permission_ruleset()`, `ruleset_digest()`, `_selected_ruleset(effective_date)`, product-class resolution and applicable component/action rule. A **narrow new read-only derived admission function in that owner**, e.g. `derive_pension_action_permission_admission(db, *, verified_context)`, evaluates the current immutable rules in the *same caller-owned PostgreSQL REPEATABLE READ READ ONLY snapshot* as the scenario manifest, decision, factual product/component and factor acknowledgment. It does not call the public `preview()` entry point (which opens a separate snapshot), does not trust a stored `preview_id`, and does not create a parallel rules engine.
+
+This is **base-rule admission to compute a non-binding single-decision gross pension illustration only**. It does NOT determine professional eligibility, tax entitlement, access to actual benefits, conversion authority, payout authorization or permission for capital actions. The separately authenticated N1.3 professional factor acknowledgment is also necessary. No conversion, 161ד, tax or actual payment is authorized.
+
+### Source selection and mandatory checks
+
+- Verify current client / active scenario / scenario version / one decision ID from DB; decision `action="pension"`, exact positive two-decimal amount and valid decision effective date; referenced product belongs to client and component belongs to product, matching component code, current product version, DB-derived manifest and draft source digest; aggregate allocations cannot exceed component balance.
+- Invoke existing `_selected_ruleset(decision.effective_date)`. Require `status="approved"`, its effective-from/effective-until validity, verified current ruleset digest equals the SHA-256 of the canonical artifact; no default rule, no stale stored ruleset digest and no unknown or ambiguous product-class mapping. Resolve product class with existing `_resolve_product(product.source_kind,product.product_type)`. Require the resolved class in `applicable_product_classes`.
+- Match **exactly one** component rule by `component_code`; read that rule's `actions["pension"]`. Require `permission_status="allowed"` and `reason_code="BASE_PERMISSION_ALLOWED"`. A different action or any blocked/unknown/reconciliation status blocks. Reuse existing ruleset and reason codes; the whole-product `overall_status` is not authoritative for a single component (mixed product is permitted only when the *specific selected component* is allowed).
+- Bind the source `statement_date` and admission revision/option elsewhere via N1.1–N1.3; base-rule permission does not pretend to assess coefficient, retirement eligibility or tax. Never source the decision from user-supplied JSON. No writing/persistence of this permission fingerprint: recompute at every attempted execution, and reject any mismatch with prior accepted current identity.
+- The *existing* `ScenarioDraftDecision.permission_preview_id_at_review` stays documentary, NOT accepted proof. N1.5's missing current producer is addressed by the **specified future canonical owner extension**, not by an invented current row.
+
+### Closed permission fingerprint preimage
+
+Contract and field set are exactly the object below. Owner `scenario_permission_preview_service`; serializer **`scenario_permission_preview_service.canonical_json(preimage).encode("utf-8")`**, which normalizes strings/keys to NFC and encodes sorted compact JSON with `ensure_ascii=False` and `allow_nan=False`. Hash = lowercase SHA-256 hex of those bytes; name `permission_admission_fingerprint`. No extra keys and no omitted keys.
+
+```json
+{
+  "contract_version": "SCENARIO_PENSION_ACTION_PERMISSION_ADMISSION_V1",
+  "client_id": 1,
+  "scenario_id": "scenario-id",
+  "scenario_version": 1,
+  "decision_id": "decision-id",
+  "source_product_id": "product-id",
+  "source_product_version": 1,
+  "source_component_id": "component-id",
+  "source_fingerprint": "64-lowercase-hex-draft-source-digest",
+  "component_code": "component-code",
+  "amount": "1000000.00",
+  "action": "pension",
+  "effective_date": "2026-10-27",
+  "ruleset_id": "retire-v2-permission-standard-20261024",
+  "ruleset_version": 1,
+  "ruleset_digest": "64-lowercase-hex-sha256",
+  "applicable_rule_id": "standard-component-02",
+  "permission_status": "allowed",
+  "reason_code": "BASE_PERMISSION_ALLOWED"
+}
+```
+
+Illustrative IDs, dates and amounts are **not defaults**. Integer fields `client_id`, `scenario_version`, `source_product_version`, `ruleset_version` are strictly positive JSON integers (not bool). `amount` is the selected decision's exact decimal NIS formatted `0.00`; `effective_date` canonical ISO date. All other fields are mandatory, nonempty strings. `source_fingerprint` is the existing DB-derived **draft component source digest** `scenario_draft_service._source_digest` with equality to current manifest evidence; it is *not* the whole-product source fingerprint calculated for Preview. `ruleset_id/version/digest`, `applicable_rule_id`, `permission_status` and `reason_code` are copied from current ruleset evaluation in this same snapshot, never from a saved preview or caller.
+
+### Consumption / failure semantics
+
+- Current admission is a **derived evidence object** `{schema_version:"SCENARIO_PENSION_ACTION_PERMISSION_ADMISSION_V1",permission_admission_fingerprint:<hash>,permission_status:"allowed",reason_code:"BASE_PERMISSION_ALLOWED",applicable_rule_id:<current-rule-id>,ruleset_id:<id>,ruleset_version:<positive-int>,ruleset_digest:<hash>}` on success. It is not an independent approval flag and cannot enable financial calculation by itself.
+- If source, action, version, allocation, effective date, product mapping, component permission or ruleset cannot be proved, return **decision-scoped BLOCKED** with `permission_admission_fingerprint=null`, no factor execution and no PTE call. A ruleset ID, version or digest change necessarily invalidates a previously bound N1.3 acknowledgment and P1, even if the new rule still returns `allowed`. A decision amount or scenario version change also changes the permission fingerprint.
+- N1.1 P1 and N1.3 professional factor acknowledgment consume **the exact recomputed** `permission_admission_fingerprint` and current `ruleset_digest`; no preview identifier, manually supplied fingerprint or memoized admission is authoritative.
+- The existing general `scenario_calculation_admission_service.assess()` keeps its conservative always-blocking behavior and original codes. Only the future **separately authorized, single-decision Stage 6 route** may combine N1.6 base permission with N1.3 authenticated professional factor acknowledgment and N1.1 identity checks to admit **this narrow illustration**. Its display MUST state that eligibility/tax have **not** been evaluated, not imply those general blockers have been removed for other scenario operations.
+
+### N1.6 negative fixtures / delta acceptance
+
+Tests (to implement only after PASS_DESIGN_ONLY): allowed component while other components blocked; blocked component; unknown product mapping; effective date before ruleset; changed rule/digest; changed component/source balance without product version increment; amount exceeding balance; changed decision amount without preview update; stale scenario version; forged source fingerprint; permission preview allowed but no N1.3 planner acknowledgment; changed actor/option/date after acknowledgment; cloned scenario. All invalid cases return BLOCKED with zero PTE invocations.
+
+**One remaining acceptance action:** independent GPT Work READ ONLY delta inspection of this N1.6 contract only, with verdict `PASS_DESIGN_ONLY` or `BLOCKED` and exact evidence if blocked. No CI, code, migration or deployment is authorized by this documentation update.

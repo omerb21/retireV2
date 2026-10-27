@@ -253,3 +253,54 @@ def resolve_income(db, client_id, income_id, payload):
     resolution.actor = "planner:planning-input"
     db.flush()
     return {"decision_version": decision.version, "resolution": serialize(record(resolution))}
+
+
+# Stage 6 P1C: canonical scenario identity, distinct from factual planning hash.
+def scenario_decision_calculation_identity(facts: dict) -> dict:
+    """Produce P1 only from current admitted identities (caller validates snapshot).
+
+    Identity-only producer; no pension calculation and no executive grant.
+    """
+    from urllib.parse import quote
+    required=frozenset((
+        "client_id","scenario_id","scenario_version","decision_id","source_id",
+        "manifest_fingerprint","partition_fingerprint","source_fingerprint",
+        "statement_date","amount","action","election_fingerprint",
+        "retirement_target_date","monthly_semantic_fingerprint",
+        "monthly_source_fingerprint","temporal_semantic_fingerprint",
+        "temporal_source_fingerprint","professional_admission_revision",
+        "professional_admission_fingerprint","ruleset_digest",
+        "permission_admission_fingerprint"))
+    if type(facts) is not dict or set(facts)!=required:
+        raise ValueError("SCENARIO_PLANNING_FIELDS_INVALID")
+    for k in ("client_id","scenario_version","professional_admission_revision"):
+        if type(facts[k]) is not int or facts[k]<=0:
+            raise ValueError("SCENARIO_PLANNING_VERSION_INVALID")
+    if facts["action"]!="pension":
+        raise ValueError("SCENARIO_PLANNING_ACTION_INVALID")
+    for k in ("scenario_id","decision_id"):
+        if type(facts[k]) is not str or not facts[k]:
+            raise ValueError("SCENARIO_PLANNING_ID_INVALID")
+    expected="scenario-decision:"+quote(facts["scenario_id"],safe="")+":"+quote(facts["decision_id"],safe="")
+    if facts["source_id"]!=expected:
+        raise ValueError("SCENARIO_PLANNING_SOURCE_INVALID")
+    for k in ("manifest_fingerprint","partition_fingerprint","source_fingerprint",
+              "election_fingerprint","monthly_semantic_fingerprint",
+              "monthly_source_fingerprint","temporal_semantic_fingerprint",
+              "temporal_source_fingerprint","professional_admission_fingerprint",
+              "ruleset_digest","permission_admission_fingerprint"):
+        v=facts[k]
+        if type(v) is not str or len(v)!=64 or any(c not in "0123456789abcdef" for c in v):
+            raise ValueError("SCENARIO_PLANNING_HASH_INVALID")
+    from datetime import date as _date
+    from app.services.pension_monthly_basis_service import money,decimal
+    for k in ("statement_date","retirement_target_date"):
+        if type(facts[k]) is not str or _date.fromisoformat(facts[k]).isoformat()!=facts[k]:
+            raise ValueError("SCENARIO_PLANNING_DATE_INVALID")
+    if facts["retirement_target_date"]<facts["statement_date"]:
+        raise ValueError("SCENARIO_PLANNING_TARGET_INVALID")
+    if type(facts["amount"]) is not str or money(facts["amount"])!=facts["amount"] or decimal(facts["amount"])<=0:
+        raise ValueError("SCENARIO_PLANNING_AMOUNT_INVALID")
+    preimage={"contract":"canonical-scenario-pension-planning-calculation-input-v1",**facts}
+    return {"planning_calculation_input_fingerprint":fingerprint(preimage),
+            "planning_calculation_input_preimage":preimage}

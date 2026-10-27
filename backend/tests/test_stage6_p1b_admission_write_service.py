@@ -8,8 +8,9 @@ from app.services.scenario_pension_factor_admission_write_service import (
 )
 
 class DB:
-    def __init__(self):
+    def __init__(self, previous_revision=None):
         self._n=0
+        self.previous_revision=previous_revision
         self.added=[]
     def get_bind(self):
         return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
@@ -23,7 +24,7 @@ class DB:
         if self._n==1:
             return SimpleNamespace(client_id=1,scenario_id="s",version=2,status="draft")
         if self._n==2:
-            return None
+            return self.previous_revision
         if self._n==3:
             return SimpleNamespace(statement_date=__import__("datetime").date(2026,9,30))
         if self._n==4:
@@ -97,3 +98,22 @@ def test_mismatched_option_is_rejected():
     with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_OPTION_MISMATCH"):
         call(db,payout_option_name="forged-option")
     assert not db.added
+
+def test_cas_rejects_competing_revision_before_any_write():
+    db=DB(previous_revision=1)
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_REVISION_CONFLICT"):
+        call(db,expected_admission_revision=0)
+    assert not db.added
+
+def test_cas_accepts_the_latest_revision():
+    db=DB(previous_revision=1)
+    outcome=call(db,expected_admission_revision=1)
+    assert outcome["admission_revision"]==2
+    assert db.added[0].admission_revision==2
+    assert outcome["execution_allowed"] is False
+
+def test_factor_approval_does_not_commit_transaction():
+    db=DB()
+    db.commit=lambda: (_ for _ in ()).throw(AssertionError("service must never commit"))
+    call(db)
+    assert len(db.added)==1

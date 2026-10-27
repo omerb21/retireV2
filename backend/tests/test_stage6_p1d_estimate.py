@@ -107,3 +107,41 @@ def test_missing_current_identity_blocks_before_pte():
                 statement_date="2026-09-30",retirement_target_date="2027-09-30",
                 five_identities=forged)
         engine.assert_not_called()
+
+
+def test_real_canonical_pte_one_source_gross_result():
+    """Exercise P1C owners into real PTE (not a mocked PTE result)."""
+    from test_stage6_p1c_canonical_identity import result
+    from app.services.planning_input_service import scenario_decision_one_source_planning_result
+    facts, monthly, temporal, planning_facts=result()
+    actual_planning=scenario_decision_one_source_planning_result(
+        facts=planning_facts,monthly=monthly,temporal=temporal,
+        factor_value=facts["factor_value"])
+    approval={**APPROVAL, "factor_value":facts["factor_value"]}
+    out=subject._execute_verified(
+        planning_result=actual_planning,
+        approval=approval,
+        statement_date=facts["statement_date"],
+        retirement_target_date=planning_facts["retirement_target_date"],
+        five_identities=planning_facts)
+    assert out["result_state"]=="RESULT_READY"
+    assert out["monthly_estimate_gross_ils"]=="5000.00"
+    assert out["result_fingerprint"]
+    assert out["pte_source_execution_fingerprint"]
+
+
+def test_real_canonical_pte_never_runs_on_preflight_target_conflict():
+    from test_stage6_p1c_canonical_identity import result
+    from app.services.planning_input_service import scenario_decision_one_source_planning_result
+    facts,monthly,temporal,planning_facts=result()
+    built=scenario_decision_one_source_planning_result(
+        facts=planning_facts,monthly=monthly,temporal=temporal,
+        factor_value=facts["factor_value"])
+    with patch.object(subject,"execute_from_planning_result") as engine:
+        with pytest.raises(ScenarioSnapshotError,match="STAGE6_P1D_PLANNING_RESULT_INVALID"):
+            subject._execute_verified(
+                planning_result=built,approval=APPROVAL,
+                statement_date=facts["statement_date"],
+                retirement_target_date="2028-01-01",
+                five_identities=planning_facts)
+        engine.assert_not_called()

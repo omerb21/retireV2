@@ -321,8 +321,34 @@ def scenario_decision_one_source_planning_result(*, facts: dict, monthly: dict,
                                  "temporal_source_preimage"))
     if type(monthly) is not dict or set(monthly)!=required_monthly or type(temporal) is not dict or set(temporal)!=required_temporal:
         raise ValueError("SCENARIO_PLANNING_BASIS_INVALID")
+    from app.services.pension_monthly_basis_service import (
+        fingerprint as canonical_basis_hash, semantic as canonical_monthly_semantic,
+    )
+    from app.services.pension_temporal_basis_service import semantic_fingerprint
     if monthly["source_id"]!=facts["source_id"]:
         raise ValueError("SCENARIO_PLANNING_MONTHLY_SOURCE_INVALID")
+    monthly_source=monthly["monthly_source_preimage"]
+    temporal_source=temporal["temporal_source_preimage"]
+    if type(monthly_source) is not dict or type(temporal_source) is not dict:
+        raise ValueError("SCENARIO_PLANNING_PREIMAGE_INVALID")
+    if monthly_source.get("source_id")!=facts["source_id"] or (
+            monthly_source.get("statement_date")!=facts["statement_date"]):
+        raise ValueError("SCENARIO_PLANNING_MONTHLY_SOURCE_INVALID")
+    if temporal_source.get("source_id")!=facts["source_id"] or (
+            temporal_source.get("statement_date")!=facts["statement_date"]) or (
+            temporal_source.get("retirement_target_date")!=facts["retirement_target_date"]) or (
+            temporal_source.get("monthly_source_fingerprint")!=facts["monthly_source_fingerprint"]):
+        raise ValueError("SCENARIO_PLANNING_TEMPORAL_SOURCE_INVALID")
+    if canonical_monthly_semantic(
+            "scenario_decision_balance_ratio",monthly["representation"],facts["statement_date"]
+        )!=facts["monthly_semantic_fingerprint"]:
+        raise ValueError("SCENARIO_PLANNING_MONTHLY_SEMANTIC_INVALID")
+    if semantic_fingerprint("none",facts["statement_date"],None,None)!=facts["temporal_semantic_fingerprint"]:
+        raise ValueError("SCENARIO_PLANNING_TEMPORAL_SEMANTIC_INVALID")
+    if canonical_basis_hash(monthly_source)!=facts["monthly_source_fingerprint"]:
+        raise ValueError("SCENARIO_PLANNING_MONTHLY_SOURCE_FINGERPRINT_INVALID")
+    if canonical_basis_hash(temporal_source)!=facts["temporal_source_fingerprint"]:
+        raise ValueError("SCENARIO_PLANNING_TEMPORAL_SOURCE_FINGERPRINT_INVALID")
     for field in ("monthly_semantic_fingerprint","monthly_source_fingerprint"):
         if monthly[field]!=facts[field]:
             raise ValueError("SCENARIO_PLANNING_MONTHLY_FINGERPRINT_INVALID")

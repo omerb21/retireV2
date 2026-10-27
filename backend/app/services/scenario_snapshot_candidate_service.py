@@ -233,7 +233,7 @@ def build_manifest_candidate_snapshot(
 # Identity derivation ONLY. The P1D PTE execution path is deliberately absent.
 def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
                                        client_id: int, scenario_id: str,
-                                       decision_id: str) -> dict:
+                                       decision_id: str, _stage6_executor=None) -> dict:
     """Derive all five canonical hashes and a one-source planning result.
 
     All authority is independently read from the SAME REPEATABLE READ READ ONLY
@@ -357,8 +357,13 @@ def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
         one_source=scenario_decision_one_source_planning_result(
             facts=planning_facts,monthly=monthly,temporal=temporal,
             factor_value=approval["factor_value"])
-        # No source may be executable merely by fetching this identity proof;
-        # P1D must verify current snapshots before invoking the existing PTE.
+        # Execute only inside the original authoritative read-only snapshot.
+        # The ordinary P1C call remains identity-only and never invokes PTE.
+        if _stage6_executor is not None:
+            return _stage6_executor(
+                planning_result=one_source, approval=approval,
+                statement_date=statement, retirement_target_date=target,
+                five_identities=planning_facts)
         return {
             "schema_version":"STAGE6_P1C_IDENTITY_ONLY_V1",
             "client_id":client_id,"scenario_id":scenario_id,"decision_id":decision_id,

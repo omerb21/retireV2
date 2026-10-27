@@ -1,0 +1,93 @@
+"""P1B writer behavioral contract (unit only; PostgreSQL integration still required)."""
+from types import SimpleNamespace
+from unittest.mock import patch
+import pytest
+
+from app.services.scenario_pension_factor_admission_write_service import (
+    save_factor_admission, PensionFactorWriteBlocked,
+)
+
+class DB:
+    def __init__(self):
+        self._n=0
+        self.added=[]
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    def in_transaction(self):
+        return True
+    new=dirty=deleted=()
+    def execute(self, stmt):
+        return SimpleNamespace(scalar_one=lambda: "repeatable read" if "isolation" in str(stmt) else "off")
+    def scalar(self, query):
+        self._n+=1
+        if self._n==1:
+            return SimpleNamespace(client_id=1,scenario_id="s",version=2,status="draft")
+        if self._n==2:
+            return None
+        if self._n==3:
+            return SimpleNamespace(statement_date=__import__("datetime").date(2026,9,30))
+        if self._n==4:
+            return SimpleNamespace(
+                coefficient_selection="manual_review_required",
+                pension_start_date=__import__("datetime").date(2027,9,30),
+                survivors_option="60%",spouse_age_diff=0)
+        raise AssertionError("unexpected query")
+    def add(self, row):
+        self.added.append(row)
+    def flush(self):
+        pass
+
+MANIFEST={
+    "manifest_fingerprint":"a"*64,
+    "decisions":[{"decision_id":"d","action":"pension","product_id":"p",
+                  "component_id":"c","component_code":"code","amount":"100.00",
+                  "source":{"source_fingerprint":"b"*64}}]}
+REVIEW={"manifest_fingerprint":"a"*64,"election_fingerprint":"c"*64}
+PERMISSION={"permission_admission_fingerprint":"e"*64,"ruleset_digest":"d"*64}
+
+def call(db,**overrides):
+    arguments=dict(client_id=1,scenario_id="s",decision_id="d",
+        expected_scenario_version=2,expected_admission_revision=0,
+        actor_id="authenticated-planner",factor_value="200",
+        factor_evidence_type="PLANNER_ASSUMPTION",
+        factor_evidence_reference="professional assumption",
+        payout_option_name="standard",
+        expected_manifest_fingerprint="a"*64,
+        expected_election_fingerprint="c"*64)
+    arguments.update(overrides)
+    with patch("app.services.scenario_pension_factor_admission_write_service._derive_pension_action_permission_in_transaction",return_value=PERMISSION),patch(
+         "app.services.scenario_pension_factor_admission_write_service.derive_documentary_review_context",return_value=REVIEW),patch(
+         "app.services.scenario_pension_factor_admission_write_service.build_inert_manifest",return_value=MANIFEST):
+        return save_factor_admission(db,**arguments)
+
+def test_append_only_new_revision_is_not_executable():
+    db=DB()
+    result=call(db)
+    assert result["admission_revision"]==1
+    assert result["execution_allowed"] is False
+    assert len(db.added)==1
+    assert db.added[0].admission_revision==1
+
+def test_stale_scenario_rejected_before_permission():
+    db=DB()
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_SCENARIO_STALE"):
+        call(db,expected_scenario_version=3)
+    assert not db.added
+
+def test_missing_authenticated_actor_rejected():
+    db=DB()
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_REQUEST_INVALID"):
+        call(db,actor_id="")
+    assert not db.added
+
+def test_bad_factor_rejected_before_append():
+    db=DB()
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_PREIMAGE_INVALID"):
+        call(db,factor_value="0")
+    assert not db.added
+
+def test_wrong_expected_review_fingerprint_rejected():
+    db=DB()
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_CONTEXT_STALE"):
+        call(db,expected_election_fingerprint="f"*64)
+    assert not db.added

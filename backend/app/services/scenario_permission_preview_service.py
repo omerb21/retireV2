@@ -396,3 +396,88 @@ def preview(
         raise ScenarioPermissionError("PREVIEW_DATABASE_UNAVAILABLE", 503) from primary
     assert result is not None
     return deepcopy(result)
+
+
+
+# Stage6-P1A: read-only, decision-scoped rule admission; not financial authority.
+def derive_pension_action_permission_admission(
+    db: Session, *, client_id: int, scenario_id: str, decision_id: str,
+) -> dict[str, Any]:
+    """Derive N1.6 evidence within the caller-owned, consistent read snapshot.
+
+    The caller MUST hold a PostgreSQL REPEATABLE READ READ ONLY transaction.
+    This function opens no connection, commits no writes, and does not call preview().
+    """
+    from app.services.scenario_input_manifest_service import build_inert_manifest
+    from app.services.scenario_snapshot_candidate_service import _partition_verified_manifest
+
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql" or not db.in_transaction():
+        raise ScenarioPermissionError("PENSION_PERMISSION_SNAPSHOT_REQUIRED", 409)
+    if db.new or db.dirty or db.deleted:
+        raise ScenarioPermissionError("PENSION_PERMISSION_DIRTY_SESSION", 409)
+    with db.no_autoflush:
+        manifest = build_inert_manifest(db, client_id, scenario_id)
+        partition = _partition_verified_manifest(manifest)
+        if partition["evidence_state"] != "STRUCTURALLY_CONSISTENT_NOT_ADMITTED":
+            raise ScenarioPermissionError("PENSION_PERMISSION_SOURCE_STALE", 409)
+        rows = [r for r in manifest["decisions"] if r["decision_id"] == decision_id]
+        if len(rows) != 1:
+            raise ScenarioPermissionError("PENSION_PERMISSION_DECISION_NOT_FOUND", 409)
+        row = rows[0]
+        source = row["source"]
+        if row["action"] != "pension" or source is None:
+            raise ScenarioPermissionError("PENSION_PERMISSION_ACTION_INVALID", 409)
+        amount = Decimal(row["amount"])
+        if not amount.is_finite() or amount <= 0:
+            raise ScenarioPermissionError("PENSION_PERMISSION_AMOUNT_INVALID", 409)
+        effective_date = date.fromisoformat(row["effective_date"])
+        ruleset = _selected_ruleset(effective_date)
+        if ruleset["status"] != "approved":
+            raise ScenarioPermissionError("PENSION_PERMISSION_RULESET_INVALID", 409)
+        if ruleset["effective_until"] is not None and effective_date.isoformat() > ruleset["effective_until"]:
+            raise ScenarioPermissionError("PENSION_PERMISSION_RULESET_EXPIRED", 409)
+        current_digest = ruleset_digest()
+        if current_digest != RULESET_DIGEST:
+            raise ScenarioPermissionError("PENSION_PERMISSION_RULESET_STALE", 409)
+        if row["ruleset_digest_at_review"] != current_digest:
+            raise ScenarioPermissionError("PENSION_PERMISSION_RULESET_STALE", 409)
+        product_class, _ = _resolve_product(source["source_kind"], source["product_type"])
+        rules = [r for r in ruleset["component_rules"] if r["component_code"] == row["component_code"]]
+        if len(rules) != 1 or product_class not in rules[0]["applicable_product_classes"]:
+            raise ScenarioPermissionError("PENSION_PERMISSION_RULE_MISSING", 409)
+        rule = rules[0]
+        permission = rule["actions"].get("pension")
+        if permission is None or permission["permission_status"] != "allowed" or permission["reason_code"] != "BASE_PERMISSION_ALLOWED":
+            raise ScenarioPermissionError("PENSION_PERMISSION_NOT_ALLOWED", 409)
+        preimage = {
+            "contract_version": "SCENARIO_PENSION_ACTION_PERMISSION_ADMISSION_V1",
+            "client_id": client_id,
+            "scenario_id": scenario_id,
+            "scenario_version": manifest["scenario_version"],
+            "decision_id": decision_id,
+            "source_product_id": source["product_id"],
+            "source_product_version": source["product_version"],
+            "source_component_id": source["component_id"],
+            "source_fingerprint": source["source_fingerprint"],
+            "component_code": row["component_code"],
+            "amount": row["amount"],
+            "action": "pension",
+            "effective_date": row["effective_date"],
+            "ruleset_id": ruleset["ruleset_id"],
+            "ruleset_version": ruleset["ruleset_version"],
+            "ruleset_digest": current_digest,
+            "applicable_rule_id": rule["rule_id"],
+            "permission_status": "allowed",
+            "reason_code": "BASE_PERMISSION_ALLOWED",
+        }
+        return {
+            "schema_version": "SCENARIO_PENSION_ACTION_PERMISSION_ADMISSION_V1",
+            "permission_admission_fingerprint": _sha256(preimage),
+            "permission_status": "allowed",
+            "reason_code": "BASE_PERMISSION_ALLOWED",
+            "applicable_rule_id": rule["rule_id"],
+            "ruleset_id": ruleset["ruleset_id"],
+            "ruleset_version": ruleset["ruleset_version"],
+            "ruleset_digest": current_digest,
+        }

@@ -272,12 +272,21 @@ def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
         if len(decisions)!=1 or decisions[0]["action"]!="pension" or decisions[0]["source"] is None:
             raise ScenarioSnapshotError("STAGE6_P1C_DECISION_BLOCKED")
         decision=decisions[0]
-        approval=read_current_admission(db,client_id=client_id,
-                                        scenario_id=scenario_id,decision_id=decision_id)
-        permission=derive_pension_action_permission_admission(
-            db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
-        review=derive_documentary_review_context(
-            db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
+        from app.services.scenario_pension_factor_admission_read_service import FactorAdmissionBlocked
+        from app.services.scenario_permission_preview_service import ScenarioPermissionError
+        try:
+            approval=read_current_admission(
+                db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
+            permission=derive_pension_action_permission_admission(
+                db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
+            review=derive_documentary_review_context(
+                db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
+        except FactorAdmissionBlocked as exc:
+            raise ScenarioSnapshotError("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED") from exc
+        except ScenarioPermissionError as exc:
+            raise ScenarioSnapshotError("STAGE6_P1C_PERMISSION_BLOCKED") from exc
+        except DraftError as exc:
+            raise ScenarioSnapshotError("STAGE6_P1C_DOCUMENTARY_CONTEXT_BLOCKED") from exc
         product=db.scalar(select(PensionProduct).where(
             PensionProduct.client_id==client_id,
             PensionProduct.product_id==decision["product_id"]))

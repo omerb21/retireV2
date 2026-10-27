@@ -8,9 +8,10 @@ from app.services.scenario_pension_factor_admission_write_service import (
 )
 
 class DB:
-    def __init__(self, previous_revision=None):
+    def __init__(self, previous_revision=None, statement_date=None):
         self._n=0
         self.previous_revision=previous_revision
+        self.statement_date=statement_date
         self.added=[]
     def get_bind(self):
         return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
@@ -26,7 +27,7 @@ class DB:
         if self._n==2:
             return self.previous_revision
         if self._n==3:
-            return SimpleNamespace(statement_date=__import__("datetime").date(2026,9,30))
+            return SimpleNamespace(statement_date=self.statement_date or __import__("datetime").date(2026,9,30))
         if self._n==4:
             return SimpleNamespace(
                 coefficient_selection="manual_review_required",
@@ -117,3 +118,10 @@ def test_factor_approval_does_not_commit_transaction():
     db.commit=lambda: (_ for _ in ()).throw(AssertionError("service must never commit"))
     call(db)
     assert len(db.added)==1
+
+def test_payout_date_earlier_than_statement_fails_closed():
+    from datetime import date
+    db=DB(statement_date=date(2028,1,1))
+    with pytest.raises(PensionFactorWriteBlocked,match="FACTOR_ADMISSION_PAYOUT_BEFORE_STATEMENT"):
+        call(db)
+    assert not db.added

@@ -6,6 +6,7 @@ snapshot. An immutable audit row is never authority by itself.
 from __future__ import annotations
 import json
 import hmac
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -135,6 +136,11 @@ def read_current_admission(
         "factor_evidence_reference": data["factor_evidence_reference"],
         "payout_option_name": data["payout_option_name"],
         "actor_id": data["actor_id"],
-        "source_id": f"scenario-decision:{scenario_id}:{decision_id}",
+        "source_id": (
+            "scenario-decision:"
+            + quote(scenario_id, safe="")
+            + ":"
+            + quote(decision_id, safe="")
+        ),
         "execution_allowed": False,
     }

@@ -39,7 +39,7 @@ def test_wrong_source_namespace_blocks_scenario_kind():
     result=execute(source="manual:7")
     assert result["result_state"]=="block_no_result"
     assert "MONTHLY_BASIS_NOT_READY" in result["blockers"]
-    assert result["final_monthly_amount"] is None
+    assert "final_monthly_amount" not in result
 
 
 def test_scenario_kind_requires_exact_ratio():

@@ -229,17 +229,23 @@ def build_manifest_candidate_snapshot(
     return deepcopy(result)
 
 
-# Stage 6 P1C: approved narrow extension of the existing immutable snapshot owner.
-# Identity derivation ONLY. The P1D PTE execution path is deliberately absent.
+_STAGE6_P1D_EXECUTION_CAPABILITY = object()
+
+
+# Stage 6 P1C/P1D: approved narrow extension of the immutable snapshot owner.
 def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
                                        client_id: int, scenario_id: str,
-                                       decision_id: str, _stage6_executor=None) -> dict:
+                                       decision_id: str, _stage6_executor=None,
+                                       _stage6_capability=None) -> dict:
     """Derive all five canonical hashes and a one-source planning result.
 
     All authority is independently read from the SAME REPEATABLE READ READ ONLY
     PostgreSQL snapshot owned by build_manifest_candidate_snapshot().
     No caller-supplied manifest, factor, date, actor, hash or ready flag.
     """
+    if (_stage6_executor is not None
+            and _stage6_capability is not _STAGE6_P1D_EXECUTION_CAPABILITY):
+        raise ScenarioSnapshotError("STAGE6_P1D_EXECUTOR_NOT_AUTHORIZED")
     from sqlalchemy import select
     from app.models.pension_product import PensionProduct
     from app.models.planning_input_decision import PlanningInputDecision
@@ -363,7 +369,12 @@ def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
             return _stage6_executor(
                 planning_result=one_source, approval=approval,
                 statement_date=statement, retirement_target_date=target,
-                five_identities=planning_facts)
+                five_identities={
+                    **planning_facts,
+                    "planning_calculation_input_fingerprint": planning[
+                        "planning_calculation_input_fingerprint"
+                    ],
+                })
         return {
             "schema_version":"STAGE6_P1C_IDENTITY_ONLY_V1",
             "client_id":client_id,"scenario_id":scenario_id,"decision_id":decision_id,

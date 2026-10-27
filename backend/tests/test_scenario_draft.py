@@ -143,7 +143,8 @@ def test_draft_writes_never_modify_factual_tables(env):
     assert writes
     for statement in writes:
         assert any(name in statement for name in (
-            "SCENARIO_DRAFTS", "SCENARIO_DRAFT_DECISIONS", "SCENARIO_DRAFT_REVISIONS",
+                "SCENARIO_DRAFTS", "SCENARIO_DRAFT_DECISIONS", "SCENARIO_DRAFT_REVISIONS",
+                "SCENARIO_DRAFT_PENSION_ELECTIONS",
         )), statement
     for forbidden in ("PENSION_PRODUCTS", "PENSION_PRODUCT_COMPONENTS",
                       "CANONICAL_CONVERSIONS", "CAPITAL_ASSET", "CANONICAL_PENSIONS"):

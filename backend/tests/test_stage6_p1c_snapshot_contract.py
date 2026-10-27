@@ -126,3 +126,26 @@ def test_invalid_decision_fails_before_snapshot():
             snapshot.build_stage6_p1c_planning_snapshot(
                 None,client_id=1,scenario_id="scenario",decision_id="")
         owner.assert_not_called()
+
+
+def test_unapproved_executor_callback_is_rejected_before_snapshot():
+    reached = False
+
+    def unapproved(**_kwargs):
+        nonlocal reached
+        reached = True
+
+    with patch.object(snapshot, "build_manifest_candidate_snapshot") as owner:
+        with pytest.raises(
+            snapshot.ScenarioSnapshotError,
+            match="STAGE6_P1D_EXECUTOR_NOT_AUTHORIZED",
+        ):
+            snapshot.build_stage6_p1c_planning_snapshot(
+                None,
+                client_id=1,
+                scenario_id="scenario",
+                decision_id="decision",
+                _stage6_executor=unapproved,
+            )
+        owner.assert_not_called()
+    assert reached is False

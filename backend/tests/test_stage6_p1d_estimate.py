@@ -8,17 +8,37 @@ from app.services.pension_monthly_basis_service import fingerprint
 H={str(i):str(i)*64 for i in range(1,6)}
 P={"client_id":1,"scenario_id":"scenario","scenario_version":2,
    "decision_id":"decision","source_id":"scenario-decision:scenario:decision",
+   "amount":"1000000.00",
    "professional_admission_fingerprint":"a"*64,
    "planning_calculation_input_fingerprint":H["3"],
    "monthly_semantic_fingerprint":H["1"],"monthly_source_fingerprint":H["2"],
    "temporal_semantic_fingerprint":H["4"],"temporal_source_fingerprint":H["5"]}
 APPROVAL={"factor_value":"200","factor_evidence_type":"PLANNER_ASSUMPTION",
           "factor_evidence_reference":"manual professional estimate",
-          "payout_option_name":"standard","admission_revision":1}
-SOURCE={"source_id":P["source_id"],"pension_start_date":"2027-09-30",
-        "monthly_amount_basis":{"authority_kind":"scenario_decision_balance_ratio"},
-        "temporal_authority":{"temporal_authority_kind":"none","annual_rate":None}}
+          "payout_option_name":"standard","admission_revision":1,
+          "source_id":P["source_id"],
+          "professional_admission_fingerprint":P["professional_admission_fingerprint"]}
+SOURCE={"source_id":P["source_id"],"pension_start_date":"2027-09-30","currency":"ILS",
+        "monthly_amount_basis":{
+            "contract_version":"canonical-pension-monthly-amount-basis-v1",
+            "source_id":P["source_id"],"source_kind":"scenario_decision",
+            "authority_kind":"scenario_decision_balance_ratio",
+            "base_amount_representation":{"representation_kind":"exact_ratio",
+                                           "numerator":P["amount"],"denominator":"200"},
+            "base_amount_effective_date":"2026-09-30",
+            "basis_authority_ready":True,"basis_blockers":[],
+            "base_amount_semantic_fingerprint":H["1"],
+            "base_amount_source_fingerprint":H["2"]},
+        "temporal_authority":{
+            "contract_version":"canonical-pension-temporal-indexation-basis-v1",
+            "source_id":P["source_id"],"source_kind":"scenario_decision",
+            "temporal_authority_kind":"none","temporal_origin_date":"2026-09-30",
+            "annual_rate":None,"rate_basis":None,"temporal_authority_ready":True,
+            "temporal_blockers":[],"temporal_semantic_fingerprint":H["4"],
+            "temporal_source_fingerprint":H["5"]}}
 PLANNING={"contract_version":"SCENARIO_PENSION_PLANNING_RESULT_V1",
+          "client_id":1,"scenario_id":"scenario","scenario_version":2,
+          "decision_id":"decision",
           "pension_inputs":[SOURCE],
           "retirement_target":{"retirement_target_date":"2027-09-30",
                                "retirement_target_ready":True},
@@ -50,6 +70,9 @@ def test_ready_schema_and_sealed_hash():
     assert got["result_fingerprint"]==fingerprint({
        "contract_version":"STAGE6_SINGLE_PENSION_DECISION_RESULT_FINGERPRINT_V1",
        "result":{k:v for k,v in got.items() if k!="result_fingerprint"}})
+    assert got["result_fingerprint"] == (
+        "79da432d43592b1cfbbd21a2771c054ff7b7dac627b4464208894ce555db9192"
+    )
     assert len(got)==22
 
 def test_blocked_schema_has_no_recycled_authority():
@@ -58,6 +81,9 @@ def test_blocked_schema_has_no_recycled_authority():
     assert got["monthly_estimate_gross_ils"] is None
     assert got["professional_admission_fingerprint"] is None
     assert all(got[k] is None for k in subject._HASHES)
+    assert got["result_fingerprint"] == (
+        "1a68c215815929905712e6dc97d36b39d9df5aea064c2fa6643872deb8d74973"
+    )
     assert len(got)==22
 
 def test_wrong_planning_source_prevents_pte():
@@ -117,13 +143,25 @@ def test_real_canonical_pte_one_source_gross_result():
     actual_planning=scenario_decision_one_source_planning_result(
         facts=planning_facts,monthly=monthly,temporal=temporal,
         factor_value=facts["factor_value"])
-    approval={**APPROVAL, "factor_value":facts["factor_value"]}
+    approval={
+        **APPROVAL,
+        "factor_value":facts["factor_value"],
+        "source_id":planning_facts["source_id"],
+        "professional_admission_fingerprint":planning_facts[
+            "professional_admission_fingerprint"
+        ],
+    }
     out=subject._execute_verified(
         planning_result=actual_planning,
         approval=approval,
         statement_date=facts["statement_date"],
         retirement_target_date=planning_facts["retirement_target_date"],
-        five_identities=planning_facts)
+        five_identities={
+            **planning_facts,
+            "planning_calculation_input_fingerprint": actual_planning[
+                "planning_calculation_input_fingerprint"
+            ],
+        })
     assert out["result_state"]=="RESULT_READY"
     assert out["monthly_estimate_gross_ils"]=="5000.00"
     assert out["result_fingerprint"]

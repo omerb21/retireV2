@@ -115,3 +115,29 @@ def test_reject_injected_fifth_hash_or_source():
     with pytest.raises(ValueError):
         scenario_decision_one_source_planning_result(
             facts={**p,"source_id":"manual:1"},monthly=m,temporal=t,factor_value=src["factor_value"])
+
+
+def test_cannot_forge_source_preimage_while_reusing_hash():
+    src,m,t,p=result()
+    forged={**m,"monthly_source_preimage":{
+        **m["monthly_source_preimage"],"source_product_version":999}}
+    with pytest.raises(ValueError,match="SCENARIO_PLANNING_MONTHLY_SOURCE_FINGERPRINT_INVALID"):
+        scenario_decision_one_source_planning_result(
+            facts=p,monthly=forged,temporal=t,factor_value=src["factor_value"])
+
+
+def test_cannot_forge_temporal_preimage_while_reusing_hash():
+    src,m,t,p=result()
+    forged={**t,"temporal_source_preimage":{
+        **t["temporal_source_preimage"],"retirement_target_date":"2030-01-01"}}
+    with pytest.raises(ValueError,match="SCENARIO_PLANNING_TEMPORAL_SOURCE_INVALID"):
+        scenario_decision_one_source_planning_result(
+            facts=p,monthly=m,temporal=forged,factor_value=src["factor_value"])
+
+
+def test_planning_uses_factual_and_scenario_serializers_independently():
+    src,m,t,p=result()
+    assert scenario_decision_calculation_identity(p)["planning_calculation_input_fingerprint"]==planning_hash({
+        "contract":"canonical-scenario-pension-planning-calculation-input-v1",**p})
+    assert m["monthly_source_fingerprint"]==monthly_hash(m["monthly_source_preimage"])
+    assert t["temporal_source_fingerprint"]==monthly_hash(t["temporal_source_preimage"])

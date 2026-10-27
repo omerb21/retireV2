@@ -425,6 +425,15 @@ def derive_pension_action_permission_admission(
         raise ScenarioPermissionError("PENSION_PERMISSION_SNAPSHOT_REQUIRED", 409) from exc
     if isolation.lower() != "repeatable read" or readonly.lower() != "on":
         raise ScenarioPermissionError("PENSION_PERMISSION_SNAPSHOT_REQUIRED", 409)
+    return _derive_pension_action_permission_in_transaction(db, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id)
+
+
+def _derive_pension_action_permission_in_transaction(
+    db: Session, *, client_id: int, scenario_id: str, decision_id: str,
+) -> dict[str, Any]:
+    """Internal shared rule evaluator; caller owns and validates transaction policy."""
+    from app.services.scenario_input_manifest_service import build_inert_manifest
+    from app.services.scenario_snapshot_candidate_service import _partition_verified_manifest
     with db.no_autoflush:
         manifest = build_inert_manifest(db, client_id, scenario_id)
         partition = _partition_verified_manifest(manifest)

@@ -321,3 +321,41 @@ def write_conversion(db, client_id: int, destination_id: str, payload) -> dict:
     result = conversion(db, client_id, destination, conversion_row, batch, decision)
     return {"outcome": outcome, "decision_version": decision.version,
         "source_version_at_decision": decision.source_version_at_decision, "temporal_authority": result}
+
+
+# Stage 6 P1C: identity-only scenario temporal authority; no indexation.
+def scenario_decision_temporal_identity(facts: dict) -> dict:
+    """Canonical T1/T2. All inputs must be independently DB-admitted upstream."""
+    from datetime import date as _date
+    required=frozenset((
+        "source_id","client_id","scenario_id","scenario_version","decision_id",
+        "statement_date","retirement_target_date","monthly_source_fingerprint",
+        "professional_admission_fingerprint"))
+    if type(facts) is not dict or set(facts)!=required:
+        raise ValueError("SCENARIO_TEMPORAL_FIELDS_INVALID")
+    if type(facts["client_id"]) is not int or facts["client_id"]<=0 or type(facts["scenario_version"]) is not int or facts["scenario_version"]<=0:
+        raise ValueError("SCENARIO_TEMPORAL_ID_INVALID")
+    for k in ("source_id","scenario_id","decision_id"):
+        if type(facts[k]) is not str or not facts[k]:
+            raise ValueError("SCENARIO_TEMPORAL_ID_INVALID")
+    from urllib.parse import quote
+    if facts["source_id"] != "scenario-decision:"+quote(facts["scenario_id"],safe="")+":"+quote(facts["decision_id"],safe=""):
+        raise ValueError("SCENARIO_TEMPORAL_SOURCE_MISMATCH")
+    for k in ("monthly_source_fingerprint","professional_admission_fingerprint"):
+        v=facts[k]
+        if type(v) is not str or len(v)!=64 or any(c not in "0123456789abcdef" for c in v):
+            raise ValueError("SCENARIO_TEMPORAL_DIGEST_INVALID")
+    try:
+        origin=_date.fromisoformat(facts["statement_date"])
+        target=_date.fromisoformat(facts["retirement_target_date"])
+        if origin.isoformat()!=facts["statement_date"] or target.isoformat()!=facts["retirement_target_date"] or target<origin:
+            raise ValueError("SCENARIO_TEMPORAL_DATE_INVALID")
+    except (TypeError,ValueError) as exc:
+        raise ValueError("SCENARIO_TEMPORAL_DATE_INVALID") from exc
+    t1=semantic_fingerprint("none",facts["statement_date"],None,None)
+    preimage={"contract_version":"canonical-scenario-pension-temporal-source-v1",
+              "source_kind":"scenario_decision",**facts,
+              "temporal_semantic_fingerprint":t1}
+    return {"temporal_semantic_fingerprint":t1,
+            "temporal_source_fingerprint":fingerprint(preimage),
+            "temporal_source_preimage":preimage}

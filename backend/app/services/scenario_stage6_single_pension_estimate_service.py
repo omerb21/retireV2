@@ -60,6 +60,16 @@ def _execute_verified(*, planning_result: dict, approval: dict,
             or planning_result["retirement_target"]!={"retirement_target_date":retirement_target_date,
                                                       "retirement_target_ready":True}):
         raise ScenarioSnapshotError("STAGE6_P1D_PLANNING_RESULT_INVALID")
+    if (planning_result.get("planning_calculation_input_fingerprint")
+            != identities.get("planning_calculation_input_fingerprint")):
+        raise ScenarioSnapshotError("STAGE6_P1D_PLANNING_IDENTITY_MISMATCH")
+    # These are the already verified P1C identities from the DB-owned snapshot.
+    for key in ("monthly_semantic_fingerprint", "monthly_source_fingerprint",
+                "temporal_semantic_fingerprint", "temporal_source_fingerprint"):
+        value=identities.get(key)
+        if (type(value) is not str or len(value)!=64
+                or any(ch not in "0123456789abcdef" for ch in value)):
+            raise ScenarioSnapshotError("STAGE6_P1D_IDENTITY_INVALID")
     supplied=dict(
         supplied_planning_calculation_input_fingerprint=planning_result["planning_calculation_input_fingerprint"],
         supplied_monthly_basis_semantic_fingerprint=identities["monthly_semantic_fingerprint"],

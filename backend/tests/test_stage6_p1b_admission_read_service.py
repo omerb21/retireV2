@@ -40,14 +40,23 @@ def execute(data,*,change_row=None, permission_digest=None, current_context=None
              manifest_fingerprint=data["manifest_fingerprint"],source_fingerprint=data["source_fingerprint"],
              election_fingerprint=data["election_fingerprint"])
     row.update(change_row or {})
-    db=SimpleNamespace(scalars=lambda query: SimpleNamespace(all=lambda:[SimpleNamespace(**row)]))
+    class FakeDb:
+        def __init__(self): self.counter=0
+        def scalars(self, q): return SimpleNamespace(all=lambda:[SimpleNamespace(**row)])
+        def scalar(self, q):
+            from datetime import date
+            self.counter+=1
+            if self.counter==1: return SimpleNamespace(statement_date=date(2026,9,30))
+            if self.counter==2: return SimpleNamespace(pension_start_date=date(2027,9,30),survivors_option="60%",spouse_age_diff=0,option_name="option")
+            raise AssertionError("unexpected query")
+    db=FakeDb()
     return db, current_context if current_context is not None else context(data)
 
 def verify(data,**kwargs):
     db,ctx=execute(data,**kwargs)
-    with patch("app.services.scenario_pension_factor_admission_read_service.derive_pension_action_permission_admission",
+    with patch("app.services.scenario_pension_factor_admission_read_service.derive_documentary_review_context",return_value={"election_fingerprint":"c"*64}), patch("app.services.scenario_pension_factor_admission_read_service.build_inert_manifest",return_value={"scenario_version":2,"manifest_fingerprint":"a"*64,"decisions":[{"decision_id":"d","product_id":"p","component_id":"c","component_code":"code","amount":"100.00","source":{"source_fingerprint":"b"*64}}]}), patch("app.services.scenario_pension_factor_admission_read_service.derive_pension_action_permission_admission",
         return_value={"permission_admission_fingerprint":kwargs.get("permission_digest") or "e"*64,"ruleset_digest":"d"*64}):
-        return read_current_admission(db,client_id=1,scenario_id="s",decision_id="d",current_context=ctx)
+        return read_current_admission(db,client_id=1,scenario_id="s",decision_id="d")
 
 def test_valid_approval_remains_nonexecutable():
     result=verify(payload())
@@ -64,10 +73,9 @@ def test_row_hash_changed_fails():
 
 def test_current_amount_changed_fails():
     data=payload()
-    ctx=context(data)
-    ctx["amount"]="101.00"
+    data["amount"]="101.00"
     with pytest.raises(FactorAdmissionBlocked,match="FACTOR_ADMISSION_STALE"):
-        verify(data,current_context=ctx)
+        verify(data)
 
 def test_indexed_provenance_tampering_fails():
     with pytest.raises(FactorAdmissionBlocked, match="FACTOR_ADMISSION_INDEXED_PROVENANCE_MISMATCH"):

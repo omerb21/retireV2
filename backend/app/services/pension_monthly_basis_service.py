@@ -188,3 +188,60 @@ def registry(client_id, sources):
         source_id=s['source_id'], base_amount_source_fingerprint=s['base_amount_source_fingerprint'],
         basis_authority_ready=s['basis_authority_ready'], basis_blockers=sorted(set(s['basis_blockers'])))
         for s in sorted(sources, key=lambda s: s['source_id'])]))
+
+
+# Stage 6 P1C: scenario-owned identity, not a factual manual/conversion source.
+def scenario_decision_monthly_identity(facts: dict) -> dict:
+    """Canonical M1/M2 for one trusted, already-admitted DB scenario decision.
+
+    Caller must establish admission and source/permission provenance from one
+    PostgreSQL snapshot. This pure function does not grant authority or execute.
+    """
+    from urllib.parse import quote
+    required = frozenset((
+        "client_id", "scenario_id", "scenario_version", "decision_id",
+        "manifest_fingerprint", "partition_fingerprint", "source_product_id",
+        "source_product_version", "source_component_id", "component_code",
+        "source_fingerprint", "amount", "statement_date",
+        "election_fingerprint", "professional_admission_revision",
+        "professional_admission_fingerprint", "factor_value"))
+    if type(facts) is not dict or set(facts) != required:
+        raise ValueError("SCENARIO_MONTHLY_FIELDS_INVALID")
+    for k in ("client_id","scenario_version","source_product_version","professional_admission_revision"):
+        if type(facts[k]) is not int or facts[k] <= 0:
+            raise ValueError("SCENARIO_MONTHLY_REVISION_INVALID")
+    for k in ("manifest_fingerprint","partition_fingerprint","source_fingerprint",
+              "election_fingerprint","professional_admission_fingerprint"):
+        v=facts[k]
+        if type(v) is not str or len(v)!=64 or any(ch not in "0123456789abcdef" for ch in v):
+            raise ValueError("SCENARIO_MONTHLY_DIGEST_INVALID")
+    for k in ("scenario_id","decision_id","source_product_id","source_component_id","component_code"):
+        if type(facts[k]) is not str or not facts[k] or len(facts[k])>128:
+            raise ValueError("SCENARIO_MONTHLY_IDENTITY_INVALID")
+    from datetime import date as _date
+    raw_date=facts["statement_date"]
+    if type(raw_date) is not str or _date.fromisoformat(raw_date).isoformat()!=raw_date:
+        raise ValueError("SCENARIO_MONTHLY_DATE_INVALID")
+    amount=money(facts["amount"])
+    if amount!=facts["amount"] or decimal(amount)<=0:
+        raise ValueError("SCENARIO_MONTHLY_AMOUNT_INVALID")
+    divisor=factor(facts["factor_value"])
+    if divisor != facts["factor_value"] or decimal(divisor)<=0:
+        raise ValueError("SCENARIO_MONTHLY_FACTOR_INVALID")
+    source_id="scenario-decision:"+quote(facts["scenario_id"],safe="")+":"+quote(facts["decision_id"],safe="")
+    representation={"representation_kind":"exact_ratio","numerator":amount,"denominator":divisor}
+    m1=semantic("scenario_decision_balance_ratio",representation,raw_date)
+    m2_preimage={
+        "contract_version":"canonical-scenario-pension-monthly-source-v1",
+        "source_id":source_id,"source_kind":"scenario_decision",
+        **{k:facts[k] for k in (
+            "client_id","scenario_id","scenario_version","decision_id",
+            "manifest_fingerprint","partition_fingerprint","source_product_id",
+            "source_product_version","source_component_id","component_code",
+            "source_fingerprint","amount","statement_date","election_fingerprint",
+            "professional_admission_revision","professional_admission_fingerprint")},
+        "monthly_semantic_fingerprint":m1}
+    return {"source_id":source_id,"representation":representation,
+            "monthly_semantic_fingerprint":m1,
+            "monthly_source_fingerprint":fingerprint(m2_preimage),
+            "monthly_source_preimage":m2_preimage}

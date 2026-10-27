@@ -251,12 +251,23 @@ def execute_source(
         blockers.append("SOURCE_NOT_CURRENT")
     if not target_ready or target is None:
         blockers.append("RETIREMENT_TARGET_NOT_READY")
+    # P1D narrow canonical kind admission: no factual-source impersonation.
+    # A scenario kind may appear only under its dedicated source namespace and
+    # with an exact ratio. This does not establish DB authority on its own.
+    scenario_kind = monthly_kind == "scenario_decision_balance_ratio"
+    scenario_identity_valid = (
+        isinstance(source_id, str)
+        and source_id.startswith("scenario-decision:")
+        and len(source_id.split(":")) == 3
+        and all(source_id.split(":")[1:])
+    )
     monthly_required = (
-        monthly_kind not in ("entered_monthly_amount", "manual_balance_ratio", "persisted_conversion_ratio")
+        monthly_kind not in ("entered_monthly_amount", "manual_balance_ratio", "persisted_conversion_ratio", "scenario_decision_balance_ratio")
         or not representation_ready
         or (monthly_kind == "entered_monthly_amount" and representation and representation.get("representation_kind") != "exact_money")
-        or (monthly_kind in ("manual_balance_ratio", "persisted_conversion_ratio")
+        or (monthly_kind in ("manual_balance_ratio", "persisted_conversion_ratio", "scenario_decision_balance_ratio")
             and representation and representation.get("representation_kind") != "exact_ratio")
+        or (scenario_kind and not scenario_identity_valid)
         or current_monthly_semantic is None or current_monthly_source is None
         or supplied_monthly_basis_semantic_fingerprint is None or supplied_monthly_basis_source_fingerprint is None
         or monthly_basis.get("basis_authority_ready") is not True or bool(monthly_blockers)

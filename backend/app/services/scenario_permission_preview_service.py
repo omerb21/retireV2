@@ -416,6 +416,15 @@ def derive_pension_action_permission_admission(
         raise ScenarioPermissionError("PENSION_PERMISSION_SNAPSHOT_REQUIRED", 409)
     if db.new or db.dirty or db.deleted:
         raise ScenarioPermissionError("PENSION_PERMISSION_DIRTY_SESSION", 409)
+    # Verify actual transaction settings, not merely the intended caller policy.
+    from sqlalchemy import text
+    try:
+        isolation = db.execute(text("SHOW transaction_isolation")).scalar_one()
+        readonly = db.execute(text("SHOW transaction_read_only")).scalar_one()
+    except Exception as exc:
+        raise ScenarioPermissionError("PENSION_PERMISSION_SNAPSHOT_REQUIRED", 409) from exc
+    if isolation.lower() != "repeatable read" or readonly.lower() != "on":
+        raise ScenarioPermissionError("PENSION_PERMISSION_SNAPSHOT_REQUIRED", 409)
     with db.no_autoflush:
         manifest = build_inert_manifest(db, client_id, scenario_id)
         partition = _partition_verified_manifest(manifest)

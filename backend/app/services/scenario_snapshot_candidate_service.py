@@ -227,3 +227,147 @@ def build_manifest_candidate_snapshot(
         raise ScenarioSnapshotError("SCENARIO_SNAPSHOT_DATABASE_UNAVAILABLE") from primary
     assert result is not None
     return deepcopy(result)
+
+
+# Stage 6 P1C: approved narrow extension of the existing immutable snapshot owner.
+# Identity derivation ONLY. The P1D PTE execution path is deliberately absent.
+def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
+                                       client_id: int, scenario_id: str,
+                                       decision_id: str) -> dict:
+    """Derive all five canonical hashes and a one-source planning result.
+
+    All authority is independently read from the SAME REPEATABLE READ READ ONLY
+    PostgreSQL snapshot owned by build_manifest_candidate_snapshot().
+    No caller-supplied manifest, factor, date, actor, hash or ready flag.
+    """
+    from sqlalchemy import select
+    from app.models.pension_product import PensionProduct
+    from app.models.planning_input_decision import PlanningInputDecision
+    from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
+    from app.services.scenario_pension_factor_admission_read_service import (
+        read_current_admission,
+    )
+    from app.services.scenario_permission_preview_service import (
+        derive_pension_action_permission_admission,
+    )
+    from app.services.scenario_coefficient_review_context_service import (
+        derive_documentary_review_context,
+    )
+    from app.services.pension_monthly_basis_service import scenario_decision_monthly_identity
+    from app.services.pension_temporal_basis_service import scenario_decision_temporal_identity
+    from app.services.planning_input_service import (
+        scenario_decision_calculation_identity,
+        scenario_decision_one_source_planning_result,
+    )
+
+    if type(decision_id) is not str or not decision_id or len(decision_id)>64:
+        raise ScenarioSnapshotError("STAGE6_P1C_DECISION_INVALID")
+
+    def _stage6_identity(db: Session, pair: dict) -> dict:
+        manifest=pair["manifest"]
+        partition=pair["candidate"]
+        if partition["evidence_state"]!="STRUCTURALLY_CONSISTENT_NOT_ADMITTED":
+            raise ScenarioSnapshotError("STAGE6_P1C_SOURCE_BLOCKED")
+        decisions=[row for row in manifest["decisions"] if row["decision_id"]==decision_id]
+        if len(decisions)!=1 or decisions[0]["action"]!="pension" or decisions[0]["source"] is None:
+            raise ScenarioSnapshotError("STAGE6_P1C_DECISION_BLOCKED")
+        decision=decisions[0]
+        approval=read_current_admission(db,client_id=client_id,
+                                        scenario_id=scenario_id,decision_id=decision_id)
+        permission=derive_pension_action_permission_admission(
+            db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
+        review=derive_documentary_review_context(
+            db,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
+        product=db.scalar(select(PensionProduct).where(
+            PensionProduct.client_id==client_id,
+            PensionProduct.product_id==decision["product_id"]))
+        election=db.scalar(select(ScenarioDraftPensionElection).where(
+            ScenarioDraftPensionElection.scenario_id==scenario_id,
+            ScenarioDraftPensionElection.decision_id==decision_id,
+            ScenarioDraftPensionElection.scenario_version==manifest["scenario_version"]))
+        if (product is None or product.statement_date is None or election is None
+                or product.version!=decision["source"]["product_version"]
+                or election.coefficient_selection!="manual_review_required"
+                or not election.option_name):
+            raise ScenarioSnapshotError("STAGE6_P1C_FACTS_STALE")
+        global_decision=db.get(PlanningInputDecision,client_id)
+        if (global_decision is not None
+                and global_decision.retirement_target_date is not None
+                and global_decision.retirement_target_date!=election.pension_start_date):
+            raise ScenarioSnapshotError("SCENARIO_GLOBAL_TARGET_CONFLICT")
+        statement=product.statement_date.isoformat()
+        target=election.pension_start_date.isoformat()
+        if target<statement:
+            raise ScenarioSnapshotError("STAGE6_P1C_DATE_ORDER_INVALID")
+        if review["manifest_fingerprint"]!=manifest["manifest_fingerprint"]:
+            raise ScenarioSnapshotError("STAGE6_P1C_MANIFEST_STALE")
+        monthly=scenario_decision_monthly_identity({
+            "client_id":client_id,"scenario_id":scenario_id,
+            "scenario_version":manifest["scenario_version"],"decision_id":decision_id,
+            "manifest_fingerprint":manifest["manifest_fingerprint"],
+            "partition_fingerprint":partition["partition_fingerprint"],
+            "source_product_id":decision["product_id"],
+            "source_product_version":decision["source"]["product_version"],
+            "source_component_id":decision["component_id"],
+            "component_code":decision["component_code"],
+            "source_fingerprint":decision["source"]["source_fingerprint"],
+            "amount":decision["amount"],"statement_date":statement,
+            "election_fingerprint":review["election_fingerprint"],
+            "professional_admission_revision":approval["admission_revision"],
+            "professional_admission_fingerprint":approval["professional_admission_fingerprint"],
+            "factor_value":approval["factor_value"],
+        })
+        temporal=scenario_decision_temporal_identity({
+            "source_id":monthly["source_id"],"client_id":client_id,
+            "scenario_id":scenario_id,"scenario_version":manifest["scenario_version"],
+            "decision_id":decision_id,"statement_date":statement,
+            "retirement_target_date":target,
+            "monthly_source_fingerprint":monthly["monthly_source_fingerprint"],
+            "professional_admission_fingerprint":approval["professional_admission_fingerprint"],
+        })
+        planning_facts={
+            "client_id":client_id,"scenario_id":scenario_id,
+            "scenario_version":manifest["scenario_version"],"decision_id":decision_id,
+            "source_id":monthly["source_id"],
+            "manifest_fingerprint":manifest["manifest_fingerprint"],
+            "partition_fingerprint":partition["partition_fingerprint"],
+            "source_fingerprint":decision["source"]["source_fingerprint"],
+            "statement_date":statement,"amount":decision["amount"],"action":"pension",
+            "election_fingerprint":review["election_fingerprint"],
+            "retirement_target_date":target,
+            "monthly_semantic_fingerprint":monthly["monthly_semantic_fingerprint"],
+            "monthly_source_fingerprint":monthly["monthly_source_fingerprint"],
+            "temporal_semantic_fingerprint":temporal["temporal_semantic_fingerprint"],
+            "temporal_source_fingerprint":temporal["temporal_source_fingerprint"],
+            "professional_admission_revision":approval["admission_revision"],
+            "professional_admission_fingerprint":approval["professional_admission_fingerprint"],
+            "ruleset_digest":permission["ruleset_digest"],
+            "permission_admission_fingerprint":permission["permission_admission_fingerprint"],
+        }
+        planning=scenario_decision_calculation_identity(planning_facts)
+        one_source=scenario_decision_one_source_planning_result(
+            facts=planning_facts,monthly=monthly,temporal=temporal,
+            factor_value=approval["factor_value"])
+        # No source may be executable merely by fetching this identity proof;
+        # P1D must verify current snapshots before invoking the existing PTE.
+        return {
+            "schema_version":"STAGE6_P1C_IDENTITY_ONLY_V1",
+            "client_id":client_id,"scenario_id":scenario_id,"decision_id":decision_id,
+            "scenario_version":manifest["scenario_version"],
+            "monthly_semantic_fingerprint":monthly["monthly_semantic_fingerprint"],
+            "monthly_source_fingerprint":monthly["monthly_source_fingerprint"],
+            "temporal_semantic_fingerprint":temporal["temporal_semantic_fingerprint"],
+            "temporal_source_fingerprint":temporal["temporal_source_fingerprint"],
+            "planning_calculation_input_fingerprint":planning["planning_calculation_input_fingerprint"],
+            "planning_result":one_source,
+            "professional_admission_fingerprint":approval["professional_admission_fingerprint"],
+            "permission_admission_fingerprint":permission["permission_admission_fingerprint"],
+            "ruleset_digest":permission["ruleset_digest"],
+            "execution_allowed":False,
+            "financial_result":None,
+        }
+
+    # This is the pre-existing snapshot owner, not a new transaction engine.
+    return build_manifest_candidate_snapshot(
+        factory,client_id=client_id,scenario_id=scenario_id,
+        _snapshot_extension=_stage6_identity)

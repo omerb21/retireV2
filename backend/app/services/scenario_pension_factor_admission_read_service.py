@@ -67,6 +67,13 @@ def read_current_admission(
             or data["scenario_id"] != latest.scenario_id
             or data["decision_id"] != latest.decision_id):
         _block("FACTOR_ADMISSION_ROW_MISMATCH")
+    # Duplicated indexed provenance columns must match the signed preimage.
+    # Otherwise an attacker or a broken migration could mix approval identities.
+    if (data["permission_admission_fingerprint"] != latest.permission_admission_fingerprint
+            or data["manifest_fingerprint"] != latest.manifest_fingerprint
+            or data["source_fingerprint"] != latest.source_fingerprint
+            or data["election_fingerprint"] != latest.election_fingerprint):
+        _block("FACTOR_ADMISSION_INDEXED_PROVENANCE_MISMATCH")
     if data["permission_admission_fingerprint"] != permission["permission_admission_fingerprint"]:
         _block("FACTOR_PERMISSION_STALE")
     if data["ruleset_digest"] != permission["ruleset_digest"]:

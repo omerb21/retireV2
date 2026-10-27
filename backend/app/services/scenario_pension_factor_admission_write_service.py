@@ -105,6 +105,8 @@ def save_factor_admission(
         _blocked("FACTOR_ADMISSION_NOT_MANUAL")
     if payout_option_name != election.option_name:
         _blocked("FACTOR_ADMISSION_OPTION_MISMATCH")
+    if election.pension_start_date < product.statement_date:
+        _blocked("FACTOR_ADMISSION_PAYOUT_BEFORE_STATEMENT")
     try:
         canonical_factor = factor(factor_value)
     except (ValueError, TypeError):

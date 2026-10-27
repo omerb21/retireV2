@@ -304,3 +304,60 @@ def scenario_decision_calculation_identity(facts: dict) -> dict:
     preimage={"contract":"canonical-scenario-pension-planning-calculation-input-v1",**facts}
     return {"planning_calculation_input_fingerprint":fingerprint(preimage),
             "planning_calculation_input_preimage":preimage}
+
+
+def scenario_decision_one_source_planning_result(*, facts: dict, monthly: dict,
+                                                 temporal: dict, factor_value: str) -> dict:
+    """P1C/N1.2: assemble one non-executable scenario planning result.
+
+    Caller must prove fresh PostgreSQL admission; this function cannot
+    independently authorize execution. PTE acceptance is deferred to P1D.
+    """
+    from app.services.pension_monthly_basis_service import factor as canonical_factor
+    p1=scenario_decision_calculation_identity(facts)
+    required_monthly=frozenset(("source_id","representation","monthly_semantic_fingerprint",
+                                "monthly_source_fingerprint","monthly_source_preimage"))
+    required_temporal=frozenset(("temporal_semantic_fingerprint","temporal_source_fingerprint",
+                                 "temporal_source_preimage"))
+    if type(monthly) is not dict or set(monthly)!=required_monthly or type(temporal) is not dict or set(temporal)!=required_temporal:
+        raise ValueError("SCENARIO_PLANNING_BASIS_INVALID")
+    if monthly["source_id"]!=facts["source_id"]:
+        raise ValueError("SCENARIO_PLANNING_MONTHLY_SOURCE_INVALID")
+    for field in ("monthly_semantic_fingerprint","monthly_source_fingerprint"):
+        if monthly[field]!=facts[field]:
+            raise ValueError("SCENARIO_PLANNING_MONTHLY_FINGERPRINT_INVALID")
+    for field in ("temporal_semantic_fingerprint","temporal_source_fingerprint"):
+        if temporal[field]!=facts[field]:
+            raise ValueError("SCENARIO_PLANNING_TEMPORAL_FINGERPRINT_INVALID")
+    if monthly["representation"]!={"representation_kind":"exact_ratio",
+                                    "numerator":facts["amount"],
+                                    "denominator":canonical_factor(factor_value)}:
+        raise ValueError("SCENARIO_PLANNING_REPRESENTATION_INVALID")
+    statement=facts["statement_date"]
+    target=facts["retirement_target_date"]
+    return {
+        "contract_version":"SCENARIO_PENSION_PLANNING_RESULT_V1",
+        "client_id":facts["client_id"],"scenario_id":facts["scenario_id"],
+        "scenario_version":facts["scenario_version"],"decision_id":facts["decision_id"],
+        "planning_calculation_input_fingerprint":p1["planning_calculation_input_fingerprint"],
+        "retirement_target":{"retirement_target_date":target,"retirement_target_ready":True},
+        "pension_inputs":[{
+            "source_id":facts["source_id"],"pension_start_date":target,"currency":"ILS",
+            "monthly_amount_basis":{
+                "contract_version":"canonical-pension-monthly-amount-basis-v1",
+                "source_id":facts["source_id"],"source_kind":"scenario_decision",
+                "authority_kind":"scenario_decision_balance_ratio",
+                "base_amount_representation":monthly["representation"],
+                "base_amount_effective_date":statement,
+                "basis_authority_ready":True,"basis_blockers":[],
+                "base_amount_semantic_fingerprint":facts["monthly_semantic_fingerprint"],
+                "base_amount_source_fingerprint":facts["monthly_source_fingerprint"]},
+            "temporal_authority":{
+                "contract_version":"canonical-pension-temporal-indexation-basis-v1",
+                "source_id":facts["source_id"],"source_kind":"scenario_decision",
+                "temporal_authority_kind":"none","temporal_origin_date":statement,
+                "annual_rate":None,"rate_basis":None,
+                "temporal_authority_ready":True,"temporal_blockers":[],
+                "temporal_semantic_fingerprint":facts["temporal_semantic_fingerprint"],
+                "temporal_source_fingerprint":facts["temporal_source_fingerprint"]}}
+        ]}

@@ -9,6 +9,7 @@ H={str(i):str(i)*64 for i in range(1,6)}
 P={"client_id":1,"scenario_id":"scenario","scenario_version":2,
    "decision_id":"decision","source_id":"scenario-decision:scenario:decision",
    "professional_admission_fingerprint":"a"*64,
+   "planning_calculation_input_fingerprint":H["3"],
    "monthly_semantic_fingerprint":H["1"],"monthly_source_fingerprint":H["2"],
    "temporal_semantic_fingerprint":H["4"],"temporal_source_fingerprint":H["5"]}
 APPROVAL={"factor_value":"200","factor_evidence_type":"PLANNER_ASSUMPTION",
@@ -85,3 +86,24 @@ def test_snapshot_failure_is_sealed_blocked_result():
             None,client_id=1,scenario_id="scenario",decision_id="decision")
     assert got["result_state"]=="BLOCKED"
     assert got["blockers"]==["STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"]
+
+def test_mismatched_planning_identity_never_calls_pte():
+    forged={**PLANNING,"planning_calculation_input_fingerprint":"0"*64}
+    with patch.object(subject,"execute_from_planning_result") as engine:
+        with pytest.raises(ScenarioSnapshotError,match="STAGE6_P1D_PLANNING_IDENTITY_MISMATCH"):
+            subject._execute_verified(
+                planning_result=forged,approval=APPROVAL,
+                statement_date="2026-09-30",retirement_target_date="2027-09-30",
+                five_identities=P)
+        engine.assert_not_called()
+
+
+def test_missing_current_identity_blocks_before_pte():
+    forged={**P,"monthly_source_fingerprint":None}
+    with patch.object(subject,"execute_from_planning_result") as engine:
+        with pytest.raises(ScenarioSnapshotError,match="STAGE6_P1D_IDENTITY_INVALID"):
+            subject._execute_verified(
+                planning_result=PLANNING,approval=APPROVAL,
+                statement_date="2026-09-30",retirement_target_date="2027-09-30",
+                five_identities=forged)
+        engine.assert_not_called()

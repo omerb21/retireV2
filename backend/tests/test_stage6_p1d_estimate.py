@@ -49,7 +49,7 @@ def test_ready_schema_and_sealed_hash():
     assert got["result_fingerprint"]==fingerprint({
        "contract_version":"STAGE6_SINGLE_PENSION_DECISION_RESULT_FINGERPRINT_V1",
        "result":{k:v for k,v in got.items() if k!="result_fingerprint"}})
-    assert len(got)==21
+    assert len(got)==22
 
 def test_blocked_schema_has_no_recycled_authority():
     got=subject._blocked(1,"scenario","decision","STAGE6_P1C_FACTOR_ADMISSION_BLOCKED")
@@ -57,7 +57,7 @@ def test_blocked_schema_has_no_recycled_authority():
     assert got["monthly_estimate_gross_ils"] is None
     assert got["professional_admission_fingerprint"] is None
     assert all(got[k] is None for k in subject._HASHES)
-    assert len(got)==21
+    assert len(got)==22
 
 def test_wrong_planning_source_prevents_pte():
     forged={**PLANNING,"pension_inputs":[{**SOURCE,"source_id":"manual:forged"}]}

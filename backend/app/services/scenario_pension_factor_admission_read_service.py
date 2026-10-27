@@ -133,6 +133,7 @@ def read_current_admission(
         "factor_value": data["factor_value"],
         "factor_evidence_type": data["factor_evidence_type"],
         "factor_evidence_reference": data["factor_evidence_reference"],
+        "payout_option_name": data["payout_option_name"],
         "actor_id": data["actor_id"],
         "source_id": f"scenario-decision:{scenario_id}:{decision_id}",
         "execution_allowed": False,

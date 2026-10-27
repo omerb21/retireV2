@@ -36,7 +36,9 @@ def execute(data,*,change_row=None, permission_digest=None, current_context=None
     encoded=canonical_bytes(data).decode("utf-8")
     row=dict(client_id=1,scenario_id="s",decision_id="d",scenario_version=2,
              admission_revision=1,actor_id="planner",record_fingerprint=fingerprint_admission_preimage(data),
-             preimage_json=encoded)
+             preimage_json=encoded,permission_admission_fingerprint=data["permission_admission_fingerprint"],
+             manifest_fingerprint=data["manifest_fingerprint"],source_fingerprint=data["source_fingerprint"],
+             election_fingerprint=data["election_fingerprint"])
     row.update(change_row or {})
     db=SimpleNamespace(scalars=lambda query: SimpleNamespace(all=lambda:[SimpleNamespace(**row)]))
     return db, current_context if current_context is not None else context(data)
@@ -66,3 +68,7 @@ def test_current_amount_changed_fails():
     ctx["amount"]="101.00"
     with pytest.raises(FactorAdmissionBlocked,match="FACTOR_ADMISSION_STALE"):
         verify(data,current_context=ctx)
+
+def test_indexed_provenance_tampering_fails():
+    with pytest.raises(FactorAdmissionBlocked, match="FACTOR_ADMISSION_INDEXED_PROVENANCE_MISMATCH"):
+        verify(payload(), change_row={"election_fingerprint": "f" * 64})

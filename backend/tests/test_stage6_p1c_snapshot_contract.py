@@ -94,3 +94,35 @@ def test_missing_approval_is_not_silently_recovered():
         with pytest.raises(RuntimeError,match="no current admission"):
             snapshot.build_stage6_p1c_planning_snapshot(
                 None,client_id=1,scenario_id="scenario",decision_id="decision")
+
+
+def test_blocked_partition_never_reaches_admission():
+    def snapshot_owner(factory, *, client_id, scenario_id, _snapshot_extension):
+        return _snapshot_extension(FakeDB(), {
+            "manifest":MANIFEST,
+            "candidate":{"evidence_state":"BLOCKED","partition_fingerprint":"c"*64},
+        })
+    with patch.object(snapshot,"build_manifest_candidate_snapshot",side_effect=snapshot_owner):
+        with pytest.raises(snapshot.ScenarioSnapshotError,match="STAGE6_P1C_SOURCE_BLOCKED"):
+            snapshot.build_stage6_p1c_planning_snapshot(
+                None,client_id=1,scenario_id="scenario",decision_id="decision")
+
+
+def test_expired_approval_is_a_blocker_not_database_unavailable():
+    from app.services.scenario_pension_factor_admission_read_service import FactorAdmissionBlocked
+    def snapshot_owner(factory, *, client_id, scenario_id, _snapshot_extension):
+        return _snapshot_extension(FakeDB(), {"manifest":MANIFEST,"candidate":PARTITION})
+    with patch.object(snapshot,"build_manifest_candidate_snapshot",side_effect=snapshot_owner),patch(
+        "app.services.scenario_pension_factor_admission_read_service.read_current_admission",
+        side_effect=FactorAdmissionBlocked("FACTOR_ADMISSION_STALE")):
+        with pytest.raises(snapshot.ScenarioSnapshotError,match="STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"):
+            snapshot.build_stage6_p1c_planning_snapshot(
+                None,client_id=1,scenario_id="scenario",decision_id="decision")
+
+
+def test_invalid_decision_fails_before_snapshot():
+    with patch.object(snapshot,"build_manifest_candidate_snapshot") as owner:
+        with pytest.raises(snapshot.ScenarioSnapshotError,match="STAGE6_P1C_DECISION_INVALID"):
+            snapshot.build_stage6_p1c_planning_snapshot(
+                None,client_id=1,scenario_id="scenario",decision_id="")
+        owner.assert_not_called()

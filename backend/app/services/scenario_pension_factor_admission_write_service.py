@@ -103,6 +103,8 @@ def save_factor_admission(
         _blocked("FACTOR_ADMISSION_ELECTION_MISSING")
     if election.coefficient_selection != "manual_review_required":
         _blocked("FACTOR_ADMISSION_NOT_MANUAL")
+    if payout_option_name != election.option_name:
+        _blocked("FACTOR_ADMISSION_OPTION_MISMATCH")
     try:
         canonical_factor = factor(factor_value)
     except (ValueError, TypeError):

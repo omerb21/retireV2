@@ -72,10 +72,9 @@ def _execute_verified(*, planning_result: dict, approval: dict,
     if (pte.get("result_state")!="result_ready"
             or pte.get("source_id")!=source_id
             or pte.get("retirement_target_date")!=retirement_target_date
-            or any(pte.get(k)!=v for k,v in {
-                "source_execution_fingerprint":pte.get("source_execution_fingerprint"),
-                "source_result_fingerprint":pte.get("source_result_fingerprint")}.items()
-                if v is None)
+            or any(type(pte.get(k)) is not str or len(pte[k])!=64
+                   or any(ch not in "0123456789abcdef" for ch in pte[k])
+                   for k in ("source_execution_fingerprint","source_result_fingerprint"))
             or pte.get("final_monthly_amount") is None):
         raise ScenarioSnapshotError("STAGE6_P1D_PTE_BLOCKED")
     for label,current in (

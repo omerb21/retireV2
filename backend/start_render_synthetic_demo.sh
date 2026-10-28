@@ -11,4 +11,5 @@ runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE ROLE root LOGIN SUPERU
 runuser -u postgres -- createdb -O root retire_v2_synthetic_demo
 export SYNTHETIC_DEMO_DATABASE_URL="postgresql+psycopg2://root@/retire_v2_synthetic_demo?host=/var/run/postgresql"
 export APP_ENV=test
+python -m pytest -q tests/test_render_synthetic_workflow_pg.py
 exec python -m uvicorn render_stage6_preview:app --host 0.0.0.0 --port "${PORT:?PORT is required}" --workers 1 --no-proxy-headers

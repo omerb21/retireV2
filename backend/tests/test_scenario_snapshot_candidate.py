@@ -262,3 +262,33 @@ def test_owner_foundation_changed_source_version_invalidates_prior_approval():
     assert any(code.startswith("SOURCE_STALE:") for code in candidate["blockers"])
     assert candidate["execution_allowed"] is False
     assert candidate["financial_result"] is None
+
+
+def test_owner_foundation_capital_action_is_inert_not_pension_income():
+    db = verified_db()
+    db.decisions[0].action = "capital_asset"
+    candidate = build(db)["candidate"]
+    assert candidate["proposed_decisions"][0]["action"] == "capital_asset"
+    assert candidate["planning_snapshot"] is None
+    assert candidate["financial_result"] is None
+    assert candidate["execution_allowed"] is False
+
+
+def test_owner_foundation_effective_date_change_changes_fingerprint_without_result():
+    from datetime import date
+
+    first = build()["candidate"]
+    changed = verified_db()
+    changed.decisions[0].effective_date = date(2026, 11, 1)
+    second = build(changed)["candidate"]
+    assert first["partition_fingerprint"] != second["partition_fingerprint"]
+    assert first["financial_result"] is second["financial_result"] is None
+
+
+def test_owner_foundation_source_balance_change_invalidates_approval():
+    db = verified_db()
+    db.component.balance = Decimal("101.00")
+    candidate = build(db)["candidate"]
+    assert any(code.startswith("SOURCE_STALE:") for code in candidate["blockers"])
+    assert candidate["financial_result"] is None
+    assert candidate["execution_allowed"] is False

@@ -200,3 +200,64 @@ def test_snapshot_owner_rolls_back_and_closes_after_primary_failure(monkeypatch)
             object(), client_id=7, scenario_id="s",
         )
     assert reached == ["rollback", "session_close", "connection_close"]
+
+
+def test_owner_foundation_accepted_decision_cannot_mutate_source_records():
+    db = verified_db()
+    original_balance = db.component.balance
+    original_amount = db.decisions[0].amount
+    original_fingerprint = db.decisions[0].source_fingerprint_at_review
+    first = build(db)
+    second = build(db)
+    assert first == second
+    assert db.component.balance == original_balance
+    assert db.decisions[0].amount == original_amount
+    assert db.decisions[0].source_fingerprint_at_review == original_fingerprint
+    assert first["candidate"]["execution_allowed"] is False
+
+
+def test_owner_foundation_exact_full_allocation_is_not_overallocation():
+    db = verified_db()
+    db.decisions[0].amount = Decimal("100.00")
+    candidate = build(db)["candidate"]
+    assert "SOURCE_OVERALLOCATED:p:c" not in candidate["blockers"]
+    assert candidate["proposed_decisions"][0]["amount"] == "100.00"
+    assert candidate["financial_result"] is None
+
+
+def test_owner_foundation_same_source_two_decisions_at_limit_is_not_overallocated():
+    db = verified_db()
+    second = deepcopy(db.decisions[0])
+    second.decision_id = "d2"
+    db.decisions.append(second)
+    candidate = build(db)["candidate"]
+    assert "SOURCE_OVERALLOCATED:p:c" not in candidate["blockers"]
+    assert len(candidate["proposed_decisions"]) == 2
+    assert candidate["execution_allowed"] is False
+
+
+def test_owner_foundation_one_cent_overallocation_fails_closed():
+    db = verified_db()
+    db.decisions[0].amount = Decimal("100.01")
+    candidate = build(db)["candidate"]
+    assert "SOURCE_OVERALLOCATED:p:c" in candidate["blockers"]
+    assert candidate["evidence_state"] == "BLOCKED"
+    assert candidate["financial_result"] is None
+
+
+def test_owner_foundation_missing_professional_source_fails_closed():
+    db = verified_db()
+    db.decisions[0].source_component_id = "unavailable-component"
+    candidate = build(db)["candidate"]
+    assert any(code.startswith("SOURCE_MISSING:") for code in candidate["blockers"])
+    assert candidate["evidence_state"] == "BLOCKED"
+    assert candidate["execution_allowed"] is False
+
+
+def test_owner_foundation_changed_source_version_invalidates_prior_approval():
+    db = verified_db()
+    db.product.version += 1
+    candidate = build(db)["candidate"]
+    assert any(code.startswith("SOURCE_STALE:") for code in candidate["blockers"])
+    assert candidate["execution_allowed"] is False
+    assert candidate["financial_result"] is None

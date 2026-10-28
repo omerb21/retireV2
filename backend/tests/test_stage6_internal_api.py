@@ -31,6 +31,19 @@ def test_preview_cannot_be_mounted_on_railway_production(monkeypatch):
     assert not any("/pension-elections" in p for p in paths(app))
 
 
+
+def test_render_preview_does_not_activate_by_render_environment_alone(monkeypatch):
+    """Render cannot silently bypass the explicit Railway staging-only gate."""
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED", "1")
+    monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME", raising=False)
+    app = create_app(AuthConfig(production=True))
+    assert app.state.stage6_preview_enabled is False
+    assert not any("/gross-estimate" in p for p in paths(app))
+    assert not any("/factor-admissions" in p for p in paths(app))
+    assert not any("/pension-elections" in p for p in paths(app))
+
+
 def test_staging_preview_mounts_only_with_production_style_auth(monkeypatch):
     monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
     monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")

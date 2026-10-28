@@ -122,6 +122,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     setAllocation(null);
     setEstimate(null);
     setDirty(true);
+    setAllocation(null);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
   }
 
@@ -131,6 +132,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     if (!decision || elections.some(row => row.decision_id === id)) return;
     setEstimate(null);
     setDirty(true);
+    setAllocation(null);
     setElections(current => [...current, {
       decision_id: id, pension_start_date: decision.effective_date,
       target_year: Number(decision.effective_date.slice(0, 4)),
@@ -225,8 +227,12 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
         בדוק הקצאות ויתרות לא מוקצות
       </button>
       {allocationError && <p role="alert">{allocationError}</p>}
+      {allocationBusy && <p role="status">מאמת נתוני הקצאה...</p>}
       {allocation && <section aria-label="תוצאות בקרת הקצאות">
         <p role="status">{allocation.overall_status === "BLOCKED" ? "קיימות חסימות בבקרת ההקצאות" : "בדיקה מבנית בלבד, אינה מאשרת חישוב"}</p>
+        {allocation.candidate_blockers.length > 0 && <p role="alert">חסימות מבניות: {allocation.candidate_blockers.join(", ")}</p>}
+        {allocation.allocation_evidence.blocker_codes.length > 0 && <p role="alert">חסימות הקצאה: {allocation.allocation_evidence.blocker_codes.join(", ")}</p>}
+        {allocation.allocation_evidence.sources.length === 0 && <p>לא נמצאו החלטות הקצאה בתרחיש.</p>}
         {allocation.allocation_evidence.sources.map(row => <p key={`${row.product_id}:${row.component_id}`}>
           {row.component_code ?? row.component_id}: יתרה מקורית {row.balance ?? "לא זמינה"} ₪,
           מוקצה {row.allocated} ₪, לא מוקצה {row.unallocated ?? "חסום"} ₪.

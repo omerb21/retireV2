@@ -274,7 +274,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
     {active && <div>
       <h3>{active.name}</h3>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
-      {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.some(decision => decision.action === "pension") &&
+      {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.length > 0 &&
         <ScenarioStage6Panel clientId={clientId} scenario={active} onSaved={reload}/> }
       {active.status !== "archived" && <>
         <form onSubmit={renameActive}>

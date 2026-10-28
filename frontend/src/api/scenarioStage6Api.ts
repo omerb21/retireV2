@@ -118,3 +118,42 @@ export function submitProfessionalFactorAdmission(
       body: JSON.stringify(payload),
     });
 }
+
+
+/** Read-only structural allocation evidence; never a financial result. */
+export interface ScenarioAllocationEvidence {
+  manifest_fingerprint: string;
+  candidate_evidence_state: string;
+  candidate_blockers: string[];
+  overall_status: "BLOCKED" | "STRUCTURAL_ONLY";
+  allocation_evidence: {
+    schema_version: "SCENARIO_ALLOCATION_EVIDENCE_V1";
+    client_id: number;
+    scenario_id: string;
+    scenario_version: number;
+    manifest_fingerprint: string;
+    overall_status: "BLOCKED" | "STRUCTURAL_ONLY";
+    blocker_codes: string[];
+    evidence_fingerprint: string;
+    sources: Array<{
+      product_id: string;
+      component_id: string;
+      component_code: string | null;
+      balance: string | null;
+      allocated: string;
+      unallocated: string | null;
+      status: "BLOCKED" | "STRUCTURAL_ONLY";
+      blocker_codes: string[];
+      decision_ids: string[];
+    }>;
+    financial_result: null;
+    execution_allowed: false;
+  };
+  financial_result: null;
+  execution_allowed: false;
+}
+
+export function readScenarioAllocationEvidence(
+  clientId: number, scenarioId: string): Promise<ScenarioAllocationEvidence> {
+  return read(clientId, scenarioId, "/allocation-evidence");
+}

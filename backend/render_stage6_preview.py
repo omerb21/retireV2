@@ -5,13 +5,16 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from render_synthetic_stage6 import router as synthetic_router
+from render_synthetic_workflow import router as workflow_router, initialize as initialize_workflow
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(synthetic_router)
+app.include_router(workflow_router)
 
 @app.on_event("startup")
 def assert_canonical_synthetic_pipeline():
+    initialize_workflow()
     from render_synthetic_stage6 import SyntheticInput, estimate
     result = estimate(SyntheticInput(balance="1000000.00", divisor="200"))
     assert result["result"]["result_state"] == "RESULT_READY"

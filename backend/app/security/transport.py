@@ -87,7 +87,7 @@ def is_spa_path(path: str) -> bool:
         if len(parts) == 2:
             return True
         if len(parts) == 3 and parts[2] in {
-            "employment-history", "pension-products", "legacy-conversion-history",
+            "workspace", "employment-history", "pension-products", "legacy-conversion-history",
             "professional-sources", "planning-input", "retirement-income-readiness",
             "grants", "actual-capitalizations",
         }:

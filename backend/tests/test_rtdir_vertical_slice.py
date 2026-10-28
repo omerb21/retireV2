@@ -921,3 +921,7 @@ def test_mutation_production_spa_allowlist_rejects_unknown_and_docs_routes(monke
         lambda: monkeypatch.setattr(app_main, "is_spa_path", lambda path: True),
         lambda: monkeypatch.setattr(app_main, "is_spa_path", original),
     )
+
+
+def test_production_spa_allowlist_includes_the_professional_workspace_route():
+    assert app_main.is_spa_path("/clients/7/workspace") is True

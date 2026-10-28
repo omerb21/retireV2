@@ -257,7 +257,8 @@ it("rejects missing partition information even where sum otherwise seems valid",
   const omitted={...v,allocation_evidence:{...v.allocation_evidence,sources:[
     {...v.allocation_evidence.sources[0],allocation_by_action:undefined},
   ]}};
-  expect(validScenarioAllocationEvidence(omitted,7,"sc",2)).toBe(false);
+  expect(validScenarioAllocationEvidence(
+    omitted as unknown as ReturnType<typeof validEvidence>,7,"sc",2)).toBe(false);
 });
 
 

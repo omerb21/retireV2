@@ -10,6 +10,15 @@ DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(synthetic_router)
 
+@app.on_event("startup")
+def assert_canonical_synthetic_pipeline():
+    from render_synthetic_stage6 import SyntheticInput, estimate
+    result = estimate(SyntheticInput(balance="1000000.00", divisor="200"))
+    assert result["result"]["result_state"] == "RESULT_READY"
+    assert result["result"]["monthly_estimate_gross_ils"] == "5000.00"
+    print("STAGE6_SYNTHETIC_CANONICAL_PTE_SMOKE_PASS", flush=True)
+
+
 @app.middleware("http")
 async def no_api_access(request: Request, call_next):
     if request.url.path.startswith("/api/"):

@@ -16,6 +16,7 @@ export interface ScenarioGrossEstimate {
   scenario_version: number | null;
   decision_id: string;
   result_fingerprint: string;
+  professional_admission_fingerprint: string | null;
   result_state: "RESULT_READY" | "BLOCKED";
   execution_allowed: boolean;
   blockers: string[];

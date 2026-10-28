@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
+import { ScenarioFactorAdmissionPanel } from "./ScenarioFactorAdmissionPanel";
 import {
   listScenarioPensionElections, saveScenarioPensionElections, readScenarioGrossEstimate,
   type ScenarioPensionElection, type ScenarioGrossEstimate,
@@ -159,6 +160,12 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
         שמור בחירות קצבה כטיוטה
       </button>
     </form>}
+    {loaded && !dirty && scenario.status === "draft" &&
+      elections.filter(row => pensionDecisions.some(d => d.decision_id === row.decision_id))
+        .map(row => <ScenarioFactorAdmissionPanel
+          key={row.decision_id} clientId={clientId} scenarioId={scenario.scenario_id}
+          scenarioVersion={scenario.version} decisionId={row.decision_id}
+          disabled={busy} onApproved={() => setEstimate(null)} />)}
     {estimate && <section aria-label="תוצאת אומדן לא מחייבת">
       {estimate.result_state === "RESULT_READY" && estimate.execution_allowed
         && estimate.monthly_estimate_gross_ils != null

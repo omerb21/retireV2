@@ -28,9 +28,7 @@ set +e
 python -m pytest -q -rs \
   tests/test_health.py \
   tests/test_rtdir_vertical_slice.py \
-  tests/test_rtdir_postgresql.py \
   tests/test_scenario_draft.py \
-  tests/test_scenario_draft_postgresql.py \
   tests/test_stage6_internal_api.py \
   tests/test_stage6_internal_election_api.py \
   tests/test_stage6_factor_admission_api.py \

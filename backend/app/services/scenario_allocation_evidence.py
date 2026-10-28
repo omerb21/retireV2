@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 
-from app.services.scenario_input_manifest_service import validate_inert_manifest
+from app.services.scenario_input_manifest_service import _fingerprint, validate_inert_manifest
 
 
 def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
@@ -86,7 +86,7 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
             "status": "BLOCKED" if blocked else "STRUCTURAL_ONLY",
             "blocker_codes": sorted(blocked),
         })
-    return {
+    evidence = {
         "schema_version": "SCENARIO_ALLOCATION_EVIDENCE_V1",
         "client_id": valid["client_id"],
         "scenario_id": valid["scenario_id"],
@@ -98,3 +98,4 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
         "financial_result": None,
         "execution_allowed": False,
     }
+    return {**evidence, "evidence_fingerprint": _fingerprint(evidence)}

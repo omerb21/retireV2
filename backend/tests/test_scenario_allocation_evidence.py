@@ -200,3 +200,32 @@ def test_evidence_is_detached_and_does_not_mutate_manifest():
     result["sources"][0]["decision_ids"].append("forged")
     assert m == snapshot
     assert "forged" not in row(m)["decision_ids"]
+
+
+@pytest.mark.parametrize("status", ["archived", "needs_revalidation"])
+def test_nonactive_scenario_does_not_expose_remainder_as_current(status):
+    m = source_manifest()
+    m["scenario_status"] = status
+    result = row(rehash(m))
+    assert result["status"] == "BLOCKED"
+    assert result["unallocated"] is None
+    assert result["blocker_codes"] == ["SCENARIO_NOT_ACTIVE_DRAFT"]
+
+
+def test_status_change_changes_provenance_fingerprint():
+    m = source_manifest()
+    active = reconcile_inert_manifest_allocations(m)
+    m["scenario_status"] = "archived"
+    archived = reconcile_inert_manifest_allocations(rehash(m))
+    assert active["manifest_fingerprint"] != archived["manifest_fingerprint"]
+    assert archived["execution_allowed"] is False
+
+
+def test_new_scenario_version_produces_distinct_evidence_identity():
+    m = source_manifest()
+    first = reconcile_inert_manifest_allocations(m)
+    m["scenario_version"] = 2
+    second = reconcile_inert_manifest_allocations(rehash(m))
+    assert first["manifest_fingerprint"] != second["manifest_fingerprint"]
+    assert second["scenario_version"] == 2
+    assert second["financial_result"] is None

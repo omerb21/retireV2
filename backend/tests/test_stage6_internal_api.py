@@ -30,6 +30,7 @@ def test_preview_cannot_be_mounted_on_railway_production(monkeypatch):
     app=create_app(AuthConfig(production=True))
     assert app.state.stage6_preview_enabled is False
     assert not any("/pension-elections" in p for p in paths(app))
+    assert not any("/allocation-evidence" in p for p in paths(app))
 
 
 
@@ -257,3 +258,25 @@ def test_allocation_evidence_staging_middleware_requires_signed_session(monkeypa
     assert accepted.json()["financial_result"] is None
     builder.assert_called_once_with(
         "factory",client_id=1,scenario_id="sc")
+
+
+def test_allocation_route_never_mounts_in_nonproduction_dev_even_when_flag_enabled(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    app=create_app(AuthConfig(production=False))
+    assert not any("/allocation-evidence" in p for p in paths(app))
+
+
+def test_allocation_route_never_mounts_on_railway_production(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","production")
+    app=create_app(AuthConfig(production=True))
+    assert not any("/allocation-evidence" in p for p in paths(app))
+
+
+def test_allocation_route_never_mounts_on_render_with_optin_flag(monkeypatch):
+    monkeypatch.setenv("RENDER","true")
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME",raising=False)
+    app=create_app(AuthConfig(production=True))
+    assert not any("/allocation-evidence" in p for p in paths(app))

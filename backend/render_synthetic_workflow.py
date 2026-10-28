@@ -63,6 +63,13 @@ def start(payload: Start):
         raise HTTPException(422, "SYNTHETIC_BALANCE_INVALID")
     sid = str(uuid4())
     with database().begin() as db:
+        # Serialize public synthetic creation and cap its ephemeral storage.
+        db.execute(text("SELECT pg_advisory_xact_lock(6842201)"))
+        db.execute(text("""DELETE FROM synthetic_workflow
+            WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '12 hours'"""))
+        count = db.execute(text("SELECT COUNT(*) FROM synthetic_workflow")).scalar_one()
+        if count >= 256:
+            raise HTTPException(429, "SYNTHETIC_DEMO_CAPACITY_REACHED")
         db.execute(text("""INSERT INTO synthetic_workflow
             (scenario_id, version, balance, state)
             VALUES (:id, 1, :balance, 'CREATED')"""),

@@ -102,3 +102,55 @@ document.getElementById('calc').addEventListener('submit',async(e)=>{
  pte_source_result_fingerprint:j.result.pte_source_result_fingerprint},null,2);
  }catch(err){st.textContent='החישוב לא הושלם';out.textContent=String(err)}
 });</script></body></html>"""
+
+@app.get("/demo/stage6/workflow", response_class=HTMLResponse)
+def workflow_demo():
+    return """<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RETIRE V2 — תרחיש סינתטי ב־PostgreSQL</title>
+<style>body{font:17px system-ui;max-width:760px;margin:32px auto;padding:16px;color:#172b3d}
+section{border:1px solid #b9c8d2;border-radius:8px;padding:18px;margin:16px 0}
+label{display:block;margin:12px 0}input{font:inherit;padding:9px}
+button{font:inherit;background:#12517b;color:white;border:0;padding:10px 18px;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eef3f6;padding:15px}</style>
+</head><body><h1>תרחיש Stage 6 סינתטי — PostgreSQL</h1>
+<p>בדיקת זרימת שמירת תרחיש, בחירת קצבה, תיעוד מקדם והפקת אומדן.
+כל הנתונים בדויים, המסד נפרד וזמני. זהו מנגנון ניסוי ולא תהליך האישור המקצועי של סביבת הייצור.</p>
+<section><h2>1. יצירת תרחיש בדיקה</h2><label>יתרה סינתטית בש״ח
+<input id="balance" value="1000000.00"></label>
+<button id="start">צור תרחיש</button></section>
+<section><h2>2. שמירת בחירת קצבה</h2><p>מועד קצבה קבוע: 30.09.2027, מסלול שאירים סינתטי.</p>
+<button id="election" disabled>שמור בחירה וגרסת תרחיש</button></section>
+<section><h2>3. תיעוד מקדם סינתטי</h2>
+<label>מקדם קצבה <input id="factor" value="200"></label>
+<label><input id="ack" type="checkbox"> אני מאשר שמדובר בנתון בדיקה בדוי בלבד</label>
+<button id="admission" disabled>תעד מקדם בגרסה הנוכחית</button></section>
+<section><h2>4. בדיקת אומדן</h2><button id="calculate" disabled>הפק אומדן באמצעות PTE הקנוני</button>
+<p id="status" role="status"></p><pre id="result" aria-live="polite"></pre></section>
+<script>
+let id=null,version=0;
+const $=x=>document.getElementById(x);
+function enable(){ $('election').disabled=version!==1;$('admission').disabled=version!==2;$('calculate').disabled=version!==3 }
+async function call(path,method,body) {
+const options={method,headers:{'Content-Type':'application/json'}};
+if(body)options.body=JSON.stringify(body);
+const response=await fetch(path,options);const data=await response.json();
+if(!response.ok)throw Error(JSON.stringify(data));return data;
+}
+async function act(task){
+try { $('status').textContent='מבצע...';const out=await task();$('status').textContent='הפעולה הושלמה';
+$('result').textContent=JSON.stringify(out,null,2); }
+catch(err){$('status').textContent='הפעולה נדחתה';$('result').textContent=String(err)}
+enable();
+}
+$('start').onclick=()=>act(async()=>{const r=await call('/demo/stage6/workflow/start','POST',{balance:$('balance').value});id=r.scenario_id;version=r.version;return r});
+$('election').onclick=()=>act(async()=>{const r=await call('/demo/stage6/workflow/'+encodeURIComponent(id)+'/election','PUT',{
+expected_version:version,pension_start_date:'2027-09-30',survivor_option:'synthetic-standard'});version=r.version;return r});
+$('admission').onclick=()=>act(async()=>{const r=await call('/demo/stage6/workflow/'+encodeURIComponent(id)+'/factor','POST',{
+expected_version:version,divisor:$('factor').value,acknowledgement:$('ack').checked});version=r.version;return r});
+$('calculate').onclick=()=>act(async()=>{const r=await call('/demo/stage6/workflow/'+encodeURIComponent(id)+'/estimate','GET');
+return {monthly_estimate_gross_ils:r.calculation.result.monthly_estimate_gross_ils,
+result_state:r.calculation.result.result_state,version:r.version,
+result_fingerprint:r.calculation.result.result_fingerprint,
+is_professional_admission:r.is_professional_admission};});
+</script></body></html>"""

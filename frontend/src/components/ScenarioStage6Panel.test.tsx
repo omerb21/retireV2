@@ -125,3 +125,15 @@ it("fails closed if a READY response lacks professional authority provenance", a
   await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
+
+
+it("catalog candidate neither offers manual factor admission nor an executable estimate", async () => {
+  mock.list.mockResolvedValue([{
+    ...election, coefficient_selection: "catalog_candidate",
+  }]);
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  const estimateButton=await screen.findByRole("button",{name:"בדוק אומדן קצבה מאושר"});
+  expect((estimateButton as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("button",{name:"הזן ואשר מקדם מקצועי"})).toBeNull();
+  expect(mock.estimate).not.toHaveBeenCalled();
+});

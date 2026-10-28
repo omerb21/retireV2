@@ -92,3 +92,23 @@ def test_no_new_financial_metadata_is_returned_from_allocation_adapter():
     assert "net_income" not in result
     assert "current_m09_run_id" not in result
     assert result["financial_result"] is None
+
+
+def test_unknown_candidate_state_fails_closed_without_executable_output():
+    pair = authoritative_pair()
+    pair["candidate"] = deepcopy(pair["candidate"])
+    pair["candidate"]["evidence_state"] = "UNEXPECTED_STATE"
+    result = subject._allocation_extension(None, pair)
+    assert result["overall_status"] == "BLOCKED"
+    assert result["execution_allowed"] is False
+    assert result["financial_result"] is None
+
+
+def test_candidate_blockers_alone_fail_closed_even_if_state_is_inconsistent():
+    pair = authoritative_pair()
+    pair["candidate"] = deepcopy(pair["candidate"])
+    pair["candidate"]["blockers"] = ["SOURCE_OVERALLOCATED:p:c"]
+    result = subject._allocation_extension(None, pair)
+    assert result["overall_status"] == "BLOCKED"
+    assert result["candidate_blockers"] == ["SOURCE_OVERALLOCATED:p:c"]
+    assert result["execution_allowed"] is False

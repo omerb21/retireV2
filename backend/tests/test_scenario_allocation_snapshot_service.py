@@ -30,6 +30,7 @@ def test_existing_snapshot_owner_is_reused_without_second_database_read(monkeypa
     assert visited == [(token, 7, "s")]
     assert result["candidate_evidence_state"] == "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"
     assert result["candidate_blockers"] == []
+    assert result["overall_status"] == "STRUCTURAL_ONLY"
     assert result["allocation_evidence"]["sources"][0]["unallocated"] == "50.00"
     assert result["execution_allowed"] is False
     assert result["financial_result"] is None
@@ -43,6 +44,7 @@ def test_candidate_blockers_are_preserved_and_cannot_be_overridden():
     result = subject._allocation_extension(None, pair)
     assert result["candidate_evidence_state"] == "BLOCKED"
     assert result["candidate_blockers"] == ["TEST_STRUCTURAL_BLOCKER"]
+    assert result["overall_status"] == "BLOCKED"
     assert result["execution_allowed"] is False
     assert result["financial_result"] is None
 
@@ -62,9 +64,31 @@ def test_no_staging_mount_or_financial_evaluation_is_added():
         "manifest_fingerprint",
         "candidate_evidence_state",
         "candidate_blockers",
+        "overall_status",
         "allocation_evidence",
         "financial_result",
         "execution_allowed",
     }
     assert result["allocation_evidence"]["financial_result"] is None
     assert result["allocation_evidence"]["execution_allowed"] is False
+
+
+def test_stale_allocation_is_blocked_even_if_candidate_was_structurally_clean():
+    pair = authoritative_pair()
+    pair["manifest"] = deepcopy(pair["manifest"])
+    pair["manifest"]["decisions"][0]["product_version_at_review"] = 2
+    from app.services.scenario_input_manifest_service import MANIFEST_IDENTITY_FIELDS, _fingerprint
+    identity = {key: pair["manifest"][key] for key in MANIFEST_IDENTITY_FIELDS}
+    pair["manifest"]["manifest_fingerprint"] = _fingerprint(identity)
+    result = subject._allocation_extension(None, pair)
+    assert result["overall_status"] == "BLOCKED"
+    assert result["allocation_evidence"]["blocker_codes"] == ["SOURCE_STALE"]
+    assert result["execution_allowed"] is False
+
+
+def test_no_new_financial_metadata_is_returned_from_allocation_adapter():
+    result = subject._allocation_extension(None, authoritative_pair())
+    assert "monthly_results" not in result
+    assert "net_income" not in result
+    assert "current_m09_run_id" not in result
+    assert result["financial_result"] is None

@@ -13,7 +13,9 @@ export interface ScenarioPensionElection {
 export interface ScenarioGrossEstimate {
   schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1";
   scenario_id: string;
+  scenario_version: number | null;
   decision_id: string;
+  result_fingerprint: string;
   result_state: "RESULT_READY" | "BLOCKED";
   execution_allowed: boolean;
   blockers: string[];

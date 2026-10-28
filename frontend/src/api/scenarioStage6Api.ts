@@ -12,9 +12,11 @@ export interface ScenarioPensionElection {
 }
 export interface ScenarioGrossEstimate {
   schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1";
+  client_id: number;
   scenario_id: string;
   scenario_version: number | null;
   decision_id: string;
+  source_id: string | null;
   result_fingerprint: string;
   professional_admission_fingerprint: string | null;
   result_state: "RESULT_READY" | "BLOCKED";
@@ -29,6 +31,13 @@ export interface ScenarioGrossEstimate {
     payout_option_name: string;
     admission_revision: number;
   } | null;
+  planning_calculation_input_fingerprint: string | null;
+  monthly_basis_semantic_fingerprint: string | null;
+  monthly_basis_source_fingerprint: string | null;
+  temporal_semantic_fingerprint: string | null;
+  temporal_source_fingerprint: string | null;
+  pte_source_execution_fingerprint: string | null;
+  pte_source_result_fingerprint: string | null;
   retirement_target_date: string | null;
   statement_date: string | null;
 }

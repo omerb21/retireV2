@@ -6,7 +6,7 @@ import {
 
 const network=vi.hoisted(() => ({ fetch:vi.fn(), url:vi.fn((x:string)=>"/api"+x) }));
 vi.mock("./apiBase",() => ({ apiFetch:network.fetch, buildApiUrl:network.url }));
-afterEach(() => { vi.resetAllMocks(); });
+afterEach(() => { vi.clearAllMocks(); });
 
 it("removes read-only authority evidence from a round-trip write payload",async () => {
   network.fetch.mockResolvedValueOnce({

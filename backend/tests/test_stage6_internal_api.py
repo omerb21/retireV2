@@ -1,10 +1,13 @@
 """Stage 6 preview is opt-in on authenticated staging and not deployed by default."""
 from types import SimpleNamespace
 from unittest.mock import patch
+from fastapi.testclient import TestClient
 
 from app.api import scenario_stage6_internal_routes as route
+from app.api import scenario_stage6_factor_admission_routes as factor_route
 from app.main import create_app
 from app.security.config import AuthConfig
+from app.security.session import COOKIE_NAME, issue
 
 
 def paths(app):
@@ -84,7 +87,8 @@ def test_valid_staging_session_calls_canonical_service_once():
         result=route.internal_gross_estimate(r,"scenario","decision",client_id=1,factory="factory")
     estimate.assert_called_once_with(
         "factory",client_id=1,scenario_id="scenario",decision_id="decision")
-    assert result.headers["cache-control"]=="no-store"
+    assert result.headers["cache-control"]=="no-store, private"
+    assert result.headers["pragma"]=="no-cache"
 
 
 def test_invalid_signed_session_never_calls_service():
@@ -95,3 +99,67 @@ def test_invalid_signed_session_never_calls_service():
         result=route.internal_gross_estimate(r,"scenario","decision",client_id=1,factory=object())
     assert result=="unauthorized"
     estimate.assert_not_called()
+
+
+def _production_config():
+    return AuthConfig(
+        production=True, public_origin="https://retire.example",
+        public_authority="retire.example", actor_id="planner:stage6",
+        session_secret=b"s"*32, rate_limit_secret=b"r"*32,
+    )
+
+
+def _edge_headers(**extra):
+    values={
+        "host":"retire.example", "x-real-ip":"2001:db8::6",
+        "x-forwarded-proto":"https", "x-forwarded-host":"retire.example",
+    }
+    values.update(extra)
+    return values
+
+
+def test_real_middleware_requires_signed_session_for_mounted_preview(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    config=_production_config()
+    app=create_app(config)
+    app.dependency_overrides[route.get_stage6_factory]=lambda:"factory"
+    client=TestClient(app)
+    path="/api/clients/1/scenario-drafts/sc/pension-decisions/d/gross-estimate"
+    with patch.object(route,"estimate_single_pension_decision",
+                      return_value={"result_state":"BLOCKED"}) as estimate:
+        missing=client.get(path,headers=_edge_headers())
+        token,_=issue(config)
+        client.cookies.set(COOKIE_NAME,token)
+        accepted=client.get(path,headers=_edge_headers())
+    assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
+    assert accepted.status_code==200
+    estimate.assert_called_once_with(
+        "factory",client_id=1,scenario_id="sc",decision_id="d")
+
+
+def test_real_middleware_requires_session_bound_csrf_for_factor_write(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    config=_production_config()
+    app=create_app(config)
+    app.dependency_overrides[factor_route.get_stage6_admission_factory]=lambda:"factory"
+    client=TestClient(app)
+    token,session=issue(config)
+    client.cookies.set(COOKIE_NAME,token)
+    path="/api/clients/1/scenario-drafts/sc/pension-decisions/d/factor-admissions"
+    body={
+        "expected_scenario_version":2,"expected_admission_revision":0,
+        "factor_value":"200","factor_evidence_type":"PLANNER_ASSUMPTION",
+        "factor_evidence_reference":"professional assumption",
+    }
+    headers=_edge_headers(origin="https://retire.example")
+    with patch.object(factor_route,"append_authenticated_serializable_factor_admission",
+                      return_value={"admission_revision":1,"execution_allowed":False}) as writer:
+        rejected=client.post(path,json=body,headers=headers)
+        accepted=client.post(path,json=body,headers={
+            **headers,"x-rtdir-csrf":session["csrf"],
+        })
+    assert (rejected.status_code,rejected.json()["code"])==(403,"CSRF_INVALID")
+    assert accepted.status_code==200
+    writer.assert_called_once()

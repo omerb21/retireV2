@@ -29,6 +29,47 @@ const election = {
   coefficient_selection: "manual_review_required" as const,
   company_name: "Company", option_name: "Option",
 };
+const hashes = {
+  planning_calculation_input_fingerprint: "1".repeat(64),
+  monthly_basis_semantic_fingerprint: "2".repeat(64),
+  monthly_basis_source_fingerprint: "3".repeat(64),
+  temporal_semantic_fingerprint: "4".repeat(64),
+  temporal_source_fingerprint: "5".repeat(64),
+};
+function blockedEstimate(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1",
+    client_id: 1, scenario_id: "sc1", scenario_version: null,
+    decision_id: "d1", source_id: "scenario-decision:sc1:d1",
+    result_state: "BLOCKED", execution_allowed: false,
+    blockers: ["STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"],
+    coefficient_provenance: null, professional_admission_fingerprint: null,
+    planning_calculation_input_fingerprint: null,
+    monthly_basis_semantic_fingerprint: null, monthly_basis_source_fingerprint: null,
+    temporal_semantic_fingerprint: null, temporal_source_fingerprint: null,
+    pte_source_execution_fingerprint: null, pte_source_result_fingerprint: null,
+    monthly_estimate_gross_ils: null, retirement_target_date: null,
+    statement_date: null, result_fingerprint: "a".repeat(64), ...overrides,
+  };
+}
+function readyEstimate(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1",
+    client_id: 1, scenario_id: "sc1", scenario_version: 3,
+    decision_id: "d1", source_id: "scenario-decision:sc1:d1",
+    result_state: "RESULT_READY", execution_allowed: true, blockers: [],
+    coefficient_provenance: {
+      source_level: "MANUAL_PROFESSIONAL_OVERRIDE", factor_value: "200",
+      factor_evidence_type: "PLANNER_ASSUMPTION", factor_evidence_reference: "reference",
+      payout_option_name: "Option", admission_revision: 1,
+    },
+    professional_admission_fingerprint: "6".repeat(64), ...hashes,
+    pte_source_execution_fingerprint: "7".repeat(64),
+    pte_source_result_fingerprint: "8".repeat(64),
+    monthly_estimate_gross_ils: "5.00", retirement_target_date: "2027-09-30",
+    statement_date: "2026-09-30", result_fingerprint: "a".repeat(64), ...overrides,
+  };
+}
 function deferred<T>() {
   let resolve!: (x: T) => void;
   const promise = new Promise<T>(r => { resolve = r; });
@@ -52,14 +93,7 @@ it("saves versioned election through the canonical API without factor authority"
 
 it("never displays a ready amount from BLOCKED result", async () => {
   mock.list.mockResolvedValue([election]);
-  mock.estimate.mockResolvedValue({
-    schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1",
-    result_fingerprint: "a".repeat(64),scenario_version: null,
-    scenario_id: "sc1", decision_id: "d1", result_state: "BLOCKED",
-    execution_allowed: false, monthly_estimate_gross_ils: null,
-    blockers: ["STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"],
-    coefficient_provenance: null,
-  });
+  mock.estimate.mockResolvedValue(blockedEstimate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
   await screen.findByText("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
@@ -111,19 +145,39 @@ it("invalidates old estimate and blocks request while election edits are unsaved
 
 it("fails closed if a READY response lacks professional authority provenance", async () => {
   mock.list.mockResolvedValue([election]);
-  mock.estimate.mockResolvedValue({
-    schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1",
-    result_fingerprint: "a".repeat(64),
-    scenario_version: 3,scenario_id: "sc1",decision_id: "d1",
-    result_state: "RESULT_READY",execution_allowed: true,
-    monthly_estimate_gross_ils: "5000.00",
-    coefficient_provenance: null,professional_admission_fingerprint: null,
-    blockers: [],
-  });
+  mock.estimate.mockResolvedValue(readyEstimate({
+    coefficient_provenance: null, professional_admission_fingerprint: null,
+  }));
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
   await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
+});
+
+it("rejects a coherently shaped READY result for another client", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.estimate.mockResolvedValue(readyEstimate({ client_id: 2 }));
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
+  expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
+});
+
+it("rejects a coherently shaped READY result for another source", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.estimate.mockResolvedValue(readyEstimate({ source_id: "scenario-decision:sc1:other" }));
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
+  expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
+});
+
+it("renders a monthly amount only from the complete closed READY envelope", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.estimate.mockResolvedValue(readyEstimate());
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  await screen.findByText(/אומדן קצבה חודשית ברוטו: 5.00/);
 });
 
 

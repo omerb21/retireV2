@@ -26,7 +26,7 @@ it("posts authenticated CAS fields only after fresh cursor read",async () => {
   const approved=vi.fn();
   panel(3,approved);
   fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
-  const factor=await screen.findByLabelText(/מקדם קצבה/);
+  const factor=await screen.findByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)");
   fireEvent.change(factor,{target:{value:"200"}});
   fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
     target:{value:"Document ref 123"},
@@ -59,7 +59,7 @@ it("never sends invalid or nonpositive factor",async () => {
   });
   panel();
   fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
-  const factor=await screen.findByLabelText(/מקדם קצבה/);
+  const factor=await screen.findByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)");
   fireEvent.change(factor,{target:{value:"0"}});
   fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
     target:{value:"assumption"},
@@ -78,7 +78,7 @@ it("drops old cursor when scenario version changes",async () => {
     scenarioId="sc" decisionId="d" scenarioVersion={4}
     disabled={false} onApproved={vi.fn()}/>);
   resolve({scenario_version:3,latest_admission_revision:0,authority_state:"NOT_EVALUATED"});
-  await waitFor(() => expect(screen.queryByLabelText(/מקדם קצבה/)).toBeNull());
+  await waitFor(() => expect(screen.queryByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)")).toBeNull());
   expect(mock.approve).not.toHaveBeenCalled();
 });
 
@@ -89,7 +89,7 @@ it("accepts exact positive decimal factors with trailing zero digits",async () =
   });
   panel(3);
   fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
-  const input=await screen.findByLabelText(/מקדם קצבה/);
+  const input=await screen.findByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)");
   fireEvent.change(input,{target:{value:"200.50"}});
   fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
     target:{value:"Insurer document ref"},

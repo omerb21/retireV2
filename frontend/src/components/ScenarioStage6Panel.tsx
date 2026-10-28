@@ -15,6 +15,71 @@ function explain(error: unknown): string {
   return error instanceof Error ? error.message : "לא ניתן להשלים את הפעולה.";
 }
 
+const estimateFields = [
+  "schema_version", "client_id", "scenario_id", "scenario_version", "decision_id",
+  "source_id", "result_state", "execution_allowed", "blockers",
+  "coefficient_provenance", "professional_admission_fingerprint",
+  "planning_calculation_input_fingerprint", "monthly_basis_semantic_fingerprint",
+  "monthly_basis_source_fingerprint", "temporal_semantic_fingerprint",
+  "temporal_source_fingerprint", "pte_source_execution_fingerprint",
+  "pte_source_result_fingerprint", "monthly_estimate_gross_ils",
+  "retirement_target_date", "statement_date", "result_fingerprint",
+] as const;
+const identityHashes = [
+  "planning_calculation_input_fingerprint", "monthly_basis_semantic_fingerprint",
+  "monthly_basis_source_fingerprint", "temporal_semantic_fingerprint",
+  "temporal_source_fingerprint",
+] as const;
+const hash = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+const optionalHash = (value: unknown): boolean => value === null || hash(value);
+const scenarioSourceId = (scenarioId: string, decisionId: string): string =>
+  `scenario-decision:${scenarioId.replace(/%/g, "%25").replace(/:/g, "%3A")}`
+  + `:${decisionId.replace(/%/g, "%25").replace(/:/g, "%3A")}`;
+
+function closedEstimateEnvelope(value: ScenarioGrossEstimate, clientId: number,
+  scenarioId: string, decisionId: string, scenarioVersion: number): boolean {
+  if (Object.keys(value).sort().join("|") !== [...estimateFields].sort().join("|")
+      || value.schema_version !== "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1"
+      || value.client_id !== clientId || value.scenario_id !== scenarioId
+      || value.decision_id !== decisionId || !hash(value.result_fingerprint)
+      || value.source_id !== scenarioSourceId(scenarioId, decisionId)
+      || !Array.isArray(value.blockers)
+      || value.blockers.some(code => typeof code !== "string" || !code)
+      || value.blockers.join("|") !== [...new Set(value.blockers)].sort().join("|")) return false;
+  if (value.result_state === "BLOCKED") {
+    return value.execution_allowed === false && value.blockers.length > 0
+      && value.monthly_estimate_gross_ils === null
+      && value.pte_source_execution_fingerprint === null
+      && value.pte_source_result_fingerprint === null
+      && (value.scenario_version === null || Number.isInteger(value.scenario_version))
+      && identityHashes.every(field => optionalHash(value[field]))
+      && optionalHash(value.professional_admission_fingerprint)
+      && (value.retirement_target_date === null || typeof value.retirement_target_date === "string")
+      && (value.statement_date === null || typeof value.statement_date === "string");
+  }
+  const provenance=value.coefficient_provenance;
+  return value.result_state === "RESULT_READY" && value.execution_allowed === true
+    && value.scenario_version === scenarioVersion && value.blockers.length === 0
+    && typeof value.source_id === "string" && value.source_id.length > 0
+    && identityHashes.every(field => hash(value[field]))
+    && hash(value.professional_admission_fingerprint)
+    && hash(value.pte_source_execution_fingerprint) && hash(value.pte_source_result_fingerprint)
+    && /^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(value.monthly_estimate_gross_ils ?? "")
+    && typeof value.retirement_target_date === "string" && value.retirement_target_date.length > 0
+    && typeof value.statement_date === "string" && value.statement_date.length > 0
+    && provenance !== null
+    && Object.keys(provenance).sort().join("|") === [
+      "source_level", "factor_value", "factor_evidence_type", "factor_evidence_reference",
+      "payout_option_name", "admission_revision",
+    ].sort().join("|")
+    && provenance.source_level === "MANUAL_PROFESSIONAL_OVERRIDE"
+    && typeof provenance.factor_value === "string" && provenance.factor_value.length > 0
+    && typeof provenance.factor_evidence_type === "string" && provenance.factor_evidence_type.length > 0
+    && typeof provenance.factor_evidence_reference === "string" && provenance.factor_evidence_reference.length > 0
+    && typeof provenance.payout_option_name === "string" && provenance.payout_option_name.length > 0
+    && Number.isInteger(provenance.admission_revision) && provenance.admission_revision > 0;
+}
+
 /** Phase-1 internal workspace only; does NOT enter or approve factor values. */
 export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   const [elections, setElections] = useState<ScenarioPensionElection[]>([]);
@@ -105,12 +170,8 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
           || !/^[0-9a-f]{64}$/.test(result.result_fingerprint)) {
         throw Error("STAGE6_CONTEXT_MISMATCH");
       }
-      if (result.result_state === "RESULT_READY"
-          && (result.scenario_version !== scenario.version
-            || result.execution_allowed !== true
-            || !/^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(result.monthly_estimate_gross_ils ?? "")
-            || !result.coefficient_provenance
-            || !/^[0-9a-f]{64}$/.test(result.professional_admission_fingerprint ?? ""))) {
+      if (!closedEstimateEnvelope(result, clientId, scenario.scenario_id,
+          decisionId, scenario.version)) {
         throw Error("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
       }
       setEstimate(result);

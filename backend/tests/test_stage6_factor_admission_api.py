@@ -42,7 +42,8 @@ def test_production_delegates_to_authenticated_writer_only():
                       return_value={"admission_revision":1,"execution_allowed":False}) as writer:
         response=routes.approve_professional_factor(
             request(True),payload(),"scenario","decision",client_id=1,factory="factory")
-    assert response.headers["cache-control"]=="no-store"
+    assert response.headers["cache-control"]=="no-store, private"
+    assert response.headers["pragma"]=="no-cache"
     assert writer.call_count==1
     kwargs=writer.call_args.kwargs
     assert "actor_id" not in kwargs

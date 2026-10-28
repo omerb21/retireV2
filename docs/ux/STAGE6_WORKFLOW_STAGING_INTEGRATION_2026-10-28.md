@@ -38,10 +38,10 @@ The frontend component is shown only if the **build-time** `VITE_STAGE6_PREVIEW_
 - Stage 6 remains isolated from tax, eligibility, CPI/indexation, capital assets, implementation of pension withdrawals and the general assessor.
 
 ## Evidence/remaining gates
-- **Code completed:** backend routes, typed frontend clients, integrated draft UI, separate factor acknowledgment UI, fail-closed estimate rendering and targeted API/UI tests.
-- **Not verified yet:** local execution of the new backend + frontend tests, real authenticated staging integration, PostgreSQL schema against live staging, server-side CSRF/edge behavior and frontend build.
-- **Not performed:** GitHub Actions, merge, deployment or production database changes.
-- **Release gate remains BLOCKED** until a Medium-effort local acceptance run validates all new routes, TypeScript/Vitest tests, PostgreSQL CAS, signed sessions and staging flag gating. Follow with one explicitly authorized budgeted CI integration run and a separate release decision.
-- Do not conflate reported P1A–P1D 308 passing tests with execution of the newly added workflow tests.
+- **Code completed and locally verified:** backend routes, typed frontend clients, integrated draft UI, separate factor acknowledgment UI and fail-closed validation of the complete N1.4 estimate envelope, including client binding.
+- **Backend evidence:** 233 focused Stage 6, P1A–P1D, PTE and governance tests passed; 45 security, draft and election regressions passed. Four dedicated PostgreSQL 16.2 tests passed for election persistence, factor-admission CAS/rollback, snapshot composition and READY/BLOCKED estimation.
+- **Frontend evidence:** 17 focused Vitest tests passed and the TypeScript/Vite production build passed.
+- **Not performed:** GitHub Actions, merge, deployment, live staging verification or production database changes.
+- **Release gate remains BLOCKED:** local validation does not authorize production exposure. A separately authorized integration run in the authenticated staging topology and a separate release decision remain required.
 
-Status: `STAGE6_WORKFLOW_CODE_READY_FOR_VALIDATION` — **not** `PRODUCTION_READY`.
+Status: `STAGE6_WORKFLOW_READY_FOR_REVIEW` — **not** `PRODUCTION_READY`.

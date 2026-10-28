@@ -179,11 +179,14 @@ export function validScenarioAllocationEvidence(
       || !sha(value.allocation_evidence.evidence_fingerprint)
       || !["BLOCKED", "STRUCTURAL_ONLY"].includes(value.overall_status)
       || !["BLOCKED", "STRUCTURAL_ONLY"].includes(value.allocation_evidence.overall_status)
+      || !["BLOCKED", "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"].includes(value.candidate_evidence_state)
       || !Array.isArray(value.candidate_blockers)
       || !Array.isArray(value.allocation_evidence.blocker_codes)
       || !Array.isArray(value.allocation_evidence.sources)
       || (value.overall_status === "STRUCTURAL_ONLY"
-          && (value.candidate_blockers.length !== 0 || value.allocation_evidence.overall_status !== "STRUCTURAL_ONLY"))
+          && (value.candidate_evidence_state !== "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"
+              || value.candidate_blockers.length !== 0
+              || value.allocation_evidence.overall_status !== "STRUCTURAL_ONLY"))
       || (value.allocation_evidence.overall_status === "BLOCKED"
           && value.overall_status !== "BLOCKED")) return false;
   if (value.allocation_evidence.sources.some(row =>

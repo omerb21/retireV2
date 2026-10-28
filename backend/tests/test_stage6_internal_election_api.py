@@ -10,11 +10,13 @@ from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
 from app.services.scenario_draft_service import DraftError
 
 
-def req(production=False):
+def req(production=True, enabled=True):
     return SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(
-            auth_config=SimpleNamespace(production=production))),
-        state=SimpleNamespace(trusted_professional_actor="planner:valid"),
+            auth_config=SimpleNamespace(production=production),
+            stage6_preview_enabled=enabled)),
+        state=SimpleNamespace(trusted_professional_actor="planner:valid",
+                              auth_session={"actor_id":"planner:valid"}),
     )
 
 
@@ -88,6 +90,6 @@ def test_production_internal_election_is_not_authorized():
     with patch.object(route,"replace_elections") as writer,patch.object(
         route,"error",return_value="disabled") as reject:
         result=route.save_internal_pension_elections(
-            req(True),body(),scenario_id="sc",client_id=1,db=object())
+            req(True,enabled=False),body(),scenario_id="sc",client_id=1,db=object())
     assert result=="disabled"
     writer.assert_not_called()

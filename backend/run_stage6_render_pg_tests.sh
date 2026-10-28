@@ -16,8 +16,13 @@ fi
 pg_ctlcluster "$version" main start
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE ROLE root LOGIN SUPERUSER"
 runuser -u postgres -- createdb -O root retire_v2_scenario_test
+# One isolated localhost-only test needs an explicit hostname. Generate a fresh
+# per-container credential; never print it or place it in Git or Render secrets.
+pgpass="$(openssl rand -hex 24)"
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "ALTER ROLE root PASSWORD '$pgpass'" >/dev/null
 export APP_ENV=test
-export SCENARIO_TEST_POSTGRES_URL="postgresql+psycopg2:///retire_v2_scenario_test"
+export SCENARIO_TEST_POSTGRES_URL="postgresql+psycopg2://root:$pgpass@127.0.0.1:5432/retire_v2_scenario_test"
+unset pgpass
 echo STAGE6_RENDER_LOCAL_POSTGRES_READY
 set +e
 python -m pytest -q \

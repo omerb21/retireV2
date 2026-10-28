@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
 import { readRetirementCalculationContext, type RetirementCalculationContext } from "../api/retirementCalculationContextApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
+import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
 import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComparison";
 import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import {
@@ -273,6 +274,8 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
     {active && <div>
       <h3>{active.name}</h3>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
+      {import.meta.env.MODE !== "production" && active.decisions.some(decision => decision.action === "pension") &&
+        <ScenarioStage6Panel clientId={clientId} scenario={active} onSaved={reload}/> }
       {active.status !== "archived" && <>
         <form onSubmit={renameActive}>
           <label>שינוי שם חלופה <input maxLength={255} value={rename} onChange={event => setRename(event.target.value)} placeholder={active.name}/></label>

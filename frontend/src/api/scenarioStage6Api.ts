@@ -60,3 +60,38 @@ export async function readScenarioGrossEstimate(
   return read(clientId, scenarioId,
     `/pension-decisions/${encodeURIComponent(decisionId)}/gross-estimate`);
 }
+
+
+export type FactorEvidenceType = "INSURER_QUOTE" | "POLICY_CONTRACT" | "PLANNER_ASSUMPTION";
+export interface FactorAdmissionCursor {
+  scenario_version: number;
+  latest_admission_revision: number;
+  authority_state: "NOT_EVALUATED";
+}
+export interface FactorAdmissionReceipt {
+  admission_revision: number;
+  professional_admission_fingerprint: string;
+  execution_allowed: false;
+}
+
+export function readFactorAdmissionCursor(
+  clientId: number, scenarioId: string, decisionId: string): Promise<FactorAdmissionCursor> {
+  return read(clientId, scenarioId,
+    `/pension-decisions/${encodeURIComponent(decisionId)}/factor-admissions/revision`);
+}
+export function submitProfessionalFactorAdmission(
+  clientId: number, scenarioId: string, decisionId: string,
+  payload: {
+    expected_scenario_version: number;
+    expected_admission_revision: number;
+    factor_value: string;
+    factor_evidence_type: FactorEvidenceType;
+    factor_evidence_reference: string;
+  }): Promise<FactorAdmissionReceipt> {
+  return read(clientId, scenarioId,
+    `/pension-decisions/${encodeURIComponent(decisionId)}/factor-admissions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+}

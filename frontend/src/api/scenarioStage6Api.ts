@@ -157,3 +157,48 @@ export function readScenarioAllocationEvidence(
   clientId: number, scenarioId: string): Promise<ScenarioAllocationEvidence> {
   return read(clientId, scenarioId, "/allocation-evidence");
 }
+
+/** Validate the exact informational result before presenting financial-looking amounts.
+ * This is UI response integrity only, not proof of server-side authority. */
+export function validScenarioAllocationEvidence(
+  value: ScenarioAllocationEvidence, clientId: number, scenarioId: string,
+  scenarioVersion: number): boolean {
+  const sha = (x: unknown): x is string => typeof x === "string" && /^[0-9a-f]{64}$/.test(x);
+  const money = (x: unknown): x is string => typeof x === "string"
+    && /^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(x);
+  if (!value || !value.allocation_evidence
+      || value.execution_allowed !== false || value.financial_result !== null
+      || value.allocation_evidence.execution_allowed !== false
+      || value.allocation_evidence.financial_result !== null
+      || value.allocation_evidence.schema_version !== "SCENARIO_ALLOCATION_EVIDENCE_V1"
+      || value.allocation_evidence.client_id !== clientId
+      || value.allocation_evidence.scenario_id !== scenarioId
+      || value.allocation_evidence.scenario_version !== scenarioVersion
+      || !sha(value.manifest_fingerprint)
+      || value.manifest_fingerprint !== value.allocation_evidence.manifest_fingerprint
+      || !sha(value.allocation_evidence.evidence_fingerprint)
+      || !["BLOCKED", "STRUCTURAL_ONLY"].includes(value.overall_status)
+      || !["BLOCKED", "STRUCTURAL_ONLY"].includes(value.allocation_evidence.overall_status)
+      || !Array.isArray(value.candidate_blockers)
+      || !Array.isArray(value.allocation_evidence.blocker_codes)
+      || !Array.isArray(value.allocation_evidence.sources)
+      || (value.overall_status === "STRUCTURAL_ONLY"
+          && (value.candidate_blockers.length !== 0 || value.allocation_evidence.overall_status !== "STRUCTURAL_ONLY"))
+      || (value.allocation_evidence.overall_status === "BLOCKED"
+          && value.overall_status !== "BLOCKED")) return false;
+  if (value.allocation_evidence.sources.some(row =>
+      !row || typeof row.product_id !== "string" || !row.product_id
+      || typeof row.component_id !== "string" || !row.component_id
+      || !money(row.allocated)
+      || (row.balance !== null && !money(row.balance))
+      || (row.unallocated !== null && !money(row.unallocated))
+      || (row.status !== "BLOCKED" && row.status !== "STRUCTURAL_ONLY")
+      || !Array.isArray(row.blocker_codes)
+      || row.blocker_codes.some(code => typeof code !== "string")
+      || !Array.isArray(row.decision_ids)
+      || row.decision_ids.some(id => typeof id !== "string" || !id)
+      || (row.status === "BLOCKED" && row.unallocated !== null)
+      || (row.status === "STRUCTURAL_ONLY" && (row.unallocated === null || row.blocker_codes.length > 0))
+  )) return false;
+  return true;
+}

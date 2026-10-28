@@ -42,6 +42,7 @@ def test_half_allocated_component_has_explicit_remaining_evidence():
         "component_code": "תגמולי_עובד_עד_2000",
         "source_fingerprint": source_manifest()["decisions"][0]["source"]["source_fingerprint"],
         "balance": "100.00", "allocated": "50.00", "unallocated": "50.00",
+        "allocation_by_action": {"pension": "50.00", "capital_asset": "0.00"},
         "decision_ids": ["d"],
         "status": "STRUCTURAL_ONLY", "blocker_codes": [],
     }]
@@ -394,3 +395,32 @@ def test_cross_source_aggregate_blockers_are_sorted_without_duplicates():
     assert result["overall_status"]=="BLOCKED"
     assert result["blocker_codes"]==["SOURCE_MISSING","SOURCE_OVERALLOCATED"]
     assert result["execution_allowed"] is False
+
+
+def test_action_allocations_are_separate_and_never_financial_results():
+    m=source_manifest()
+    second=deepcopy(m["decisions"][0])
+    second["decision_id"]="second"
+    second["amount"]="10.01"
+    second["action"]="capital_asset"
+    m["decisions"].append(second)
+    result=reconcile_inert_manifest_allocations(rehash(m))
+    source=result["sources"][0]
+    assert source["allocation_by_action"]=={
+        "pension":"50.00","capital_asset":"10.01",
+    }
+    assert source["allocated"]=="60.01"
+    assert source["unallocated"]=="39.99"
+    assert result["financial_result"] is None
+    assert result["execution_allowed"] is False
+
+
+def test_allocation_action_partition_accounts_for_full_source_balance():
+    m=source_manifest()
+    m["decisions"][0]["action"]="capital_asset"
+    source=row(rehash(m))
+    assert source["allocation_by_action"]=={
+        "pension":"0.00","capital_asset":"50.00",
+    }
+    assert source["allocated"]=="50.00"
+    assert source["unallocated"]=="50.00"

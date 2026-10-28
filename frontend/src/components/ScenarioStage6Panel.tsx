@@ -222,7 +222,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     {error && <p role="alert">{error}</p>}
     <section aria-label="בדיקת הקצאות ללא חישוב פיננסי">
       <h5>בקרת הקצאות תרחיש</h5>
-      <p>נתונים מבניים בלבד, ללא קצבה מחושבת, מס, תזרים או אישור מקצועי.</p>
+      <p>נתונים מבניים בלבד לרכיבים שהוקצו בהחלטות התרחיש. זו אינה סקירה של כל נכסי הלקוח, ואינה קצבה מחושבת, מס, תזרים או אישור מקצועי.</p>
       <button type="button" disabled={allocationBusy || dirty || scenario.status !== "draft"} onClick={() => void inspectAllocations()}>
         בדוק הקצאות ויתרות לא מוקצות
       </button>

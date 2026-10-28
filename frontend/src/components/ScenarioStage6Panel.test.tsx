@@ -215,6 +215,7 @@ it("shows only structural allocation facts and explicitly avoids income claims",
       sources:[{
         product_id:"p1",component_id:"c1",component_code:"תגמולים",
         balance:"100000.00",allocated:"40000.00",unallocated:"60000.00",
+        allocation_by_action:{pension:"40000.00",capital_asset:"0.00"},
         decision_ids:["d1"],status:"STRUCTURAL_ONLY",blocker_codes:[],
       }],
       financial_result:null,execution_allowed:false,
@@ -301,6 +302,7 @@ it("discards a pending allocation read after editing pension terms", async () =>
       sources:[{
         product_id:"p1",component_id:"c1",component_code:"fund",
         balance:"100.00",allocated:"50.00",unallocated:"50.00",
+      allocation_by_action:{pension:"50.00",capital_asset:"0.00"},
         status:"STRUCTURAL_ONLY",blocker_codes:[],decision_ids:["d1"],
       }],
     },

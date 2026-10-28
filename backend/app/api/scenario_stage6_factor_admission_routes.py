@@ -41,7 +41,8 @@ def approve_professional_factor(
     client_id: int=Path(gt=0),
     factory: sessionmaker[Session]=Depends(get_stage6_admission_factory),
 ):
-    if not request.app.state.auth_config.production:
+    if (not getattr(request.app.state,"stage6_preview_enabled",False)
+            or not request.app.state.auth_config.production):
         return error(request,404,"ROUTE_NOT_FOUND")
     if not scenario_id or len(scenario_id)>64 or not decision_id or len(decision_id)>64:
         return error(request,422,"FACTOR_ADMISSION_REQUEST_INVALID")

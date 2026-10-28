@@ -48,10 +48,12 @@ def test_public_synthetic_endpoint_rejects_external_identity_fields():
 
 def test_render_public_app_denies_real_retirement_api_routes():
     from render_stage6_preview import app as public_app
-    with TestClient(public_app) as client:
-        response = client.get("/api/clients/1/scenario-drafts")
-        assert response.status_code == 404
-        assert response.json()["code"] == "SYNTHETIC_PREVIEW_API_DISABLED"
-        response = client.get("/demo/stage6")
-        assert response.status_code == 200
-        assert "RETIRE V2" in response.text
+    # This unit test deliberately does not enter ASGI lifespan: PostgreSQL
+    # is provisioned only by the Render runtime entrypoint, not Docker builds.
+    client = TestClient(public_app)
+    response = client.get("/api/clients/1/scenario-drafts")
+    assert response.status_code == 404
+    assert response.json()["code"] == "SYNTHETIC_PREVIEW_API_DISABLED"
+    response = client.get("/demo/stage6")
+    assert response.status_code == 200
+    assert "RETIRE V2" in response.text

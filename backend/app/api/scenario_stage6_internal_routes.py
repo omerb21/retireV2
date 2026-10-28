@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_session_factory
-from app.security.transport import NO_STORE, error, validate_session
+from app.security.transport import NO_STORE, error, validate_session, validate_csrf, validate_origin
 from app.services.scenario_stage6_single_pension_estimate_service import (
     estimate_single_pension_decision,
 )
@@ -92,6 +92,10 @@ def save_internal_pension_elections(
     actor=_verified_internal_actor(request)
     if actor is None:
         return error(request,401,"AUTHENTICATION_REQUIRED")
+    # Development middleware does not enforce CSRF/origin itself.
+    rejected=validate_origin(request,request.app.state.auth_config) or validate_csrf(request)
+    if rejected is not None:
+        return rejected
     try:
         result=replace_elections(db,client_id,scenario_id,payload,actor)
         db.commit()

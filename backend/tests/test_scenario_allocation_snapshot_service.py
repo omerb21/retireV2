@@ -112,3 +112,34 @@ def test_candidate_blockers_alone_fail_closed_even_if_state_is_inconsistent():
     assert result["overall_status"] == "BLOCKED"
     assert result["candidate_blockers"] == ["SOURCE_OVERALLOCATED:p:c"]
     assert result["execution_allowed"] is False
+
+
+def test_snapshot_extension_keeps_two_distinct_evidence_identities():
+    pair = authoritative_pair()
+    output = subject._allocation_extension(None, pair)
+    assert output["manifest_fingerprint"] == pair["manifest"]["manifest_fingerprint"]
+    assert output["allocation_evidence"]["manifest_fingerprint"] == output["manifest_fingerprint"]
+    assert output["allocation_evidence"]["evidence_fingerprint"] != output["manifest_fingerprint"]
+    assert output["execution_allowed"] is False
+
+
+def test_snapshot_extension_never_uses_inert_manifest_to_approve_execution():
+    pair = authoritative_pair()
+    assert pair["candidate"]["evidence_state"] == "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"
+    output = subject._allocation_extension(None, pair)
+    assert output["overall_status"] == "STRUCTURAL_ONLY"
+    assert output["financial_result"] is None
+    assert output["execution_allowed"] is False
+
+
+def test_snapshot_extension_rejects_empty_draft_as_blocked():
+    pair = authoritative_pair()
+    pair["manifest"] = deepcopy(pair["manifest"])
+    pair["manifest"]["decisions"] = []
+    from app.services.scenario_input_manifest_service import MANIFEST_IDENTITY_FIELDS, _fingerprint
+    identity = {key: pair["manifest"][key] for key in MANIFEST_IDENTITY_FIELDS}
+    pair["manifest"]["manifest_fingerprint"] = _fingerprint(identity)
+    output = subject._allocation_extension(None, pair)
+    assert output["overall_status"] == "BLOCKED"
+    assert output["allocation_evidence"]["blocker_codes"] == ["SCENARIO_DECISIONS_EMPTY_OR_INVALID"]
+    assert output["allocation_evidence"]["sources"] == []

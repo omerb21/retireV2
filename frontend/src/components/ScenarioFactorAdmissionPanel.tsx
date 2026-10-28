@@ -31,6 +31,7 @@ export function ScenarioFactorAdmissionPanel({
   useEffect(() => {
     ++epoch.current;
     setOpened(false);
+    setBusy(false);
     setCursor(null);
     setFactorValue("");
     setEvidenceReference("");
@@ -80,7 +81,8 @@ export function ScenarioFactorAdmissionPanel({
       });
       if (epoch.current !== current) return;
       if (receipt.execution_allowed !== false
-          || receipt.admission_revision !== cursor.latest_admission_revision + 1) {
+          || receipt.admission_revision !== cursor.latest_admission_revision + 1
+          || !/^[0-9a-f]{64}$/.test(receipt.professional_admission_fingerprint)) {
         throw Error("FACTOR_ADMISSION_RECEIPT_INVALID");
       }
       setOpened(false);

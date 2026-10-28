@@ -16,10 +16,6 @@ from decimal import Decimal
 from app.services.scenario_input_manifest_service import validate_inert_manifest
 
 
-class AllocationEvidenceError(ValueError):
-    """The input cannot be reconciled; fail closed rather than guess."""
-
-
 def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
     """Return detached per-source reconciliation, never execution admission.
 
@@ -59,6 +55,8 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
 
     rows = []
     all_blockers: set[str] = set()
+    if not valid["decisions"]:
+        all_blockers.add("SCENARIO_DECISIONS_EMPTY_OR_INVALID")
     for product_id, component_id in sorted(decisions):
         key = (product_id, component_id)
         source = sources.get(key)

@@ -26,6 +26,7 @@ from app.api.professional_source_routes import router as professional_source_rou
 from app.api.retirement_income_readiness_routes import router as readiness_router
 from app.api.scenario_permission_preview_routes import router as scenario_permission_preview_router
 from app.api.scenario_draft_routes import router as scenario_draft_router
+from app.api.scenario_stage6_internal_routes import router as scenario_stage6_internal_router
 from app.db.base import load_all_models
 from app.db.session import get_session_factory
 from app.security.config import AuthConfig
@@ -111,6 +112,9 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         m09_cashflow_router, m10_comparison_router, scenario_permission_preview_router, scenario_draft_router,
     ):
         app.include_router(router)
+    # Explicitly absent in production; Stage 6 has not passed release acceptance.
+    if not config.production:
+        app.include_router(scenario_stage6_internal_router)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError):

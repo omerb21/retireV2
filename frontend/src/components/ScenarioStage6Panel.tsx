@@ -117,7 +117,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
       .catch(cause => {
         if (epoch.current === current) setError(explain(cause));
       });
-    return () => { epoch.current += 1; };
+    return () => { epoch.current += 1; allocationEpoch.current += 1; };
   }, [scenarioKey, clientId, scenario.scenario_id]);
 
   function modify(id: string, patch: Partial<ScenarioPensionElection>) {
@@ -126,7 +126,6 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     setAllocation(null);
     setEstimate(null);
     setDirty(true);
-    setAllocation(null);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
   }
 

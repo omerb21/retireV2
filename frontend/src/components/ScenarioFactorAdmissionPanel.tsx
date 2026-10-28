@@ -12,7 +12,7 @@ interface Props {
   disabled: boolean;
   onApproved: () => void;
 }
-const positiveDivisor = (value: string): boolean => /^(?:[1-9][0-9]*|0\.[0-9]*[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/.test(value);
+const positiveDivisor = (value: string): boolean => value.length <= 128 && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value) && /[1-9]/.test(value);
 
 /** Dedicated professional acknowledgment, never a calculation or insurer quote. */
 export function ScenarioFactorAdmissionPanel({

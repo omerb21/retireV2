@@ -18,6 +18,7 @@ function explain(error: unknown): string {
 export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   const [elections, setElections] = useState<ScenarioPensionElection[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [estimate, setEstimate] = useState<ScenarioGrossEstimate | null>(null);
@@ -27,6 +28,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   useEffect(() => {
     const current = ++epoch.current;
     setLoaded(false);
+    setDirty(false);
     setError(null);
     setEstimate(null);
     setElections([]);
@@ -44,6 +46,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
 
   function modify(id: string, patch: Partial<ScenarioPensionElection>) {
     setEstimate(null);
+    setDirty(true);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
   }
 
@@ -52,6 +55,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     const decision = pensionDecisions.find(row => row.decision_id === id);
     if (!decision || elections.some(row => row.decision_id === id)) return;
     setEstimate(null);
+    setDirty(true);
     setElections(current => [...current, {
       decision_id: id, pension_start_date: decision.effective_date,
       target_year: Number(decision.effective_date.slice(0, 4)),
@@ -86,7 +90,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }
 
   async function checkEstimate(decisionId: string) {
-    if (busy || !loaded || scenario.status !== "draft") return;
+    if (busy || !loaded || !dirty || scenario.status !== "draft") return;
     const current = ++epoch.current;
     setBusy(true);
     setEstimate(null);
@@ -144,13 +148,14 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
                 onChange={event => modify(row.decision_id, { option_name: event.target.value || null })}/>
             </label>
             <p>מקדם: נדרש אישור מקצועי נפרד; אינו נגזר או מאושר על ידי טופס זה.</p>
-            <button type="button" disabled={busy} onClick={() => void checkEstimate(decision.decision_id)}>
+            <button type="button" disabled={busy || dirty} onClick={() => void checkEstimate(decision.decision_id)}>
               בדוק אומדן קצבה מאושר
             </button>
           </>}
         </fieldset>;
       })}
-      <button type="submit" disabled={busy || scenario.status !== "draft" || !pensionDecisions.length}>
+      {dirty && <p>בחירות הקצבה שונו. שמור ורענן את החלופה לפני בדיקת אומדן.</p>}
+      <button type="submit" disabled={busy || !dirty || scenario.status !== "draft" || !pensionDecisions.length}>
         שמור בחירות קצבה כטיוטה
       </button>
     </form>}

@@ -311,3 +311,44 @@ def test_material_source_or_decision_change_changes_evidence_fingerprint(change)
     changed = reconcile_inert_manifest_allocations(rehash(m))
     assert baseline["evidence_fingerprint"] != changed["evidence_fingerprint"]
     assert changed["execution_allowed"] is False
+
+
+def test_same_component_identity_different_classification_is_blocked():
+    m = source_manifest()
+    second = deepcopy(m["decisions"][0])
+    second["decision_id"] = "second"
+    second["amount"] = "25.00"
+    second["component_code"] = "תגמולי_עובד_אחרי_2000"
+    second["source"]["component_code"] = second["component_code"]
+    second["source"]["source_fingerprint"] = manifest_owner._fingerprint({
+        key: value for key, value in second["source"].items()
+        if key != "source_fingerprint"
+    })
+    second["source_fingerprint_at_review"] = second["source"]["source_fingerprint"]
+    m["decisions"].append(second)
+    result = row(rehash(m))
+    assert result["status"] == "BLOCKED"
+    assert "SOURCE_CONFLICT" in result["blocker_codes"]
+    assert result["unallocated"] is None
+
+
+def test_blocker_codes_are_sorted_deterministically_on_multiple_failures():
+    m = source_manifest()
+    second = deepcopy(m["decisions"][0])
+    second["decision_id"] = "second"
+    second["amount"] = "60.00"
+    second["source_fingerprint_at_review"] = "0" * 64
+    m["decisions"].append(second)
+    result = row(rehash(m))
+    assert result["blocker_codes"] == ["SOURCE_OVERALLOCATED", "SOURCE_STALE"]
+    assert result["allocated"] == "110.00"
+    assert result["unallocated"] is None
+
+
+def test_readonly_evidence_schema_never_exposes_a_pension_producer():
+    m = source_manifest()
+    result = reconcile_inert_manifest_allocations(m)
+    for forbidden in ("monthly_income", "monthly_results", "tax", "net", "cashflow", "pension_factor", "approved"):
+        assert forbidden not in result
+    assert result["execution_allowed"] is False
+    assert result["financial_result"] is None

@@ -194,6 +194,11 @@ export function validScenarioAllocationEvidence(
               || value.allocation_evidence.overall_status !== "STRUCTURAL_ONLY"))
       || (value.allocation_evidence.overall_status === "BLOCKED"
           && value.overall_status !== "BLOCKED")) return false;
+  const sortedUnique = (codes: string[]): boolean =>
+    codes.every((code, index) => typeof code === "string" && code.length > 0
+      && (index === 0 || codes[index - 1] < code));
+  if (!sortedUnique(value.candidate_blockers)
+      || !sortedUnique(value.allocation_evidence.blocker_codes)) return false;
   const cents = (amount: string): bigint => {
     const [whole, fraction] = amount.split(".");
     return BigInt(whole) * 100n + BigInt(fraction);
@@ -211,7 +216,7 @@ export function validScenarioAllocationEvidence(
       || (row.unallocated !== null && !money(row.unallocated))
       || (row.status !== "BLOCKED" && row.status !== "STRUCTURAL_ONLY")
       || !Array.isArray(row.blocker_codes)
-      || row.blocker_codes.some(code => typeof code !== "string")
+      || !sortedUnique(row.blocker_codes)
       || !Array.isArray(row.decision_ids)
       || row.decision_ids.some(id => typeof id !== "string" || !id)
       || (row.status === "BLOCKED" && row.unallocated !== null)

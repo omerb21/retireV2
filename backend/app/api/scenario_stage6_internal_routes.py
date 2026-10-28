@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_session_factory
-from app.security.transport import NO_STORE, error
+from app.security.transport import NO_STORE, error, validate_session
 from app.services.scenario_stage6_single_pension_estimate_service import (
     estimate_single_pension_decision,
 )
@@ -32,6 +32,12 @@ def internal_gross_estimate(
     client_id: int = Path(gt=0),
     factory: sessionmaker[Session] = Depends(get_stage6_factory),
 ):
+    # Development middleware skips auth, so independently validate a genuine
+    # signed session. Never invent a local-development planner identity.
+    if not request.app.state.auth_config.production:
+        rejected=validate_session(request, request.app.state.auth_config)
+        if rejected is not None:
+            return rejected
     actor=getattr(request.state,"trusted_professional_actor",None)
     if not isinstance(actor,str) or not actor.strip():
         return error(request,401,"AUTHENTICATION_REQUIRED")

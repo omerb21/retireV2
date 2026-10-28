@@ -15,7 +15,7 @@ from app.services.scenario_stage6_single_pension_estimate_service import _execut
 router = APIRouter(prefix="/demo/stage6", tags=["synthetic"])
 
 class SyntheticInput(BaseModel):
-    balance: str = Field(pattern=r"^(?:0|[1-9][0-9]{0,11})\\.[0-9]{2}$")
+    balance: str = Field(pattern=r"^(?:0|[1-9][0-9]{0,11})\.[0-9]{2}$")
     divisor: str = Field(pattern=r"^[1-9][0-9]{0,4}$")
 
 @router.post("/estimate")

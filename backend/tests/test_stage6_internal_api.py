@@ -280,3 +280,41 @@ def test_allocation_route_never_mounts_on_render_with_optin_flag(monkeypatch):
     monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME",raising=False)
     app=create_app(AuthConfig(production=True))
     assert not any("/allocation-evidence" in p for p in paths(app))
+
+
+def test_allocation_endpoint_rejects_malformed_scenario_id_before_database_access():
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot"
+    ) as builder,patch.object(route,"error",return_value="invalid") as reject:
+        result=route.internal_allocation_evidence(
+            r,"x"*65,client_id=1,factory=object())
+    assert result=="invalid"
+    reject.assert_called_once_with(r,422,"SCENARIO_ALLOCATION_ROUTE_INVALID")
+    builder.assert_not_called()
+
+
+def test_allocation_endpoint_returns_404_for_missing_scenario():
+    from app.services.scenario_draft_service import DraftError
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot",
+        side_effect=DraftError("SCENARIO_NOT_FOUND",404),
+    ),patch.object(route,"error",return_value="notfound") as reject:
+        result=route.internal_allocation_evidence(
+            r,"missing",client_id=1,factory=object())
+    assert result=="notfound"
+    reject.assert_called_once_with(r,404,"SCENARIO_NOT_FOUND")
+
+
+def test_allocation_endpoint_does_not_return_untrusted_data_on_snapshot_failure():
+    from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot",
+        side_effect=ScenarioSnapshotError("SCENARIO_SNAPSHOT_CLEANUP_FAILED"),
+    ),patch.object(route,"error",return_value="unavailable") as reject:
+        result=route.internal_allocation_evidence(
+            r,"sc",client_id=1,factory=object())
+    assert result=="unavailable"
+    reject.assert_called_once_with(r,503,"SCENARIO_ALLOCATION_SNAPSHOT_UNAVAILABLE")

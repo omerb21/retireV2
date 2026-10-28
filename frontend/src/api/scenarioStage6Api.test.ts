@@ -106,6 +106,7 @@ const validEvidence = () => ({
     sources:[{
       product_id:"p",component_id:"c",component_code:"a",
       balance:"100.00",allocated:"50.00",unallocated:"50.00",
+      allocation_by_action:{pension:"50.00",capital_asset:"0.00"},
       status:"STRUCTURAL_ONLY" as const,blocker_codes:[],decision_ids:["d"],
     }],
     financial_result:null,execution_allowed:false as const,
@@ -205,7 +206,8 @@ it("rejects mathematically inconsistent source balances rather than displaying f
 it("reconciles exact one-cent amounts without floating-point rounding", () => {
   const v=validEvidence();
   const exact={...v,allocation_evidence:{...v.allocation_evidence,sources:[
-    {...v.allocation_evidence.sources[0],balance:"100.00",allocated:"99.99",unallocated:"0.01"},
+    {...v.allocation_evidence.sources[0],balance:"100.00",allocated:"99.99",unallocated:"0.01",
+      allocation_by_action:{pension:"99.99",capital_asset:"0.00"}},
   ]}};
   expect(validScenarioAllocationEvidence(exact,7,"sc",2)).toBe(true);
 });

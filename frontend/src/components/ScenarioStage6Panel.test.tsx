@@ -213,7 +213,7 @@ it("shows only structural allocation facts and explicitly avoids income claims",
       manifest_fingerprint:"a".repeat(64),evidence_fingerprint:"b".repeat(64),
       overall_status:"STRUCTURAL_ONLY",blocker_codes:[],
       sources:[{
-        product_id:"p1",component_id:"c1",component_code:"תגמולים",
+        product_id:"p1",component_id:"c1",component_code:"תגמולים",source_fingerprint:"c".repeat(64),
         balance:"100000.00",allocated:"40000.00",unallocated:"60000.00",
         allocation_by_action:{pension:"40000.00",capital_asset:"0.00"},
         decision_ids:["d1"],status:"STRUCTURAL_ONLY",blocker_codes:[],
@@ -300,7 +300,7 @@ it("discards a pending allocation read after editing pension terms", async () =>
       overall_status:"STRUCTURAL_ONLY",blocker_codes:[],
       financial_result:null,execution_allowed:false,
       sources:[{
-        product_id:"p1",component_id:"c1",component_code:"fund",
+        product_id:"p1",component_id:"c1",component_code:"fund",source_fingerprint:"c".repeat(64),
         balance:"100.00",allocated:"50.00",unallocated:"50.00",
       allocation_by_action:{pension:"50.00",capital_asset:"0.00"},
         status:"STRUCTURAL_ONLY",blocker_codes:[],decision_ids:["d1"],
@@ -323,7 +323,7 @@ it("allows structural allocation review for capital-only draft without exposing 
       manifest_fingerprint:"a".repeat(64),evidence_fingerprint:"b".repeat(64),
       overall_status:"STRUCTURAL_ONLY",blocker_codes:[],
       sources:[{
-        product_id:"p1",component_id:"c1",component_code:"fund",
+        product_id:"p1",component_id:"c1",component_code:"fund",source_fingerprint:"c".repeat(64),
         balance:"100000.00",allocated:"40000.00",unallocated:"60000.00",
         allocation_by_action:{pension:"0.00",capital_asset:"40000.00"},
         decision_ids:["d1"],status:"STRUCTURAL_ONLY",blocker_codes:[],

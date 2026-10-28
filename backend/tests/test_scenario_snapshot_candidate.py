@@ -208,6 +208,7 @@ def test_owner_foundation_accepted_decision_cannot_mutate_source_records():
     original_amount = db.decisions[0].amount
     original_fingerprint = db.decisions[0].source_fingerprint_at_review
     first = build(db)
+    db.calls = 0  # The existing FakeDb fixture models one read transaction per call.
     second = build(db)
     assert first == second
     assert db.component.balance == original_balance
@@ -247,7 +248,7 @@ def test_owner_foundation_one_cent_overallocation_fails_closed():
 
 def test_owner_foundation_missing_professional_source_fails_closed():
     db = verified_db()
-    db.decisions[0].source_component_id = "unavailable-component"
+    db.product = None
     candidate = build(db)["candidate"]
     assert any(code.startswith("SOURCE_MISSING:") for code in candidate["blockers"])
     assert candidate["evidence_state"] == "BLOCKED"

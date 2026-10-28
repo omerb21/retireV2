@@ -5,7 +5,7 @@ No database, no customer records, no admission state, no production authorizatio
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.services.pension_monthly_basis_service import scenario_decision_monthly_identity
 from app.services.pension_temporal_basis_service import scenario_decision_temporal_identity
@@ -15,6 +15,7 @@ from app.services.scenario_stage6_single_pension_estimate_service import _execut
 router = APIRouter(prefix="/demo/stage6", tags=["synthetic"])
 
 class SyntheticInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     balance: str = Field(pattern=r"^(?:0|[1-9][0-9]{0,11})\.[0-9]{2}$")
     divisor: str = Field(pattern=r"^[1-9][0-9]{0,4}$")
 

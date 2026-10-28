@@ -222,10 +222,10 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>
-    <p className="professional-workspace__boundary">
+    {pensionDecisions.length > 0 && <p className="professional-workspace__boundary">
       בחירת הקצבה היא טיוטה. שמירתה מעדכנת את גרסת החלופה ומבטלת תוקף של אישורים קודמים.
       אין כאן אישור מקדם, זכאות או הבטחת קצבה.
-    </p>
+    </p>}
     {error && <p role="alert">{error}</p>}
     <section aria-label="בדיקת הקצאות ללא חישוב פיננסי">
       <h5>בקרת הקצאות תרחיש</h5>
@@ -248,7 +248,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
         </p>)}
       </section>}
     </section>
-    {!loaded && !error && <p>טוען בחירות קצבה...</p>}
+    {!loaded && !error && pensionDecisions.length > 0 && <p>טוען בחירות קצבה...</p>}
     {loaded && pensionDecisions.length > 0 && <form onSubmit={event => void save(event)}>
       {pensionDecisions.map(decision => {
         const row = elections.find(item => item.decision_id === decision.decision_id);

@@ -21,6 +21,7 @@ def test_preview_is_absent_by_default_even_with_production_style_auth(monkeypatc
     assert app.state.stage6_preview_enabled is False
     assert not any("/gross-estimate" in p for p in paths(app))
     assert not any("/factor-admissions" in p for p in paths(app))
+    assert not any("/allocation-evidence" in p for p in paths(app))
 
 
 def test_preview_cannot_be_mounted_on_railway_production(monkeypatch):
@@ -53,6 +54,7 @@ def test_staging_preview_mounts_only_with_production_style_auth(monkeypatch):
     assert any("/gross-estimate" in x for x in p)
     assert any("/factor-admissions" in x for x in p)
     assert any("/pension-elections" in x for x in p)
+    assert any("/allocation-evidence" in x for x in p)
     ordinary=create_app(AuthConfig(production=False))
     assert ordinary.state.stage6_preview_enabled is False
     assert not any("/gross-estimate" in x for x in paths(ordinary))
@@ -176,3 +178,82 @@ def test_real_middleware_requires_session_bound_csrf_for_factor_write(monkeypatc
     assert (rejected.status_code,rejected.json()["code"])==(403,"CSRF_INVALID")
     assert accepted.status_code==200
     writer.assert_called_once()
+
+
+def test_allocation_evidence_route_rejects_unauthenticated_actor():
+    r=request(actor=None)
+    with patch.object(route,"validate_session",return_value=None),patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot"
+    ) as builder,patch.object(route,"error",return_value="unauthorized") as reject:
+        result=route.internal_allocation_evidence(
+            r,"scenario",client_id=1,factory=object())
+    assert result=="unauthorized"
+    reject.assert_called_once_with(r,401,"AUTHENTICATION_REQUIRED")
+    builder.assert_not_called()
+
+
+def test_allocation_evidence_route_unmounted_state_rejects_even_valid_actor():
+    r=request(enabled=False,actor="planner:authenticated")
+    with patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot"
+    ) as builder,patch.object(route,"error",return_value="notfound") as reject:
+        result=route.internal_allocation_evidence(
+            r,"scenario",client_id=1,factory=object())
+    assert result=="notfound"
+    reject.assert_called_once_with(r,404,"ROUTE_NOT_FOUND")
+    builder.assert_not_called()
+
+
+def test_allocation_evidence_signed_actor_uses_single_existing_snapshot():
+    r=request(actor="planner:authenticated")
+    expected={"overall_status":"BLOCKED","execution_allowed":False,
+              "financial_result":None}
+    with patch.object(route,"validate_session",return_value=None),patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot",
+        return_value=expected,
+    ) as builder:
+        result=route.internal_allocation_evidence(
+            r,"scenario",client_id=1,factory="factory")
+    builder.assert_called_once_with(
+        "factory",client_id=1,scenario_id="scenario")
+    assert result.headers["cache-control"]=="no-store, private"
+    assert result.headers["pragma"]=="no-cache"
+    assert result.status_code==200
+
+
+def test_allocation_evidence_snapshot_failure_returns_closed_unavailable():
+    from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot",
+        side_effect=ScenarioSnapshotError("SCENARIO_SNAPSHOT_DATABASE_UNAVAILABLE"),
+    ),patch.object(route,"error",return_value="closed") as reject:
+        result=route.internal_allocation_evidence(
+            r,"scenario",client_id=1,factory=object())
+    assert result=="closed"
+    reject.assert_called_once_with(r,503,"SCENARIO_ALLOCATION_SNAPSHOT_UNAVAILABLE")
+
+
+def test_allocation_evidence_staging_middleware_requires_signed_session(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    config=_production_config()
+    app=create_app(config)
+    app.dependency_overrides[route.get_stage6_factory]=lambda:"factory"
+    client=TestClient(app)
+    url="/api/clients/1/scenario-drafts/sc/allocation-evidence"
+    payload={"overall_status":"STRUCTURAL_ONLY","execution_allowed":False,
+             "financial_result":None}
+    with patch(
+        "app.services.scenario_allocation_snapshot_service.build_readonly_allocation_snapshot",
+        return_value=payload,
+    ) as builder:
+        missing=client.get(url,headers=_edge_headers())
+        token,_=issue(config)
+        client.cookies.set(COOKIE_NAME,token)
+        accepted=client.get(url,headers=_edge_headers())
+    assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
+    assert accepted.status_code==200
+    assert accepted.json()["financial_result"] is None
+    builder.assert_called_once_with(
+        "factory",client_id=1,scenario_id="sc")

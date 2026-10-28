@@ -32,6 +32,9 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
     sources: dict[tuple[str, str], dict] = {}
     allocated: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal("0.00"))
     decisions: dict[tuple[str, str], list[str]] = defaultdict(list)
+    action_amounts: dict[tuple[str, str], dict[str, Decimal]] = defaultdict(
+        lambda: {"pension": Decimal("0.00"), "capital_asset": Decimal("0.00")}
+    )
     reasons: dict[tuple[str, str], set[str]] = defaultdict(set)
     inactive = valid["scenario_status"] != "draft"
 
@@ -40,6 +43,7 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
         decision_id = decision["decision_id"]
         decisions[key].append(decision_id)
         allocated[key] += Decimal(decision["amount"])
+        action_amounts[key][decision["action"]] += Decimal(decision["amount"])
         source = decision["source"]
         if source is None:
             reasons[key].add("SOURCE_MISSING")
@@ -87,6 +91,10 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
             "source_fingerprint": source["source_fingerprint"] if source else None,
             "balance": format(balance, ".2f") if balance is not None else None,
             "allocated": format(total, ".2f"),
+            "allocation_by_action": {
+                "pension": format(action_amounts[key]["pension"], ".2f"),
+                "capital_asset": format(action_amounts[key]["capital_asset"], ".2f"),
+            },
             "unallocated": format(remainder, ".2f") if remainder is not None else None,
             "decision_ids": sorted(decisions[key]),
             "status": "BLOCKED" if blocked else "STRUCTURAL_ONLY",

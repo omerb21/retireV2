@@ -109,3 +109,34 @@ def save_internal_pension_elections(
     except Exception:
         db.rollback()
         raise
+
+
+# Read-only structural allocation evidence. This is NOT M09 execution, net
+# income, fixation, permission approval or a Stage 6 aggregate estimate.
+# The route inherits the existing staging-only mounting gate and signed session.
+@router.get("/{scenario_id}/allocation-evidence")
+def internal_allocation_evidence(
+    request: Request,
+    scenario_id: str,
+    client_id: int = Path(gt=0),
+    factory: sessionmaker[Session] = Depends(get_stage6_factory),
+):
+    if not getattr(request.app.state, "stage6_preview_enabled", False):
+        return error(request, 404, "ROUTE_NOT_FOUND")
+    if _verified_internal_actor(request) is None:
+        return error(request, 401, "AUTHENTICATION_REQUIRED")
+    if not scenario_id or len(scenario_id) > 64:
+        return error(request, 422, "SCENARIO_ALLOCATION_ROUTE_INVALID")
+    from app.services.scenario_allocation_snapshot_service import (
+        build_readonly_allocation_snapshot,
+    )
+    from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
+    try:
+        evidence = build_readonly_allocation_snapshot(
+            factory, client_id=client_id, scenario_id=scenario_id,
+        )
+    except ScenarioSnapshotError:
+        return error(request, 503, "SCENARIO_ALLOCATION_SNAPSHOT_UNAVAILABLE")
+    except DraftError as exc:
+        return error(request, exc.status, exc.code)
+    return JSONResponse(content=evidence, headers=NO_STORE)

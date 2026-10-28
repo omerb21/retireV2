@@ -36,16 +36,15 @@ def test_http_endpoint_validates_amounts_and_never_accepts_nonpositive_values():
             assert response.status_code == 422, (balance, divisor)
 
 
-def test_public_synthetic_endpoint_is_pinned_to_synthetic_identity():
+def test_public_synthetic_endpoint_rejects_external_identity_fields():
     app = FastAPI()
     app.include_router(router)
     with TestClient(app) as client:
         response = client.post("/demo/stage6/estimate", json={
             "balance": "1000000.00", "divisor": "200", "client_id": 993,
         })
-    assert response.status_code == 200
-    assert response.json()["result"]["client_id"] == 1
-    assert response.json()["result"]["scenario_id"] == "synthetic"
+    assert response.status_code == 422
+
 
 def test_render_public_app_denies_real_retirement_api_routes():
     from render_stage6_preview import app as public_app

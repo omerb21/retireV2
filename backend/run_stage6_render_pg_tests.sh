@@ -25,7 +25,7 @@ export SCENARIO_TEST_POSTGRES_URL="postgresql+psycopg2://root:$pgpass@127.0.0.1:
 unset pgpass
 echo STAGE6_RENDER_LOCAL_POSTGRES_READY
 set +e
-python -m pytest -q \
+python -m pytest -q -rs \
   tests/test_health.py \
   tests/test_rtdir_vertical_slice.py \
   tests/test_rtdir_postgresql.py \

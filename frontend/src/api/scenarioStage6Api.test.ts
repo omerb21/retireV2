@@ -192,3 +192,39 @@ it("never displays unknown candidate classification as trusted structural eviden
   };
   expect(validScenarioAllocationEvidence(changed,7,"sc",2)).toBe(false);
 });
+
+
+it("rejects mathematically inconsistent source balances rather than displaying false remainder", () => {
+  const v=validEvidence();
+  const forged={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    {...v.allocation_evidence.sources[0],unallocated:"60.00"},
+  ]}};
+  expect(validScenarioAllocationEvidence(forged,7,"sc",2)).toBe(false);
+});
+
+it("reconciles exact one-cent amounts without floating-point rounding", () => {
+  const v=validEvidence();
+  const exact={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    {...v.allocation_evidence.sources[0],balance:"100.00",allocated:"99.99",unallocated:"0.01"},
+  ]}};
+  expect(validScenarioAllocationEvidence(exact,7,"sc",2)).toBe(true);
+});
+
+it("rejects duplicate source identity and repeated decision ids in structural evidence", () => {
+  const v=validEvidence();
+  const row=v.allocation_evidence.sources[0];
+  const duplicated={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    row,{...row},
+  ]}};
+  expect(validScenarioAllocationEvidence(duplicated,7,"sc",2)).toBe(false);
+  const repeated={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    row,{...row,product_id:"p2"},
+  ]}};
+  expect(validScenarioAllocationEvidence(repeated,7,"sc",2)).toBe(false);
+});
+
+it("rejects empty structural-only evidence without scenario allocations", () => {
+  const v=validEvidence();
+  const empty={...v,allocation_evidence:{...v.allocation_evidence,sources:[]}};
+  expect(validScenarioAllocationEvidence(empty,7,"sc",2)).toBe(false);
+});

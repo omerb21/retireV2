@@ -352,3 +352,45 @@ def test_readonly_evidence_schema_never_exposes_a_pension_producer():
         assert forbidden not in result
     assert result["execution_allowed"] is False
     assert result["financial_result"] is None
+
+
+@pytest.mark.parametrize(("amount1","amount2","remaining"), [
+    ("0.01","0.01","99.98"),
+    ("25.00","75.00","0.00"),
+    ("49.99","50.00","0.01"),
+    ("33.33","33.33","33.34"),
+])
+def test_two_allocations_reconcile_exactly_per_component(amount1,amount2,remaining):
+    m=source_manifest()
+    m["decisions"][0]["amount"]=amount1
+    other=deepcopy(m["decisions"][0])
+    other["decision_id"]="second"
+    other["amount"]=amount2
+    m["decisions"].append(other)
+    evidence=row(rehash(m))
+    assert evidence["unallocated"]==remaining
+    assert evidence["allocated"]==format(Decimal(amount1)+Decimal(amount2),".2f")
+    assert evidence["status"]=="STRUCTURAL_ONLY"
+
+
+def test_allocation_source_is_not_mutated_after_reconciliation():
+    m=source_manifest()
+    original=deepcopy(m)
+    _=reconcile_inert_manifest_allocations(m)
+    assert m==original
+
+
+def test_cross_source_aggregate_blockers_are_sorted_without_duplicates():
+    m=source_manifest()
+    another=deepcopy(m["decisions"][0])
+    another["decision_id"]="second"
+    another["product_id"]="p2"
+    another["component_id"]="c2"
+    another["source"]=None
+    another["source_fingerprint_at_review"]=None
+    m["decisions"].append(another)
+    m["decisions"][0]["amount"]="100.01"
+    result=reconcile_inert_manifest_allocations(rehash(m))
+    assert result["overall_status"]=="BLOCKED"
+    assert result["blocker_codes"]==["SOURCE_MISSING","SOURCE_OVERALLOCATED"]
+    assert result["execution_allowed"] is False

@@ -13,4 +13,4 @@ RUN python -m pip install --no-cache-dir -r backend/requirements.txt
 COPY backend/ ./backend/
 COPY --from=frontend-build /src/frontend/dist ./frontend/dist
 WORKDIR /app/backend
-CMD ["sh", "-c", "test \"$WEB_CONCURRENCY\" = 1 && exec python -m uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:?PORT is required}\" --workers 1 --proxy-headers=false"]
+CMD ["sh", "-c", "test \"$WEB_CONCURRENCY\" = 1 && exec python -m uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:?PORT is required}\" --workers 1 --no-proxy-headers"]

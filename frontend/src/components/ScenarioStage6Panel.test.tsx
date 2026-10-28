@@ -53,6 +53,8 @@ it("saves versioned election through the canonical API without factor authority"
 it("never displays a ready amount from BLOCKED result", async () => {
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue({
+    schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1",
+    result_fingerprint: "a".repeat(64),scenario_version: null,
     scenario_id: "sc1", decision_id: "d1", result_state: "BLOCKED",
     execution_allowed: false, monthly_estimate_gross_ils: null,
     blockers: ["STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"],
@@ -104,4 +106,22 @@ it("invalidates old estimate and blocks request while election edits are unsaved
   expect((check as HTMLButtonElement).disabled).toBe(true);
   expect(mock.estimate).not.toHaveBeenCalled();
   expect(screen.getByText(/שמור ורענן את החלופה לפני בדיקת אומדן/)).toBeTruthy();
+});
+
+
+it("fails closed if a READY response lacks professional authority provenance", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.estimate.mockResolvedValue({
+    schema_version: "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1",
+    result_fingerprint: "a".repeat(64),
+    scenario_version: 3,scenario_id: "sc1",decision_id: "d1",
+    result_state: "RESULT_READY",execution_allowed: true,
+    monthly_estimate_gross_ils: "5000.00",
+    coefficient_provenance: null,professional_admission_fingerprint: null,
+    blockers: [],
+  });
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
+  expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });

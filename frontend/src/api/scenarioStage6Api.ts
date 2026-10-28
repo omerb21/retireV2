@@ -139,6 +139,7 @@ export interface ScenarioAllocationEvidence {
       product_id: string;
       component_id: string;
       component_code: string | null;
+      source_fingerprint: string | null;
       balance: string | null;
       allocated: string;
       allocation_by_action: { pension: string; capital_asset: string };
@@ -208,6 +209,8 @@ export function validScenarioAllocationEvidence(
   if (value.allocation_evidence.sources.some(row =>
       !row || typeof row.product_id !== "string" || !row.product_id
       || typeof row.component_id !== "string" || !row.component_id
+      || (row.component_code !== null && (typeof row.component_code !== "string" || !row.component_code))
+      || (row.source_fingerprint !== null && !sha(row.source_fingerprint))
       || !money(row.allocated)
       || !row.allocation_by_action
       || !money(row.allocation_by_action.pension)
@@ -219,13 +222,16 @@ export function validScenarioAllocationEvidence(
       || !sortedUnique(row.blocker_codes)
       || !Array.isArray(row.decision_ids)
       || row.decision_ids.some(id => typeof id !== "string" || !id)
+      || row.decision_ids.length === 0
       || (row.status === "BLOCKED" && row.unallocated !== null)
       || (row.status === "STRUCTURAL_ONLY" && (row.unallocated === null || row.blocker_codes.length > 0))
   )) return false;
+  let priorKey = "";
   for (const row of value.allocation_evidence.sources) {
     // Source identity is a tuple; JSON encoding avoids concatenation collisions.
     const key = JSON.stringify([row.product_id, row.component_id]);
-    if (seenSources.has(key)) return false;
+    if (seenSources.has(key) || (priorKey && key <= priorKey)) return false;
+    priorKey = key;
     seenSources.add(key);
     for (const id of row.decision_ids) {
       if (seenDecisions.has(id)) return false;

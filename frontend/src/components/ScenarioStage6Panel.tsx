@@ -100,8 +100,18 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     try {
       const result = await readScenarioGrossEstimate(clientId, scenario.scenario_id, decisionId);
       if (epoch.current !== current) return;
-      if (result.scenario_id !== scenario.scenario_id || result.decision_id !== decisionId) {
+      if (result.scenario_id !== scenario.scenario_id || result.decision_id !== decisionId
+          || result.schema_version !== "STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1"
+          || !/^[0-9a-f]{64}$/.test(result.result_fingerprint)) {
         throw Error("STAGE6_CONTEXT_MISMATCH");
+      }
+      if (result.result_state === "RESULT_READY"
+          && (result.scenario_version !== scenario.version
+            || result.execution_allowed !== true
+            || !/^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(result.monthly_estimate_gross_ils ?? "")
+            || !result.coefficient_provenance
+            || !/^[0-9a-f]{64}$/.test(result.professional_admission_fingerprint ?? ""))) {
+        throw Error("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
       }
       setEstimate(result);
     } catch (cause) {

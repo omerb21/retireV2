@@ -35,6 +35,7 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
     allocated: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal("0.00"))
     decisions: dict[tuple[str, str], list[str]] = defaultdict(list)
     reasons: dict[tuple[str, str], set[str]] = defaultdict(set)
+    inactive = valid["scenario_status"] != "draft"
 
     for decision in valid["decisions"]:
         key = (decision["product_id"], decision["component_id"])
@@ -63,6 +64,8 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
         total = allocated[key]
         balance = Decimal(source["balance"]) if source is not None else None
         blocked = reasons[key]
+        if inactive:
+            blocked.add("SCENARIO_NOT_ACTIVE_DRAFT")
         if balance is not None and total > balance:
             blocked.add("SOURCE_OVERALLOCATED")
         # With conflicting evidence, a subtracted number would be misleading.

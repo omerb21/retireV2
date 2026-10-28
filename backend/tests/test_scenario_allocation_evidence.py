@@ -35,6 +35,8 @@ def test_half_allocated_component_has_explicit_remaining_evidence():
     assert (result["client_id"], result["scenario_id"], result["scenario_version"]) == (7, "s", 1)
     assert result["execution_allowed"] is False
     assert result["financial_result"] is None
+    assert result["overall_status"] == "STRUCTURAL_ONLY"
+    assert result["blocker_codes"] == []
     assert result["sources"] == [{
         "product_id": "p", "component_id": "c",
         "component_code": "תגמולי_עובד_עד_2000",
@@ -229,3 +231,54 @@ def test_new_scenario_version_produces_distinct_evidence_identity():
     assert first["manifest_fingerprint"] != second["manifest_fingerprint"]
     assert second["scenario_version"] == 2
     assert second["financial_result"] is None
+
+
+@pytest.mark.parametrize("mutation", ["missing", "stale", "overallocated", "archived"])
+def test_overall_blocked_status_tracks_source_and_scenario_invalidation(mutation):
+    m = source_manifest()
+    if mutation == "missing":
+        m["decisions"][0]["source"] = None
+    elif mutation == "stale":
+        m["decisions"][0]["source_fingerprint_at_review"] = "0" * 64
+    elif mutation == "overallocated":
+        m["decisions"][0]["amount"] = "100.01"
+    else:
+        m["scenario_status"] = "archived"
+    result = reconcile_inert_manifest_allocations(rehash(m))
+    assert result["overall_status"] == "BLOCKED"
+    assert len(result["blocker_codes"]) > 0
+    assert result["sources"][0]["unallocated"] is None
+    assert result["execution_allowed"] is False
+
+
+def test_different_source_block_does_not_hide_clean_source_but_blocks_envelope():
+    m = source_manifest()
+    other = deepcopy(m["decisions"][0])
+    other["decision_id"] = "second"
+    other["product_id"] = "p2"
+    other["component_id"] = "c2"
+    other["source"] = None
+    m["decisions"].append(other)
+    result = reconcile_inert_manifest_allocations(rehash(m))
+    assert result["overall_status"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SOURCE_MISSING"]
+    assert result["sources"][0]["status"] == "STRUCTURAL_ONLY"
+    assert result["sources"][1]["status"] == "BLOCKED"
+    assert result["execution_allowed"] is False
+
+
+def test_conflicted_source_has_only_one_aggregate_blocker_code():
+    m = source_manifest()
+    other = deepcopy(m["decisions"][0])
+    other["decision_id"] = "second"
+    other["source"]["balance"] = "200.00"
+    other["source"]["source_fingerprint"] = manifest_owner._fingerprint({
+        key: value for key, value in other["source"].items()
+        if key != "source_fingerprint"
+    })
+    other["source_fingerprint_at_review"] = other["source"]["source_fingerprint"]
+    m["decisions"].append(other)
+    result = reconcile_inert_manifest_allocations(rehash(m))
+    assert result["overall_status"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SOURCE_CONFLICT"]
+    assert result["financial_result"] is None

@@ -81,3 +81,19 @@ it("drops old cursor when scenario version changes",async () => {
   await waitFor(() => expect(screen.queryByLabelText(/מקדם קצבה/)).toBeNull());
   expect(mock.approve).not.toHaveBeenCalled();
 });
+
+
+it("accepts exact positive decimal factors with trailing zero digits",async () => {
+  mock.cursor.mockResolvedValue({
+    scenario_version:3,latest_admission_revision:0,authority_state:"NOT_EVALUATED",
+  });
+  panel(3);
+  fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
+  const input=await screen.findByLabelText(/מקדם קצבה/);
+  fireEvent.change(input,{target:{value:"200.50"}});
+  fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
+    target:{value:"Insurer document ref"},
+  });
+  const submit=screen.getByRole("button",{name:"אשר את המקדם ושמור גרסת אישור"});
+  expect((submit as HTMLButtonElement).disabled).toBe(false);
+});

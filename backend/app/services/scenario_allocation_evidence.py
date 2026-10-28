@@ -92,6 +92,8 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
             "status": "BLOCKED" if blocked else "STRUCTURAL_ONLY",
             "blocker_codes": sorted(blocked),
         })
+    # An empty draft is not a structurally admissible allocation. The
+    # canonical candidate owner separately enforces this same condition.
     evidence = {
         "schema_version": "SCENARIO_ALLOCATION_EVIDENCE_V1",
         "client_id": valid["client_id"],

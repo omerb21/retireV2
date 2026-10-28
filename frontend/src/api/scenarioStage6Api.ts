@@ -141,6 +141,7 @@ export interface ScenarioAllocationEvidence {
       component_code: string | null;
       balance: string | null;
       allocated: string;
+      allocation_by_action: { pension: string; capital_asset: string };
       unallocated: string | null;
       status: "BLOCKED" | "STRUCTURAL_ONLY";
       blocker_codes: string[];
@@ -199,6 +200,9 @@ export function validScenarioAllocationEvidence(
       !row || typeof row.product_id !== "string" || !row.product_id
       || typeof row.component_id !== "string" || !row.component_id
       || !money(row.allocated)
+      || !row.allocation_by_action
+      || !money(row.allocation_by_action.pension)
+      || !money(row.allocation_by_action.capital_asset)
       || (row.balance !== null && !money(row.balance))
       || (row.unallocated !== null && !money(row.unallocated))
       || (row.status !== "BLOCKED" && row.status !== "STRUCTURAL_ONLY")
@@ -218,6 +222,8 @@ export function validScenarioAllocationEvidence(
       if (seenDecisions.has(id)) return false;
       seenDecisions.add(id);
     }
+    if (cents(row.allocated) !== cents(row.allocation_by_action.pension)
+        + cents(row.allocation_by_action.capital_asset)) return false;
     if (row.status === "STRUCTURAL_ONLY") {
       if (row.balance === null || row.unallocated === null) return false;
       if (cents(row.balance) !== cents(row.allocated) + cents(row.unallocated)) return false;

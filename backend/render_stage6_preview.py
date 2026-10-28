@@ -15,6 +15,29 @@ app.include_router(workflow_router)
 @app.on_event("startup")
 def assert_canonical_synthetic_pipeline():
     initialize_workflow()
+    from fastapi import HTTPException
+    from render_synthetic_workflow import Start, Election, Factor, start, election, factor, read_estimate
+    created = start(Start(balance="1000000.00"))
+    sid = created["scenario_id"]
+    try:
+        read_estimate(sid)
+    except HTTPException as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("Synthetic estimate must be blocked before factor acknowledgment")
+    updated = election(sid, Election(expected_version=1))
+    assert updated["version"] == 2
+    acknowledged = factor(sid, Factor(expected_version=2, divisor="200", acknowledgement=True))
+    assert acknowledged["version"] == 3
+    result_from_db = read_estimate(sid)
+    assert result_from_db["calculation"]["result"]["monthly_estimate_gross_ils"] == "5000.00"
+    try:
+        factor(sid, Factor(expected_version=2, divisor="200", acknowledgement=True))
+    except HTTPException as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("Synthetic workflow must reject stale factor approval")
+    print("STAGE6_SYNTHETIC_POSTGRES_WORKFLOW_SMOKE_PASS", flush=True)
     from render_synthetic_stage6 import SyntheticInput, estimate
     result = estimate(SyntheticInput(balance="1000000.00", divisor="200"))
     assert result["result"]["result_state"] == "RESULT_READY"

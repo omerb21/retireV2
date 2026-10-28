@@ -159,8 +159,17 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
               <input value={row.option_name ?? ""} maxLength={255}
                 onChange={event => modify(row.decision_id, { option_name: event.target.value || null })}/>
             </label>
+            <label>מקור מקדם
+              <select value={row.coefficient_selection}
+                onChange={event => modify(row.decision_id, {
+                  coefficient_selection: event.target.value as ScenarioPensionElection["coefficient_selection"],
+                })}>
+                <option value="manual_review_required">מקדם ידני — מחייב אישור מקצועי נפרד</option>
+                <option value="catalog_candidate">מועמד קטלוגי — חישוב אינו זמין בשלב זה</option>
+              </select>
+            </label>
             <p>מקדם: נדרש אישור מקצועי נפרד; אינו נגזר או מאושר על ידי טופס זה.</p>
-            <button type="button" disabled={busy || dirty} onClick={() => void checkEstimate(decision.decision_id)}>
+            <button type="button" disabled={busy || dirty || row.coefficient_selection !== "manual_review_required"} onClick={() => void checkEstimate(decision.decision_id)}>
               בדוק אומדן קצבה מאושר
             </button>
           </>}
@@ -172,7 +181,8 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
       </button>
     </form>}
     {loaded && !dirty && scenario.status === "draft" &&
-      elections.filter(row => pensionDecisions.some(d => d.decision_id === row.decision_id))
+      elections.filter(row => row.coefficient_selection === "manual_review_required" &&
+        pensionDecisions.some(d => d.decision_id === row.decision_id))
         .map(row => <ScenarioFactorAdmissionPanel
           key={row.decision_id} clientId={clientId} scenarioId={scenario.scenario_id}
           scenarioVersion={scenario.version} decisionId={row.decision_id}

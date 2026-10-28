@@ -307,7 +307,12 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
         .map(row => <ScenarioFactorAdmissionPanel
           key={row.decision_id} clientId={clientId} scenarioId={scenario.scenario_id}
           scenarioVersion={scenario.version} decisionId={row.decision_id}
-          disabled={busy} onApproved={() => setEstimate(null)} />)}
+          disabled={busy} onApproved={() => {
+            setEstimate(null);
+            allocationEpoch.current += 1;
+            setAllocation(null);
+            setAllocationBusy(false);
+          }} />)}
     {estimate && <section aria-label="תוצאת אומדן לא מחייבת">
       {estimate.result_state === "RESULT_READY" && estimate.execution_allowed
         && estimate.monthly_estimate_gross_ils != null

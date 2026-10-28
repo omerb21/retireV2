@@ -20,7 +20,7 @@ def _allocation_extension(_db: Session, pair: dict) -> dict:
     manifest = pair["manifest"]
     candidate = pair["candidate"]
     evidence = reconcile_inert_manifest_allocations(manifest)
-    blocked = candidate["evidence_state"] == "BLOCKED" or evidence["overall_status"] == "BLOCKED"
+    blocked = (\n        candidate["evidence_state"] != "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"\n        or bool(candidate["blockers"])\n        or evidence["overall_status"] == "BLOCKED"\n    )
     # SC-03A/C remains the owner of structural admission and its blockers.
     # Do not let this informational adapter convert a BLOCKED candidate into
     # financial approval or a current, eligible scenario calculation.

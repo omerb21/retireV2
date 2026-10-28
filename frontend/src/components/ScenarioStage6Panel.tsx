@@ -3,7 +3,7 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import { ScenarioFactorAdmissionPanel } from "./ScenarioFactorAdmissionPanel";
 import {
   listScenarioPensionElections, saveScenarioPensionElections, readScenarioGrossEstimate,
-  readScenarioAllocationEvidence, type ScenarioAllocationEvidence,
+  readScenarioAllocationEvidence, validScenarioAllocationEvidence, type ScenarioAllocationEvidence,
   type ScenarioPensionElection, type ScenarioGrossEstimate,
 } from "../api/scenarioStage6Api";
 
@@ -200,19 +200,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     try {
       const result = await readScenarioAllocationEvidence(clientId, scenario.scenario_id);
       if (epoch.current !== current) return;
-      if (result.allocation_evidence?.client_id !== clientId
-          || result.allocation_evidence.scenario_id !== scenario.scenario_id
-          || result.allocation_evidence.scenario_version !== scenario.version
-          || result.allocation_evidence.schema_version !== "SCENARIO_ALLOCATION_EVIDENCE_V1"
-          || !hash(result.allocation_evidence.evidence_fingerprint)
-          || !hash(result.manifest_fingerprint)
-          || result.manifest_fingerprint !== result.allocation_evidence.manifest_fingerprint
-          || result.execution_allowed !== false || result.financial_result !== null
-          || result.allocation_evidence.execution_allowed !== false
-          || result.allocation_evidence.financial_result !== null
-          || !["BLOCKED", "STRUCTURAL_ONLY"].includes(result.overall_status)
-          || !["BLOCKED", "STRUCTURAL_ONLY"].includes(result.allocation_evidence.overall_status)
-          || !Array.isArray(result.allocation_evidence.sources)) {
+      if (!validScenarioAllocationEvidence(result, clientId, scenario.scenario_id, scenario.version)) {
         throw Error("SCENARIO_ALLOCATION_EVIDENCE_INCOMPLETE");
       }
       setAllocation(result);

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -27,6 +28,7 @@ from app.api.retirement_income_readiness_routes import router as readiness_route
 from app.api.scenario_permission_preview_routes import router as scenario_permission_preview_router
 from app.api.scenario_draft_routes import router as scenario_draft_router
 from app.api.scenario_stage6_internal_routes import router as scenario_stage6_internal_router
+from app.api.scenario_stage6_factor_admission_routes import router as scenario_stage6_factor_admission_router
 from app.db.base import load_all_models
 from app.db.session import get_session_factory
 from app.security.config import AuthConfig
@@ -95,6 +97,14 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.auth_config = config
+    # Unavailable by default, including in the real production environment.
+    # Requires authenticated production-mode middleware in a dedicated Railway
+    # environment named staging; never mounted on the production environment.
+    app.state.stage6_preview_enabled = (
+        config.production
+        and os.getenv("STAGE6_PREVIEW_ENABLED") == "1"
+        and os.getenv("RAILWAY_ENVIRONMENT_NAME") == "staging"
+    )
     app.state.rate_limiter_ready = not config.production
     app.add_middleware(RTDIRSecurityMiddleware, config=config)
     if not config.production:
@@ -112,9 +122,11 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         m09_cashflow_router, m10_comparison_router, scenario_permission_preview_router, scenario_draft_router,
     ):
         app.include_router(router)
-    # Explicitly absent in production; Stage 6 has not passed release acceptance.
-    if not config.production:
+    # Explicitly unavailable by default. Both routes need the authenticated
+    # production-mode security middleware on the dedicated staging environment.
+    if app.state.stage6_preview_enabled:
         app.include_router(scenario_stage6_internal_router)
+        app.include_router(scenario_stage6_factor_admission_router)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError):

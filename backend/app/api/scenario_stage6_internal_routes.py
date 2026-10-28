@@ -49,3 +49,56 @@ def internal_gross_estimate(
     result=estimate_single_pension_decision(
         factory,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
     return JSONResponse(content=result,headers=NO_STORE)
+
+
+# SC-05C draft election management shares the same closed internal router.
+# Production registration remains disabled pending complete release acceptance.
+from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
+from app.services.scenario_pension_election_store_service import (
+    current_elections, replace_elections,
+)
+from app.services.scenario_draft_service import DraftError
+from app.db.session import get_db
+
+
+def _verified_internal_actor(request: Request):
+    if request.app.state.auth_config.production:
+        return None
+    if validate_session(request,request.app.state.auth_config) is not None:
+        return None
+    actor=getattr(request.state,"trusted_professional_actor",None)
+    return actor if isinstance(actor,str) and actor.strip() else None
+
+
+@router.get("/{scenario_id}/pension-elections")
+def read_internal_pension_elections(
+    request: Request,scenario_id: str,client_id: int=Path(gt=0),
+    db: Session=Depends(get_db)):
+    if _verified_internal_actor(request) is None:
+        return error(request,401,"AUTHENTICATION_REQUIRED")
+    try:
+        return JSONResponse(content={"elections":current_elections(db,client_id,scenario_id)},
+                            headers=NO_STORE)
+    except DraftError as exc:
+        return error(request,exc.status,exc.code)
+    finally:
+        db.rollback()
+
+
+@router.put("/{scenario_id}/pension-elections")
+def save_internal_pension_elections(
+    request: Request,payload: ScenarioPensionElectionSet,scenario_id: str,
+    client_id: int=Path(gt=0),db: Session=Depends(get_db)):
+    actor=_verified_internal_actor(request)
+    if actor is None:
+        return error(request,401,"AUTHENTICATION_REQUIRED")
+    try:
+        result=replace_elections(db,client_id,scenario_id,payload,actor)
+        db.commit()
+        return JSONResponse(content=result,headers=NO_STORE)
+    except DraftError as exc:
+        db.rollback()
+        return error(request,exc.status,exc.code)
+    except Exception:
+        db.rollback()
+        raise

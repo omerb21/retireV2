@@ -243,7 +243,8 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
         {allocation.allocation_evidence.sources.length === 0 && <p>לא נמצאו החלטות הקצאה בתרחיש.</p>}
         {allocation.allocation_evidence.sources.map(row => <p key={`${row.product_id}:${row.component_id}`}>
           {row.component_code ?? row.component_id}: יתרה מקורית {row.balance ?? "לא זמינה"} ₪,
-          מוקצה {row.allocated} ₪, לא מוקצה {row.unallocated ?? "חסום"} ₪.
+          מוקצה {row.allocated} ₪ (להחלטות קצבה {row.allocation_by_action.pension} ₪; להחלטות הון {row.allocation_by_action.capital_asset} ₪),
+          לא מוקצה {row.unallocated ?? "חסום"} ₪.
           {row.blocker_codes.length > 0 && ` חסימות: ${row.blocker_codes.join(", ")}`}
         </p>)}
       </section>}

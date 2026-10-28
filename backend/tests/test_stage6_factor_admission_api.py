@@ -7,9 +7,10 @@ from pydantic import ValidationError
 from app.api import scenario_stage6_factor_admission_routes as routes
 
 
-def request(production):
+def request(production, enabled=True):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
-        auth_config=SimpleNamespace(production=production))),state=SimpleNamespace())
+        auth_config=SimpleNamespace(production=production),
+        stage6_preview_enabled=enabled)),state=SimpleNamespace())
 
 
 def payload():
@@ -54,3 +55,11 @@ def test_invalid_factor_type_never_reaches_writer():
     with pytest.raises(ValidationError):
         routes.ProfessionalFactorAdmissionRequest(
             **{**payload().model_dump(),"factor_evidence_type":"UNKNOWN"})
+
+def test_production_with_preview_disabled_cannot_write():
+    with patch.object(routes,"append_authenticated_serializable_factor_admission") as writer,patch.object(
+        routes,"error",return_value="not-found"):
+        assert routes.approve_professional_factor(
+            request(True,enabled=False),payload(),"scenario","decision",client_id=1,
+            factory=object())=="not-found"
+        writer.assert_not_called()

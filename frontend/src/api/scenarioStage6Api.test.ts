@@ -259,3 +259,31 @@ it("rejects missing partition information even where sum otherwise seems valid",
   ]}};
   expect(validScenarioAllocationEvidence(omitted,7,"sc",2)).toBe(false);
 });
+
+
+it("rejects contradiction between per-source and aggregate blocked status", () => {
+  const v=validEvidence();
+  const blockedRow={...v.allocation_evidence.sources[0],
+    status:"BLOCKED",unallocated:null,blocker_codes:["SOURCE_STALE"]};
+  const inconsistent={...v,allocation_evidence:{
+    ...v.allocation_evidence,overall_status:"STRUCTURAL_ONLY",
+    sources:[blockedRow],
+  }};
+  expect(validScenarioAllocationEvidence(
+    inconsistent as unknown as ReturnType<typeof validEvidence>,7,"sc",2)).toBe(false);
+});
+
+it("rejects aggregate blocker codes on structural-only output", () => {
+  const v=validEvidence();
+  const inconsistent={...v,allocation_evidence:{
+    ...v.allocation_evidence,blocker_codes:["SOURCE_MISSING"],
+  }};
+  expect(validScenarioAllocationEvidence(inconsistent,7,"sc",2)).toBe(false);
+});
+
+it("rejects nonsensical blocker codes in the response", () => {
+  const v=validEvidence();
+  const inconsistent={...v,candidate_blockers:[null]};
+  expect(validScenarioAllocationEvidence(
+    inconsistent as unknown as ReturnType<typeof validEvidence>,7,"sc",2)).toBe(false);
+});

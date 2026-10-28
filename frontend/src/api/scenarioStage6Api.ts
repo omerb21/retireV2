@@ -184,6 +184,10 @@ export function validScenarioAllocationEvidence(
       || !Array.isArray(value.candidate_blockers)
       || !Array.isArray(value.allocation_evidence.blocker_codes)
       || !Array.isArray(value.allocation_evidence.sources)
+      || value.candidate_blockers.some(code => typeof code !== "string" || !code)
+      || value.allocation_evidence.blocker_codes.some(code => typeof code !== "string" || !code)
+      || (value.allocation_evidence.overall_status === "STRUCTURAL_ONLY"
+          && value.allocation_evidence.blocker_codes.length !== 0)
       || (value.overall_status === "STRUCTURAL_ONLY"
           && (value.candidate_evidence_state !== "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"
               || value.candidate_blockers.length !== 0
@@ -224,6 +228,8 @@ export function validScenarioAllocationEvidence(
     }
     if (cents(row.allocated) !== cents(row.allocation_by_action.pension)
         + cents(row.allocation_by_action.capital_asset)) return false;
+    if (row.status === "BLOCKED"
+        && value.allocation_evidence.overall_status !== "BLOCKED") return false;
     if (row.status === "STRUCTURAL_ONLY") {
       if (row.balance === null || row.unallocated === null) return false;
       if (cents(row.balance) !== cents(row.allocated) + cents(row.unallocated)) return false;

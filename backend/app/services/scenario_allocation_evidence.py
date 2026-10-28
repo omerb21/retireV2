@@ -27,6 +27,8 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
     Therefore this function does *not* claim to inventory other client assets.
     """
     valid = validate_inert_manifest(manifest)
+    # This check authenticates the manifest shape and hashes only. Database
+    # provenance is established by the calling canonical snapshot owner.
     sources: dict[tuple[str, str], dict] = {}
     allocated: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal("0.00"))
     decisions: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -46,6 +48,10 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
             reasons[key].add("SOURCE_CONFLICT")
         else:
             sources.setdefault(key, source)
+        # A source claiming a different component code under the same
+        # canonical component identity is never accepted as a new source.
+        if key in sources and sources[key]["component_code"] != decision["component_code"]:
+            reasons[key].add("SOURCE_CONFLICT")
         if (
             decision["validation_state"] != "unverified"
             or decision["product_version_at_review"] != source["product_version"]

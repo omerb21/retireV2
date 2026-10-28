@@ -137,3 +137,39 @@ it("rejects stale or forged structural evidence rows before display", () => {
   ]}})).toBe(false);
   expect(forged({...base,overall_status:"STRUCTURAL_ONLY",candidate_blockers:["SOURCE_STALE"]})).toBe(false);
 });
+
+
+it("fails closed on mismatched aggregate statuses and fabricated available amounts", () => {
+  const base=validEvidence();
+  const check=(v:unknown)=>validScenarioAllocationEvidence(
+    v as ReturnType<typeof validEvidence>,7,"sc",2);
+  expect(check({...base,overall_status:"STRUCTURAL_ONLY",
+    allocation_evidence:{...base.allocation_evidence,overall_status:"BLOCKED"}})).toBe(false);
+  expect(check({...base,allocation_evidence:{...base.allocation_evidence,sources:[
+    {...base.allocation_evidence.sources[0],unallocated:null},
+  ]}})).toBe(false);
+  expect(check({...base,allocation_evidence:{...base.allocation_evidence,sources:[
+    {...base.allocation_evidence.sources[0],allocated:"1e3"},
+  ]}})).toBe(false);
+  expect(check({...base,allocation_evidence:{...base.allocation_evidence,sources:[
+    {...base.allocation_evidence.sources[0],balance:"-100.00"},
+  ]}})).toBe(false);
+});
+
+it("accepts explicitly blocked source without inventing an unallocated balance", () => {
+  const value=validEvidence();
+  const blocked={
+    ...value,overall_status:"BLOCKED" as const,
+    allocation_evidence:{
+      ...value.allocation_evidence,
+      overall_status:"BLOCKED" as const,
+      blocker_codes:["SOURCE_MISSING"],
+      sources:[{
+        ...value.allocation_evidence.sources[0],
+        status:"BLOCKED" as const,blocker_codes:["SOURCE_MISSING"],
+        balance:null,unallocated:null,
+      }],
+    },
+  };
+  expect(validScenarioAllocationEvidence(blocked,7,"sc",2)).toBe(true);
+});

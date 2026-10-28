@@ -29,6 +29,11 @@ python -m pytest -q -rs \
   tests/test_health.py \
   tests/test_rtdir_vertical_slice.py \
   tests/test_scenario_draft.py \
+  tests/test_scenario_draft_readiness.py \
+  tests/test_scenario_calculation_admission.py \
+  tests/test_scenario_coefficient_gate_bridge.py \
+  tests/test_scenario_coefficient_professional_review_contract.py \
+  tests/test_scenario_coefficient_professional_review_store.py \
   tests/test_stage6_internal_api.py \
   tests/test_stage6_internal_election_api.py \
   tests/test_stage6_factor_admission_api.py \

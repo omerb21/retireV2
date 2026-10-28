@@ -3,6 +3,7 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import { ScenarioFactorAdmissionPanel } from "./ScenarioFactorAdmissionPanel";
 import {
   listScenarioPensionElections, saveScenarioPensionElections, readScenarioGrossEstimate,
+  readScenarioAllocationEvidence, type ScenarioAllocationEvidence,
   type ScenarioPensionElection, type ScenarioGrossEstimate,
 } from "../api/scenarioStage6Api";
 
@@ -88,6 +89,9 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [estimate, setEstimate] = useState<ScenarioGrossEstimate | null>(null);
+  const [allocation, setAllocation] = useState<ScenarioAllocationEvidence | null>(null);
+  const [allocationBusy, setAllocationBusy] = useState(false);
+  const [allocationError, setAllocationError] = useState<string | null>(null);
   const epoch = useRef(0);
   const scenarioKey = `${clientId}|${scenario.scenario_id}|${scenario.version}`;
 
@@ -98,6 +102,9 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     setDirty(false);
     setError(null);
     setEstimate(null);
+    setAllocation(null);
+    setAllocationError(null);
+    setAllocationBusy(false);
     setElections([]);
     void listScenarioPensionElections(clientId, scenario.scenario_id)
       .then(rows => {
@@ -112,6 +119,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }, [scenarioKey, clientId, scenario.scenario_id]);
 
   function modify(id: string, patch: Partial<ScenarioPensionElection>) {
+    setAllocation(null);
     setEstimate(null);
     setDirty(true);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
@@ -133,6 +141,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }
 
   async function save(event: FormEvent) {
+    setAllocation(null);
     event.preventDefault();
     if (busy || !loaded || scenario.status !== "draft") return;
     const current = ++epoch.current;
@@ -182,6 +191,38 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     }
   }
 
+  async function inspectAllocations() {
+    if (allocationBusy || dirty || scenario.status !== "draft") return;
+    const current = ++epoch.current;
+    setAllocationBusy(true);
+    setAllocation(null);
+    setAllocationError(null);
+    try {
+      const result = await readScenarioAllocationEvidence(clientId, scenario.scenario_id);
+      if (epoch.current !== current) return;
+      if (result.allocation_evidence?.client_id !== clientId
+          || result.allocation_evidence.scenario_id !== scenario.scenario_id
+          || result.allocation_evidence.scenario_version !== scenario.version
+          || result.allocation_evidence.schema_version !== "SCENARIO_ALLOCATION_EVIDENCE_V1"
+          || !hash(result.allocation_evidence.evidence_fingerprint)
+          || !hash(result.manifest_fingerprint)
+          || result.manifest_fingerprint !== result.allocation_evidence.manifest_fingerprint
+          || result.execution_allowed !== false || result.financial_result !== null
+          || result.allocation_evidence.execution_allowed !== false
+          || result.allocation_evidence.financial_result !== null
+          || !["BLOCKED", "STRUCTURAL_ONLY"].includes(result.overall_status)
+          || !["BLOCKED", "STRUCTURAL_ONLY"].includes(result.allocation_evidence.overall_status)
+          || !Array.isArray(result.allocation_evidence.sources)) {
+        throw Error("SCENARIO_ALLOCATION_EVIDENCE_INCOMPLETE");
+      }
+      setAllocation(result);
+    } catch (cause) {
+      if (epoch.current === current) setAllocationError(explain(cause));
+    } finally {
+      if (epoch.current === current) setAllocationBusy(false);
+    }
+  }
+
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>בחירת קצבה — סביבת בדיקות מאובטחת בלבד</h4>
     <p className="professional-workspace__boundary">
@@ -189,6 +230,22 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
       אין כאן אישור מקדם, זכאות או הבטחת קצבה.
     </p>
     {error && <p role="alert">{error}</p>}
+    <section aria-label="בדיקת הקצאות ללא חישוב פיננסי">
+      <h5>בקרת הקצאות תרחיש</h5>
+      <p>נתונים מבניים בלבד, ללא קצבה מחושבת, מס, תזרים או אישור מקצועי.</p>
+      <button type="button" disabled={allocationBusy || dirty || scenario.status !== "draft"} onClick={() => void inspectAllocations()}>
+        בדוק הקצאות ויתרות לא מוקצות
+      </button>
+      {allocationError && <p role="alert">{allocationError}</p>}
+      {allocation && <section aria-label="תוצאות בקרת הקצאות">
+        <p role="status">{allocation.overall_status === "BLOCKED" ? "קיימות חסימות בבקרת ההקצאות" : "בדיקה מבנית בלבד, אינה מאשרת חישוב"}</p>
+        {allocation.allocation_evidence.sources.map(row => <p key={`${row.product_id}:${row.component_id}`}>
+          {row.component_code ?? row.component_id}: יתרה מקורית {row.balance ?? "לא זמינה"} ₪,
+          מוקצה {row.allocated} ₪, לא מוקצה {row.unallocated ?? "חסום"} ₪.
+          {row.blocker_codes.length > 0 && ` חסימות: ${row.blocker_codes.join(", ")}`}
+        </p>)}
+      </section>}
+    </section>
     {!loaded && !error && <p>טוען בחירות קצבה...</p>}
     {loaded && <form onSubmit={event => void save(event)}>
       {pensionDecisions.map(decision => {

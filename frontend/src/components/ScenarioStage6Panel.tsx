@@ -138,7 +138,6 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     if (!decision || elections.some(row => row.decision_id === id)) return;
     setEstimate(null);
     setDirty(true);
-    setAllocation(null);
     setElections(current => [...current, {
       decision_id: id, pension_start_date: decision.effective_date,
       target_year: Number(decision.effective_date.slice(0, 4)),

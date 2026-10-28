@@ -58,6 +58,7 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
             reasons[key].add("SOURCE_STALE")
 
     rows = []
+    all_blockers: set[str] = set()
     for product_id, component_id in sorted(decisions):
         key = (product_id, component_id)
         source = sources.get(key)
@@ -74,6 +75,7 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
             if balance is not None and not blocked
             else None
         )
+        all_blockers.update(blocked)
         rows.append({
             "product_id": product_id,
             "component_id": component_id,
@@ -93,6 +95,8 @@ def reconcile_inert_manifest_allocations(manifest: dict) -> dict:
         "scenario_version": valid["scenario_version"],
         "manifest_fingerprint": valid["manifest_fingerprint"],
         "sources": rows,
+        "overall_status": "BLOCKED" if all_blockers else "STRUCTURAL_ONLY",
+        "blocker_codes": sorted(all_blockers),
         "financial_result": None,
         "execution_allowed": False,
     }

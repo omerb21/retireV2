@@ -20,6 +20,7 @@ def _allocation_extension(_db: Session, pair: dict) -> dict:
     manifest = pair["manifest"]
     candidate = pair["candidate"]
     evidence = reconcile_inert_manifest_allocations(manifest)
+    blocked = candidate["evidence_state"] == "BLOCKED" or evidence["overall_status"] == "BLOCKED"
     # SC-03A/C remains the owner of structural admission and its blockers.
     # Do not let this informational adapter convert a BLOCKED candidate into
     # financial approval or a current, eligible scenario calculation.
@@ -27,6 +28,7 @@ def _allocation_extension(_db: Session, pair: dict) -> dict:
         "manifest_fingerprint": manifest["manifest_fingerprint"],
         "candidate_evidence_state": candidate["evidence_state"],
         "candidate_blockers": list(candidate["blockers"]),
+        "overall_status": "BLOCKED" if blocked else "STRUCTURAL_ONLY",
         "allocation_evidence": evidence,
         "financial_result": None,
         "execution_allowed": False,

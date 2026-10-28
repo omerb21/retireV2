@@ -189,6 +189,12 @@ export function validScenarioAllocationEvidence(
               || value.allocation_evidence.overall_status !== "STRUCTURAL_ONLY"))
       || (value.allocation_evidence.overall_status === "BLOCKED"
           && value.overall_status !== "BLOCKED")) return false;
+  const cents = (amount: string): bigint => {
+    const [whole, fraction] = amount.split(".");
+    return BigInt(whole) * 100n + BigInt(fraction);
+  };
+  const seenSources = new Set<string>();
+  const seenDecisions = new Set<string>();
   if (value.allocation_evidence.sources.some(row =>
       !row || typeof row.product_id !== "string" || !row.product_id
       || typeof row.component_id !== "string" || !row.component_id
@@ -203,5 +209,21 @@ export function validScenarioAllocationEvidence(
       || (row.status === "BLOCKED" && row.unallocated !== null)
       || (row.status === "STRUCTURAL_ONLY" && (row.unallocated === null || row.blocker_codes.length > 0))
   )) return false;
+  for (const row of value.allocation_evidence.sources) {
+    // Source identity is a tuple; JSON encoding avoids concatenation collisions.
+    const key = JSON.stringify([row.product_id, row.component_id]);
+    if (seenSources.has(key)) return false;
+    seenSources.add(key);
+    for (const id of row.decision_ids) {
+      if (seenDecisions.has(id)) return false;
+      seenDecisions.add(id);
+    }
+    if (row.status === "STRUCTURAL_ONLY") {
+      if (row.balance === null || row.unallocated === null) return false;
+      if (cents(row.balance) !== cents(row.allocated) + cents(row.unallocated)) return false;
+    }
+  }
+  if (value.allocation_evidence.overall_status === "STRUCTURAL_ONLY"
+      && value.allocation_evidence.sources.length === 0) return false;
   return true;
 }

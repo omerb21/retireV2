@@ -284,3 +284,30 @@ def test_conflicted_source_has_only_one_aggregate_blocker_code():
     assert result["overall_status"] == "BLOCKED"
     assert result["blocker_codes"] == ["SOURCE_CONFLICT"]
     assert result["financial_result"] is None
+
+
+def test_evidence_fingerprint_is_deterministic_and_recomputable():
+    m = source_manifest()
+    first = reconcile_inert_manifest_allocations(m)
+    second = reconcile_inert_manifest_allocations(deepcopy(m))
+    assert first == second
+    preimage = {k: v for k, v in first.items() if k != "evidence_fingerprint"}
+    assert first["evidence_fingerprint"] == manifest_owner._fingerprint(preimage)
+    assert len(first["evidence_fingerprint"]) == 64
+
+
+@pytest.mark.parametrize("change", ["amount", "date", "scenario_version", "scenario_status"])
+def test_material_source_or_decision_change_changes_evidence_fingerprint(change):
+    baseline = reconcile_inert_manifest_allocations(source_manifest())
+    m = source_manifest()
+    if change == "amount":
+        m["decisions"][0]["amount"] = "50.01"
+    elif change == "date":
+        m["decisions"][0]["effective_date"] = "2026-11-01"
+    elif change == "scenario_version":
+        m["scenario_version"] = 2
+    else:
+        m["scenario_status"] = "archived"
+    changed = reconcile_inert_manifest_allocations(rehash(m))
+    assert baseline["evidence_fingerprint"] != changed["evidence_fingerprint"]
+    assert changed["execution_allowed"] is False

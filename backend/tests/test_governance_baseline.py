@@ -305,6 +305,24 @@ APPROVED_STAGE6_P1D_PATHS = {
     "backend/tests/test_stage6_p1d_postgresql.py",
     "backend/tests/test_stage6_p1d_pte_kind.py",
 }
+APPROVED_STAGE6_WORKFLOW_STAGING_PATHS = {
+    "backend/app/api/scenario_stage6_factor_admission_routes.py",
+    "backend/app/api/scenario_stage6_internal_routes.py",
+    "backend/app/main.py",
+    "backend/tests/test_governance_baseline.py",
+    "backend/tests/test_stage6_factor_admission_api.py",
+    "backend/tests/test_stage6_factor_revision_api.py",
+    "backend/tests/test_stage6_internal_api.py",
+    "backend/tests/test_stage6_internal_election_api.py",
+    "frontend/src/api/scenarioStage6Api.ts",
+    "frontend/src/api/scenarioStage6Api.test.ts",
+    "frontend/src/components/ScenarioDraftPanel.tsx",
+    "frontend/src/components/ScenarioFactorAdmissionPanel.tsx",
+    "frontend/src/components/ScenarioFactorAdmissionPanel.test.tsx",
+    "frontend/src/components/ScenarioStage6Panel.tsx",
+    "frontend/src/components/ScenarioStage6Panel.test.tsx",
+    "docs/ux/STAGE6_WORKFLOW_STAGING_INTEGRATION_2026-10-28.md",
+}
 APPROVED_PACKAGE_1_PATHS = {
     "backend/app/api/fixation_routes.py",
     "backend/app/schemas/fixation_contracts.py",
@@ -744,6 +762,7 @@ def _allowed_untracked_paths() -> set[str]:
         *APPROVED_STAGE6_P1B_PATHS,
         *APPROVED_STAGE6_P1C_PATHS,
         *APPROVED_STAGE6_P1D_PATHS,
+        *APPROVED_STAGE6_WORKFLOW_STAGING_PATHS,
         *APPROVED_FIRST_RECOVERY_PATHS,
         *APPROVED_LOCAL_UNTRACKED_PATHS,
         APPROVED_SLICE_1_MIGRATION_PATH,

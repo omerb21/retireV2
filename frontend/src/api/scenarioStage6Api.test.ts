@@ -173,3 +173,22 @@ it("accepts explicitly blocked source without inventing an unallocated balance",
   };
   expect(validScenarioAllocationEvidence(blocked,7,"sc",2)).toBe(true);
 });
+
+
+it("never displays structurally admitted status for a blocked candidate", () => {
+  const valid=validEvidence();
+  const changed={
+    ...valid,candidate_evidence_state:"BLOCKED",
+    overall_status:"STRUCTURAL_ONLY" as const,
+  };
+  expect(validScenarioAllocationEvidence(changed,7,"sc",2)).toBe(false);
+});
+
+it("never displays unknown candidate classification as trusted structural evidence", () => {
+  const valid=validEvidence();
+  const changed={
+    ...valid,candidate_evidence_state:"READY_FOR_FINANCIAL_EXECUTION",
+    overall_status:"STRUCTURAL_ONLY" as const,
+  };
+  expect(validScenarioAllocationEvidence(changed,7,"sc",2)).toBe(false);
+});

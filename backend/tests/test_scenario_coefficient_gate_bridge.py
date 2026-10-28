@@ -1,6 +1,6 @@
 """SC-05D bridge must never call coefficient lookup or produce financial authority."""
 from app.services import scenario_coefficient_gate_bridge_service as bridge
-from app.services import scenario_annuity_coefficient_assessment_service as coefficient
+from app.services import annuity_coefficient_service as coefficient
 
 
 def test_current_election_requires_professional_authority(monkeypatch):

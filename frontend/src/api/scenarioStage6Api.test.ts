@@ -104,7 +104,7 @@ const validEvidence = () => ({
     evidence_fingerprint:"b".repeat(64),
     overall_status:"STRUCTURAL_ONLY" as const,blocker_codes:[],
     sources:[{
-      product_id:"p",component_id:"c",component_code:"a",
+      product_id:"p",component_id:"c",component_code:"a",source_fingerprint:"c".repeat(64),
       balance:"100.00",allocated:"50.00",unallocated:"50.00",
       allocation_by_action:{pension:"50.00",capital_asset:"0.00"},
       status:"STRUCTURAL_ONLY" as const,blocker_codes:[],decision_ids:["d"],

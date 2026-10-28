@@ -29,6 +29,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   useEffect(() => {
     const current = ++epoch.current;
     setLoaded(false);
+    setBusy(false);
     setDirty(false);
     setError(null);
     setEstimate(null);

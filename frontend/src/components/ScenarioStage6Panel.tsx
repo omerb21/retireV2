@@ -93,6 +93,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   const [allocationBusy, setAllocationBusy] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const epoch = useRef(0);
+  const allocationEpoch = useRef(0);
   const scenarioKey = `${clientId}|${scenario.scenario_id}|${scenario.version}`;
 
   useEffect(() => {
@@ -102,6 +103,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     setDirty(false);
     setError(null);
     setEstimate(null);
+    allocationEpoch.current += 1;
     setAllocation(null);
     setAllocationError(null);
     setAllocationBusy(false);
@@ -119,6 +121,8 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }, [scenarioKey, clientId, scenario.scenario_id]);
 
   function modify(id: string, patch: Partial<ScenarioPensionElection>) {
+    allocationEpoch.current += 1;
+    setAllocationBusy(false);
     setAllocation(null);
     setEstimate(null);
     setDirty(true);
@@ -128,6 +132,9 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
 
   const pensionDecisions = scenario.decisions.filter(d => d.action === "pension");
   function startEditing(id: string) {
+    allocationEpoch.current += 1;
+    setAllocationBusy(false);
+    setAllocation(null);
     const decision = pensionDecisions.find(row => row.decision_id === id);
     if (!decision || elections.some(row => row.decision_id === id)) return;
     setEstimate(null);
@@ -143,6 +150,8 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }
 
   async function save(event: FormEvent) {
+    allocationEpoch.current += 1;
+    setAllocationBusy(false);
     setAllocation(null);
     event.preventDefault();
     if (busy || !loaded || scenario.status !== "draft") return;
@@ -195,21 +204,21 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
 
   async function inspectAllocations() {
     if (allocationBusy || dirty || scenario.status !== "draft") return;
-    const current = ++epoch.current;
+    const current = ++allocationEpoch.current;
     setAllocationBusy(true);
     setAllocation(null);
     setAllocationError(null);
     try {
       const result = await readScenarioAllocationEvidence(clientId, scenario.scenario_id);
-      if (epoch.current !== current) return;
+      if (allocationEpoch.current !== current) return;
       if (!validScenarioAllocationEvidence(result, clientId, scenario.scenario_id, scenario.version)) {
         throw Error("SCENARIO_ALLOCATION_EVIDENCE_INCOMPLETE");
       }
       setAllocation(result);
     } catch (cause) {
-      if (epoch.current === current) setAllocationError(explain(cause));
+      if (allocationEpoch.current === current) setAllocationError(explain(cause));
     } finally {
-      if (epoch.current === current) setAllocationBusy(false);
+      if (allocationEpoch.current === current) setAllocationBusy(false);
     }
   }
 

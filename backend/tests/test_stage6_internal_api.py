@@ -18,7 +18,7 @@ def test_stage6_route_not_registered_in_production_style_app():
 def test_missing_trusted_actor_never_runs_estimate():
     request=SimpleNamespace(state=SimpleNamespace(),app=SimpleNamespace(
         state=SimpleNamespace(auth_config=SimpleNamespace(production=False))))
-    with patch.object(route,"estimate_single_pension_decision") as estimate,patch.object(
+    with patch.object(route,"validate_session",return_value=None),patch.object(route,"estimate_single_pension_decision") as estimate,patch.object(
         route,"error",return_value="unauthorized") as reject:
         result=route.internal_gross_estimate(
             request,scenario_id="scenario",decision_id="decision",client_id=1,
@@ -48,7 +48,7 @@ def test_authenticated_development_route_calls_canonical_service_once():
         state=SimpleNamespace(trusted_professional_actor="planner:authenticated"),
         app=SimpleNamespace(state=SimpleNamespace(
             auth_config=SimpleNamespace(production=False))))
-    with patch.object(route,"estimate_single_pension_decision",
+    with patch.object(route,"validate_session",return_value=None),patch.object(route,"estimate_single_pension_decision",
                       return_value={"result_state":"BLOCKED","execution_allowed":False}) as estimate:
         response=route.internal_gross_estimate(
             request,scenario_id="scenario",decision_id="decision",client_id=1,
@@ -56,3 +56,16 @@ def test_authenticated_development_route_calls_canonical_service_once():
     estimate.assert_called_once_with(
         "factory",client_id=1,scenario_id="scenario",decision_id="decision")
     assert response.headers["cache-control"]=="no-store"
+
+def test_invalid_dev_session_never_reaches_estimate():
+    request=SimpleNamespace(
+        state=SimpleNamespace(),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_config=SimpleNamespace(production=False))))
+    with patch.object(route,"validate_session",return_value="unauthorized"),patch.object(
+        route,"estimate_single_pension_decision") as estimate:
+        result=route.internal_gross_estimate(
+            request,scenario_id="scenario",decision_id="decision",
+            client_id=1,factory=object())
+    assert result=="unauthorized"
+    estimate.assert_not_called()

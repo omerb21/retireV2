@@ -230,3 +230,32 @@ it("rejects empty structural-only evidence without scenario allocations", () => 
   const empty={...v,allocation_evidence:{...v.allocation_evidence,sources:[]}};
   expect(validScenarioAllocationEvidence(empty,7,"sc",2)).toBe(false);
 });
+
+
+it("rejects mismatched pension and capital partitions independently of total balance", () => {
+  const v=validEvidence();
+  const invalid={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    {...v.allocation_evidence.sources[0],
+      allocated:"50.00",unallocated:"50.00",
+      allocation_by_action:{pension:"25.00",capital_asset:"24.99"}},
+  ]}};
+  expect(validScenarioAllocationEvidence(invalid,7,"sc",2)).toBe(false);
+});
+
+it("accepts exact separated pension and capital principal under the canonical balance", () => {
+  const v=validEvidence();
+  const split={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    {...v.allocation_evidence.sources[0],
+      allocated:"50.00",unallocated:"50.00",
+      allocation_by_action:{pension:"25.25",capital_asset:"24.75"}},
+  ]}};
+  expect(validScenarioAllocationEvidence(split,7,"sc",2)).toBe(true);
+});
+
+it("rejects missing partition information even where sum otherwise seems valid", () => {
+  const v=validEvidence();
+  const omitted={...v,allocation_evidence:{...v.allocation_evidence,sources:[
+    {...v.allocation_evidence.sources[0],allocation_by_action:undefined},
+  ]}};
+  expect(validScenarioAllocationEvidence(omitted,7,"sc",2)).toBe(false);
+});

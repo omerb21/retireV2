@@ -40,7 +40,8 @@ it("saves versioned election through the canonical API without factor authority"
   mock.save.mockResolvedValue({});
   const saved = vi.fn().mockResolvedValue(undefined);
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={saved}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "שמור בחירות קצבה כטיוטה" }));
+  fireEvent.change(await screen.findByLabelText("בחירת שאירים"), { target: { value: "spouse 75%" } });
+  fireEvent.click(screen.getByRole("button", { name: "שמור בחירות קצבה כטיוטה" }));
   await waitFor(() => expect(mock.save).toHaveBeenCalledTimes(1));
   expect(mock.save.mock.calls[0][0]).toBe(1);
   expect(mock.save.mock.calls[0][1]).toBe("sc1");
@@ -90,4 +91,17 @@ it("drops a late estimate after the scenario version changes", async () => {
   });
   await waitFor(() => expect(mock.list).toHaveBeenCalledTimes(2));
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
+});
+
+it("invalidates old estimate and blocks request while election edits are unsaved", async () => {
+  mock.list.mockResolvedValue([election]);
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  const check = await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" });
+  expect((check as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.change(screen.getByLabelText("בחירת שאירים"), {
+    target: { value: "different survivor terms" },
+  });
+  expect((check as HTMLButtonElement).disabled).toBe(true);
+  expect(mock.estimate).not.toHaveBeenCalled();
+  expect(screen.getByText(/שמור ורענן את החלופה לפני בדיקת אומדן/)).toBeTruthy();
 });

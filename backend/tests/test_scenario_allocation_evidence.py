@@ -178,6 +178,8 @@ def test_empty_scenario_is_not_financial_admission():
     m["decisions"] = []
     result = reconcile_inert_manifest_allocations(rehash(m))
     assert result["sources"] == []
+    assert result["overall_status"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SCENARIO_DECISIONS_EMPTY_OR_INVALID"]
     assert result["execution_allowed"] is False
 
 

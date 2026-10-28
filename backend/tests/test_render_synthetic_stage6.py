@@ -46,3 +46,13 @@ def test_public_synthetic_endpoint_is_pinned_to_synthetic_identity():
     assert response.status_code == 200
     assert response.json()["result"]["client_id"] == 1
     assert response.json()["result"]["scenario_id"] == "synthetic"
+
+def test_render_public_app_denies_real_retirement_api_routes():
+    from render_stage6_preview import app as public_app
+    with TestClient(public_app) as client:
+        response = client.get("/api/clients/1/scenario-drafts")
+        assert response.status_code == 404
+        assert response.json()["code"] == "SYNTHETIC_PREVIEW_API_DISABLED"
+        response = client.get("/demo/stage6")
+        assert response.status_code == 200
+        assert "RETIRE V2" in response.text

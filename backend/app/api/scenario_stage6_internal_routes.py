@@ -1,7 +1,6 @@
-"""Stage 6 internal nonbinding estimate preview.
+"""Stage 6 staging-only, signed-session workflow.
 
-Not mounted in production. Even for a local development app it requires the
-trusted actor installed by existing security middleware, never request input.
+Not mounted by default or on the Railway production environment.
 No request-controlled coefficients, identity hashes or financial authority.
 """
 from fastapi import APIRouter, Depends, Path, Request
@@ -32,17 +31,11 @@ def internal_gross_estimate(
     client_id: int = Path(gt=0),
     factory: sessionmaker[Session] = Depends(get_stage6_factory),
 ):
-    # Development middleware skips auth, so independently validate a genuine
-    # signed session. Never invent a local-development planner identity.
-    if not request.app.state.auth_config.production:
-        rejected=validate_session(request, request.app.state.auth_config)
-        if rejected is not None:
-            return rejected
-    actor=getattr(request.state,"trusted_professional_actor",None)
-    if not isinstance(actor,str) or not actor.strip():
-        return error(request,401,"AUTHENTICATION_REQUIRED")
-    if request.app.state.auth_config.production:
+    if not getattr(request.app.state,"stage6_preview_enabled",False):
         return error(request,404,"ROUTE_NOT_FOUND")
+    actor=_verified_internal_actor(request)
+    if actor is None:
+        return error(request,401,"AUTHENTICATION_REQUIRED")
     if (not scenario_id or len(scenario_id)>64
             or not decision_id or len(decision_id)>64):
         return error(request,422,"STAGE6_P1D_ROUTE_INVALID")
@@ -62,18 +55,26 @@ from app.db.session import get_db
 
 
 def _verified_internal_actor(request: Request):
-    if request.app.state.auth_config.production:
+    if (not getattr(request.app.state,"stage6_preview_enabled",False)
+            or request.app.state.auth_config.production is not True):
         return None
+    # Require independently verified signed session; never trust a hand-set
+    # request.state actor or a development authentication bypass.
     if validate_session(request,request.app.state.auth_config) is not None:
         return None
     actor=getattr(request.state,"trusted_professional_actor",None)
-    return actor if isinstance(actor,str) and actor.strip() else None
+    session=getattr(request.state,"auth_session",None)
+    return actor if (type(actor) is str and actor.strip()
+                     and type(session) is dict
+                     and session.get("actor_id")==actor) else None
 
 
 @router.get("/{scenario_id}/pension-elections")
 def read_internal_pension_elections(
     request: Request,scenario_id: str,client_id: int=Path(gt=0),
     db: Session=Depends(get_db)):
+    if not getattr(request.app.state,"stage6_preview_enabled",False):
+        return error(request,404,"ROUTE_NOT_FOUND")
     if _verified_internal_actor(request) is None:
         return error(request,401,"AUTHENTICATION_REQUIRED")
     try:
@@ -89,10 +90,12 @@ def read_internal_pension_elections(
 def save_internal_pension_elections(
     request: Request,payload: ScenarioPensionElectionSet,scenario_id: str,
     client_id: int=Path(gt=0),db: Session=Depends(get_db)):
+    if not getattr(request.app.state,"stage6_preview_enabled",False):
+        return error(request,404,"ROUTE_NOT_FOUND")
     actor=_verified_internal_actor(request)
     if actor is None:
         return error(request,401,"AUTHENTICATION_REQUIRED")
-    # Development middleware does not enforce CSRF/origin itself.
+    # Defense-in-depth, in addition to production-mode middleware.
     rejected=validate_origin(request,request.app.state.auth_config) or validate_csrf(request)
     if rejected is not None:
         return rejected

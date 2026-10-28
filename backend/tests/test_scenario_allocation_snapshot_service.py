@@ -143,3 +143,39 @@ def test_snapshot_extension_rejects_empty_draft_as_blocked():
     assert output["overall_status"] == "BLOCKED"
     assert output["allocation_evidence"]["blocker_codes"] == ["SCENARIO_DECISIONS_EMPTY_OR_INVALID"]
     assert output["allocation_evidence"]["sources"] == []
+
+
+def test_allocation_snapshot_propagates_authoritative_client_scope(monkeypatch):
+    calls=[]
+    def fake_snapshot(factory, *, client_id, scenario_id, _snapshot_extension):
+        calls.append((client_id,scenario_id))
+        return _snapshot_extension(None, authoritative_pair())
+    monkeypatch.setattr(subject,"build_manifest_candidate_snapshot",fake_snapshot)
+    result=subject.build_readonly_allocation_snapshot(
+        object(),client_id=7,scenario_id="s")
+    assert calls==[(7,"s")]
+    assert result["allocation_evidence"]["client_id"]==7
+    assert result["allocation_evidence"]["scenario_id"]=="s"
+
+
+def test_allocation_snapshot_does_not_override_owner_database_error(monkeypatch):
+    from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
+    def unavailable(*_args,**_kwargs):
+        raise ScenarioSnapshotError("SCENARIO_SNAPSHOT_DATABASE_UNAVAILABLE")
+    monkeypatch.setattr(subject,"build_manifest_candidate_snapshot",unavailable)
+    import pytest
+    with pytest.raises(ScenarioSnapshotError,match="SCENARIO_SNAPSHOT_DATABASE_UNAVAILABLE"):
+        subject.build_readonly_allocation_snapshot(
+            object(),client_id=7,scenario_id="s")
+
+
+def test_allocation_snapshot_never_requests_an_unsafe_claimed_manifest(monkeypatch):
+    observed={}
+    def fake_snapshot(factory, **kwargs):
+        observed.update(kwargs)
+        return {"financial_result":None,"execution_allowed":False}
+    monkeypatch.setattr(subject,"build_manifest_candidate_snapshot",fake_snapshot)
+    subject.build_readonly_allocation_snapshot(object(),client_id=7,scenario_id="s")
+    assert "claimed_manifest" not in observed
+    assert "_snapshot_extension" in observed
+    assert observed["client_id"]==7

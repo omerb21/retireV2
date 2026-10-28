@@ -92,7 +92,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }
 
   async function checkEstimate(decisionId: string) {
-    if (busy || !loaded || !dirty || scenario.status !== "draft") return;
+    if (busy || !loaded || dirty || scenario.status !== "draft") return;
     const current = ++epoch.current;
     setBusy(true);
     setEstimate(null);
@@ -122,7 +122,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   }
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
-    <h4>בחירת קצבה — סביבת פיתוח בלבד</h4>
+    <h4>בחירת קצבה — סביבת בדיקות מאובטחת בלבד</h4>
     <p className="professional-workspace__boundary">
       בחירת הקצבה היא טיוטה. שמירתה מעדכנת את גרסת החלופה ומבטלת תוקף של אישורים קודמים.
       אין כאן אישור מקדם, זכאות או הבטחת קצבה.

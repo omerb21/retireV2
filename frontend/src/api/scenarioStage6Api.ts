@@ -44,7 +44,18 @@ async function read<T>(clientId: number, scenarioId: string, suffix: string,
 export async function listScenarioPensionElections(clientId: number, scenarioId: string):
   Promise<ScenarioPensionElection[]> {
   const response = await read<{ elections: ScenarioPensionElection[] }>(clientId, scenarioId, "/pension-elections");
-  return response.elections;
+  // The read projection contains "authority_state" for display only. Never
+  // send it back: the SC-05C writer uses an exact extra=forbid schema.
+  return response.elections.map(row => ({
+    decision_id: row.decision_id,
+    pension_start_date: row.pension_start_date,
+    target_year: row.target_year,
+    survivors_option: row.survivors_option,
+    spouse_age_diff: row.spouse_age_diff,
+    coefficient_selection: row.coefficient_selection,
+    company_name: row.company_name,
+    option_name: row.option_name,
+  }));
 }
 
 export async function saveScenarioPensionElections(clientId: number, scenarioId: string,

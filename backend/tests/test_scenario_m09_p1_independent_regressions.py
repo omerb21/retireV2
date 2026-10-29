@@ -248,3 +248,24 @@ def test_m09_p1_does_not_use_business_pension_factor_or_tax_fallback():
         assert forbidden not in result
     assert decision["periodization"] is None
     assert decision["monthly_income"] is None
+
+
+def test_unknown_candidate_state_is_blocked_with_explicit_reason():
+    pair = verified_pair()
+    pair["candidate"]["evidence_state"] = "UNKNOWN_STATUS"
+    pair["candidate"]["blockers"] = []
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SCENARIO_CANDIDATE_NOT_ADMITTED"]
+    assert result["financial_result"] is None
+    assert result["execution_allowed"] is False
+
+
+def test_blocked_without_candidate_codes_never_becomes_unexplained_failure():
+    pair = verified_pair()
+    pair["candidate"]["evidence_state"] = "BLOCKED"
+    pair["candidate"]["blockers"] = []
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SCENARIO_CANDIDATE_NOT_ADMITTED"]
+    assert result["monthly_cashflow"] is None

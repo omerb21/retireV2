@@ -194,6 +194,7 @@ def test_forged_pension_result_fingerprint_is_blocked(monkeypatch):
 
 @pytest.mark.parametrize(("start", "end", "code"), [
     ("2027-13", "2027-12", "STAGE6_CASHFLOW_MONTH_INVALID"),
+    ("0000-01", "0000-02", "STAGE6_CASHFLOW_MONTH_INVALID"),
     ("2027-02", "2027-01", "STAGE6_CASHFLOW_RANGE_INVALID"),
 ])
 def test_closed_timeline_range(start, end, code):

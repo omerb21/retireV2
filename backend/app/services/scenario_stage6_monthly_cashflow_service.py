@@ -47,7 +47,10 @@ VALID_VERIFICATION_STATES = {
 def _parse_month(value: str) -> date:
     if type(value) is not str or not MONTH.fullmatch(value):
         raise ValueError("STAGE6_CASHFLOW_MONTH_INVALID")
-    return date(int(value[:4]), int(value[5:]), 1)
+    try:
+        return date(int(value[:4]), int(value[5:]), 1)
+    except ValueError:
+        raise ValueError("STAGE6_CASHFLOW_MONTH_INVALID") from None
 
 
 def _next_month(value: date) -> date:

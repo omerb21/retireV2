@@ -45,3 +45,33 @@ def test_snapshot_owner_reuse(monkeypatch):
     result = subject.build_m09_current_input_inventory(token, client_id=7, scenario_id="s")
     assert seen == [(token, 7, "s")]
     assert result["monthly_cashflow"] is None
+
+
+def test_review_identity_fields_are_preserved():
+    p = pair()
+    original = p["manifest"]["decisions"][0]
+    result = subject._m09_p1_extension(None, p)
+    current = result["decisions"][0]
+    for key in ("validation_state", "ruleset_digest_at_review",
+                "permission_preview_id_at_review"):
+        assert current[key] == original[key]
+
+
+def test_only_source_with_missing_evidence_is_blocked():
+    from copy import deepcopy
+    p = pair()
+    missing = deepcopy(p["manifest"]["decisions"][0])
+    missing["decision_id"] = "missing"
+    missing["product_id"] = "other-product"
+    missing["component_id"] = "other-component"
+    missing["source"] = None
+    p["manifest"]["decisions"].append(missing)
+    p["manifest"]["manifest_fingerprint"] = owner._fingerprint({
+        key: p["manifest"][key] for key in owner.MANIFEST_IDENTITY_FIELDS
+    })
+    result = subject._m09_p1_extension(None, p)
+    assert result["inventory_state"] == "BLOCKED"
+    by_id = {decision["decision_id"]: decision for decision in result["decisions"]}
+    assert by_id["d"]["input_state"] == "STRUCTURAL_ONLY"
+    assert by_id["missing"]["input_state"] == "BLOCKED"
+    assert result["monthly_cashflow"] is None

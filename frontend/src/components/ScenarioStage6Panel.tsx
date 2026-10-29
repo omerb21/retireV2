@@ -11,6 +11,7 @@ interface Props {
   clientId: number;
   scenario: ScenarioDraft;
   onSaved: (id: string) => Promise<void>;
+  autoInspectAllocations?: boolean;
 }
 function explain(error: unknown): string {
   return error instanceof Error ? error.message : "לא ניתן להשלים את הפעולה.";
@@ -82,7 +83,7 @@ function closedEstimateEnvelope(value: ScenarioGrossEstimate, clientId: number,
 }
 
 /** Phase-1 internal workspace only; does NOT enter or approve factor values. */
-export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
+export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAllocations = false }: Props) {
   const [elections, setElections] = useState<ScenarioPensionElection[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -225,11 +226,11 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
   // The existing epoch/identity checks discard stale responses after switching
   // client, scenario or version. The button below remains a manual retry.
   useEffect(() => {
-    if (scenario.status !== "draft" || scenario.decisions.length === 0) return;
+    if (!autoInspectAllocations || scenario.status !== "draft" || scenario.decisions.length === 0) return;
     void inspectAllocations();
     // A scenario version change remounts the evidence request; edits clear it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenarioKey]);
+  }, [scenarioKey, autoInspectAllocations]);
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>

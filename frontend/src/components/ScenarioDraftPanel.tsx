@@ -266,6 +266,23 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
     </section>}
     {active && <div>
       <h3>{active.name}</h3>
+      <section aria-label="רצף עבודה בחלופה">
+        <h4>רצף עבודה — {active.name}</h4>
+        <ol>
+          <li>החלטות והקצאות: {active.decisions.length === 0
+            ? "יש להוסיף החלטה לחלופה"
+            : `${active.decisions.length} החלטות שמורות; בקרת המקורות נטענת אוטומטית בהמשך המסך`}</li>
+          <li>בקרת מקור: {active.status === "needs_revalidation"
+            ? "נדרש אימות מחדש של נתונים שהתיישנו"
+            : active.status === "archived"
+            ? "החלופה בארכיון"
+            : "יש לעיין בתוצאות בקרת ההקצאות של החלופה"}</li>
+          <li>בחירת קצבה: {active.decisions.some(decision => decision.action === "pension")
+            ? "ניתן להגדיר תנאי קצבה ולבדוק אומדן מאושר ברוטו בהמשך"
+            : "אין החלטת קצבה בחלופה הזאת"}</li>
+          <li>תזרים חודשי והשוואה כספית: טרם זמינים בחלופה הנוכחית</li>
+        </ol>
+      </section>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
       {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.length > 0 &&
         <ScenarioStage6Panel clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/> }

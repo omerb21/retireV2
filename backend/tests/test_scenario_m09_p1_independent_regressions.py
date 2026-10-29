@@ -137,3 +137,36 @@ def test_input_status_is_source_granular_with_global_block():
     assert statuses["d"] == "STRUCTURAL_ONLY"
     assert statuses["another"] == "BLOCKED"
     assert result["execution_allowed"] is False
+
+
+def test_changed_source_review_blocks_only_that_evidence():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["source_fingerprint_at_review"] = "0" * 64
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert result["decisions"][0]["input_state"] == "BLOCKED"
+    assert result["source_allocations"][0]["unallocated"] is None
+    assert result["financial_result"] is None
+
+
+def test_readonly_inventory_never_exposes_historical_m09_run_identity():
+    result = subject._m09_p1_extension(None, verified_pair())
+    for prohibited in (
+        "run_id", "monthly_results", "tax_net", "pension_net",
+        "gross_inflow_total", "gross_outflow_total", "period_net",
+        "comparison_result", "recommended_scenario",
+    ):
+        assert prohibited not in result
+    assert result["periodization"] is None
+    assert result["execution_allowed"] is False
+
+
+def test_identity_fields_appear_only_as_input_evidence_not_authority():
+    result = subject._m09_p1_extension(None, verified_pair())
+    row = result["decisions"][0]
+    assert row["amount_principal"] == "50.00"
+    assert row["periodization"] is None
+    assert row["monthly_income"] is None
+    assert result["financial_result"] is None
+    assert result["inventory_fingerprint"] != result["manifest_fingerprint"]

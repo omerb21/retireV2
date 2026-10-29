@@ -220,6 +220,17 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved }: Props) {
     }
   }
 
+  // Loading a saved alternative now reads its already-authorized structural
+  // allocation evidence in the same workspace; no separate inspection step.
+  // The existing epoch/identity checks discard stale responses after switching
+  // client, scenario or version. The button below remains a manual retry.
+  useEffect(() => {
+    if (scenario.status !== "draft" || scenario.decisions.length === 0) return;
+    void inspectAllocations();
+    // A scenario version change remounts the evidence request; edits clear it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarioKey]);
+
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>
     {pensionDecisions.length > 0 && <p className="professional-workspace__boundary">

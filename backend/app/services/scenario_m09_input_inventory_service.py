@@ -19,6 +19,11 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         and not candidate["blockers"]
         and allocation["overall_status"] == "STRUCTURAL_ONLY"
     )
+    source_status = {
+        decision_id: source["status"]
+        for source in allocation["sources"]
+        for decision_id in source["decision_ids"]
+    }
     # Never assume all structural decisions are financial-ready.
     decisions = [{
         "decision_id": row["decision_id"],
@@ -30,7 +35,10 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         "amount_principal": row["amount"],
         "source_fingerprint_at_review": row["source_fingerprint_at_review"],
         "product_version_at_review": row["product_version_at_review"],
-        "input_state": "STRUCTURAL_ONLY" if structurally_consistent else "BLOCKED",
+        "validation_state": row["validation_state"],
+        "ruleset_digest_at_review": row["ruleset_digest_at_review"],
+        "permission_preview_id_at_review": row["permission_preview_id_at_review"],
+        "input_state": "STRUCTURAL_ONLY" if source_status.get(row["decision_id"]) == "STRUCTURAL_ONLY" else "BLOCKED",
         "monthly_income": None,
         "periodization": None,
     } for row in manifest["decisions"]]

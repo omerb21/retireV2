@@ -211,3 +211,40 @@ def test_explicit_source_identity_remains_stable_across_other_source_failure():
     assert first["decisions"][0]["source_fingerprint_at_review"] == second["decisions"][0]["source_fingerprint_at_review"]
     assert second["decisions"][0]["input_state"] == "STRUCTURAL_ONLY"
     assert second["decisions"][1]["input_state"] == "BLOCKED"
+
+
+def test_revised_ruleset_fingerprint_changes_input_receipt():
+    pair = verified_pair()
+    baseline = subject._m09_p1_extension(None, pair)
+    pair["manifest"]["decisions"][0]["ruleset_digest_at_review"] = "f" * 64
+    rehash(pair["manifest"])
+    updated = subject._m09_p1_extension(None, pair)
+    assert baseline["inventory_fingerprint"] != updated["inventory_fingerprint"]
+    assert updated["decisions"][0]["ruleset_digest_at_review"] == "f" * 64
+    assert updated["monthly_cashflow"] is None
+
+
+def test_revised_permission_preview_identity_changes_input_receipt():
+    pair = verified_pair()
+    baseline = subject._m09_p1_extension(None, pair)
+    pair["manifest"]["decisions"][0]["permission_preview_id_at_review"] = "e" * 64
+    rehash(pair["manifest"])
+    updated = subject._m09_p1_extension(None, pair)
+    assert baseline["inventory_fingerprint"] != updated["inventory_fingerprint"]
+    assert updated["decisions"][0]["permission_preview_id_at_review"] == "e" * 64
+    assert updated["financial_result"] is None
+
+
+def test_m09_p1_does_not_use_business_pension_factor_or_tax_fallback():
+    pair = verified_pair()
+    result = subject._m09_p1_extension(None, pair)
+    decision = result["decisions"][0]
+    for forbidden in (
+        "pension_factor", "monthly_pension_gross", "monthly_pension_net",
+        "tax_amount", "capital_gains_tax", "annuity_start_month",
+        "cpi_adjustment", "discount_rate", "social_security",
+    ):
+        assert forbidden not in decision
+        assert forbidden not in result
+    assert decision["periodization"] is None
+    assert decision["monthly_income"] is None

@@ -14,7 +14,12 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
     manifest = pair["manifest"]
     candidate = pair["candidate"]
     allocation = reconcile_inert_manifest_allocations(manifest)
+    candidate_identity_matches = all(
+        candidate.get(field) == manifest[field]
+        for field in ("client_id", "scenario_id", "scenario_version", "manifest_fingerprint")
+    )
     structurally_consistent = (
+        candidate_identity_matches and
         candidate["evidence_state"] == "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"
         and not candidate["blockers"]
         and allocation["overall_status"] == "STRUCTURAL_ONLY"
@@ -45,6 +50,8 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
     blockers = sorted(set(candidate["blockers"]) | set(allocation["blocker_codes"]))
     if not decisions:
         blockers = sorted(set(blockers) | {"SCENARIO_DECISIONS_EMPTY_OR_INVALID"})
+    if candidate["evidence_state"] == "STRUCTURALLY_CONSISTENT_NOT_ADMITTED" and not candidate_identity_matches:
+        blockers = sorted(set(blockers) | {"SCENARIO_CANDIDATE_IDENTITY_MISMATCH"})
     if not structurally_consistent and not blockers:
         # Unknown or unadmitted candidate states must carry an explicit reason.
         blockers = ["SCENARIO_CANDIDATE_NOT_ADMITTED"]

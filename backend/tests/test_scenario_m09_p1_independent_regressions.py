@@ -367,3 +367,40 @@ def test_local_source_blocker_order_is_deterministic():
         "SCENARIO_NOT_ACTIVE_DRAFT", "SOURCE_STALE"
     ]
     assert result["inventory_state"] == "BLOCKED"
+
+
+def test_inventory_exposes_current_and_reviewed_source_identity_separately():
+    pair = verified_pair()
+    source = pair["manifest"]["decisions"][0]["source"]
+    result = subject._m09_p1_extension(None, pair)
+    row = result["decisions"][0]
+    assert row["source_fingerprint_current"] == source["source_fingerprint"]
+    assert row["product_version_current"] == source["product_version"]
+    assert row["source_fingerprint_at_review"] == source["source_fingerprint"]
+    assert row["product_version_at_review"] == source["product_version"]
+    assert result["monthly_cashflow"] is None
+
+
+def test_stale_source_keeps_review_version_while_exposing_current_version():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["product_version_at_review"] = 2
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    decision = result["decisions"][0]
+    assert decision["product_version_at_review"] == 2
+    assert decision["product_version_current"] == 1
+    assert decision["input_state"] == "BLOCKED"
+    assert decision["source_blocker_codes"] == ["SOURCE_STALE"]
+
+
+def test_missing_source_never_invents_current_source_identity():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["source"] = None
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    decision = result["decisions"][0]
+    assert decision["source_fingerprint_current"] is None
+    assert decision["product_version_current"] is None
+    assert decision["input_state"] == "BLOCKED"
+    assert decision["source_blocker_codes"] == ["SOURCE_MISSING"]
+    assert result["execution_allowed"] is False

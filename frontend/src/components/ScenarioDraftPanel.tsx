@@ -287,7 +287,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
       </section>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
       {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.length > 0 &&
-        <ScenarioStage6Panel clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/> }
+        <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`} clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/> }
       {active.status !== "archived" && <>
         <form onSubmit={renameActive}>
           <label>שינוי שם חלופה <input maxLength={255} value={rename} onChange={event => setRename(event.target.value)} placeholder={active.name}/></label>

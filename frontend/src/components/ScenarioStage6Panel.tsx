@@ -89,7 +89,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [estimate, setEstimate] = useState<ScenarioGrossEstimate | null>(null);
+  const [estimates, setEstimates] = useState<Record<string, ScenarioGrossEstimate>>({});
   const [allocation, setAllocation] = useState<ScenarioAllocationEvidence | null>(null);
   const [allocationBusy, setAllocationBusy] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
@@ -103,7 +103,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setBusy(false);
     setDirty(false);
     setError(null);
-    setEstimate(null);
+    setEstimates({});
     allocationEpoch.current += 1;
     setAllocation(null);
     setAllocationError(null);
@@ -131,7 +131,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     allocationEpoch.current += 1;
     setAllocationBusy(false);
     setAllocation(null);
-    setEstimate(null);
+    setEstimates({});
     setDirty(true);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
   }
@@ -143,7 +143,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setAllocation(null);
     const decision = pensionDecisions.find(row => row.decision_id === id);
     if (!decision || elections.some(row => row.decision_id === id)) return;
-    setEstimate(null);
+    setEstimates({});
     setDirty(true);
     setElections(current => [...current, {
       decision_id: id, pension_start_date: decision.effective_date,
@@ -163,7 +163,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     const current = ++epoch.current;
     setBusy(true);
     setError(null);
-    setEstimate(null);
+    setEstimates({});
     try {
       const rows = elections.map(row => ({
         ...row, target_year: Number(row.pension_start_date.slice(0, 4)),
@@ -185,7 +185,11 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     if (busy || !loaded || dirty || scenario.status !== "draft") return;
     const current = ++epoch.current;
     setBusy(true);
-    setEstimate(null);
+    setEstimates(current => {
+      const next = { ...current };
+      delete next[decisionId];
+      return next;
+    });
     setError(null);
     try {
       const result = await readScenarioGrossEstimate(clientId, scenario.scenario_id, decisionId);
@@ -199,7 +203,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
           decisionId, scenario.version)) {
         throw Error("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
       }
-      setEstimate(result);
+      setEstimates(current => ({ ...current, [decisionId]: result }));
     } catch (cause) {
       if (epoch.current === current) setError(explain(cause));
     } finally {
@@ -237,6 +241,22 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     // A scenario version change refreshes the evidence request; edits clear it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenarioKey, autoInspectAllocations]);
+  const evaluatedEstimates = pensionDecisions
+    .map(decision => estimates[decision.decision_id])
+    .filter((value): value is ScenarioGrossEstimate => value !== undefined);
+  const readyEstimateCount = evaluatedEstimates.filter(
+    value => value.result_state === "RESULT_READY" && value.execution_allowed,
+  ).length;
+  const blockedEstimateCount = evaluatedEstimates.length - readyEstimateCount;
+  const calculationStatus = evaluatedEstimates.length === 0
+    ? "טרם חושב אומדן קצבה מאושר לחלופה."
+    : readyEstimateCount === pensionDecisions.length
+      ? "החישוב הושלם לכל החלטות הקצבה בחלופה."
+      : readyEstimateCount > 0 || evaluatedEstimates.length < pensionDecisions.length
+        ? "תוצאה חלקית: קיים אומדן מאושר רק לחלק מהחלטות הקצבה."
+        : blockedEstimateCount > 0
+          ? "החישוב חסום: לא הופק סכום קצבה מאושר."
+          : "טרם חושב אומדן קצבה מאושר לחלופה.";
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>
@@ -310,6 +330,21 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
             <button type="button" disabled={busy || dirty || row.coefficient_selection !== "manual_review_required"} onClick={() => void checkEstimate(decision.decision_id)}>
               בדוק אומדן קצבה מאושר
             </button>
+            {estimates[decision.decision_id] && <section
+              aria-label={`תוצאת אומדן עבור ${decision.component_code}`}>
+              {estimates[decision.decision_id].result_state === "RESULT_READY"
+                && estimates[decision.decision_id].execution_allowed
+                && estimates[decision.decision_id].monthly_estimate_gross_ils != null
+                ? <>
+                  <p>אומדן קצבה חודשית ברוטו: {estimates[decision.decision_id].monthly_estimate_gross_ils} ₪</p>
+                  <p>לפי מקדם מקצועי מאושר — {estimates[decision.decision_id].coefficient_provenance?.factor_evidence_type ?? "מקור לא ידוע"}.
+                    אומדן נומינלי, ללא מס, הצמדה או הבטחת זכאות.</p>
+                </>
+                : <>
+                  <p role="status">לא ניתן להפיק אומדן קצבה מהנתונים המאושרים כעת.</p>
+                  <ul>{estimates[decision.decision_id].blockers.map(code => <li key={code}>{code}</li>)}</ul>
+                </>}
+            </section>}
           </>}
         </fieldset>;
       })}
@@ -325,23 +360,16 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
           key={row.decision_id} clientId={clientId} scenarioId={scenario.scenario_id}
           scenarioVersion={scenario.version} decisionId={row.decision_id}
           disabled={busy} onApproved={() => {
-            setEstimate(null);
+            setEstimates({});
             allocationEpoch.current += 1;
             setAllocation(null);
             setAllocationBusy(false);
           }} />)}
-    {estimate && <section aria-label="תוצאת אומדן לא מחייבת">
-      {estimate.result_state === "RESULT_READY" && estimate.execution_allowed
-        && estimate.monthly_estimate_gross_ils != null
-        ? <>
-          <p>אומדן קצבה חודשית ברוטו: {estimate.monthly_estimate_gross_ils} ₪</p>
-          <p>לפי מקדם מקצועי מאושר — {estimate.coefficient_provenance?.factor_evidence_type ?? "מקור לא ידוע"}.
-            אומדן נומינלי, ללא מס, הצמדה או הבטחת זכאות.</p>
-        </>
-        : <>
-          <p role="status">לא ניתן להפיק אומדן קצבה מהנתונים המאושרים כעת.</p>
-          <ul>{estimate.blockers.map(code => <li key={code}>{code}</li>)}</ul>
-        </>}
+    {loaded && pensionDecisions.length > 0 && <section aria-label="מצב חישוב החלופה">
+      <h5>מצב חישוב קצבה בחלופה</h5>
+      <p role="status">{calculationStatus}</p>
+      <p>{readyEstimateCount} אומדנים הושלמו; {blockedEstimateCount} חסומים; {pensionDecisions.length - evaluatedEstimates.length} טרם נבדקו.</p>
+      <p>הסכומים מוצגים לכל החלטה בנפרד ואינם סכום קצבה מצרפי.</p>
     </section>}
   </section>;
 }

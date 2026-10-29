@@ -189,6 +189,51 @@ it("renders a monthly amount only from the complete closed READY envelope", asyn
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
   await screen.findByText(/אומדן קצבה חודשית ברוטו: 5.00/);
+  expect(screen.getByLabelText("מצב חישוב החלופה")).toHaveTextContent(
+    "החישוב הושלם לכל החלטות הקצבה בחלופה",
+  );
+});
+
+it("preserves per-decision results and reports a partial alternative without aggregation", async () => {
+  const secondDecision = {
+    ...scenario.decisions[0], decision_id: "d2", source_component_id: "c2",
+    component_code: "fund-2",
+  };
+  const secondElection = { ...election, decision_id: "d2", option_name: "Option 2" };
+  mock.list.mockResolvedValue([election, secondElection]);
+  mock.estimate
+    .mockResolvedValueOnce(readyEstimate())
+    .mockResolvedValueOnce(blockedEstimate({
+      decision_id: "d2", source_id: "scenario-decision:sc1:d2",
+      blockers: ["STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"],
+    }));
+  render(<ScenarioStage6Panel clientId={1}
+    scenario={{ ...scenario, decisions: [...scenario.decisions, secondDecision] }}
+    onSaved={vi.fn()}/>);
+
+  const buttons = await screen.findAllByRole("button", { name: "בדוק אומדן קצבה מאושר" });
+  fireEvent.click(buttons[0]);
+  await screen.findByText(/אומדן קצבה חודשית ברוטו: 5.00/);
+  fireEvent.click(buttons[1]);
+  await screen.findByText("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
+
+  expect(screen.getByText(/אומדן קצבה חודשית ברוטו: 5.00/)).toBeInTheDocument();
+  const status = screen.getByLabelText("מצב חישוב החלופה");
+  expect(status).toHaveTextContent("תוצאה חלקית");
+  expect(status).toHaveTextContent("1 אומדנים הושלמו; 1 חסומים; 0 טרם נבדקו");
+  expect(status).toHaveTextContent("אינם סכום קצבה מצרפי");
+  expect(status).not.toHaveTextContent("10.00");
+});
+
+it("reports a blocked alternative without presenting a zero result", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.estimate.mockResolvedValue(blockedEstimate());
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  await screen.findByText("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
+  const status = screen.getByLabelText("מצב חישוב החלופה");
+  expect(status).toHaveTextContent("החישוב חסום");
+  expect(status).not.toHaveTextContent("0.00 ₪");
 });
 
 

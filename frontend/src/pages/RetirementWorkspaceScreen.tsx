@@ -757,7 +757,7 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
-        <p className="professional-workspace__boundary">השוואת הקצאות הטיוטה השמורות מוצגת להלן. אין עדיין תוצאות קצבה, מס, הון נזיל או NPV מחושבות.</p>
+        <p className="professional-workspace__boundary">השוואת הקצאות הטיוטה השמורות מוצגת להלן. בחלופה פנסיונית שהשלימה את שערי Stage 6 ניתן לבדוק אומדן קצבה חודשי ברוטו לכל החלטה בנפרד. אין עדיין מס, הון נזיל, NPV או סכום קצבה מצרפי.</p>
         <ScenarioDraftPanel clientId={clientId} products={products} />
         <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
       </section>}

@@ -24,8 +24,10 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         and not candidate["blockers"]
         and allocation["overall_status"] == "STRUCTURAL_ONLY"
     )
-    source_status = {
-        decision_id: source["status"]
+    # Keep blocker provenance local to the affected source; a blocked sibling
+    # must not erase the diagnostic identity of an otherwise valid source.
+    by_decision = {
+        decision_id: source
         for source in allocation["sources"]
         for decision_id in source["decision_ids"]
     }
@@ -43,7 +45,14 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         "validation_state": row["validation_state"],
         "ruleset_digest_at_review": row["ruleset_digest_at_review"],
         "permission_preview_id_at_review": row["permission_preview_id_at_review"],
-        "input_state": "STRUCTURAL_ONLY" if source_status.get(row["decision_id"]) == "STRUCTURAL_ONLY" else "BLOCKED",
+        "input_state": (
+            "STRUCTURAL_ONLY"
+            if by_decision.get(row["decision_id"], {}).get("status") == "STRUCTURAL_ONLY"
+            else "BLOCKED"
+        ),
+        "source_blocker_codes": list(
+            by_decision.get(row["decision_id"], {}).get("blocker_codes", [])
+        ),
         "monthly_income": None,
         "periodization": None,
     } for row in manifest["decisions"]]

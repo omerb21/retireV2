@@ -1,7 +1,7 @@
-"""Independent M09-P1 regression cases to integrate after locally verified fixes.
+"""M09-P1 input-envelope contract regressions.
 
-Deliberately isolated in a new test module: does not touch the M09-P1
-service or the test module already modified by Codex on an unpushed branch.
+Tests the canonical read-only snapshot adapter and per-source blockers without
+conferring pension, cashflow, tax or execution authority.
 """
 from copy import deepcopy
 

@@ -31,6 +31,7 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         for source in allocation["sources"]
         for decision_id in source["decision_ids"]
     }
+    candidate_only_blocked = not candidate_identity_matches or candidate["evidence_state"] != "STRUCTURALLY_CONSISTENT_NOT_ADMITTED" or bool(candidate["blockers"])
     # Never assume all structural decisions are financial-ready.
     decisions = [{
         "decision_id": row["decision_id"],
@@ -55,7 +56,7 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         "permission_preview_id_at_review": row["permission_preview_id_at_review"],
         "input_state": (
             "STRUCTURAL_ONLY"
-            if by_decision.get(row["decision_id"], {}).get("status") == "STRUCTURAL_ONLY"
+            if not candidate_only_blocked and by_decision.get(row["decision_id"], {}).get("status") == "STRUCTURAL_ONLY"
             else "BLOCKED"
         ),
         "source_blocker_codes": list(

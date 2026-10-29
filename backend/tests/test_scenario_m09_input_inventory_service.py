@@ -1,6 +1,11 @@
+from copy import deepcopy
+
 from app.services import scenario_m09_input_inventory_service as subject
 from app.services import scenario_input_manifest_service as owner
-from app.services.scenario_snapshot_candidate_service import _build_pair_in_snapshot
+from app.services.scenario_snapshot_candidate_service import (
+    _build_pair_in_snapshot,
+    _partition_verified_manifest,
+)
 from tests.test_scenario_input_manifest import fixture
 
 
@@ -18,6 +23,51 @@ def test_readonly_inventory():
     assert result["decisions"][0]["amount_principal"] == "50.00"
     assert result["source_allocations"][0]["unallocated"] == "50.00"
     assert result["monthly_cashflow"] is None
+    assert result["execution_allowed"] is False
+
+
+def test_decision_inventory_preserves_exact_review_identities():
+    result = subject._m09_p1_extension(None, pair())
+    decision = result["decisions"][0]
+    assert set(decision) == {
+        "decision_id", "product_id", "component_id", "component_code",
+        "action", "effective_date", "amount_principal", "validation_state",
+        "source_fingerprint_at_review", "product_version_at_review",
+        "ruleset_digest_at_review", "permission_preview_id_at_review",
+        "input_state", "monthly_income", "periodization",
+    }
+    assert decision["validation_state"] == "unverified"
+    assert decision["ruleset_digest_at_review"] == "a" * 64
+    assert decision["permission_preview_id_at_review"] == "b" * 64
+    assert decision["monthly_income"] is None
+    assert decision["periodization"] is None
+
+
+def test_blocked_second_source_does_not_relabel_clean_source():
+    evidence = pair()
+    manifest = deepcopy(evidence["manifest"])
+    second = deepcopy(manifest["decisions"][0])
+    second["decision_id"] = "blocked-second"
+    second["product_id"] = "p2"
+    second["component_id"] = "c2"
+    second["source"] = None
+    second["source_fingerprint_at_review"] = None
+    manifest["decisions"].append(second)
+    identity = {key: manifest[key] for key in owner.MANIFEST_IDENTITY_FIELDS}
+    manifest["manifest_fingerprint"] = owner._fingerprint(identity)
+    evidence = {
+        "manifest": manifest,
+        "candidate": _partition_verified_manifest(manifest),
+    }
+
+    result = subject._m09_p1_extension(None, evidence)
+
+    assert result["inventory_state"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SOURCE_MISSING", "SOURCE_MISSING:blocked-second"]
+    assert [(row["decision_id"], row["input_state"]) for row in result["decisions"]] == [
+        ("d", "STRUCTURAL_ONLY"),
+        ("blocked-second", "BLOCKED"),
+    ]
     assert result["execution_allowed"] is False
 
 

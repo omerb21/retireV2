@@ -300,3 +300,29 @@ def test_changed_source_version_does_not_refresh_review_identity():
     assert result["decisions"][0]["input_state"] == "BLOCKED"
     assert "SOURCE_STALE" in result["blocker_codes"]
     assert result["source_allocations"][0]["unallocated"] is None
+
+
+def test_candidate_manifest_fingerprint_mismatch_blocks_nonfinancial_inventory():
+    pair = verified_pair()
+    pair["candidate"]["manifest_fingerprint"] = "0" * 64
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert "SCENARIO_CANDIDATE_IDENTITY_MISMATCH" in result["blocker_codes"]
+    assert result["financial_result"] is None
+    assert result["execution_allowed"] is False
+
+
+def test_candidate_scenario_version_mismatch_blocks_inventory():
+    pair = verified_pair()
+    pair["candidate"]["scenario_version"] += 1
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert result["blocker_codes"] == ["SCENARIO_CANDIDATE_IDENTITY_MISMATCH"]
+    assert result["monthly_cashflow"] is None
+
+
+def test_canonical_candidate_identity_matches_the_manifest():
+    pair = verified_pair()
+    output = subject._m09_p1_extension(None, pair)
+    assert pair["candidate"]["manifest_fingerprint"] == output["manifest_fingerprint"]
+    assert output["inventory_state"] == "STRUCTURAL_ONLY"

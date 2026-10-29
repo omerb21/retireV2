@@ -4,7 +4,6 @@ Deliberately isolated in a new test module: does not touch the M09-P1
 service or the test module already modified by Codex on an unpushed branch.
 """
 from copy import deepcopy
-from decimal import Decimal
 
 from app.services import scenario_m09_input_inventory_service as subject
 from app.services import scenario_input_manifest_service as manifest

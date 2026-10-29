@@ -4,8 +4,10 @@ import { ScenarioFactorAdmissionPanel } from "./ScenarioFactorAdmissionPanel";
 import {
   listScenarioPensionElections, saveScenarioPensionElections, readScenarioGrossEstimate,
   readScenarioPensionAggregate,
+  readScenarioMonthlyCashflow,
   readScenarioAllocationEvidence, validScenarioAllocationEvidence, type ScenarioAllocationEvidence,
   type ScenarioPensionElection, type ScenarioGrossEstimate, type ScenarioPensionAggregate,
+  type ScenarioMonthlyCashflow,
 } from "../api/scenarioStage6Api";
 
 interface Props {
@@ -134,6 +136,93 @@ function closedAggregateEnvelope(value: ScenarioPensionAggregate, clientId: numb
     || completeSnapshot;
 }
 
+const money = (value: unknown): value is string => typeof value === "string"
+  && /^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(value);
+const sortedUnique = (values: string[]): boolean => values.every(
+  (value, index) => typeof value === "string" && value.length > 0
+    && (index === 0 || values[index - 1] < value),
+);
+const cents = (value: string): bigint => {
+  const [whole, fraction] = value.split(".");
+  return BigInt(whole) * 100n + BigInt(fraction);
+};
+function monthSequence(start: string, end: string): string[] {
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(start)
+      || !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(end)) return [];
+  const values: string[] = [];
+  let year = Number(start.slice(0, 4));
+  let month = Number(start.slice(5));
+  const endValue = Number(end.replace("-", ""));
+  while (year * 100 + month <= endValue && values.length <= 600) {
+    values.push(`${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}`);
+    month += 1;
+    if (month === 13) { year += 1; month = 1; }
+  }
+  return values.length <= 600 ? values : [];
+}
+
+function closedCashflowEnvelope(value: ScenarioMonthlyCashflow, clientId: number,
+  scenarioId: string, scenarioVersion: number, startMonth: string, endMonth: string): boolean {
+  if (!value || value.schema_version !== "STAGE6_MONTHLY_RETIREMENT_CASHFLOW_V1"
+      || value.client_id !== clientId || value.scenario_id !== scenarioId
+      || value.start_month !== startMonth || value.end_month !== endMonth
+      || value.execution_allowed !== false || !hash(value.cashflow_fingerprint)
+      || !Array.isArray(value.sources) || !Array.isArray(value.monthly_rows)
+      || !Array.isArray(value.blocker_codes) || !sortedUnique(value.blocker_codes)
+      || (value.scenario_version !== scenarioVersion && value.scenario_version !== null)
+      || ((value.scenario_version === null) !== (value.manifest_fingerprint === null))
+      || (value.scenario_version === null && value.cashflow_state !== "BLOCKED")
+      || (value.manifest_fingerprint !== null && !hash(value.manifest_fingerprint))) return false;
+  const sourceIds = value.sources.map(source => source.source_id);
+  if (sourceIds.join("|") !== [...new Set(sourceIds)].sort().join("|")
+      || value.sources.some(source => !source || !source.source_id || !source.label
+        || !hash(source.authority_fingerprint) || !Array.isArray(source.blocker_codes)
+        || !sortedUnique(source.blocker_codes)
+        || !["CALCULATED_PENSION", "KNOWN_RECURRING_INCOME"].includes(source.source_kind)
+        || !["READY", "BLOCKED"].includes(source.source_state)
+        || (source.source_state === "READY" && (!money(source.monthly_amount_gross_ils)
+          || source.income_basis !== "GROSS" || source.blocker_codes.length !== 0
+          || !["NOMINAL_UNINDEXED", "STATED_NOMINAL_NO_INDEXATION"].includes(source.price_basis ?? "")))
+        || (source.source_state === "BLOCKED" && source.monthly_amount_gross_ils !== null))) return false;
+  const expectedMonths = monthSequence(startMonth, endMonth);
+  if (expectedMonths.length === 0
+      || value.monthly_rows.map(row => row.month).join("|") !== expectedMonths.join("|")) return false;
+  const sourceMap = new Map(value.sources.map(source => [source.source_id, source]));
+  for (const row of value.monthly_rows) {
+    if (!Array.isArray(row.contributions) || !Array.isArray(row.blocker_codes)
+        || !sortedUnique(row.blocker_codes)
+        || !money(row.known_income_subtotal_ils)
+        || !money(row.calculated_pension_subtotal_ils)) return false;
+    const ids = row.contributions.map(item => item.source_id);
+    if (ids.length !== new Set(ids).size) return false;
+    let known = 0n;
+    let calculated = 0n;
+    for (const item of row.contributions) {
+      const source = sourceMap.get(item.source_id);
+      if (!source || source.source_state !== "READY"
+          || source.source_kind !== item.source_kind
+          || source.monthly_amount_gross_ils !== item.amount_monthly_gross_ils
+          || !money(item.amount_monthly_gross_ils)) return false;
+      if (item.contribution_state === "KNOWN") known += cents(item.amount_monthly_gross_ils);
+      else if (item.contribution_state === "CALCULATED") calculated += cents(item.amount_monthly_gross_ils);
+      else return false;
+    }
+    if (cents(row.known_income_subtotal_ils) !== known
+        || cents(row.calculated_pension_subtotal_ils) !== calculated) return false;
+    if (row.cashflow_state === "COMPLETE") {
+      if (row.blocker_codes.length !== 0 || !money(row.gross_income_total_ils)
+          || cents(row.gross_income_total_ils) !== known + calculated) return false;
+    } else if ((row.cashflow_state !== "PARTIAL" && row.cashflow_state !== "BLOCKED")
+        || row.blocker_codes.length === 0 || row.gross_income_total_ils !== null) return false;
+  }
+  const states = new Set(value.monthly_rows.map(row => row.cashflow_state));
+  const rowBlockers = [...new Set(value.monthly_rows.flatMap(row => row.blocker_codes))].sort();
+  if (rowBlockers.join("|") !== value.blocker_codes.join("|")) return false;
+  return (value.cashflow_state === "COMPLETE" && states.size === 1 && states.has("COMPLETE"))
+    || (value.cashflow_state === "PARTIAL" && (states.has("COMPLETE") || states.has("PARTIAL")))
+    || (value.cashflow_state === "BLOCKED" && states.size === 1 && states.has("BLOCKED"));
+}
+
 /** Phase-1 internal workspace only; does NOT enter or approve factor values. */
 export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAllocations = false }: Props) {
   const [elections, setElections] = useState<ScenarioPensionElection[]>([]);
@@ -143,6 +232,9 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
   const [busy, setBusy] = useState(false);
   const [estimates, setEstimates] = useState<Record<string, ScenarioGrossEstimate>>({});
   const [aggregate, setAggregate] = useState<ScenarioPensionAggregate | null>(null);
+  const [cashflow, setCashflow] = useState<ScenarioMonthlyCashflow | null>(null);
+  const [cashflowStartMonth, setCashflowStartMonth] = useState("");
+  const [cashflowEndMonth, setCashflowEndMonth] = useState("");
   const [allocation, setAllocation] = useState<ScenarioAllocationEvidence | null>(null);
   const [allocationBusy, setAllocationBusy] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
@@ -158,6 +250,11 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setError(null);
     setEstimates({});
     setAggregate(null);
+    setCashflow(null);
+    setCashflowStartMonth(scenario.decisions
+      .filter(decision => decision.action === "pension")
+      .map(decision => decision.effective_date.slice(0, 7)).sort()[0] ?? "");
+    setCashflowEndMonth("");
     allocationEpoch.current += 1;
     setAllocation(null);
     setAllocationError(null);
@@ -187,6 +284,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setAllocation(null);
     setEstimates({});
     setAggregate(null);
+    setCashflow(null);
     setDirty(true);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
   }
@@ -200,6 +298,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     if (!decision || elections.some(row => row.decision_id === id)) return;
     setEstimates({});
     setAggregate(null);
+    setCashflow(null);
     setDirty(true);
     setElections(current => [...current, {
       decision_id: id, pension_start_date: decision.effective_date,
@@ -221,6 +320,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setError(null);
     setEstimates({});
     setAggregate(null);
+    setCashflow(null);
     try {
       const rows = elections.map(row => ({
         ...row, target_year: Number(row.pension_start_date.slice(0, 4)),
@@ -293,6 +393,30 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     }
   }
 
+  async function checkCashflow() {
+    if (busy || !loaded || dirty || scenario.status !== "draft"
+        || !cashflowStartMonth || !cashflowEndMonth) return;
+    const current = ++epoch.current;
+    setBusy(true);
+    setCashflow(null);
+    setError(null);
+    try {
+      const result = await readScenarioMonthlyCashflow(
+        clientId, scenario.scenario_id, cashflowStartMonth, cashflowEndMonth,
+      );
+      if (epoch.current !== current) return;
+      if (!closedCashflowEnvelope(result, clientId, scenario.scenario_id,
+          scenario.version, cashflowStartMonth, cashflowEndMonth)) {
+        throw Error("STAGE6_CASHFLOW_AUTHORITY_INCOMPLETE");
+      }
+      setCashflow(result);
+    } catch (cause) {
+      if (epoch.current === current) setError(explain(cause));
+    } finally {
+      if (epoch.current === current) setBusy(false);
+    }
+  }
+
   async function inspectAllocations() {
     if (allocationBusy || dirty || scenario.status !== "draft") return;
     const current = ++allocationEpoch.current;
@@ -337,6 +461,13 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
       : aggregate.aggregation_state === "PARTIAL"
         ? "תוצאה חלקית: מוצגות תוצאות מאושרות נפרדות, ללא סכום קצבה כולל."
         : "החישוב חסום: לא הופק סכום קצבה כולל.";
+  const cashflowStatus = cashflow === null
+    ? "התזרים טרם חושב. יש לבחור אופק סיום מפורש."
+    : cashflow.cashflow_state === "COMPLETE"
+      ? "התזרים הושלם לכל החודשים על בסיס מקורות תקפים ובני־השוואה."
+      : cashflow.cashflow_state === "PARTIAL"
+        ? "התזרים חלקי: חודשים חסומים אינם כוללים סכום כולל."
+        : "התזרים חסום: לא נמצא חודש עם סכום כולל תקף.";
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>
@@ -442,6 +573,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
           disabled={busy} onApproved={() => {
             setEstimates({});
             setAggregate(null);
+            setCashflow(null);
             allocationEpoch.current += 1;
             setAllocation(null);
             setAllocationBusy(false);
@@ -465,6 +597,53 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
         : <p>לא מוצג סכום כולל. תוצאות תקינות, אם קיימות, מוצגות לכל החלטה בנפרד בלבד.</p>}
       {aggregate && aggregate.blockers.length > 0
         && <ul aria-label="חסימות סיכום הקצבה">{aggregate.blockers.map(code => <li key={code}>{code}</li>)}</ul>}
+    </section>}
+    {loaded && pensionDecisions.length > 0 && <section aria-label="תזרים הכנסות חודשי מבוקר">
+      <h5>תזרים הכנסות חודשי ברוטו</h5>
+      <p>הצגה זו משלבת רק קצבאות Stage 6 מאומתות והכנסות חוזרות חודשיות תקפות.
+        אין בה מס, נטו, הצמדה, תשואה, היוון, NPV או משיכות הון.</p>
+      <div className="professional-workspace__grid">
+        <label>חודש תחילת התזרים
+          <input type="month" value={cashflowStartMonth} disabled={busy || dirty}
+            onChange={event => { setCashflowStartMonth(event.target.value); setCashflow(null); }} />
+        </label>
+        <label>חודש סיום התזרים
+          <input type="month" value={cashflowEndMonth} disabled={busy || dirty}
+            onChange={event => { setCashflowEndMonth(event.target.value); setCashflow(null); }} />
+        </label>
+      </div>
+      <button type="button" disabled={busy || dirty || scenario.status !== "draft"
+        || !cashflowStartMonth || !cashflowEndMonth}
+        onClick={() => void checkCashflow()}>
+        חשב תזרים חודשי מבוקר
+      </button>
+      <p role="status">{cashflowStatus}</p>
+      {cashflow && <>
+        <ul aria-label="מקורות תזרים">
+          {cashflow.sources.map(source => <li key={source.source_id}>
+            {source.label}: {source.source_state === "READY"
+              ? `${source.monthly_amount_gross_ils} ₪ ברוטו לחודש`
+              : `חסום — ${source.blocker_codes.join(", ")}`}
+          </li>)}
+        </ul>
+        <div className="table-wrap">
+          <table>
+            <caption>טבלת תזרים חודשי לפי Snapshot חלופה {cashflow.scenario_version ?? "לא זמין"}</caption>
+            <thead><tr><th>חודש</th><th>הכנסה ידועה</th><th>קצבה מחושבת</th><th>סך ברוטו</th><th>מקורות ומצב</th></tr></thead>
+            <tbody>{cashflow.monthly_rows.map(row => <tr key={row.month}>
+              <td>{row.month}</td>
+              <td>{row.known_income_subtotal_ils} ₪</td>
+              <td>{row.calculated_pension_subtotal_ils} ₪</td>
+              <td>{row.gross_income_total_ils === null ? "לא זמין" : `${row.gross_income_total_ils} ₪`}</td>
+              <td>{row.contributions.map(item => cashflow.sources.find(source => source.source_id === item.source_id)?.label
+                ?? item.source_id).join("; ") || row.blocker_codes.join(", ")}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        {cashflow.blocker_codes.length > 0 && <ul aria-label="חסימות תזרים">
+          {cashflow.blocker_codes.map(code => <li key={code}>{code}</li>)}
+        </ul>}
+      </>}
     </section>}
   </section>;
 }

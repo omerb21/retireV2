@@ -31,7 +31,12 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         for source in allocation["sources"]
         for decision_id in source["decision_ids"]
     }
-    candidate_only_blocked = not candidate_identity_matches or candidate["evidence_state"] != "STRUCTURALLY_CONSISTENT_NOT_ADMITTED" or bool(candidate["blockers"])
+    # Candidate state is scenario-wide, but source diagnostics remain local.
+    # A blocked sibling must not relabel a source whose allocation evidence is
+    # structurally sound.  Only a torn manifest/candidate identity invalidates
+    # every row; source and scenario blockers already appear on their affected
+    # allocation rows.
+    candidate_only_blocked = not candidate_identity_matches
     # Never assume all structural decisions are financial-ready.
     decisions = [{
         "decision_id": row["decision_id"],

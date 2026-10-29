@@ -5,12 +5,14 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 
 const mock = vi.hoisted(() => ({
   list: vi.fn(), save: vi.fn(), estimate: vi.fn(), aggregate: vi.fn(), allocation: vi.fn(),
+  cashflow: vi.fn(),
 }));
 vi.mock("../api/scenarioStage6Api", () => ({
   listScenarioPensionElections: mock.list,
   saveScenarioPensionElections: mock.save,
   readScenarioGrossEstimate: mock.estimate,
   readScenarioPensionAggregate: mock.aggregate,
+  readScenarioMonthlyCashflow: mock.cashflow,
   readScenarioAllocationEvidence: mock.allocation,
   validScenarioAllocationEvidence: (value: any, clientId: number, scenarioId: string, version: number) =>
     value?.allocation_evidence?.client_id === clientId
@@ -94,6 +96,43 @@ function aggregate(overrides: Record<string, unknown> = {}) {
       retirement_target_date: "2027-09-30", source_reference_date: "2026-09-30",
     },
     execution_allowed: false, aggregate_fingerprint: "f".repeat(64), ...overrides,
+  };
+}
+function cashflow(overrides: Record<string, unknown> = {}): any {
+  return {
+    schema_version: "STAGE6_MONTHLY_RETIREMENT_CASHFLOW_V1",
+    client_id: 1, scenario_id: "sc1", scenario_version: 3,
+    manifest_fingerprint: "9".repeat(64), start_month: "2026-09", end_month: "2026-10",
+    cashflow_state: "COMPLETE", blocker_codes: [], execution_allowed: false,
+    sources: [{
+      source_id: "pension:d1", source_kind: "CALCULATED_PENSION", decision_id: "d1",
+      recurring_income_id: null, label: "קצבה fund", monthly_amount_gross_ils: "5.00",
+      income_basis: "GROSS", price_basis: "NOMINAL_UNINDEXED", start_date: "2026-09-01",
+      end_date: null, source_reference_date: "2026-08-01", authority_fingerprint: "7".repeat(64),
+      source_state: "READY", blocker_codes: [],
+    }, {
+      source_id: "recurring:7", source_kind: "KNOWN_RECURRING_INCOME", decision_id: null,
+      recurring_income_id: 7, label: "שכירות", monthly_amount_gross_ils: "1200.00",
+      income_basis: "GROSS", price_basis: "STATED_NOMINAL_NO_INDEXATION", start_date: "2026-10-01",
+      end_date: null, source_reference_date: null, authority_fingerprint: "8".repeat(64),
+      source_state: "READY", blocker_codes: [],
+    }],
+    monthly_rows: [{
+      month: "2026-09", cashflow_state: "COMPLETE",
+      contributions: [{ source_id: "pension:d1", source_kind: "CALCULATED_PENSION",
+        amount_monthly_gross_ils: "5.00", contribution_state: "CALCULATED" }],
+      known_income_subtotal_ils: "0.00", calculated_pension_subtotal_ils: "5.00",
+      gross_income_total_ils: "5.00", blocker_codes: [],
+    }, {
+      month: "2026-10", cashflow_state: "COMPLETE",
+      contributions: [{ source_id: "pension:d1", source_kind: "CALCULATED_PENSION",
+        amount_monthly_gross_ils: "5.00", contribution_state: "CALCULATED" },
+      { source_id: "recurring:7", source_kind: "KNOWN_RECURRING_INCOME",
+        amount_monthly_gross_ils: "1200.00", contribution_state: "KNOWN" }],
+      known_income_subtotal_ils: "1200.00", calculated_pension_subtotal_ils: "5.00",
+      gross_income_total_ils: "1205.00", blocker_codes: [],
+    }],
+    cashflow_fingerprint: "f".repeat(64), ...overrides,
   };
 }
 function deferred<T>() {
@@ -585,4 +624,60 @@ it("opens a capital-only alternative without requesting pension elections", asyn
   expect(mock.list).not.toHaveBeenCalled();
   expect(screen.queryByText("טוען בחירות קצבה...")).toBeNull();
   expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeNull();
+});
+
+it("renders a verified monthly gross cashflow with distinct known and calculated sources", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.cashflow.mockResolvedValue(cashflow());
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  await screen.findByRole("button", { name: "חשב תזרים חודשי מבוקר" });
+  fireEvent.change(screen.getByLabelText("חודש סיום התזרים"), { target: { value: "2026-10" } });
+  fireEvent.click(screen.getByRole("button", { name: "חשב תזרים חודשי מבוקר" }));
+  await screen.findByText(/התזרים הושלם לכל החודשים/);
+  expect(mock.cashflow).toHaveBeenCalledWith(1, "sc1", "2026-09", "2026-10");
+  expect(screen.getByText("1205.00 ₪")).toBeTruthy();
+  expect(screen.getByText(/אין בה מס, נטו, הצמדה/)).toBeTruthy();
+  expect(screen.getByText(/שכירות: 1200.00 ₪ ברוטו/)).toBeTruthy();
+});
+
+it("shows a partial cashflow without presenting a misleading monthly total", async () => {
+  mock.list.mockResolvedValue([election]);
+  const partial = cashflow();
+  partial.cashflow_state = "PARTIAL";
+  partial.blocker_codes = ["STAGE6_CASHFLOW_PARTIAL_MONTH_PRORATION_UNDEFINED"];
+  partial.monthly_rows[0] = {
+    ...partial.monthly_rows[0], cashflow_state: "PARTIAL", gross_income_total_ils: null,
+    blocker_codes: ["STAGE6_CASHFLOW_PARTIAL_MONTH_PRORATION_UNDEFINED"],
+  };
+  mock.cashflow.mockResolvedValue(partial);
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.change(await screen.findByLabelText("חודש סיום התזרים"), { target: { value: "2026-10" } });
+  fireEvent.click(screen.getByRole("button", { name: "חשב תזרים חודשי מבוקר" }));
+  await screen.findByText(/התזרים חלקי/);
+  expect(screen.getAllByText("לא זמין").length).toBeGreaterThan(0);
+  expect(screen.getByText("STAGE6_CASHFLOW_PARTIAL_MONTH_PRORATION_UNDEFINED")).toBeTruthy();
+});
+
+it("fails closed on a malformed cashflow authority fingerprint", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.cashflow.mockResolvedValue(cashflow({ cashflow_fingerprint: "forged" }));
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.change(await screen.findByLabelText("חודש סיום התזרים"), { target: { value: "2026-10" } });
+  fireEvent.click(screen.getByRole("button", { name: "חשב תזרים חודשי מבוקר" }));
+  await screen.findByText("STAGE6_CASHFLOW_AUTHORITY_INCOMPLETE");
+  expect(screen.queryByText("1205.00 ₪")).toBeNull();
+});
+
+it("drops a late cashflow after switching client and alternative generation", async () => {
+  mock.list.mockResolvedValue([election]);
+  const waiting = deferred<any>();
+  mock.cashflow.mockReturnValue(waiting.promise);
+  const view = render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.change(await screen.findByLabelText("חודש סיום התזרים"), { target: { value: "2026-10" } });
+  fireEvent.click(screen.getByRole("button", { name: "חשב תזרים חודשי מבוקר" }));
+  view.rerender(<ScenarioStage6Panel clientId={2}
+    scenario={{ ...scenario, client_id: 2, scenario_id: "sc2", version: 4 }} onSaved={vi.fn()}/>);
+  waiting.resolve(cashflow());
+  await waitFor(() => expect(mock.list).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("1205.00 ₪")).toBeNull();
 });

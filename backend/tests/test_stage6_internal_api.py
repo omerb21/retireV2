@@ -120,6 +120,33 @@ def test_valid_staging_session_calls_aggregate_service_once():
     assert result.headers["pragma"]=="no-cache"
 
 
+def test_valid_staging_session_calls_monthly_cashflow_once():
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch.object(
+        route,"build_scenario_monthly_cashflow",
+        return_value={"cashflow_state":"BLOCKED","execution_allowed":False}) as builder:
+        result=route.internal_monthly_income_cashflow(
+            r,"scenario","2027-01","2027-12",client_id=1,factory="factory")
+    builder.assert_called_once_with(
+        "factory",client_id=1,scenario_id="scenario",
+        start_month="2027-01",end_month="2027-12")
+    assert result.headers["cache-control"]=="no-store, private"
+    assert result.headers["pragma"]=="no-cache"
+
+
+def test_monthly_cashflow_rejects_invalid_range_without_database_access():
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch.object(
+        route,"build_scenario_monthly_cashflow",
+        side_effect=ValueError("STAGE6_CASHFLOW_RANGE_INVALID")) as builder,patch.object(
+        route,"error",return_value="invalid") as reject:
+        result=route.internal_monthly_income_cashflow(
+            r,"scenario","2028-01","2027-01",client_id=1,factory="factory")
+    assert result=="invalid"
+    reject.assert_called_once_with(r,422,"STAGE6_CASHFLOW_RANGE_INVALID")
+    builder.assert_called_once()
+
+
 def test_invalid_signed_session_never_calls_service():
     r=request(actor="planner:authenticated")
     with patch.object(route,"validate_session",return_value="invalid"),patch.object(
@@ -184,6 +211,28 @@ def test_real_middleware_requires_signed_session_for_aggregate(monkeypatch):
     assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
     assert accepted.status_code==200
     estimate.assert_called_once_with("factory",client_id=1,scenario_id="sc")
+
+
+def test_real_middleware_requires_signed_session_for_monthly_cashflow(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    config=_production_config()
+    app=create_app(config)
+    app.dependency_overrides[route.get_stage6_factory]=lambda:"factory"
+    client=TestClient(app)
+    path=("/api/clients/1/scenario-drafts/sc/monthly-income-cashflow"
+          "?start_month=2027-01&end_month=2027-03")
+    with patch.object(route,"build_scenario_monthly_cashflow",
+                      return_value={"cashflow_state":"BLOCKED"}) as builder:
+        missing=client.get(path,headers=_edge_headers())
+        token,_=issue(config)
+        client.cookies.set(COOKIE_NAME,token)
+        accepted=client.get(path,headers=_edge_headers())
+    assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
+    assert accepted.status_code==200
+    builder.assert_called_once_with(
+        "factory",client_id=1,scenario_id="sc",
+        start_month="2027-01",end_month="2027-03")
 
 
 def test_real_middleware_requires_session_bound_csrf_for_factor_write(monkeypatch):

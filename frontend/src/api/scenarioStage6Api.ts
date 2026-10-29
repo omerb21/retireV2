@@ -60,6 +60,49 @@ export interface ScenarioPensionAggregate {
   execution_allowed: false;
   aggregate_fingerprint: string;
 }
+export interface ScenarioMonthlyCashflow {
+  schema_version: "STAGE6_MONTHLY_RETIREMENT_CASHFLOW_V1";
+  client_id: number;
+  scenario_id: string;
+  scenario_version: number | null;
+  manifest_fingerprint: string | null;
+  start_month: string;
+  end_month: string;
+  cashflow_state: "COMPLETE" | "PARTIAL" | "BLOCKED";
+  blocker_codes: string[];
+  sources: Array<{
+    source_id: string;
+    source_kind: "CALCULATED_PENSION" | "KNOWN_RECURRING_INCOME";
+    decision_id: string | null;
+    recurring_income_id: number | null;
+    label: string;
+    monthly_amount_gross_ils: string | null;
+    income_basis: "GROSS" | null;
+    price_basis: "NOMINAL_UNINDEXED" | "STATED_NOMINAL_NO_INDEXATION" | null;
+    start_date: string | null;
+    end_date: string | null;
+    source_reference_date: string | null;
+    authority_fingerprint: string;
+    source_state: "READY" | "BLOCKED";
+    blocker_codes: string[];
+  }>;
+  monthly_rows: Array<{
+    month: string;
+    cashflow_state: "COMPLETE" | "PARTIAL" | "BLOCKED";
+    contributions: Array<{
+      source_id: string;
+      source_kind: "CALCULATED_PENSION" | "KNOWN_RECURRING_INCOME";
+      amount_monthly_gross_ils: string;
+      contribution_state: "KNOWN" | "CALCULATED";
+    }>;
+    known_income_subtotal_ils: string;
+    calculated_pension_subtotal_ils: string;
+    gross_income_total_ils: string | null;
+    blocker_codes: string[];
+  }>;
+  execution_allowed: false;
+  cashflow_fingerprint: string;
+}
 
 async function read<T>(clientId: number, scenarioId: string, suffix: string,
                        options: RequestInit = {}): Promise<T> {
@@ -106,6 +149,13 @@ export async function readScenarioGrossEstimate(
 export async function readScenarioPensionAggregate(
   clientId: number, scenarioId: string): Promise<ScenarioPensionAggregate> {
   return read(clientId, scenarioId, "/pension-gross-summary");
+}
+
+export async function readScenarioMonthlyCashflow(
+  clientId: number, scenarioId: string, startMonth: string, endMonth: string,
+): Promise<ScenarioMonthlyCashflow> {
+  const query = new URLSearchParams({ start_month: startMonth, end_month: endMonth });
+  return read(clientId, scenarioId, `/monthly-income-cashflow?${query.toString()}`);
 }
 
 

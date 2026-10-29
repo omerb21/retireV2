@@ -15,11 +15,15 @@ from app.models.client_profile import ClientProfile
 from app.models.pension_product import (
     COMPONENT_CODES, PensionProduct, PensionProductComponent,
 )
-from app.models.planning_input_decision import PlanningInputDecision
+from app.models.planning_input_decision import PensionIncomeResolution, PlanningInputDecision
+from app.models.retirement_facts import RecurringIncome
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services import scenario_stage6_single_pension_estimate_service as subject
+from app.services.scenario_stage6_monthly_cashflow_service import (
+    build_scenario_monthly_cashflow,
+)
 from app.services.scenario_draft_service import _source_evidence
 from app.services.scenario_permission_preview_service import ruleset_digest
 from app.services.scenario_pension_factor_admission_write_service import (
@@ -71,6 +75,8 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 PensionProductComponent.__table__, ScenarioDraft.__table__,
                 ScenarioDraftDecision.__table__, ScenarioDraftPensionElection.__table__,
                 PlanningInputDecision.__table__,
+                PensionIncomeResolution.__table__,
+                RecurringIncome.__table__,
             ))
             monkeypatch.setenv("CRTISBA_APPLICATION_DB_ROLE", role)
             original_operation = migration.op
@@ -112,6 +118,14 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             connection.execute(PensionProductComponent.__table__.insert(), {
                 "component_id": "component-2", "product_id": "product-2",
                 "component_code": component_code, "balance": Decimal("1200.00"),
+            })
+            connection.execute(RecurringIncome.__table__.insert(), {
+                "id": 27, "client_id": 27, "income_category": "rental",
+                "description": "Synthetic rent", "amount": Decimal("1200.00"),
+                "amount_basis": "gross", "frequency": "monthly",
+                "continuation_status": "ongoing", "lifecycle_status": "current",
+                "source_status": "planner entered", "verification_state": "reviewed",
+                "start_date": date(2027, 1, 1), "end_date": None,
             })
             source = _source_evidence(
                 SimpleNamespace(
@@ -245,6 +259,17 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
         assert [row["monthly_estimate_gross_ils"]
                 for row in aggregate["decision_results"]] == ["2.00", "2.00"]
         assert len(aggregate["aggregate_fingerprint"]) == 64
+        cashflow = build_scenario_monthly_cashflow(
+            factory, client_id=27, scenario_id="scenario",
+            start_month="2027-10", end_month="2027-11",
+        )
+        assert cashflow["cashflow_state"] == "COMPLETE"
+        assert [row["gross_income_total_ils"] for row in cashflow["monthly_rows"]] == [
+            "1204.00", "1204.00",
+        ]
+        assert all(len(row["contributions"]) == 3 for row in cashflow["monthly_rows"])
+        assert cashflow["execution_allowed"] is False
+        assert len(cashflow["cashflow_fingerprint"]) == 64
         with factory() as db:
             assert db.scalar(select(func.count()).select_from(
                 ScenarioPensionFactorAdmission)) == 2

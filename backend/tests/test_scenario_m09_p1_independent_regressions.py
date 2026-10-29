@@ -7,7 +7,9 @@ from copy import deepcopy
 
 from app.services import scenario_m09_input_inventory_service as subject
 from app.services import scenario_input_manifest_service as manifest
-from app.services.scenario_snapshot_candidate_service import _build_pair_in_snapshot
+from app.services.scenario_snapshot_candidate_service import (
+    _build_pair_in_snapshot, _partition_verified_manifest,
+)
 from tests.test_scenario_input_manifest import fixture
 
 
@@ -131,6 +133,7 @@ def test_input_status_is_source_granular_with_global_block():
     blocked["source"] = None
     pair["manifest"]["decisions"].append(blocked)
     rehash(pair["manifest"])
+    pair["candidate"] = _partition_verified_manifest(pair["manifest"])
     result = subject._m09_p1_extension(None, pair)
     statuses = {row["decision_id"]: row["input_state"] for row in result["decisions"]}
     assert result["inventory_state"] == "BLOCKED"
@@ -206,6 +209,7 @@ def test_explicit_source_identity_remains_stable_across_other_source_failure():
     missing["source"] = None
     pair["manifest"]["decisions"].append(missing)
     rehash(pair["manifest"])
+    pair["candidate"] = _partition_verified_manifest(pair["manifest"])
     second = subject._m09_p1_extension(None, pair)
     assert second["inventory_state"] == "BLOCKED"
     assert first["decisions"][0]["source_fingerprint_at_review"] == second["decisions"][0]["source_fingerprint_at_review"]
@@ -279,6 +283,7 @@ def test_multiple_decisions_on_same_component_retain_distinct_input_identity():
     second["action"] = "capital_asset"
     pair["manifest"]["decisions"].append(second)
     rehash(pair["manifest"])
+    pair["candidate"] = _partition_verified_manifest(pair["manifest"])
     result = subject._m09_p1_extension(None, pair)
     assert result["inventory_state"] == "STRUCTURAL_ONLY"
     assert {row["decision_id"] for row in result["decisions"]} == {"d", "second"}
@@ -337,6 +342,7 @@ def test_per_decision_blockers_are_source_scoped():
     missing["source"] = None
     pair["manifest"]["decisions"].append(missing)
     rehash(pair["manifest"])
+    pair["candidate"] = _partition_verified_manifest(pair["manifest"])
     result = subject._m09_p1_extension(None, pair)
     by_id = {row["decision_id"]: row for row in result["decisions"]}
     assert result["inventory_state"] == "BLOCKED"

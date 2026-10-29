@@ -12,6 +12,9 @@ from app.security.transport import NO_STORE, error, validate_session, validate_c
 from app.services.scenario_stage6_single_pension_estimate_service import (
     estimate_scenario_pension_aggregate, estimate_single_pension_decision,
 )
+from app.services.scenario_stage6_monthly_cashflow_service import (
+    build_scenario_monthly_cashflow,
+)
 
 router = APIRouter(
     prefix="/api/clients/{client_id}/scenario-drafts",
@@ -60,6 +63,29 @@ def internal_pension_gross_summary(
     result = estimate_scenario_pension_aggregate(
         factory, client_id=client_id, scenario_id=scenario_id,
     )
+    return JSONResponse(content=result, headers=NO_STORE)
+
+
+@router.get("/{scenario_id}/monthly-income-cashflow")
+def internal_monthly_income_cashflow(
+    request: Request,
+    scenario_id: str,
+    start_month: str,
+    end_month: str,
+    client_id: int = Path(gt=0),
+    factory: sessionmaker[Session] = Depends(get_stage6_factory),
+):
+    if not getattr(request.app.state, "stage6_preview_enabled", False):
+        return error(request, 404, "ROUTE_NOT_FOUND")
+    if _verified_internal_actor(request) is None:
+        return error(request, 401, "AUTHENTICATION_REQUIRED")
+    try:
+        result = build_scenario_monthly_cashflow(
+            factory, client_id=client_id, scenario_id=scenario_id,
+            start_month=start_month, end_month=end_month,
+        )
+    except ValueError as exc:
+        return error(request, 422, str(exc))
     return JSONResponse(content=result, headers=NO_STORE)
 
 

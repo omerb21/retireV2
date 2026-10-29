@@ -33,6 +33,8 @@ def test_decision_inventory_preserves_exact_review_identities():
         "decision_id", "product_id", "component_id", "component_code",
         "action", "effective_date", "amount_principal", "validation_state",
         "source_fingerprint_at_review", "product_version_at_review",
+        "source_fingerprint_current", "product_version_current",
+        "source_blocker_codes",
         "ruleset_digest_at_review", "permission_preview_id_at_review",
         "input_state", "monthly_income", "periodization",
     }
@@ -119,6 +121,7 @@ def test_only_source_with_missing_evidence_is_blocked():
     p["manifest"]["manifest_fingerprint"] = owner._fingerprint({
         key: p["manifest"][key] for key in owner.MANIFEST_IDENTITY_FIELDS
     })
+    p["candidate"] = _partition_verified_manifest(p["manifest"])
     result = subject._m09_p1_extension(None, p)
     assert result["inventory_state"] == "BLOCKED"
     by_id = {decision["decision_id"]: decision for decision in result["decisions"]}

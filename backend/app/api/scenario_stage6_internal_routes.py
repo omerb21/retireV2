@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.session import get_session_factory
 from app.security.transport import NO_STORE, error, validate_session, validate_csrf, validate_origin
 from app.services.scenario_stage6_single_pension_estimate_service import (
-    estimate_single_pension_decision,
+    estimate_scenario_pension_aggregate, estimate_single_pension_decision,
 )
 
 router = APIRouter(
@@ -42,6 +42,25 @@ def internal_gross_estimate(
     result=estimate_single_pension_decision(
         factory,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id)
     return JSONResponse(content=result,headers=NO_STORE)
+
+
+@router.get("/{scenario_id}/pension-gross-summary")
+def internal_pension_gross_summary(
+    request: Request,
+    scenario_id: str,
+    client_id: int = Path(gt=0),
+    factory: sessionmaker[Session] = Depends(get_stage6_factory),
+):
+    if not getattr(request.app.state, "stage6_preview_enabled", False):
+        return error(request, 404, "ROUTE_NOT_FOUND")
+    if _verified_internal_actor(request) is None:
+        return error(request, 401, "AUTHENTICATION_REQUIRED")
+    if not scenario_id or len(scenario_id) > 64:
+        return error(request, 422, "STAGE6_AGGREGATE_ROUTE_INVALID")
+    result = estimate_scenario_pension_aggregate(
+        factory, client_id=client_id, scenario_id=scenario_id,
+    )
+    return JSONResponse(content=result, headers=NO_STORE)
 
 
 # SC-05C draft election management shares the same closed internal router.

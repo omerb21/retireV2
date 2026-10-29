@@ -41,6 +41,25 @@ export interface ScenarioGrossEstimate {
   retirement_target_date: string | null;
   statement_date: string | null;
 }
+export interface ScenarioPensionAggregate {
+  schema_version: "STAGE6_PENSION_DECISION_AGGREGATE_V1";
+  client_id: number;
+  scenario_id: string;
+  scenario_version: number | null;
+  aggregation_state: "COMPLETE" | "PARTIAL" | "BLOCKED";
+  blockers: string[];
+  decision_results: ScenarioGrossEstimate[];
+  monthly_pension_gross_total_ils: string | null;
+  comparison_basis: {
+    currency: "ILS";
+    income_basis: "GROSS";
+    price_basis: "NOMINAL_UNINDEXED";
+    retirement_target_date: string;
+    source_reference_date: string;
+  } | null;
+  execution_allowed: false;
+  aggregate_fingerprint: string;
+}
 
 async function read<T>(clientId: number, scenarioId: string, suffix: string,
                        options: RequestInit = {}): Promise<T> {
@@ -82,6 +101,11 @@ export async function readScenarioGrossEstimate(
   clientId: number, scenarioId: string, decisionId: string): Promise<ScenarioGrossEstimate> {
   return read(clientId, scenarioId,
     `/pension-decisions/${encodeURIComponent(decisionId)}/gross-estimate`);
+}
+
+export async function readScenarioPensionAggregate(
+  clientId: number, scenarioId: string): Promise<ScenarioPensionAggregate> {
+  return read(clientId, scenarioId, "/pension-gross-summary");
 }
 
 

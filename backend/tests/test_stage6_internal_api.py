@@ -107,6 +107,19 @@ def test_valid_staging_session_calls_canonical_service_once():
     assert result.headers["pragma"]=="no-cache"
 
 
+def test_valid_staging_session_calls_aggregate_service_once():
+    r=request(actor="planner:authenticated")
+    with patch.object(route,"validate_session",return_value=None),patch.object(
+        route,"estimate_scenario_pension_aggregate",
+        return_value={"aggregation_state":"BLOCKED","execution_allowed":False}) as estimate:
+        result=route.internal_pension_gross_summary(
+            r,"scenario",client_id=1,factory="factory")
+    estimate.assert_called_once_with(
+        "factory",client_id=1,scenario_id="scenario")
+    assert result.headers["cache-control"]=="no-store, private"
+    assert result.headers["pragma"]=="no-cache"
+
+
 def test_invalid_signed_session_never_calls_service():
     r=request(actor="planner:authenticated")
     with patch.object(route,"validate_session",return_value="invalid"),patch.object(
@@ -152,6 +165,25 @@ def test_real_middleware_requires_signed_session_for_mounted_preview(monkeypatch
     assert accepted.status_code==200
     estimate.assert_called_once_with(
         "factory",client_id=1,scenario_id="sc",decision_id="d")
+
+
+def test_real_middleware_requires_signed_session_for_aggregate(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    config=_production_config()
+    app=create_app(config)
+    app.dependency_overrides[route.get_stage6_factory]=lambda:"factory"
+    client=TestClient(app)
+    path="/api/clients/1/scenario-drafts/sc/pension-gross-summary"
+    with patch.object(route,"estimate_scenario_pension_aggregate",
+                      return_value={"aggregation_state":"BLOCKED"}) as estimate:
+        missing=client.get(path,headers=_edge_headers())
+        token,_=issue(config)
+        client.cookies.set(COOKIE_NAME,token)
+        accepted=client.get(path,headers=_edge_headers())
+    assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
+    assert accepted.status_code==200
+    estimate.assert_called_once_with("factory",client_id=1,scenario_id="sc")
 
 
 def test_real_middleware_requires_session_bound_csrf_for_factor_write(monkeypatch):

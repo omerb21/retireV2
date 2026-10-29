@@ -3,8 +3,9 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import { ScenarioFactorAdmissionPanel } from "./ScenarioFactorAdmissionPanel";
 import {
   listScenarioPensionElections, saveScenarioPensionElections, readScenarioGrossEstimate,
+  readScenarioPensionAggregate,
   readScenarioAllocationEvidence, validScenarioAllocationEvidence, type ScenarioAllocationEvidence,
-  type ScenarioPensionElection, type ScenarioGrossEstimate,
+  type ScenarioPensionElection, type ScenarioGrossEstimate, type ScenarioPensionAggregate,
 } from "../api/scenarioStage6Api";
 
 interface Props {
@@ -82,6 +83,57 @@ function closedEstimateEnvelope(value: ScenarioGrossEstimate, clientId: number,
     && Number.isInteger(provenance.admission_revision) && provenance.admission_revision > 0;
 }
 
+const aggregateFields = [
+  "schema_version", "client_id", "scenario_id", "scenario_version",
+  "aggregation_state", "blockers", "decision_results",
+  "monthly_pension_gross_total_ils", "comparison_basis", "execution_allowed",
+  "aggregate_fingerprint",
+] as const;
+
+function closedAggregateEnvelope(value: ScenarioPensionAggregate, clientId: number,
+  scenarioId: string, scenarioVersion: number, decisionIds: string[]): boolean {
+  if (!value || Object.keys(value).sort().join("|") !== [...aggregateFields].sort().join("|")
+      || value.schema_version !== "STAGE6_PENSION_DECISION_AGGREGATE_V1"
+      || value.client_id !== clientId || value.scenario_id !== scenarioId
+      || value.execution_allowed !== false || !hash(value.aggregate_fingerprint)
+      || !Array.isArray(value.blockers) || !Array.isArray(value.decision_results)
+      || value.blockers.some(code => typeof code !== "string" || !code)
+      || value.blockers.join("|") !== [...new Set(value.blockers)].sort().join("|")) return false;
+  const expected = [...decisionIds].sort();
+  const actual = value.decision_results.map(result => result.decision_id);
+  const completeSnapshot = value.scenario_version === scenarioVersion
+    && actual.join("|") === expected.join("|")
+    && value.decision_results.every(result => closedEstimateEnvelope(
+      result, clientId, scenarioId, result.decision_id, scenarioVersion));
+  if (value.aggregation_state === "COMPLETE") {
+    const basis = value.comparison_basis;
+    return completeSnapshot && value.blockers.length === 0
+      && value.decision_results.length > 0
+      && value.decision_results.every(result => result.result_state === "RESULT_READY"
+        && result.execution_allowed)
+      && /^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(
+        value.monthly_pension_gross_total_ils ?? "")
+      && basis !== null
+      && Object.keys(basis).sort().join("|") === [
+        "currency", "income_basis", "price_basis", "retirement_target_date",
+        "source_reference_date",
+      ].sort().join("|")
+      && basis.currency === "ILS" && basis.income_basis === "GROSS"
+      && basis.price_basis === "NOMINAL_UNINDEXED"
+      && typeof basis.retirement_target_date === "string" && basis.retirement_target_date.length > 0
+      && typeof basis.source_reference_date === "string" && basis.source_reference_date.length > 0;
+  }
+  if (value.aggregation_state !== "PARTIAL" && value.aggregation_state !== "BLOCKED") return false;
+  if (value.monthly_pension_gross_total_ils !== null || value.comparison_basis !== null
+      || value.blockers.length === 0) return false;
+  if (value.aggregation_state === "PARTIAL") {
+    const ready = value.decision_results.filter(result => result.result_state === "RESULT_READY").length;
+    return completeSnapshot && ready > 0 && ready < value.decision_results.length;
+  }
+  return (value.scenario_version === null && value.decision_results.length === 0)
+    || completeSnapshot;
+}
+
 /** Phase-1 internal workspace only; does NOT enter or approve factor values. */
 export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAllocations = false }: Props) {
   const [elections, setElections] = useState<ScenarioPensionElection[]>([]);
@@ -90,6 +142,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [estimates, setEstimates] = useState<Record<string, ScenarioGrossEstimate>>({});
+  const [aggregate, setAggregate] = useState<ScenarioPensionAggregate | null>(null);
   const [allocation, setAllocation] = useState<ScenarioAllocationEvidence | null>(null);
   const [allocationBusy, setAllocationBusy] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
@@ -104,6 +157,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setDirty(false);
     setError(null);
     setEstimates({});
+    setAggregate(null);
     allocationEpoch.current += 1;
     setAllocation(null);
     setAllocationError(null);
@@ -132,6 +186,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setAllocationBusy(false);
     setAllocation(null);
     setEstimates({});
+    setAggregate(null);
     setDirty(true);
     setElections(current => current.map(row => row.decision_id === id ? { ...row, ...patch } : row));
   }
@@ -144,6 +199,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     const decision = pensionDecisions.find(row => row.decision_id === id);
     if (!decision || elections.some(row => row.decision_id === id)) return;
     setEstimates({});
+    setAggregate(null);
     setDirty(true);
     setElections(current => [...current, {
       decision_id: id, pension_start_date: decision.effective_date,
@@ -164,6 +220,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setBusy(true);
     setError(null);
     setEstimates({});
+    setAggregate(null);
     try {
       const rows = elections.map(row => ({
         ...row, target_year: Number(row.pension_start_date.slice(0, 4)),
@@ -190,6 +247,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
       delete next[decisionId];
       return next;
     });
+    setAggregate(null);
     setError(null);
     try {
       const result = await readScenarioGrossEstimate(clientId, scenario.scenario_id, decisionId);
@@ -204,6 +262,30 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
         throw Error("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
       }
       setEstimates(current => ({ ...current, [decisionId]: result }));
+    } catch (cause) {
+      if (epoch.current === current) setError(explain(cause));
+    } finally {
+      if (epoch.current === current) setBusy(false);
+    }
+  }
+
+  async function checkAggregate() {
+    if (busy || !loaded || dirty || scenario.status !== "draft") return;
+    const current = ++epoch.current;
+    setBusy(true);
+    setAggregate(null);
+    setError(null);
+    try {
+      const result = await readScenarioPensionAggregate(clientId, scenario.scenario_id);
+      if (epoch.current !== current) return;
+      if (!closedAggregateEnvelope(
+        result, clientId, scenario.scenario_id, scenario.version,
+        pensionDecisions.map(decision => decision.decision_id),
+      )) throw Error("STAGE6_AGGREGATE_AUTHORITY_INCOMPLETE");
+      setAggregate(result);
+      setEstimates(Object.fromEntries(
+        result.decision_results.map(item => [item.decision_id, item]),
+      ));
     } catch (cause) {
       if (epoch.current === current) setError(explain(cause));
     } finally {
@@ -248,15 +330,13 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     value => value.result_state === "RESULT_READY" && value.execution_allowed,
   ).length;
   const blockedEstimateCount = evaluatedEstimates.length - readyEstimateCount;
-  const calculationStatus = evaluatedEstimates.length === 0
-    ? "טרם חושב אומדן קצבה מאושר לחלופה."
-    : readyEstimateCount === pensionDecisions.length
-      ? "החישוב הושלם לכל החלטות הקצבה בחלופה."
-      : readyEstimateCount > 0 || evaluatedEstimates.length < pensionDecisions.length
-        ? "תוצאה חלקית: קיים אומדן מאושר רק לחלק מהחלטות הקצבה."
-        : blockedEstimateCount > 0
-          ? "החישוב חסום: לא הופק סכום קצבה מאושר."
-          : "טרם חושב אומדן קצבה מאושר לחלופה.";
+  const calculationStatus = aggregate === null
+    ? "טרם חושב סיכום קצבה מצרפי מאושר לחלופה."
+    : aggregate.aggregation_state === "COMPLETE"
+      ? "החישוב הושלם: כל החלטות הקצבה אושרו ונמצאו בנות־השוואה."
+      : aggregate.aggregation_state === "PARTIAL"
+        ? "תוצאה חלקית: מוצגות תוצאות מאושרות נפרדות, ללא סכום קצבה כולל."
+        : "החישוב חסום: לא הופק סכום קצבה כולל.";
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>
@@ -361,15 +441,30 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
           scenarioVersion={scenario.version} decisionId={row.decision_id}
           disabled={busy} onApproved={() => {
             setEstimates({});
+            setAggregate(null);
             allocationEpoch.current += 1;
             setAllocation(null);
             setAllocationBusy(false);
           }} />)}
     {loaded && pensionDecisions.length > 0 && <section aria-label="מצב חישוב החלופה">
       <h5>מצב חישוב קצבה בחלופה</h5>
+      <button type="button" disabled={busy || dirty || scenario.status !== "draft"}
+        onClick={() => void checkAggregate()}>
+        חשב סיכום קצבאות מאושר
+      </button>
       <p role="status">{calculationStatus}</p>
       <p>{readyEstimateCount} אומדנים הושלמו; {blockedEstimateCount} חסומים; {pensionDecisions.length - evaluatedEstimates.length} טרם נבדקו.</p>
-      <p>הסכומים מוצגים לכל החלטה בנפרד ואינם סכום קצבה מצרפי.</p>
+      {aggregate?.aggregation_state === "COMPLETE"
+        && aggregate.monthly_pension_gross_total_ils !== null
+        && aggregate.comparison_basis !== null
+        ? <>
+          <p><strong>סך קצבה חודשית ברוטו: {aggregate.monthly_pension_gross_total_ils} ₪</strong></p>
+          <p>בסיס השוואה: ברוטו בשקלים, נומינלי ללא הצמדה; מועד יעד {aggregate.comparison_basis.retirement_target_date}; תאריך אסמכתת מקור {aggregate.comparison_basis.source_reference_date}.</p>
+          <p>הסכום אינו קצבה נטו, חישוב מס, תזרים או NPV.</p>
+        </>
+        : <p>לא מוצג סכום כולל. תוצאות תקינות, אם קיימות, מוצגות לכל החלטה בנפרד בלבד.</p>}
+      {aggregate && aggregate.blockers.length > 0
+        && <ul aria-label="חסימות סיכום הקצבה">{aggregate.blockers.map(code => <li key={code}>{code}</li>)}</ul>}
     </section>}
   </section>;
 }

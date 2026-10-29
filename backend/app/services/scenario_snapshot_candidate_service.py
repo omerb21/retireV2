@@ -233,19 +233,13 @@ _STAGE6_P1D_EXECUTION_CAPABILITY = object()
 
 
 # Stage 6 P1C/P1D: approved narrow extension of the immutable snapshot owner.
-def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
-                                       client_id: int, scenario_id: str,
-                                       decision_id: str, _stage6_executor=None,
-                                       _stage6_capability=None) -> dict:
-    """Derive all five canonical hashes and a one-source planning result.
+def _stage6_identity_extension(*, client_id: int, scenario_id: str,
+                               decision_id: str, _stage6_executor=None):
+    """Create one decision extension for an already-owned canonical snapshot.
 
-    All authority is independently read from the SAME REPEATABLE READ READ ONLY
-    PostgreSQL snapshot owned by build_manifest_candidate_snapshot().
-    No caller-supplied manifest, factor, date, actor, hash or ready flag.
+    The public single-decision owner and the bounded aggregate owner share this
+    exact gate, so aggregation cannot weaken or recreate P1C/P1D validation.
     """
-    if (_stage6_executor is not None
-            and _stage6_capability is not _STAGE6_P1D_EXECUTION_CAPABILITY):
-        raise ScenarioSnapshotError("STAGE6_P1D_EXECUTOR_NOT_AUTHORIZED")
     from sqlalchemy import select
     from app.models.pension_product import PensionProduct
     from app.models.planning_input_decision import PlanningInputDecision
@@ -392,7 +386,27 @@ def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
             "financial_result":None,
         }
 
+    return _stage6_identity
+
+
+def build_stage6_p1c_planning_snapshot(factory: sessionmaker[Session], *,
+                                       client_id: int, scenario_id: str,
+                                       decision_id: str, _stage6_executor=None,
+                                       _stage6_capability=None) -> dict:
+    """Derive all five canonical hashes and a one-source planning result.
+
+    All authority is independently read from the SAME REPEATABLE READ READ ONLY
+    PostgreSQL snapshot owned by build_manifest_candidate_snapshot().
+    No caller-supplied manifest, factor, date, actor, hash or ready flag.
+    """
+    if (_stage6_executor is not None
+            and _stage6_capability is not _STAGE6_P1D_EXECUTION_CAPABILITY):
+        raise ScenarioSnapshotError("STAGE6_P1D_EXECUTOR_NOT_AUTHORIZED")
+    extension = _stage6_identity_extension(
+        client_id=client_id, scenario_id=scenario_id, decision_id=decision_id,
+        _stage6_executor=_stage6_executor,
+    )
     # This is the pre-existing snapshot owner, not a new transaction engine.
     return build_manifest_candidate_snapshot(
         factory,client_id=client_id,scenario_id=scenario_id,
-        _snapshot_extension=_stage6_identity)
+        _snapshot_extension=extension)

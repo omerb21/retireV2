@@ -183,3 +183,154 @@ def test_real_canonical_pte_never_runs_on_preflight_target_conflict():
                 retirement_target_date="2028-01-01",
                 five_identities=planning_facts)
         engine.assert_not_called()
+
+
+def aggregate_result(decision_id, amount="5000.00", *, target="2027-09-30",
+                     statement="2026-09-30"):
+    value = run()
+    value.update(
+        decision_id=decision_id,
+        source_id=f"scenario-decision:scenario:{decision_id}",
+        monthly_estimate_gross_ils=amount,
+        retirement_target_date=target,
+        statement_date=statement,
+    )
+    value.pop("result_fingerprint")
+    return subject._seal(value)
+
+
+def aggregate_pair(*rows):
+    return {
+        "manifest": {"scenario_version": 2, "decisions": list(rows)},
+        "candidate": {"evidence_state": "STRUCTURALLY_CONSISTENT_NOT_ADMITTED"},
+    }
+
+
+def decision(decision_id, product_id, component_id):
+    return {
+        "decision_id": decision_id, "product_id": product_id,
+        "component_id": component_id, "action": "pension",
+    }
+
+
+def run_aggregate(monkeypatch, pair, results):
+    def extension(*, decision_id, **_kwargs):
+        value = results[decision_id]
+        if isinstance(value, BaseException):
+            return lambda _db, _pair: (_ for _ in ()).throw(value)
+        return lambda _db, _pair: value
+    monkeypatch.setattr(subject, "_stage6_identity_extension", extension)
+    return subject._aggregate_extension(
+        client_id=1, scenario_id="scenario",
+    )(None, pair)
+
+
+def test_single_decision_aggregate_is_complete_and_recomputable(monkeypatch):
+    result = run_aggregate(
+        monkeypatch, aggregate_pair(decision("d1", "p1", "c1")),
+        {"d1": aggregate_result("d1")},
+    )
+    assert result["aggregation_state"] == "COMPLETE"
+    assert result["monthly_pension_gross_total_ils"] == "5000.00"
+    assert result["comparison_basis"] == {
+        "currency": "ILS", "income_basis": "GROSS",
+        "price_basis": "NOMINAL_UNINDEXED",
+        "retirement_target_date": "2027-09-30",
+        "source_reference_date": "2026-09-30",
+    }
+    preimage = {key: value for key, value in result.items()
+                if key != "aggregate_fingerprint"}
+    assert result["aggregate_fingerprint"] == fingerprint({
+        "contract_version": "STAGE6_PENSION_DECISION_AGGREGATE_FINGERPRINT_V1",
+        "result": preimage,
+    })
+
+
+def test_two_comparable_decisions_sum_exact_decimal_amounts(monkeypatch):
+    result = run_aggregate(
+        monkeypatch,
+        aggregate_pair(decision("d1", "p1", "c1"), decision("d2", "p2", "c2")),
+        {"d1": aggregate_result("d1", "5000.10"),
+         "d2": aggregate_result("d2", "2500.55")},
+    )
+    assert result["aggregation_state"] == "COMPLETE"
+    assert result["monthly_pension_gross_total_ils"] == "7500.65"
+    assert [row["decision_id"] for row in result["decision_results"]] == ["d1", "d2"]
+
+
+def test_aggregate_does_not_round_large_exact_money(monkeypatch):
+    result = run_aggregate(
+        monkeypatch,
+        aggregate_pair(decision("d1", "p1", "c1"), decision("d2", "p2", "c2")),
+        {"d1": aggregate_result("d1", "9999999999999999999999999999.99"),
+         "d2": aggregate_result("d2", "0.02")},
+    )
+    assert result["monthly_pension_gross_total_ils"] == (
+        "10000000000000000000000000000.01"
+    )
+
+
+@pytest.mark.parametrize(("changed", "blocker"), [
+    ({"target": "2028-01-01"}, "STAGE6_AGGREGATE_RETIREMENT_TARGET_DATE_MISMATCH"),
+    ({"statement": "2026-10-01"}, "STAGE6_AGGREGATE_REFERENCE_DATE_MISMATCH"),
+])
+def test_noncomparable_basis_blocks_total(monkeypatch, changed, blocker):
+    result = run_aggregate(
+        monkeypatch,
+        aggregate_pair(decision("d1", "p1", "c1"), decision("d2", "p2", "c2")),
+        {"d1": aggregate_result("d1"), "d2": aggregate_result("d2", **changed)},
+    )
+    assert result["aggregation_state"] == "BLOCKED"
+    assert result["monthly_pension_gross_total_ils"] is None
+    assert blocker in result["blockers"]
+
+
+def test_one_ready_and_one_blocked_is_partial_without_total(monkeypatch):
+    result = run_aggregate(
+        monkeypatch,
+        aggregate_pair(decision("d1", "p1", "c1"), decision("d2", "p2", "c2")),
+        {"d1": aggregate_result("d1"),
+         "d2": ScenarioSnapshotError("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED")},
+    )
+    assert result["aggregation_state"] == "PARTIAL"
+    assert result["monthly_pension_gross_total_ils"] is None
+    assert result["blockers"] == ["d2:STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"]
+    assert result["decision_results"][0]["monthly_estimate_gross_ils"] == "5000.00"
+
+
+def test_duplicate_source_blocks_total_even_when_each_result_is_ready(monkeypatch):
+    result = run_aggregate(
+        monkeypatch,
+        aggregate_pair(decision("d1", "p1", "c1"), decision("d2", "p1", "c1")),
+        {"d1": aggregate_result("d1"), "d2": aggregate_result("d2")},
+    )
+    assert result["aggregation_state"] == "BLOCKED"
+    assert result["monthly_pension_gross_total_ils"] is None
+    assert result["blockers"] == ["STAGE6_AGGREGATE_DUPLICATE_SOURCE"]
+
+
+def test_coherently_shaped_result_with_bad_fingerprint_is_not_counted(monkeypatch):
+    forged = aggregate_result("d1")
+    forged["monthly_estimate_gross_ils"] = "999999.99"
+    result = run_aggregate(
+        monkeypatch, aggregate_pair(decision("d1", "p1", "c1")),
+        {"d1": forged},
+    )
+    assert result["aggregation_state"] == "BLOCKED"
+    assert result["monthly_pension_gross_total_ils"] is None
+    assert result["decision_results"][0]["blockers"] == [
+        "STAGE6_AGGREGATE_RESULT_INVALID",
+    ]
+
+
+def test_aggregate_owner_uses_one_snapshot_for_all_decisions(monkeypatch):
+    observed = []
+    def owner(factory, *, client_id, scenario_id, _snapshot_extension):
+        observed.append((factory, client_id, scenario_id))
+        return {"aggregation_state": "BLOCKED"}
+    monkeypatch.setattr(subject, "build_manifest_candidate_snapshot", owner)
+    token = object()
+    assert subject.estimate_scenario_pension_aggregate(
+        token, client_id=1, scenario_id="scenario",
+    ) == {"aggregation_state": "BLOCKED"}
+    assert observed == [(token, 1, "scenario")]

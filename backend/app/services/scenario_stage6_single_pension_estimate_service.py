@@ -4,14 +4,18 @@ No database writes. No automatic coefficient selection. All financial execution
 is gated inside the existing REPEATABLE READ READ ONLY snapshot owner.
 """
 from __future__ import annotations
+from decimal import Decimal, InvalidOperation, localcontext
+
 from app.services.pension_monthly_basis_service import fingerprint
 from app.services.scenario_snapshot_candidate_service import (
     ScenarioSnapshotError, _STAGE6_P1D_EXECUTION_CAPABILITY,
+    _stage6_identity_extension, build_manifest_candidate_snapshot,
     build_stage6_p1c_planning_snapshot,
 )
 from app.services.pension_target_date_execution_service import execute_from_planning_result
 
 CONTRACT="STAGE6_SINGLE_PENSION_DECISION_ESTIMATE_V1"
+AGGREGATE_CONTRACT="STAGE6_PENSION_DECISION_AGGREGATE_V1"
 _HASHES=("planning_calculation_input_fingerprint","monthly_basis_semantic_fingerprint",
          "monthly_basis_source_fingerprint","temporal_semantic_fingerprint",
          "temporal_source_fingerprint")
@@ -211,3 +215,195 @@ def estimate_single_pension_decision(factory, *, client_id: int,
         if not code.startswith(("STAGE6_","SCENARIO_GLOBAL_TARGET_CONFLICT")):
             code="STAGE6_P1D_SNAPSHOT_UNAVAILABLE"
         return _blocked(client_id,scenario_id,decision_id,code)
+
+
+def _blocked_from_exception(client_id: int, scenario_id: str,
+                            decision_id: str, exc: ScenarioSnapshotError) -> dict:
+    code = str(exc)
+    if not code.startswith(("STAGE6_", "SCENARIO_GLOBAL_TARGET_CONFLICT")):
+        code = "STAGE6_P1D_SNAPSHOT_UNAVAILABLE"
+    return _blocked(client_id, scenario_id, decision_id, code)
+
+
+def _valid_sealed_result(value: object, *, client_id: int, scenario_id: str,
+                         decision_id: str) -> bool:
+    from urllib.parse import quote
+    expected_source = (
+        "scenario-decision:" + quote(scenario_id, safe="") + ":"
+        + quote(decision_id, safe="")
+    )
+    if type(value) is not dict or set(value) != set(_FIELDS):
+        return False
+    if (value.get("schema_version") != CONTRACT
+            or value.get("client_id") != client_id
+            or value.get("scenario_id") != scenario_id
+            or value.get("decision_id") != decision_id
+            or value.get("source_id") != expected_source
+            or not _is_hash(value.get("result_fingerprint"))):
+        return False
+    preimage = {key: value[key] for key in _FIELDS if key != "result_fingerprint"}
+    if value["result_fingerprint"] != fingerprint({
+        "contract_version": "STAGE6_SINGLE_PENSION_DECISION_RESULT_FINGERPRINT_V1",
+        "result": preimage,
+    }):
+        return False
+    if value.get("result_state") == "BLOCKED":
+        return (value.get("execution_allowed") is False
+                and type(value.get("blockers")) is list
+                and len(value["blockers"]) > 0
+                and value["blockers"] == sorted(set(value["blockers"]))
+                and all(type(code) is str and code for code in value["blockers"])
+                and value.get("monthly_estimate_gross_ils") is None)
+    amount = value.get("monthly_estimate_gross_ils")
+    if (value.get("result_state") != "RESULT_READY"
+            or value.get("execution_allowed") is not True
+            or value.get("blockers") != []
+            or type(value.get("scenario_version")) is not int
+            or value["scenario_version"] <= 0
+            or not all(_is_hash(value.get(key)) for key in (
+                "professional_admission_fingerprint", *_HASHES,
+                "pte_source_execution_fingerprint", "pte_source_result_fingerprint",
+            ))
+            or type(value.get("retirement_target_date")) is not str
+            or not value["retirement_target_date"]
+            or type(value.get("statement_date")) is not str
+            or not value["statement_date"]
+            or type(value.get("coefficient_provenance")) is not dict
+            or type(amount) is not str):
+        return False
+    try:
+        parsed = Decimal(amount)
+    except InvalidOperation:
+        return False
+    return parsed.is_finite() and parsed >= 0 and format(parsed, ".2f") == amount
+
+
+def _seal_aggregate(data: dict) -> dict:
+    result = dict(data)
+    result["aggregate_fingerprint"] = fingerprint({
+        "contract_version": "STAGE6_PENSION_DECISION_AGGREGATE_FINGERPRINT_V1",
+        "result": dict(data),
+    })
+    return result
+
+
+def _aggregate_extension(*, client_id: int, scenario_id: str):
+    def build(db, pair: dict) -> dict:
+        manifest = pair["manifest"]
+        pension_rows = sorted(
+            (row for row in manifest["decisions"] if row["action"] == "pension"),
+            key=lambda row: row["decision_id"],
+        )
+        results = []
+        blockers: set[str] = set()
+        source_keys: set[tuple[str, str]] = set()
+        for row in pension_rows:
+            decision_id = row["decision_id"]
+            source_key = (row["product_id"], row["component_id"])
+            if source_key in source_keys:
+                blockers.add("STAGE6_AGGREGATE_DUPLICATE_SOURCE")
+            source_keys.add(source_key)
+            extension = _stage6_identity_extension(
+                client_id=client_id, scenario_id=scenario_id,
+                decision_id=decision_id, _stage6_executor=_execute_verified,
+            )
+            try:
+                decision_result = extension(db, pair)
+            except ScenarioSnapshotError as exc:
+                decision_result = _blocked_from_exception(
+                    client_id, scenario_id, decision_id, exc,
+                )
+            if not _valid_sealed_result(
+                decision_result, client_id=client_id,
+                scenario_id=scenario_id, decision_id=decision_id,
+            ):
+                decision_result = _blocked(
+                    client_id, scenario_id, decision_id,
+                    "STAGE6_AGGREGATE_RESULT_INVALID",
+                )
+            results.append(decision_result)
+
+        if not pension_rows:
+            blockers.add("STAGE6_AGGREGATE_NO_PENSION_DECISIONS")
+        ready = [row for row in results if row["result_state"] == "RESULT_READY"]
+        blocked = [row for row in results if row["result_state"] == "BLOCKED"]
+        for row in blocked:
+            blockers.update(
+                f'{row["decision_id"]}:{code}' for code in row["blockers"]
+            )
+
+        targets = {row["retirement_target_date"] for row in ready}
+        statement_dates = {row["statement_date"] for row in ready}
+        if len(targets) > 1:
+            blockers.add("STAGE6_AGGREGATE_RETIREMENT_TARGET_DATE_MISMATCH")
+        if len(statement_dates) > 1:
+            blockers.add("STAGE6_AGGREGATE_REFERENCE_DATE_MISMATCH")
+
+        complete = (
+            bool(results) and len(ready) == len(results) and not blockers
+            and len(targets) == 1 and len(statement_dates) == 1
+        )
+        if complete:
+            money = [row["monthly_estimate_gross_ils"] for row in ready]
+            precision = max(len(value.replace(".", "")) for value in money)
+            precision += len(str(len(money))) + 2
+            with localcontext() as context:
+                context.prec = precision
+                total = sum((Decimal(value) for value in money), Decimal("0.00"))
+            total_value = format(total, ".2f")
+            comparison_basis = {
+                "currency": "ILS", "income_basis": "GROSS",
+                "price_basis": "NOMINAL_UNINDEXED",
+                "retirement_target_date": next(iter(targets)),
+                "source_reference_date": next(iter(statement_dates)),
+            }
+            state = "COMPLETE"
+        else:
+            total_value = None
+            comparison_basis = None
+            state = "PARTIAL" if ready and blocked else "BLOCKED"
+        return _seal_aggregate({
+            "schema_version": AGGREGATE_CONTRACT,
+            "client_id": client_id,
+            "scenario_id": scenario_id,
+            "scenario_version": manifest["scenario_version"],
+            "aggregation_state": state,
+            "blockers": sorted(blockers),
+            "decision_results": results,
+            "monthly_pension_gross_total_ils": total_value,
+            "comparison_basis": comparison_basis,
+            "execution_allowed": False,
+        })
+    return build
+
+
+def estimate_scenario_pension_aggregate(factory, *, client_id: int,
+                                        scenario_id: str) -> dict:
+    """Compute a complete comparable gross total inside one canonical snapshot."""
+    if (type(client_id) is not int or client_id <= 0
+            or type(scenario_id) is not str or not scenario_id
+            or len(scenario_id) > 64):
+        raise ValueError("STAGE6_AGGREGATE_ROUTE_INVALID")
+    try:
+        return build_manifest_candidate_snapshot(
+            factory, client_id=client_id, scenario_id=scenario_id,
+            _snapshot_extension=_aggregate_extension(
+                client_id=client_id, scenario_id=scenario_id,
+            ),
+        )
+    except ScenarioSnapshotError as exc:
+        code = str(exc)
+        if not code.startswith(("STAGE6_", "SCENARIO_GLOBAL_TARGET_CONFLICT")):
+            code = "STAGE6_AGGREGATE_SNAPSHOT_UNAVAILABLE"
+        return _seal_aggregate({
+            "schema_version": AGGREGATE_CONTRACT,
+            "client_id": client_id,
+            "scenario_id": scenario_id,
+            "scenario_version": None,
+            "aggregation_state": "BLOCKED",
+            "blockers": [code],
+            "decision_results": [],
+            "monthly_pension_gross_total_ils": None,
+            "comparison_basis": None,
+            "execution_allowed": False,
+        })

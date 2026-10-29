@@ -4,12 +4,13 @@ import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 
 const mock = vi.hoisted(() => ({
-  list: vi.fn(), save: vi.fn(), estimate: vi.fn(), allocation: vi.fn(),
+  list: vi.fn(), save: vi.fn(), estimate: vi.fn(), aggregate: vi.fn(), allocation: vi.fn(),
 }));
 vi.mock("../api/scenarioStage6Api", () => ({
   listScenarioPensionElections: mock.list,
   saveScenarioPensionElections: mock.save,
   readScenarioGrossEstimate: mock.estimate,
+  readScenarioPensionAggregate: mock.aggregate,
   readScenarioAllocationEvidence: mock.allocation,
   validScenarioAllocationEvidence: (value: any, clientId: number, scenarioId: string, version: number) =>
     value?.allocation_evidence?.client_id === clientId
@@ -79,6 +80,20 @@ function readyEstimate(overrides: Record<string, unknown> = {}) {
     pte_source_result_fingerprint: "8".repeat(64),
     monthly_estimate_gross_ils: "5.00", retirement_target_date: "2027-09-30",
     statement_date: "2026-09-30", result_fingerprint: "a".repeat(64), ...overrides,
+  };
+}
+function aggregate(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "STAGE6_PENSION_DECISION_AGGREGATE_V1",
+    client_id: 1, scenario_id: "sc1", scenario_version: 3,
+    aggregation_state: "COMPLETE", blockers: [],
+    decision_results: [readyEstimate()],
+    monthly_pension_gross_total_ils: "5.00",
+    comparison_basis: {
+      currency: "ILS", income_basis: "GROSS", price_basis: "NOMINAL_UNINDEXED",
+      retirement_target_date: "2027-09-30", source_reference_date: "2026-09-30",
+    },
+    execution_allowed: false, aggregate_fingerprint: "f".repeat(64), ...overrides,
   };
 }
 function deferred<T>() {
@@ -190,11 +205,11 @@ it("renders a monthly amount only from the complete closed READY envelope", asyn
   fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
   await screen.findByText(/אומדן קצבה חודשית ברוטו: 5.00/);
   expect(screen.getByLabelText("מצב חישוב החלופה")).toHaveTextContent(
-    "החישוב הושלם לכל החלטות הקצבה בחלופה",
+    "טרם חושב סיכום קצבה מצרפי מאושר לחלופה",
   );
 });
 
-it("preserves per-decision results and reports a partial alternative without aggregation", async () => {
+it("preserves per-decision results without representing them as an aggregate", async () => {
   const secondDecision = {
     ...scenario.decisions[0], decision_id: "d2", source_component_id: "c2",
     component_code: "fund-2",
@@ -219,21 +234,139 @@ it("preserves per-decision results and reports a partial alternative without agg
 
   expect(screen.getByText(/אומדן קצבה חודשית ברוטו: 5.00/)).toBeInTheDocument();
   const status = screen.getByLabelText("מצב חישוב החלופה");
-  expect(status).toHaveTextContent("תוצאה חלקית");
+  expect(status).toHaveTextContent("טרם חושב סיכום קצבה מצרפי");
   expect(status).toHaveTextContent("1 אומדנים הושלמו; 1 חסומים; 0 טרם נבדקו");
-  expect(status).toHaveTextContent("אינם סכום קצבה מצרפי");
+  expect(status).toHaveTextContent("לא מוצג סכום כולל");
   expect(status).not.toHaveTextContent("10.00");
 });
 
-it("reports a blocked alternative without presenting a zero result", async () => {
+it("does not infer aggregate blocked state from one independently blocked decision", async () => {
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue(blockedEstimate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
   await screen.findByText("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
   const status = screen.getByLabelText("מצב חישוב החלופה");
-  expect(status).toHaveTextContent("החישוב חסום");
+  expect(status).toHaveTextContent("טרם חושב סיכום קצבה מצרפי");
   expect(status).not.toHaveTextContent("0.00 ₪");
+});
+
+it("shows a single-decision gross total only from a complete aggregate envelope", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.aggregate.mockResolvedValue(aggregate());
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  const status = await screen.findByLabelText("מצב חישוב החלופה");
+  expect(status).toHaveTextContent("החישוב הושלם");
+  expect(status).toHaveTextContent("סך קצבה חודשית ברוטו: 5.00 ₪");
+  expect(status).toHaveTextContent("מועד יעד 2027-09-30");
+  expect(status).toHaveTextContent("אינו קצבה נטו, חישוב מס, תזרים או NPV");
+});
+
+it("shows the exact total for two comparable authorized decisions", async () => {
+  const d2 = { ...scenario.decisions[0], decision_id: "d2", source_product_id: "p2",
+    source_component_id: "c2", component_code: "fund-2" };
+  const e2 = { ...election, decision_id: "d2" };
+  const result2 = readyEstimate({
+    decision_id: "d2", source_id: "scenario-decision:sc1:d2",
+    monthly_estimate_gross_ils: "7.35",
+  });
+  mock.list.mockResolvedValue([election, e2]);
+  mock.aggregate.mockResolvedValue(aggregate({
+    decision_results: [readyEstimate(), result2],
+    monthly_pension_gross_total_ils: "12.35",
+  }));
+  render(<ScenarioStage6Panel clientId={1}
+    scenario={{ ...scenario, decisions: [...scenario.decisions, d2] }} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  const status = await screen.findByLabelText("מצב חישוב החלופה");
+  expect(status).toHaveTextContent("סך קצבה חודשית ברוטו: 12.35 ₪");
+  expect(screen.getByText(/אומדן קצבה חודשית ברוטו: 5.00/)).toBeInTheDocument();
+  expect(screen.getByText(/אומדן קצבה חודשית ברוטו: 7.35/)).toBeInTheDocument();
+});
+
+it("keeps one ready decision visible but never totals a partial aggregate", async () => {
+  const d2 = { ...scenario.decisions[0], decision_id: "d2", source_product_id: "p2",
+    source_component_id: "c2", component_code: "fund-2" };
+  const e2 = { ...election, decision_id: "d2" };
+  const blocked2 = blockedEstimate({
+    decision_id: "d2", source_id: "scenario-decision:sc1:d2",
+  });
+  mock.list.mockResolvedValue([election, e2]);
+  mock.aggregate.mockResolvedValue(aggregate({
+    aggregation_state: "PARTIAL",
+    blockers: ["d2:STAGE6_P1C_FACTOR_ADMISSION_BLOCKED"],
+    decision_results: [readyEstimate(), blocked2],
+    monthly_pension_gross_total_ils: null, comparison_basis: null,
+  }));
+  render(<ScenarioStage6Panel clientId={1}
+    scenario={{ ...scenario, decisions: [...scenario.decisions, d2] }} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  const status = await screen.findByLabelText("מצב חישוב החלופה");
+  expect(status).toHaveTextContent("תוצאה חלקית");
+  expect(status).toHaveTextContent("לא מוצג סכום כולל");
+  expect(status).toHaveTextContent("d2:STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
+  expect(status).not.toHaveTextContent("סך קצבה חודשית ברוטו");
+});
+
+it("blocks a total for different time bases", async () => {
+  const d2 = { ...scenario.decisions[0], decision_id: "d2", source_product_id: "p2",
+    source_component_id: "c2", component_code: "fund-2" };
+  const e2 = { ...election, decision_id: "d2" };
+  mock.list.mockResolvedValue([election, e2]);
+  mock.aggregate.mockResolvedValue(aggregate({
+    aggregation_state: "BLOCKED",
+    blockers: ["STAGE6_AGGREGATE_RETIREMENT_TARGET_DATE_MISMATCH"],
+    decision_results: [readyEstimate(), readyEstimate({
+      decision_id: "d2", source_id: "scenario-decision:sc1:d2",
+      retirement_target_date: "2028-09-30",
+    })],
+    monthly_pension_gross_total_ils: null, comparison_basis: null,
+  }));
+  render(<ScenarioStage6Panel clientId={1}
+    scenario={{ ...scenario, decisions: [...scenario.decisions, d2] }} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  const status = await screen.findByLabelText("מצב חישוב החלופה");
+  expect(status).toHaveTextContent("החישוב חסום");
+  expect(status).toHaveTextContent("STAGE6_AGGREGATE_RETIREMENT_TARGET_DATE_MISMATCH");
+  expect(status).not.toHaveTextContent("סך קצבה חודשית ברוטו");
+});
+
+it("rejects a malformed aggregate fingerprint without presenting its total", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.aggregate.mockResolvedValue(aggregate({ aggregate_fingerprint: "not-a-hash" }));
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  await screen.findByText("STAGE6_AGGREGATE_AUTHORITY_INCOMPLETE");
+  expect(screen.queryByText(/סך קצבה חודשית ברוטו/)).toBeNull();
+});
+
+it("discards a late aggregate after the scenario version changes", async () => {
+  mock.list.mockResolvedValue([election]);
+  const waiting = deferred<any>();
+  mock.aggregate.mockReturnValue(waiting.promise);
+  const view = render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  view.rerender(<ScenarioStage6Panel clientId={1}
+    scenario={{ ...scenario, version: 4 }} onSaved={vi.fn()}/>);
+  waiting.resolve(aggregate());
+  await waitFor(() => expect(mock.list).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText(/סך קצבה חודשית ברוטו/)).toBeNull();
+});
+
+it("immediately invalidates an aggregate after pension terms change", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.aggregate.mockResolvedValue(aggregate());
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  await screen.findByText(/סך קצבה חודשית ברוטו: 5.00/);
+  fireEvent.change(screen.getByLabelText("בחירת שאירים"), {
+    target: { value: "changed terms" },
+  });
+  expect(screen.queryByText(/סך קצבה חודשית ברוטו/)).toBeNull();
+  expect(screen.getByLabelText("מצב חישוב החלופה")).toHaveTextContent(
+    "טרם חושב סיכום קצבה מצרפי",
+  );
 });
 
 

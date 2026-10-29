@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db.session import get_db
-from app.schemas.scenario_draft import DraftWrite, DraftReplace, DraftVersion
+from app.schemas.scenario_draft import DraftWrite, DraftRename, DraftReplace, DraftVersion
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
 from app.services import scenario_calculation_admission_service as admission
@@ -87,6 +87,13 @@ def duplicate_scenario(request: Request, payload: DraftWrite, scenario_id: str, 
 @router.put("/{scenario_id}")
 def replace_scenario(request: Request, payload: DraftReplace, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
     return _run(request, db, lambda: service.replace(db, client_id, scenario_id, payload, _actor(request)))
+
+
+@router.post("/{scenario_id}/rename")
+def rename_scenario(request: Request, payload: DraftRename, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
+    return _run(request, db, lambda: service.rename(
+        db, client_id, scenario_id, payload.name, payload.expected_version, _actor(request),
+    ))
 
 
 @router.post("/{scenario_id}/archive")

@@ -35,6 +35,10 @@ class DraftReplace(DraftWrite):
     expected_version: int = Field(ge=1)
     decisions: list[DraftDecisionWrite] = Field(max_length=500)
 
+class DraftRename(DraftWrite):
+    """Metadata-only rename; it must not rebind decision source evidence."""
+    expected_version: int = Field(ge=1)
+
 class DraftVersion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(ge=1)

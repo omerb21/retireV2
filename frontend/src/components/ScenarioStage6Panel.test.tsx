@@ -30,6 +30,8 @@ const scenario: ScenarioDraft = {
     decision_id: "d1", source_product_id: "p1", source_component_id: "c1",
     component_code: "fund", amount: "100000.00", action: "pension",
     effective_date: "2026-09-30", validation_state: "unverified",
+    product_version_at_review: 1, source_fingerprint_at_review: "a".repeat(64),
+    ruleset_digest_at_review: "b".repeat(64), permission_preview_id_at_review: "c".repeat(64),
   }],
 };
 const election = {

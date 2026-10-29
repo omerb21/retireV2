@@ -6,6 +6,8 @@ const sample: ScenarioDraftDecision = {
   decision_id: "d1", source_product_id: "p1", source_component_id: "c1",
   component_code: "תגמולי_עובד_עד_2000", amount: "25.00",
   action: "pension", effective_date: "2026-10-24", validation_state: "unverified",
+  product_version_at_review: 1, source_fingerprint_at_review: "a".repeat(64),
+  ruleset_digest_at_review: null, permission_preview_id_at_review: null,
 };
 const response = {
   schema_version: "SCENARIO_PERMISSION_PREVIEW_V1",

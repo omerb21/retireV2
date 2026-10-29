@@ -7,7 +7,7 @@ import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComp
 import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
-  replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
+  renameScenarioDraft, replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
 
 interface Props { clientId: number; products: PensionProduct[]; initialSource?: { productId: string; componentCode: string } | null }
@@ -187,14 +187,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
   async function renameActive(event: FormEvent) {
     event.preventDefault();
     if (!active || active.status === "archived" || !rename.trim()) return;
-    const decisions: DraftDecisionInput[] = active.decisions.map(item => ({
-      decision_id: item.decision_id,
-      source_product_id: item.source_product_id,
-      source_component_id: item.source_component_id,
-      component_code: item.component_code, amount: item.amount,
-      action: item.action, effective_date: item.effective_date,
-    }));
-    if (await run(() => replaceScenarioDraft(clientId, active, decisions, rename.trim()))) setRename("");
+    if (await run(() => renameScenarioDraft(clientId, active, rename.trim()))) setRename("");
   }
   function beginEdit(decision: ScenarioDraft["decisions"][number]) {
     setEditingDecisionId(decision.decision_id);
@@ -365,7 +358,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
         return <li key={key}>
           {entry?.label ?? "מקור אינו נמצא עוד בתיק"}:
           {" "}הוקצה בטיוטה {displayCents(assigned)} ₪;
-          {" "}יתרה זמינה לתצוגה {base === null ? "לא ידועה" : displayCents(base - assigned) + " ₪"}
+          {" "}יתרה זמינה לתצוגה {base === null ? "לא ידועה" : assigned > base ? "חסומה" : displayCents(base - assigned) + " ₪"}
           {(base === null || assigned > base) && <strong role="alert"> — נדרש אימות מחדש; אין אישור להקצאה</strong>}
         </li>;
       })}</ul>

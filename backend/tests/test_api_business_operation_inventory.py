@@ -63,7 +63,7 @@ KNOWN_MUTATING_OPERATIONS = {
     },
     "scenario-drafts": {
         "POST /", "POST /{scenario_id}/duplicate", "PUT /{scenario_id}",
-        "POST /{scenario_id}/archive",
+        "POST /{scenario_id}/rename", "POST /{scenario_id}/archive",
     },
     "scenario-permission-preview": {"POST /permission-preview"},
 }

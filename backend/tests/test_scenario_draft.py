@@ -84,7 +84,7 @@ def test_invalid_precision_rejected_without_draft_creation(env):
     assert client.get(f"/api/clients/1/scenario-drafts/{ident}").json()["version"] == 1
 
 
-def test_rename_preserves_stable_decision_id_and_revision(env):
+def test_replace_preserves_stable_decision_id_and_revision(env):
     client, factory = env
     created = client.post("/api/clients/1/scenario-drafts", json={"name":"טיוטה"}).json()
     url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
@@ -114,6 +114,57 @@ def test_rename_preserves_stable_decision_id_and_revision(env):
             ScenarioDraftRevision.scenario_id == created["scenario_id"]
         )).all()
         assert len(revisions) == 3
+
+
+def test_metadata_rename_preserves_stale_source_evidence(env):
+    from app.models.pension_product import PensionProduct, PensionProductComponent
+    from app.models.scenario_draft import ScenarioDraftDecision
+
+    client, factory = env
+    with factory.begin() as db:
+        db.add(PensionProduct(
+            product_id="rename-source", client_id=1, source_kind="imported",
+            source_identity="rename-identity", product_name="Rename source",
+            product_type="קרן פנסיה", account_reference="rename-account",
+            version=1, created_by="test", updated_by="test",
+        ))
+        db.add(PensionProductComponent(
+            component_id="rename-component", product_id="rename-source",
+            component_code="תגמולי_עובד_עד_2000", balance=Decimal("200.00"),
+        ))
+    scenario = client.post("/api/clients/1/scenario-drafts", json={"name": "לפני"}).json()
+    url = f"/api/clients/1/scenario-drafts/{scenario['scenario_id']}"
+    saved = client.put(url, json={
+        "name": "לפני", "expected_version": 1, "decisions": [{
+            "source_product_id": "rename-source",
+            "source_component_id": "rename-component",
+            "component_code": "תגמולי_עובד_עד_2000", "amount": "100.00",
+            "action": "pension", "effective_date": "2026-10-24",
+        }],
+    }).json()
+    before = saved["decisions"][0]
+    with factory.begin() as db:
+        db.get(PensionProduct, "rename-source").version = 2
+        db.get(PensionProductComponent, "rename-component").balance = Decimal("210.00")
+
+    renamed = client.post(url + "/rename", json={
+        "name": "אחרי", "expected_version": saved["version"],
+    })
+    assert renamed.status_code == 200, renamed.text
+    output = renamed.json()
+    assert (output["name"], output["version"], output["status"]) == (
+        "אחרי", saved["version"] + 1, "needs_revalidation",
+    )
+    assert output["decisions"][0]["decision_id"] == before["decision_id"]
+    assert output["decisions"][0]["source_fingerprint_at_review"] == before["source_fingerprint_at_review"]
+    assert output["decisions"][0]["product_version_at_review"] == 1
+    with factory() as db:
+        stored = db.get(ScenarioDraftDecision, before["decision_id"])
+        assert stored.source_fingerprint_at_review == before["source_fingerprint_at_review"]
+        revisions = db.scalars(select(ScenarioDraftRevision).where(
+            ScenarioDraftRevision.scenario_id == scenario["scenario_id"]
+        ).order_by(ScenarioDraftRevision.version)).all()
+        assert [revision.action for revision in revisions] == ["create", "replace", "rename"]
 
 
 def test_draft_writes_never_modify_factual_tables(env):

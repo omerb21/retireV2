@@ -15,7 +15,9 @@ function scenario(decisions: ScenarioDraft["decisions"], status: ScenarioDraft["
 function decision(id: string, amount: string, componentId = "c", action: "pension" | "capital_asset" = "pension"): ScenarioDraft["decisions"][number] {
   return { decision_id: id, source_product_id: "p", source_component_id: componentId,
     component_code: "standard-component-02", amount, action, effective_date: "2026-10-24",
-    validation_state: "unverified" };
+    validation_state: "unverified", product_version_at_review: 1,
+    source_fingerprint_at_review: "a".repeat(64), ruleset_digest_at_review: null,
+    permission_preview_id_at_review: null };
 }
 it("sums amounts in exact cents separately for pension and capital", () => {
   const result = summarizeScenarioDraft(scenario([

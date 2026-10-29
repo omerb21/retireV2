@@ -5,12 +5,13 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import type { PensionProduct } from "../api/pensionProductsApi";
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), preview: vi.fn(), create: vi.fn(), replace: vi.fn(), duplicate: vi.fn(),
+  list: vi.fn(), preview: vi.fn(), create: vi.fn(), replace: vi.fn(), rename: vi.fn(), duplicate: vi.fn(),
 }));
 vi.mock("../api/scenarioDraftsApi", () => ({
   listScenarioDrafts: mocks.list,
   createScenarioDraft: mocks.create, duplicateScenarioDraft: mocks.duplicate,
-  replaceScenarioDraft: mocks.replace, archiveScenarioDraft: vi.fn(),
+  replaceScenarioDraft: mocks.replace, renameScenarioDraft: mocks.rename,
+  archiveScenarioDraft: vi.fn(),
 }));
 vi.mock("../api/scenarioDraftPermissionApi", () => ({
   previewDraftDecision: mocks.preview,
@@ -26,6 +27,8 @@ function draft(id: string, status: ScenarioDraft["status"] = "draft"): ScenarioD
       source_component_id: "c1", component_code: "תגמולי_עובד_עד_2000",
       amount: "30.00", action: "pension", effective_date: "2026-10-24",
       validation_state: status === "needs_revalidation" ? "needs_revalidation" : "unverified",
+      product_version_at_review: 1, source_fingerprint_at_review: "a".repeat(64),
+      ruleset_digest_at_review: null, permission_preview_id_at_review: null,
     }],
   };
 }
@@ -169,6 +172,14 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
     revisions.push(result);
     return copy(result);
   });
+  mocks.rename.mockImplementation(async (clientId: number, existing: ScenarioDraft, name: string) => {
+    expect(clientId).toBe(1);
+    const index = revisions.findIndex(item => item.scenario_id === existing.scenario_id);
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(existing.version).toBe(revisions[index].version);
+    revisions[index] = { ...revisions[index], version: existing.version + 1, name };
+    return copy(revisions[index]);
+  });
   const view = render(<ScenarioDraftPanel clientId={1} products={products}
     initialSource={{ productId: "p1", componentCode: "תגמולי_עובד_עד_2000" }} />);
   fireEvent.change(screen.getByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "חלופה מקורית" } });
@@ -184,25 +195,42 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   fireEvent.change(screen.getByRole("textbox", { name: "סכום מתוכנן (₪)" }), { target: { value: "35.00" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור עריכת טיוטה" }));
   await waitFor(() => expect(revisions[0].decisions[0]?.amount).toBe("35.00"));
+  fireEvent.change(screen.getByRole("textbox", { name: "שינוי שם חלופה" }), { target: { value: "חלופה ששמה שונה" } });
+  fireEvent.click(screen.getByRole("button", { name: "שמור שם" }));
+  await screen.findByRole("heading", { name: "חלופה ששמה שונה" });
+  expect(revisions[0].decisions[0].decision_id).toBe("added-0");
   fireEvent.click(await screen.findByRole("button", { name: "שכפל חלופה" }));
   await waitFor(() => expect(revisions).toHaveLength(2));
   expect(revisions[0].decisions[0].amount).toBe("35.00");
   // The cloned draft is selected after duplication; removing its decision
   // must preserve the original and survive a fresh server-backed reload.
-  await screen.findByRole("heading", { name: "חלופה מקורית — העתק" });
+  await screen.findByRole("heading", { name: "חלופה ששמה שונה — העתק" });
   fireEvent.click(screen.getByRole("button", { name: "מחק החלטת טיוטה" }));
   await waitFor(() => expect(revisions[1].decisions).toHaveLength(0));
   expect(revisions[0].decisions).toHaveLength(1);
   expect(revisions[0].decisions[0].amount).toBe("35.00");
   const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
-  expect(comparison.textContent).toContain("חלופה מקורית — העתק");
+  expect(comparison.textContent).toContain("חלופה ששמה שונה — העתק");
   expect(comparison.textContent).toContain("35.00");
   expect(mocks.create).toHaveBeenCalledTimes(1);
   expect(mocks.replace).toHaveBeenCalledTimes(3);
+  expect(mocks.rename).toHaveBeenCalledTimes(1);
   expect(mocks.duplicate).toHaveBeenCalledTimes(1);
   view.unmount();
   render(<ScenarioDraftPanel clientId={1} products={products} />);
-  await screen.findByRole("button", { name: /חלופה מקורית — גרסה/ });
+  await screen.findByRole("button", { name: /חלופה ששמה שונה — גרסה/ });
   expect((await screen.findByRole("region", { name: "השוואת חלופות טיוטה" })).textContent)
-    .toContain("חלופה מקורית — העתק");
+    .toContain("חלופה ששמה שונה — העתק");
+});
+
+it("never presents a negative amount as an available remainder", async () => {
+  const overallocated = draft("overallocated");
+  overallocated.decisions[0].amount = "100.01";
+  mocks.list.mockResolvedValue([overallocated]);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const balances = await screen.findByRole("heading", { name: "יתרות טיוטה לפי המקור שנטען" });
+  const section = balances.parentElement!;
+  expect(section.textContent).toContain("יתרה זמינה לתצוגה חסומה");
+  expect(section.textContent).toContain("נדרש אימות מחדש; אין אישור להקצאה");
+  expect(section.textContent).not.toContain("-0.01 ₪");
 });

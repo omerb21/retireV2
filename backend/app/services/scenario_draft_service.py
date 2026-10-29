@@ -248,6 +248,19 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     return _revision(db, scenario, "replace", actor)
 
 
+def rename(db: Session, client_id: int, scenario_id: str, name: str,
+           expected: int, actor: str) -> dict:
+    """Rename draft metadata without re-reviewing or replacing decisions.
+
+    Source fingerprints and pension elections are version-bound evidence. A
+    display-name edit is not a factual review and therefore may not refresh,
+    delete, or otherwise rewrite that evidence.
+    """
+    scenario = _scenario(db, client_id, scenario_id)
+    _cas(db, scenario, expected, actor, name=name)
+    return _revision(db, scenario, "rename", actor)
+
+
 def archive(db: Session, client_id: int, scenario_id: str, expected: int, actor: str) -> dict:
     scenario = _scenario(db, client_id, scenario_id)
     _cas(db, scenario, expected, actor, status="archived")

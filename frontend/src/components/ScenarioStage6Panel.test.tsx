@@ -340,3 +340,34 @@ it("allows structural allocation review for capital-only draft without exposing 
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו/)).toBeNull();
   expect(mock.estimate).not.toHaveBeenCalled();
 });
+
+
+it("loads current alternative allocation evidence within the workspace without a second click", async () => {
+  mock.list.mockResolvedValue([election]);
+  mock.allocation.mockResolvedValue({
+    manifest_fingerprint: "a".repeat(64),
+    candidate_evidence_state: "STRUCTURALLY_CONSISTENT_NOT_ADMITTED",
+    candidate_blockers: [],
+    overall_status: "STRUCTURAL_ONLY",
+    allocation_evidence: {
+      schema_version: "SCENARIO_ALLOCATION_EVIDENCE_V1",
+      client_id: 1, scenario_id: "sc1", scenario_version: 3,
+      manifest_fingerprint: "a".repeat(64), evidence_fingerprint: "b".repeat(64),
+      overall_status: "STRUCTURAL_ONLY", blocker_codes: [],
+      sources: [{
+        product_id: "p1", component_id: "c1", component_code: "fund",
+        source_fingerprint: "c".repeat(64),
+        balance: "100000.00", allocated: "40000.00", unallocated: "60000.00",
+        allocation_by_action: { pension: "40000.00", capital_asset: "0.00" },
+        decision_ids: ["d1"], status: "STRUCTURAL_ONLY", blocker_codes: [],
+      }],
+      financial_result: null, execution_allowed: false,
+    },
+    financial_result: null, execution_allowed: false,
+  });
+  render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}
+    autoInspectAllocations/>);
+  await waitFor(() => expect(mock.allocation).toHaveBeenCalledWith(1, "sc1"));
+  await screen.findByText(/לא מוקצה 60000.00/);
+  expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
+});

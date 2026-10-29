@@ -371,3 +371,40 @@ it("loads current alternative allocation evidence within the workspace without a
   await screen.findByText(/לא מוקצה 60000.00/);
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
+
+
+it("opens a capital-only alternative without requesting pension elections", async () => {
+  const capitalScenario: ScenarioDraft = {
+    ...scenario,
+    decisions: scenario.decisions.map(decision => ({
+      ...decision, action: "capital_asset" as const,
+    })),
+  };
+  mock.allocation.mockResolvedValue({
+    manifest_fingerprint: "a".repeat(64),
+    candidate_evidence_state: "STRUCTURALLY_CONSISTENT_NOT_ADMITTED",
+    candidate_blockers: [], overall_status: "STRUCTURAL_ONLY",
+    allocation_evidence: {
+      schema_version: "SCENARIO_ALLOCATION_EVIDENCE_V1",
+      client_id: 1, scenario_id: "sc1", scenario_version: 3,
+      manifest_fingerprint: "a".repeat(64),
+      evidence_fingerprint: "b".repeat(64),
+      overall_status: "STRUCTURAL_ONLY", blocker_codes: [],
+      sources: [{
+        product_id: "p1", component_id: "c1", component_code: "fund",
+        source_fingerprint: "c".repeat(64), balance: "100000.00",
+        allocated: "100000.00", unallocated: "0.00",
+        allocation_by_action: { pension: "0.00", capital_asset: "100000.00" },
+        status: "STRUCTURAL_ONLY", blocker_codes: [], decision_ids: ["d1"],
+      }],
+      financial_result: null, execution_allowed: false,
+    },
+    financial_result: null, execution_allowed: false,
+  });
+  render(<ScenarioStage6Panel clientId={1} scenario={capitalScenario}
+    onSaved={vi.fn()} autoInspectAllocations/>);
+  await screen.findByText(/לא מוקצה 0.00/);
+  expect(mock.list).not.toHaveBeenCalled();
+  expect(screen.queryByText("טוען בחירות קצבה...")).toBeNull();
+  expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeNull();
+});

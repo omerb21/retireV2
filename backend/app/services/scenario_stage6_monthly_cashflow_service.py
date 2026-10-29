@@ -59,6 +59,10 @@ def _months(start_month: str, end_month: str) -> list[date]:
     current = start
     while current <= end and len(values) <= MAX_MONTHS:
         values.append(current)
+        # Do not advance beyond the final requested month: 9999-12 is a
+        # valid calendar month but Python's date cannot represent year 10000.
+        if current == end:
+            break
         current = _next_month(current)
     if len(values) > MAX_MONTHS:
         raise ValueError("STAGE6_CASHFLOW_RANGE_TOO_LARGE")

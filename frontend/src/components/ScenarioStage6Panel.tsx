@@ -109,6 +109,12 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
     setAllocationError(null);
     setAllocationBusy(false);
     setElections([]);
+    // Capital-only alternatives have no pension choices to load. Keep their
+    // structural allocation workspace usable if the pension API is unavailable.
+    if (!scenario.decisions.some(decision => decision.action === "pension")) {
+      setLoaded(true);
+      return () => { epoch.current += 1; allocationEpoch.current += 1; };
+    }
     void listScenarioPensionElections(clientId, scenario.scenario_id)
       .then(rows => {
         if (epoch.current !== current) return;
@@ -119,7 +125,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
         if (epoch.current === current) setError(explain(cause));
       });
     return () => { epoch.current += 1; allocationEpoch.current += 1; };
-  }, [scenarioKey, clientId, scenario.scenario_id]);
+  }, [scenarioKey, clientId, scenario.scenario_id, scenario.decisions]);
 
   function modify(id: string, patch: Partial<ScenarioPensionElection>) {
     allocationEpoch.current += 1;

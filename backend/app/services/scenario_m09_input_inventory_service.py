@@ -41,6 +41,14 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
         "effective_date": row["effective_date"],
         "amount_principal": row["amount"],
         "source_fingerprint_at_review": row["source_fingerprint_at_review"],
+        # Observed source identity is factual evidence; review fields above
+        # remain unchanged even when a factual revision invalidates the draft.
+        "source_fingerprint_current": (
+            row["source"]["source_fingerprint"] if row["source"] is not None else None
+        ),
+        "product_version_current": (
+            row["source"]["product_version"] if row["source"] is not None else None
+        ),
         "product_version_at_review": row["product_version_at_review"],
         "validation_state": row["validation_state"],
         "ruleset_digest_at_review": row["ruleset_digest_at_review"],

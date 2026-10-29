@@ -45,6 +45,9 @@ def _m09_p1_extension(_db, pair: dict) -> dict:
     blockers = sorted(set(candidate["blockers"]) | set(allocation["blocker_codes"]))
     if not decisions:
         blockers = sorted(set(blockers) | {"SCENARIO_DECISIONS_EMPTY_OR_INVALID"})
+    if not structurally_consistent and not blockers:
+        # Unknown or unadmitted candidate states must carry an explicit reason.
+        blockers = ["SCENARIO_CANDIDATE_NOT_ADMITTED"]
     evidence = {
         "schema_version": "M09_CURRENT_SCENARIO_INPUT_INVENTORY_P1_V1",
         "client_id": manifest["client_id"],

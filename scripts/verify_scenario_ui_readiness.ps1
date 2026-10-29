@@ -8,7 +8,7 @@ if (!(Test-Path (Join-Path $backend "app/main.py"))) { throw "Canonical backend 
 if (!(Test-Path (Join-Path $frontend "package.json"))) { throw "Canonical frontend missing" }
 Push-Location $backend
 try {
-  python -m pytest -q tests/test_scenario_input_manifest.py tests/test_scenario_snapshot_candidate.py tests/test_scenario_allocation_evidence.py tests/test_scenario_allocation_snapshot_service.py tests/test_stage6_internal_api.py
+  python -m pytest -q tests/test_scenario_input_manifest.py tests/test_scenario_snapshot_candidate.py tests/test_scenario_allocation_evidence.py tests/test_scenario_allocation_snapshot_service.py tests/test_stage6_internal_api.py tests/test_scenario_m09_input_inventory_service.py tests/test_scenario_m09_p1_independent_regressions.py
   if ($LASTEXITCODE -ne 0) { throw "Backend tests failed" }
 } finally { Pop-Location }
 Push-Location $frontend

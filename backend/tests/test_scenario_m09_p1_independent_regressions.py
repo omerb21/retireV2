@@ -269,3 +269,34 @@ def test_blocked_without_candidate_codes_never_becomes_unexplained_failure():
     assert result["inventory_state"] == "BLOCKED"
     assert result["blocker_codes"] == ["SCENARIO_CANDIDATE_NOT_ADMITTED"]
     assert result["monthly_cashflow"] is None
+
+
+def test_multiple_decisions_on_same_component_retain_distinct_input_identity():
+    pair = verified_pair()
+    second = deepcopy(pair["manifest"]["decisions"][0])
+    second["decision_id"] = "second"
+    second["amount"] = "12.34"
+    second["action"] = "capital_asset"
+    pair["manifest"]["decisions"].append(second)
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "STRUCTURAL_ONLY"
+    assert {row["decision_id"] for row in result["decisions"]} == {"d", "second"}
+    assert len(result["source_allocations"]) == 1
+    assert result["source_allocations"][0]["allocated"] == "62.34"
+    assert result["source_allocations"][0]["unallocated"] == "37.66"
+    assert result["source_allocations"][0]["decision_ids"] == ["d", "second"]
+    assert all(row["input_state"] == "STRUCTURAL_ONLY" for row in result["decisions"])
+    assert result["monthly_cashflow"] is None
+
+
+def test_changed_source_version_does_not_refresh_review_identity():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["product_version_at_review"] = 2
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert result["decisions"][0]["product_version_at_review"] == 2
+    assert result["decisions"][0]["input_state"] == "BLOCKED"
+    assert "SOURCE_STALE" in result["blocker_codes"]
+    assert result["source_allocations"][0]["unallocated"] is None

@@ -228,7 +228,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
   useEffect(() => {
     if (!autoInspectAllocations || scenario.status !== "draft" || scenario.decisions.length === 0) return;
     void inspectAllocations();
-    // A scenario version change remounts the evidence request; edits clear it.
+    // A scenario version change refreshes the evidence request; edits clear it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenarioKey, autoInspectAllocations]);
 

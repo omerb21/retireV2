@@ -1,6 +1,6 @@
 # RetireV2 — Scenario UI QA release gate (2026-10-28)
 
-**State: CODE_PREPARED_NOT_RUNTIME_VERIFIED**. This document records the path to a *manually testable staging UI*, not public release or final retirement plan.
+**State: RUNTIME_VERIFIED_IN_ISOLATED_WORK_ENVIRONMENT**. The original application was exercised on 2026-10-28 with synthetic data, isolated PostgreSQL 16.2, production-style signed-session authentication and the staging-only preview gates. This is a manually testable staging UI, not public release or a final retirement plan.
 
 ## Actual original application entrypoint
 
@@ -14,6 +14,16 @@
 ## Workstation preflight
 
 On a separate recovery worktree, check out `development/retirev2-product-completion-20261028` without altering the canonical recovery branch, and run `scripts/verify_scenario_ui_readiness.ps1` in an environment with backend and frontend dependencies already installed. This executes narrow Python pytest suites, Vitest API/component suites, then a staging-enabled `npm run build` (TypeScript and Vite). A successful script is **not proof** of browser or PostgreSQL E2E behavior.
+
+## Verified local opening procedure
+
+1. Start a dedicated PostgreSQL instance and migrate it to Alembic head `d6f1a9c3b704`; grant the existing restricted application-role permissions with `dev/grant_workspace_permissions.py`.
+2. Seed only synthetic client and pension-product data.
+3. Build the original frontend with `VITE_STAGE6_PREVIEW_ENABLED=1`.
+4. Start the original backend with production-style signed-session settings, `STAGE6_PREVIEW_ENABLED=1`, `RAILWAY_ENVIRONMENT_NAME=staging`, the isolated application-role database URL and local HTTPS.
+5. Sign in and open `https://127.0.0.1:8443/clients/{clientId}/workspace`, then select **תכנון תרחישים**.
+
+The Work verification used this exact route and configuration. It completed 17 browser checks, captured 44 relevant API responses, exercised a successful monthly estimate, stale CAS conflict, cross-client rejection, source invalidation and responsive RTL rendering. The database and services were stopped after the run; this document does not identify a persistent or production endpoint.
 
 ## Required browser-and-PostgreSQL acceptance
 

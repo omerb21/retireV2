@@ -271,12 +271,14 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
         <ol>
           <li>החלטות והקצאות: {active.decisions.length === 0
             ? "יש להוסיף החלטה לחלופה"
-            : `${active.decisions.length} החלטות שמורות; בקרת המקורות נטענת אוטומטית בהמשך המסך`}</li>
+            : `${active.decisions.length} החלטות שמורות`}</li>
           <li>בקרת מקור: {active.status === "needs_revalidation"
             ? "נדרש אימות מחדש של נתונים שהתיישנו"
             : active.status === "archived"
             ? "החלופה בארכיון"
-            : "יש לעיין בתוצאות בקרת ההקצאות של החלופה"}</li>
+            : import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.length > 0
+            ? "בקרת ההקצאות נטענת בהמשך המסך"
+            : "בקרת ההקצאות זמינה בסביבת בדיקות מאובטחת בלבד"}</li>
           <li>בחירת קצבה: {active.decisions.some(decision => decision.action === "pension")
             ? "ניתן להגדיר תנאי קצבה ולבדוק אומדן מאושר ברוטו בהמשך"
             : "אין החלטת קצבה בחלופה הזאת"}</li>

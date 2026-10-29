@@ -326,3 +326,44 @@ def test_canonical_candidate_identity_matches_the_manifest():
     output = subject._m09_p1_extension(None, pair)
     assert pair["candidate"]["manifest_fingerprint"] == output["manifest_fingerprint"]
     assert output["inventory_state"] == "STRUCTURAL_ONLY"
+
+
+def test_per_decision_blockers_are_source_scoped():
+    pair = verified_pair()
+    missing = deepcopy(pair["manifest"]["decisions"][0])
+    missing["decision_id"] = "missing"
+    missing["product_id"] = "other-product"
+    missing["component_id"] = "other-component"
+    missing["source"] = None
+    pair["manifest"]["decisions"].append(missing)
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    by_id = {row["decision_id"]: row for row in result["decisions"]}
+    assert result["inventory_state"] == "BLOCKED"
+    assert by_id["d"]["source_blocker_codes"] == []
+    assert by_id["missing"]["source_blocker_codes"] == ["SOURCE_MISSING"]
+    assert by_id["d"]["input_state"] == "STRUCTURAL_ONLY"
+    assert by_id["missing"]["input_state"] == "BLOCKED"
+    assert result["execution_allowed"] is False
+
+
+def test_stale_source_blocker_is_present_on_decision():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["product_version_at_review"] = 2
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    assert result["decisions"][0]["source_blocker_codes"] == ["SOURCE_STALE"]
+    assert result["decisions"][0]["input_state"] == "BLOCKED"
+    assert result["monthly_cashflow"] is None
+
+
+def test_local_source_blocker_order_is_deterministic():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["product_version_at_review"] = 2
+    pair["manifest"]["scenario_status"] = "archived"
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    assert result["decisions"][0]["source_blocker_codes"] == [
+        "SCENARIO_NOT_ACTIVE_DRAFT", "SOURCE_STALE"
+    ]
+    assert result["inventory_state"] == "BLOCKED"

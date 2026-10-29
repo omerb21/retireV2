@@ -9,7 +9,9 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal, localcontext
+import hmac
 import re
+from urllib.parse import quote
 
 from sqlalchemy import select
 
@@ -30,6 +32,7 @@ from app.services.scenario_stage6_single_pension_estimate_service import (
 CONTRACT = "STAGE6_MONTHLY_RETIREMENT_CASHFLOW_V1"
 MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 MAX_MONTHS = 600
+HASH = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 VALID_SOURCE_STATUSES = {
     "client stated", "planner entered", "external statement",
     "employer information", "institution information",
@@ -78,6 +81,24 @@ def _money_sum(values: list[str]) -> str:
         context.prec = precision
         total = sum((Decimal(value) for value in values), Decimal("0.00"))
     return format(total, ".2f")
+
+
+def _money(value) -> bool:
+    if not isinstance(value, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.[0-9]{2}", value):
+        return False
+    try:
+        amount = Decimal(value)
+    except Exception:
+        return False
+    return amount.is_finite() and amount >= 0
+
+
+def _sorted_unique(values) -> bool:
+    return (
+        isinstance(values, list)
+        and all(isinstance(item, str) and item for item in values)
+        and values == sorted(set(values))
+    )
 
 
 def _month_contains(value: date, start: date | None, end: date | None) -> bool:
@@ -355,6 +376,178 @@ def _blocked_result(client_id: int, scenario_id: str, start_month: str,
         "contract_version": "STAGE6_MONTHLY_RETIREMENT_CASHFLOW_FINGERPRINT_V1",
         "result": evidence,
     })}
+
+
+def validate_monthly_cashflow_result(value, *, client_id: int, scenario_id: str,
+                                     scenario_version: int, start_month: str,
+                                     end_month: str) -> bool:
+    """Purely validate a public cashflow result before downstream composition."""
+    result_keys = {
+        "schema_version", "client_id", "scenario_id", "scenario_version",
+        "manifest_fingerprint", "start_month", "end_month", "cashflow_state",
+        "blocker_codes", "sources", "monthly_rows", "execution_allowed",
+        "cashflow_fingerprint",
+    }
+    source_keys = {
+        "source_id", "source_kind", "decision_id", "recurring_income_id", "label",
+        "monthly_amount_gross_ils", "income_basis", "price_basis", "start_date",
+        "end_date", "source_reference_date", "authority_fingerprint", "source_state",
+        "blocker_codes",
+    }
+    row_keys = {
+        "month", "cashflow_state", "contributions", "known_income_subtotal_ils",
+        "calculated_pension_subtotal_ils", "gross_income_total_ils", "blocker_codes",
+    }
+    contribution_keys = {
+        "source_id", "source_kind", "amount_monthly_gross_ils", "contribution_state",
+    }
+    if not isinstance(value, dict) or set(value) != result_keys:
+        return False
+    if (
+        value["schema_version"] != CONTRACT
+        or value["client_id"] != client_id
+        or value["scenario_id"] != scenario_id
+        or value["scenario_version"] != scenario_version
+        or value["start_month"] != start_month
+        or value["end_month"] != end_month
+        or value["execution_allowed"] is not False
+        or value["cashflow_state"] not in {"COMPLETE", "PARTIAL", "BLOCKED"}
+        or not isinstance(value["manifest_fingerprint"], str)
+        or not HASH.fullmatch(value["manifest_fingerprint"])
+        or not isinstance(value["cashflow_fingerprint"], str)
+        or not HASH.fullmatch(value["cashflow_fingerprint"])
+        or not _sorted_unique(value["blocker_codes"])
+        or not isinstance(value["sources"], list)
+        or not isinstance(value["monthly_rows"], list)
+    ):
+        return False
+    expected_months = [month.strftime("%Y-%m") for month in _months(start_month, end_month)]
+    if [row.get("month") if isinstance(row, dict) else None
+        for row in value["monthly_rows"]] != expected_months:
+        return False
+    source_map = {}
+    for source in value["sources"]:
+        if not isinstance(source, dict) or set(source) != source_keys:
+            return False
+        source_id = source["source_id"]
+        if (
+            not isinstance(source_id, str) or not source_id or source_id in source_map
+            or source["source_kind"] not in {"CALCULATED_PENSION", "KNOWN_RECURRING_INCOME"}
+            or not isinstance(source["label"], str) or not source["label"]
+            or not isinstance(source["authority_fingerprint"], str)
+            or not HASH.fullmatch(source["authority_fingerprint"])
+            or source["source_state"] not in {"READY", "BLOCKED"}
+            or not _sorted_unique(source["blocker_codes"])
+        ):
+            return False
+        if source["source_kind"] == "CALCULATED_PENSION":
+            expected_pension_source = (
+                "scenario-decision:" + quote(scenario_id, safe="") + ":"
+                + quote(source["decision_id"], safe="")
+            ) if isinstance(source["decision_id"], str) else None
+            if (
+                not isinstance(source["decision_id"], str)
+                or not source["decision_id"] or len(source["decision_id"]) > 64
+                or source_id != expected_pension_source
+                or source["recurring_income_id"] is not None
+                or (source["source_state"] == "READY"
+                    and source["price_basis"] != "NOMINAL_UNINDEXED")
+            ):
+                return False
+        elif (
+            source["decision_id"] is not None
+            or isinstance(source["recurring_income_id"], bool)
+            or not isinstance(source["recurring_income_id"], int)
+            or source["recurring_income_id"] <= 0
+            or source_id != f"income:{source['recurring_income_id']}"
+            or (source["source_state"] == "READY"
+                and source["price_basis"] != "STATED_NOMINAL_NO_INDEXATION")
+        ):
+            return False
+        if source["source_state"] == "READY":
+            if (
+                not _money(source["monthly_amount_gross_ils"])
+                or source["income_basis"] != "GROSS"
+                or source["price_basis"] not in {
+                    "NOMINAL_UNINDEXED", "STATED_NOMINAL_NO_INDEXATION",
+                }
+                or source["blocker_codes"]
+            ):
+                return False
+        elif source["monthly_amount_gross_ils"] is not None:
+            return False
+        for field in ("start_date", "end_date", "source_reference_date"):
+            raw = source[field]
+            if raw is not None:
+                try:
+                    if date.fromisoformat(raw).isoformat() != raw:
+                        return False
+                except (TypeError, ValueError):
+                    return False
+        if (source["start_date"] is not None and source["end_date"] is not None
+                and source["end_date"] < source["start_date"]):
+            return False
+        source_map[source_id] = source
+    if list(source_map) != sorted(source_map):
+        return False
+    row_blockers = set()
+    states = set()
+    for row in value["monthly_rows"]:
+        if not isinstance(row, dict) or set(row) != row_keys:
+            return False
+        if row["cashflow_state"] not in {"COMPLETE", "PARTIAL", "BLOCKED"}:
+            return False
+        if not _sorted_unique(row["blocker_codes"]):
+            return False
+        states.add(row["cashflow_state"])
+        row_blockers.update(row["blocker_codes"])
+        if not isinstance(row["contributions"], list):
+            return False
+        contribution_ids = set()
+        known = []
+        calculated = []
+        for item in row["contributions"]:
+            if not isinstance(item, dict) or set(item) != contribution_keys:
+                return False
+            source = source_map.get(item["source_id"])
+            if (
+                source is None or source["source_state"] != "READY"
+                or item["source_id"] in contribution_ids
+                or item["source_kind"] != source["source_kind"]
+                or item["amount_monthly_gross_ils"] != source["monthly_amount_gross_ils"]
+                or item["contribution_state"] not in {"KNOWN", "CALCULATED"}
+                or (item["contribution_state"] == "KNOWN")
+                   != (item["source_kind"] == "KNOWN_RECURRING_INCOME")
+            ):
+                return False
+            contribution_ids.add(item["source_id"])
+            (known if item["contribution_state"] == "KNOWN" else calculated).append(
+                item["amount_monthly_gross_ils"]
+            )
+        if (
+            row["known_income_subtotal_ils"] != _money_sum(known)
+            or row["calculated_pension_subtotal_ils"] != _money_sum(calculated)
+        ):
+            return False
+        expected_total = _money_sum(known + calculated)
+        if row["cashflow_state"] == "COMPLETE":
+            if row["blocker_codes"] or row["gross_income_total_ils"] != expected_total:
+                return False
+        elif not row["blocker_codes"] or row["gross_income_total_ils"] is not None:
+            return False
+    expected_state = (
+        "COMPLETE" if states == {"COMPLETE"}
+        else "PARTIAL" if "COMPLETE" in states or "PARTIAL" in states
+        else "BLOCKED"
+    )
+    if value["cashflow_state"] != expected_state or value["blocker_codes"] != sorted(row_blockers):
+        return False
+    evidence = {key: value[key] for key in result_keys - {"cashflow_fingerprint"}}
+    expected_fingerprint = fingerprint({
+        "contract_version": "STAGE6_MONTHLY_RETIREMENT_CASHFLOW_FINGERPRINT_V1",
+        "result": evidence,
+    })
+    return hmac.compare_digest(value["cashflow_fingerprint"], expected_fingerprint)
 
 
 def build_scenario_monthly_cashflow(factory, *, client_id: int,

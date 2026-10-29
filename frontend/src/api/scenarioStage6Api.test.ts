@@ -3,11 +3,30 @@ import {
   listScenarioPensionElections, saveScenarioPensionElections,
   readFactorAdmissionCursor, submitProfessionalFactorAdmission,
   readScenarioAllocationEvidence, validScenarioAllocationEvidence,
+  readScenarioMonthlyComparison,
 } from "./scenarioStage6Api";
 
 const network=vi.hoisted(() => ({ fetch:vi.fn(), url:vi.fn((x:string)=>"/api"+x) }));
 vi.mock("./apiBase",() => ({ apiFetch:network.fetch, buildApiUrl:network.url }));
 afterEach(() => { vi.clearAllMocks(); });
+
+it("posts only two version-bound scenario identities and the requested common month range", async () => {
+  const response = { schema_version:"STAGE6_SCENARIO_MONTHLY_COMPARISON_V1" };
+  network.fetch.mockResolvedValueOnce({ok:true,json:async()=>response});
+  const abort = new AbortController();
+  await expect(readScenarioMonthlyComparison(7, {
+    scenario_a_id:"a",scenario_a_version:2,scenario_b_id:"b",scenario_b_version:3,
+    start_month:"2030-01",end_month:"2030-12",
+  }, abort.signal)).resolves.toEqual(response);
+  const [url,options]=network.fetch.mock.calls[0] as [string,RequestInit];
+  expect(url).toBe("/api/clients/7/scenario-drafts/monthly-income-comparison");
+  expect(options.method).toBe("POST");
+  expect(options.signal).toBe(abort.signal);
+  expect(JSON.parse(options.body as string)).toEqual({
+    scenario_a_id:"a",scenario_a_version:2,scenario_b_id:"b",scenario_b_version:3,
+    start_month:"2030-01",end_month:"2030-12",
+  });
+});
 
 it("removes read-only authority evidence from a round-trip write payload",async () => {
   network.fetch.mockResolvedValueOnce({

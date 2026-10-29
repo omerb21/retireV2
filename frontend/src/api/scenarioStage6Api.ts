@@ -103,6 +103,59 @@ export interface ScenarioMonthlyCashflow {
   execution_allowed: false;
   cashflow_fingerprint: string;
 }
+export interface ScenarioMonthlyComparison {
+  schema_version: "STAGE6_SCENARIO_MONTHLY_COMPARISON_V1";
+  client_id: number;
+  start_month: string;
+  end_month: string;
+  comparison_state: "COMPLETE" | "PARTIAL" | "BLOCKED";
+  target_comparison_state: "COMPLETE" | "BLOCKED";
+  scenario_a: ScenarioComparisonIdentity;
+  scenario_b: ScenarioComparisonIdentity;
+  shared_source_ids: string[];
+  target: {
+    target_state: "NOT_READY" | "NET_NOT_COMPARABLE" | "PRICE_BASIS_NOT_COMPARABLE" | "GROSS_NOMINAL_TARGET_MONTH_ONLY";
+    monthly_amount_ils: string | null;
+    income_basis: "GROSS" | "NET" | null;
+    price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE" | null;
+    retirement_target_date: string | null;
+    target_semantic_fingerprint: string | null;
+    target_result_fingerprint: string;
+    blocker_codes: string[];
+  };
+  monthly_rows: Array<{
+    month: string;
+    comparison_state: "COMPLETE" | "BLOCKED";
+    scenario_a_gross_income_ils: string | null;
+    scenario_b_gross_income_ils: string | null;
+    scenario_b_minus_a_gross_ils: string | null;
+    target_comparison_state: "COMPLETE" | "BLOCKED";
+    target_gross_income_ils: string | null;
+    scenario_a_minus_target_gross_ils: string | null;
+    scenario_b_minus_target_gross_ils: string | null;
+    change_events: {
+      scenario_a_started_source_ids: string[];
+      scenario_a_ended_source_ids: string[];
+      scenario_b_started_source_ids: string[];
+      scenario_b_ended_source_ids: string[];
+    };
+    blocker_codes: string[];
+  }>;
+  execution_allowed: false;
+  comparison_fingerprint: string;
+}
+interface ScenarioComparisonIdentity {
+  scenario_id: string;
+  scenario_version: number;
+  manifest_fingerprint: string;
+  cashflow_fingerprint: string;
+  sources: Array<{
+    source_id: string;
+    source_kind: "CALCULATED_PENSION" | "KNOWN_RECURRING_INCOME";
+    authority_fingerprint: string;
+    source_state: "READY" | "BLOCKED";
+  }>;
+}
 
 async function read<T>(clientId: number, scenarioId: string, suffix: string,
                        options: RequestInit = {}): Promise<T> {
@@ -156,6 +209,28 @@ export async function readScenarioMonthlyCashflow(
 ): Promise<ScenarioMonthlyCashflow> {
   const query = new URLSearchParams({ start_month: startMonth, end_month: endMonth });
   return read(clientId, scenarioId, `/monthly-income-cashflow?${query.toString()}`);
+}
+
+export async function readScenarioMonthlyComparison(
+  clientId: number,
+  payload: {
+    scenario_a_id: string; scenario_a_version: number;
+    scenario_b_id: string; scenario_b_version: number;
+    start_month: string; end_month: string;
+  },
+  signal?: AbortSignal,
+): Promise<ScenarioMonthlyComparison> {
+  const response = await apiFetch(buildApiUrl(
+    `/clients/${clientId}/scenario-drafts/monthly-income-comparison`,
+  ), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload), signal,
+  });
+  if (!response.ok) {
+    const parsed = await response.json().catch(() => null);
+    throw Error(typeof parsed?.code === "string" ? parsed.code : "STAGE6_COMPARISON_UNAVAILABLE");
+  }
+  return response.json() as Promise<ScenarioMonthlyComparison>;
 }
 
 

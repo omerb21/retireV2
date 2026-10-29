@@ -22,6 +22,7 @@ def test_preview_is_absent_by_default_even_with_production_style_auth(monkeypatc
     assert not any("/gross-estimate" in p for p in paths(app))
     assert not any("/factor-admissions" in p for p in paths(app))
     assert not any("/allocation-evidence" in p for p in paths(app))
+    assert not any("/monthly-income-comparison" in p for p in paths(app))
 
 
 def test_preview_cannot_be_mounted_on_railway_production(monkeypatch):
@@ -31,6 +32,7 @@ def test_preview_cannot_be_mounted_on_railway_production(monkeypatch):
     assert app.state.stage6_preview_enabled is False
     assert not any("/pension-elections" in p for p in paths(app))
     assert not any("/allocation-evidence" in p for p in paths(app))
+    assert not any("/monthly-income-comparison" in p for p in paths(app))
 
 
 
@@ -56,6 +58,7 @@ def test_staging_preview_mounts_only_with_production_style_auth(monkeypatch):
     assert any("/factor-admissions" in x for x in p)
     assert any("/pension-elections" in x for x in p)
     assert any("/allocation-evidence" in x for x in p)
+    assert any("/monthly-income-comparison" in x for x in p)
     ordinary=create_app(AuthConfig(production=False))
     assert ordinary.state.stage6_preview_enabled is False
     assert not any("/gross-estimate" in x for x in paths(ordinary))
@@ -147,6 +150,43 @@ def test_monthly_cashflow_rejects_invalid_range_without_database_access():
     builder.assert_called_once()
 
 
+def test_valid_staging_session_calls_two_scenario_comparison_once():
+    r=request(actor="planner:authenticated")
+    payload=route.MonthlyComparisonRequest(
+        scenario_a_id="a",scenario_a_version=2,
+        scenario_b_id="b",scenario_b_version=3,
+        start_month="2030-01",end_month="2030-12")
+    with patch.object(route,"validate_session",return_value=None),patch.object(
+        route,"validate_origin",return_value=None),patch.object(
+        route,"validate_csrf",return_value=None),patch.object(
+        route,"compare_scenario_monthly_cashflows",
+        return_value={"comparison_state":"COMPLETE","execution_allowed":False}) as compare:
+        result=route.internal_monthly_income_comparison(
+            r,payload,client_id=1,factory="factory")
+    compare.assert_called_once_with(
+        "factory",client_id=1,scenario_a_id="a",scenario_a_version=2,
+        scenario_b_id="b",scenario_b_version=3,
+        start_month="2030-01",end_month="2030-12")
+    assert result.headers["cache-control"]=="no-store, private"
+
+
+def test_comparison_maps_wrong_client_or_missing_scenario_without_leaking_data():
+    r=request(actor="planner:authenticated")
+    payload=route.MonthlyComparisonRequest(
+        scenario_a_id="a",scenario_a_version=2,
+        scenario_b_id="foreign",scenario_b_version=3,
+        start_month="2030-01",end_month="2030-12")
+    with patch.object(route,"validate_session",return_value=None),patch.object(
+        route,"validate_origin",return_value=None),patch.object(
+        route,"validate_csrf",return_value=None),patch.object(
+        route,"compare_scenario_monthly_cashflows",
+        side_effect=route.ScenarioSnapshotError("SCENARIO_NOT_FOUND")),patch.object(
+        route,"error",return_value="not-found") as reject:
+        assert route.internal_monthly_income_comparison(
+            r,payload,client_id=1,factory="factory") == "not-found"
+    reject.assert_called_once_with(r,404,"SCENARIO_NOT_FOUND")
+
+
 def test_invalid_signed_session_never_calls_service():
     r=request(actor="planner:authenticated")
     with patch.object(route,"validate_session",return_value="invalid"),patch.object(
@@ -233,6 +273,38 @@ def test_real_middleware_requires_signed_session_for_monthly_cashflow(monkeypatc
     builder.assert_called_once_with(
         "factory",client_id=1,scenario_id="sc",
         start_month="2027-01",end_month="2027-03")
+
+
+def test_real_middleware_requires_session_origin_and_csrf_for_comparison(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME","staging")
+    config=_production_config()
+    app=create_app(config)
+    app.dependency_overrides[route.get_stage6_factory]=lambda:"factory"
+    client=TestClient(app)
+    path="/api/clients/1/scenario-drafts/monthly-income-comparison"
+    body={
+        "scenario_a_id":"a","scenario_a_version":2,
+        "scenario_b_id":"b","scenario_b_version":3,
+        "start_month":"2030-01","end_month":"2030-12",
+    }
+    headers=_edge_headers(origin="https://retire.example")
+    with patch.object(route,"compare_scenario_monthly_cashflows",
+                      return_value={"comparison_state":"COMPLETE"}) as compare:
+        missing=client.post(path,json=body,headers=headers)
+        token,session=issue(config)
+        client.cookies.set(COOKIE_NAME,token)
+        rejected=client.post(path,json=body,headers=headers)
+        accepted=client.post(path,json=body,headers={
+            **headers,"x-rtdir-csrf":session["csrf"],
+        })
+    assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
+    assert (rejected.status_code,rejected.json()["code"])==(403,"CSRF_INVALID")
+    assert accepted.status_code==200
+    compare.assert_called_once_with(
+        "factory",client_id=1,scenario_a_id="a",scenario_a_version=2,
+        scenario_b_id="b",scenario_b_version=3,
+        start_month="2030-01",end_month="2030-12")
 
 
 def test_real_middleware_requires_session_bound_csrf_for_factor_write(monkeypatch):

@@ -3,6 +3,7 @@ import type { PensionProduct } from "../api/pensionProductsApi";
 import { readRetirementCalculationContext, type RetirementCalculationContext } from "../api/retirementCalculationContextApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
+import { ScenarioMonthlyComparisonPanel } from "./ScenarioMonthlyComparisonPanel";
 import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComparison";
 import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import {
@@ -264,6 +265,8 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
         })}</tbody>
       </table>
     </section>}
+    {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" &&
+      <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={drafts}/>}
     {active && <div>
       <h3>{active.name}</h3>
       <section aria-label="רצף עבודה בחלופה">
@@ -282,7 +285,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
           <li>בחירת קצבה: {active.decisions.some(decision => decision.action === "pension")
             ? "ניתן להגדיר תנאי קצבה ולבדוק אומדן מאושר ברוטו בהמשך"
             : "אין החלטת קצבה בחלופה הזאת"}</li>
-          <li>תזרים חודשי והשוואה כספית: טרם זמינים בחלופה הנוכחית</li>
+          <li>תזרים חודשי והשוואה כספית: זמינים בסביבת Stage 6 המאובטחת כאשר קיימות שתי חלופות פעילות</li>
         </ol>
       </section>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>

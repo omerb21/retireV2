@@ -17,12 +17,17 @@ from app.models.pension_product import (
 )
 from app.models.planning_input_decision import PensionIncomeResolution, PlanningInputDecision
 from app.models.retirement_facts import RecurringIncome
+from app.models.retirement_monthly_income_target import RetirementMonthlyIncomeTargetElection
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services import scenario_stage6_single_pension_estimate_service as subject
+from app.services import scenario_stage6_monthly_comparison_service as comparison_subject
 from app.services.scenario_stage6_monthly_cashflow_service import (
     build_scenario_monthly_cashflow,
+)
+from app.services.scenario_stage6_monthly_comparison_service import (
+    compare_scenario_monthly_cashflows,
 )
 from app.services.scenario_draft_service import _source_evidence
 from app.services.scenario_permission_preview_service import ruleset_digest
@@ -77,6 +82,7 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 PlanningInputDecision.__table__,
                 PensionIncomeResolution.__table__,
                 RecurringIncome.__table__,
+                RetirementMonthlyIncomeTargetElection.__table__,
             ))
             monkeypatch.setenv("CRTISBA_APPLICATION_DB_ROLE", role)
             original_operation = migration.op
@@ -188,6 +194,41 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 "coefficient_selection": "manual_review_required",
                 "option_name": "standard-2",
             })
+            connection.execute(ScenarioDraft.__table__.insert(), {
+                "scenario_id": "scenario-b", "client_id": 27, "name": "Synthetic B",
+                "status": "draft", "version": 1,
+                "created_by": "test", "updated_by": "test",
+            })
+            connection.execute(ScenarioDraftDecision.__table__.insert(), [{
+                "decision_id": "decision-b", "scenario_id": "scenario-b",
+                "source_product_id": "product", "source_component_id": "component",
+                "component_code": component_code, "amount": Decimal("400.00"),
+                "action": "pension", "effective_date": date(2026, 10, 27),
+                "validation_state": "unverified", "product_version_at_review": 1,
+                "source_fingerprint_at_review": source["source_fingerprint"],
+                "ruleset_digest_at_review": ruleset_digest(),
+            }, {
+                "decision_id": "decision-b-2", "scenario_id": "scenario-b",
+                "source_product_id": "product-2", "source_component_id": "component-2",
+                "component_code": component_code, "amount": Decimal("600.00"),
+                "action": "pension", "effective_date": date(2026, 10, 27),
+                "validation_state": "unverified", "product_version_at_review": 1,
+                "source_fingerprint_at_review": source2["source_fingerprint"],
+                "ruleset_digest_at_review": ruleset_digest(),
+            }])
+            connection.execute(ScenarioDraftPensionElection.__table__.insert(), [{
+                "election_id": "election-b", "scenario_id": "scenario-b",
+                "decision_id": "decision-b", "scenario_version": 1,
+                "pension_start_date": date(2027, 9, 30), "target_year": 2027,
+                "survivors_option": "60%", "spouse_age_diff": 0,
+                "coefficient_selection": "manual_review_required", "option_name": "standard-b",
+            }, {
+                "election_id": "election-b-2", "scenario_id": "scenario-b",
+                "decision_id": "decision-b-2", "scenario_version": 1,
+                "pension_start_date": date(2027, 9, 30), "target_year": 2027,
+                "survivors_option": "60%", "spouse_age_diff": 0,
+                "coefficient_selection": "manual_review_required", "option_name": "standard-b-2",
+            }])
 
         factory = sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
         admission = append_authenticated_serializable_factor_admission(
@@ -206,6 +247,18 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             factor_evidence_reference="synthetic professional assumption 2",
         )
         assert admission2["admission_revision"] == 1
+        for decision_id, reference, option in (
+            ("decision-b", "synthetic professional assumption b", "standard-b"),
+            ("decision-b-2", "synthetic professional assumption b2", "standard-b-2"),
+        ):
+            admitted = append_authenticated_serializable_factor_admission(
+                factory, request=_request(), client_id=27, scenario_id="scenario-b",
+                decision_id=decision_id, expected_scenario_version=1,
+                expected_admission_revision=0, factor_value="100",
+                factor_evidence_type="PLANNER_ASSUMPTION",
+                factor_evidence_reference=reference,
+            )
+            assert admitted["admission_revision"] == 1
 
         calls = 0
         real = subject.execute_from_planning_result
@@ -270,9 +323,70 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
         assert all(len(row["contributions"]) == 3 for row in cashflow["monthly_rows"])
         assert cashflow["execution_allowed"] is False
         assert len(cashflow["cashflow_fingerprint"]) == 64
+        comparison = compare_scenario_monthly_cashflows(
+            factory, client_id=27, scenario_a_id="scenario", scenario_a_version=1,
+            scenario_b_id="scenario-b", scenario_b_version=1,
+            start_month="2027-10", end_month="2027-11",
+        )
+        assert comparison["comparison_state"] == "COMPLETE"
+        assert comparison["target"]["target_state"] == "NOT_READY"
+        assert [row["scenario_a_gross_income_ils"] for row in comparison["monthly_rows"]] == [
+            "1204.00", "1204.00",
+        ]
+        assert [row["scenario_b_gross_income_ils"] for row in comparison["monthly_rows"]] == [
+            "1210.00", "1210.00",
+        ]
+        assert [row["scenario_b_minus_a_gross_ils"] for row in comparison["monthly_rows"]] == [
+            "6", "6",
+        ]
+        # Alternatives are never summed together. The recurring source keeps
+        # one stable identity across both; pension contributions deliberately
+        # retain their scenario-local decision identities.
+        assert comparison["shared_source_ids"] == ["income:27"]
+        assert comparison["execution_allowed"] is False
+        assert len(comparison["comparison_fingerprint"]) == 64
+
+        # A writer commits after scenario A has been read. Scenario B and the
+        # target must still observe the original repeatable-read snapshot.
+        cashflow_extension = comparison_subject._cashflow_extension
+        extension_calls = 0
+
+        def writer_between_alternatives(**kwargs):
+            extension = cashflow_extension(**kwargs)
+            def read_then_write(db, pair):
+                nonlocal extension_calls
+                value = extension(db, pair)
+                extension_calls += 1
+                if extension_calls == 1:
+                    with scoped.begin() as writer:
+                        writer.execute(RecurringIncome.__table__.update().where(
+                            RecurringIncome.id == 27,
+                        ).values(amount=Decimal("1300.00")))
+                return value
+            return read_then_write
+
+        monkeypatch.setattr(comparison_subject, "_cashflow_extension", writer_between_alternatives)
+        isolated = compare_scenario_monthly_cashflows(
+            factory, client_id=27, scenario_a_id="scenario", scenario_a_version=1,
+            scenario_b_id="scenario-b", scenario_b_version=1,
+            start_month="2027-10", end_month="2027-11",
+        )
+        assert extension_calls == 2
+        assert [row["scenario_a_gross_income_ils"] for row in isolated["monthly_rows"]] == [
+            "1204.00", "1204.00",
+        ]
+        assert [row["scenario_b_gross_income_ils"] for row in isolated["monthly_rows"]] == [
+            "1210.00", "1210.00",
+        ]
+        with scoped.begin() as writer:
+            assert writer.scalar(select(RecurringIncome.amount).where(RecurringIncome.id == 27)) == Decimal("1300.00")
+            writer.execute(RecurringIncome.__table__.update().where(
+                RecurringIncome.id == 27,
+            ).values(amount=Decimal("1200.00")))
+        monkeypatch.setattr(comparison_subject, "_cashflow_extension", cashflow_extension)
         with factory() as db:
             assert db.scalar(select(func.count()).select_from(
-                ScenarioPensionFactorAdmission)) == 2
+                ScenarioPensionFactorAdmission)) == 4
             db.rollback()
 
         # A changed payout route makes the immutable professional admission stale.
@@ -324,7 +438,7 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
         # Read-only execution persisted neither a result nor a replacement approval.
         with factory() as db:
             assert db.scalar(select(func.count()).select_from(
-                ScenarioPensionFactorAdmission)) == 2
+                    ScenarioPensionFactorAdmission)) == 4
             db.rollback()
     finally:
         with engine.begin() as connection:

@@ -5,6 +5,7 @@ No request-controlled coefficients, identity hashes or financial authority.
 """
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_session_factory
@@ -15,6 +16,10 @@ from app.services.scenario_stage6_single_pension_estimate_service import (
 from app.services.scenario_stage6_monthly_cashflow_service import (
     build_scenario_monthly_cashflow,
 )
+from app.services.scenario_stage6_monthly_comparison_service import (
+    compare_scenario_monthly_cashflows,
+)
+from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
 
 router = APIRouter(
     prefix="/api/clients/{client_id}/scenario-drafts",
@@ -24,6 +29,46 @@ router = APIRouter(
 
 def get_stage6_factory() -> sessionmaker[Session]:
     return get_session_factory()
+
+
+class MonthlyComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    scenario_a_id: str = Field(min_length=1, max_length=64)
+    scenario_a_version: int = Field(gt=0)
+    scenario_b_id: str = Field(min_length=1, max_length=64)
+    scenario_b_version: int = Field(gt=0)
+    start_month: str = Field(min_length=7, max_length=7)
+    end_month: str = Field(min_length=7, max_length=7)
+
+
+@router.post("/monthly-income-comparison")
+def internal_monthly_income_comparison(
+    request: Request,
+    payload: MonthlyComparisonRequest,
+    client_id: int = Path(gt=0),
+    factory: sessionmaker[Session] = Depends(get_stage6_factory),
+):
+    if not getattr(request.app.state, "stage6_preview_enabled", False):
+        return error(request, 404, "ROUTE_NOT_FOUND")
+    if _verified_internal_actor(request) is None:
+        return error(request, 401, "AUTHENTICATION_REQUIRED")
+    rejected = validate_origin(request, request.app.state.auth_config) or validate_csrf(request)
+    if rejected is not None:
+        return rejected
+    try:
+        result = compare_scenario_monthly_cashflows(
+            factory, client_id=client_id, **payload.model_dump(),
+        )
+    except ValueError as exc:
+        return error(request, 422, str(exc))
+    except ScenarioSnapshotError as exc:
+        status = 404 if exc.code == "SCENARIO_NOT_FOUND" else 503 if exc.code in {
+            "STAGE6_COMPARISON_REQUIRES_POSTGRESQL",
+            "STAGE6_COMPARISON_DATABASE_UNAVAILABLE",
+            "STAGE6_COMPARISON_CLEANUP_FAILED",
+        } else 409
+        return error(request, status, exc.code)
+    return JSONResponse(content=result, headers=NO_STORE)
 
 
 @router.get("/{scenario_id}/pension-decisions/{decision_id}/gross-estimate")

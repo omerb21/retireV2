@@ -170,3 +170,44 @@ def test_identity_fields_appear_only_as_input_evidence_not_authority():
     assert row["monthly_income"] is None
     assert result["financial_result"] is None
     assert result["inventory_fingerprint"] != result["manifest_fingerprint"]
+
+
+def test_two_source_same_decision_id_is_rejected_by_manifest_validator():
+    pair = verified_pair()
+    cloned = deepcopy(pair["manifest"]["decisions"][0])
+    cloned["amount"] = "10.00"
+    pair["manifest"]["decisions"].append(cloned)
+    rehash(pair["manifest"])
+    import pytest
+    from app.services.scenario_input_manifest_service import ManifestValidationError
+    with pytest.raises(ManifestValidationError, match="DECISION_CONTRACT_INVALID"):
+        subject._m09_p1_extension(None, pair)
+
+
+def test_missing_source_never_receives_invented_amount_or_monthly_stream():
+    pair = verified_pair()
+    pair["manifest"]["decisions"][0]["source"] = None
+    rehash(pair["manifest"])
+    result = subject._m09_p1_extension(None, pair)
+    assert result["inventory_state"] == "BLOCKED"
+    assert "SOURCE_MISSING" in result["blocker_codes"]
+    assert result["source_allocations"][0]["balance"] is None
+    assert result["source_allocations"][0]["unallocated"] is None
+    assert result["decisions"][0]["monthly_income"] is None
+
+
+def test_explicit_source_identity_remains_stable_across_other_source_failure():
+    pair = verified_pair()
+    first = subject._m09_p1_extension(None, pair)
+    missing = deepcopy(pair["manifest"]["decisions"][0])
+    missing["decision_id"] = "missing-id"
+    missing["product_id"] = "other"
+    missing["component_id"] = "other-component"
+    missing["source"] = None
+    pair["manifest"]["decisions"].append(missing)
+    rehash(pair["manifest"])
+    second = subject._m09_p1_extension(None, pair)
+    assert second["inventory_state"] == "BLOCKED"
+    assert first["decisions"][0]["source_fingerprint_at_review"] == second["decisions"][0]["source_fingerprint_at_review"]
+    assert second["decisions"][0]["input_state"] == "STRUCTURAL_ONLY"
+    assert second["decisions"][1]["input_state"] == "BLOCKED"

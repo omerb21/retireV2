@@ -201,6 +201,16 @@ def test_closed_timeline_range(start, end, code):
         subject._months(start, end)
 
 
+
+def test_final_calendar_month_is_valid_without_year_overflow():
+    assert subject._months("9999-12", "9999-12") == [date(9999, 12, 1)]
+
+
+def test_timeline_ending_in_last_calendar_month():
+    values = subject._months("9999-11", "9999-12")
+    assert values == [date(9999, 11, 1), date(9999, 12, 1)]
+
+
 def test_cashflow_owner_uses_one_canonical_snapshot(monkeypatch):
     seen = []
     def owner(factory, *, client_id, scenario_id, _snapshot_extension):

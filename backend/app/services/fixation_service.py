@@ -58,6 +58,21 @@ class FixationPreviewConflictError(ValueError):
         self.message = message
 
 
+def _is_fixation_run_identity_conflict(
+    exc: IntegrityError,
+    *,
+    dialect_name: str,
+) -> bool:
+    original = exc.orig
+    diagnostic = getattr(original, "diag", None)
+    return (
+        dialect_name == "postgresql"
+        and getattr(original, "pgcode", None) == "23505"
+        and getattr(diagnostic, "constraint_name", None)
+        == "fixation_runs_fixation_run_id_key"
+    )
+
+
 class FixationPreviewClientNotFoundError(LookupError):
     pass
 
@@ -662,13 +677,9 @@ def save_fixation_from_preview(
             # the first save commits. The unique preview identity is the final
             # exactly-once guard. After rollback, a fresh snapshot may return
             # the already committed run, but only for this named constraint.
-            original = exc.orig
-            diagnostic = getattr(original, "diag", None)
-            if not (
-                dialect_name == "postgresql"
-                and getattr(original, "sqlstate", None) == "23505"
-                and getattr(diagnostic, "constraint_name", None)
-                == "fixation_runs_fixation_run_id_key"
+            if not _is_fixation_run_identity_conflict(
+                exc,
+                dialect_name=dialect_name,
             ):
                 raise
             db_session.rollback()

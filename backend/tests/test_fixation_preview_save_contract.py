@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base, load_all_models
@@ -21,6 +22,7 @@ from app.schemas.cbs_indexation import (
 )
 from app.services.fixation_service import (
     FixationPreviewConflictError,
+    _is_fixation_run_identity_conflict,
     calculate_fixation_preview,
     save_fixation_from_preview,
 )
@@ -109,6 +111,28 @@ def _preview(factory, payload, *, client_id: int = 1):
     assert result.status == "success"
     assert result.preview_identity is not None
     return result
+
+
+def test_psycopg2_unique_preview_identity_conflict_is_classified_by_pgcode():
+    class Diagnostic:
+        constraint_name = "fixation_runs_fixation_run_id_key"
+
+    class Psycopg2UniqueViolation:
+        pgcode = "23505"
+        diag = Diagnostic()
+
+    conflict = IntegrityError("INSERT", {}, Psycopg2UniqueViolation())
+    assert _is_fixation_run_identity_conflict(
+        conflict,
+        dialect_name="postgresql",
+    )
+
+    Psycopg2UniqueViolation.diag.constraint_name = "unrelated_unique_key"
+    unrelated = IntegrityError("INSERT", {}, Psycopg2UniqueViolation())
+    assert not _is_fixation_run_identity_conflict(
+        unrelated,
+        dialect_name="postgresql",
+    )
 
 
 def test_preview_identity_binds_authoritative_sources_and_save_is_idempotent(tmp_path):

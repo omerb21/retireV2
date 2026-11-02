@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from itertools import count
 import os
 from pathlib import Path
 import subprocess
 import sys
+from threading import Lock
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
@@ -62,31 +64,55 @@ def _migrate_fixation_schema(database_url: str) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _cbs(*, amount, grant_date, work_end_date, eligibility_date):
+def _cbs(
+    *,
+    amount,
+    grant_date,
+    work_end_date,
+    eligibility_date,
+    calculation_timestamp=NOW,
+    index_factor=Decimal("1.1"),
+):
     base_date = grant_date or work_end_date
     request = CbsIndexationRequestEvidence(
         amount=Decimal(amount),
         resolved_base_date=base_date,
         base_date_source="grant_date" if grant_date is not None else "work_end_date",
         target_date=eligibility_date,
-        calculation_timestamp=NOW,
+        calculation_timestamp=calculation_timestamp,
     )
     return CbsIndexationSuccess(
         request=request,
         response=CbsIndexationResponseEvidence(
-            raw_to_value=Decimal(amount) * Decimal("1.1"),
+            raw_to_value=Decimal(amount) * index_factor,
             from_index_period="01-2020",
             to_index_period="11-2026",
             from_index_value=Decimal("100"),
-            to_index_value=Decimal("110"),
+            to_index_value=Decimal("100") * index_factor,
             base_year="synthetic",
-            chaining_coefficient=Decimal("1.1"),
-            change_percentage=Decimal("10"),
+            chaining_coefficient=index_factor,
+            change_percentage=(index_factor - Decimal("1")) * Decimal("100"),
             missing_optional_fields=[],
-            calculation_timestamp=NOW,
+            calculation_timestamp=calculation_timestamp,
             response_status=200,
         ),
     )
+
+
+def _varying_timestamp_cbs(*, index_factor=Decimal("1.1")):
+    sequence = count()
+    lock = Lock()
+
+    def calculate(**kwargs):
+        with lock:
+            timestamp = NOW + timedelta(microseconds=next(sequence) + 1)
+        return _cbs(
+            **kwargs,
+            calculation_timestamp=timestamp,
+            index_factor=index_factor,
+        )
+
+    return calculate
 
 
 def _seed(session: Session, *, client_id: int = 1) -> dict:
@@ -128,17 +154,67 @@ def _seed(session: Session, *, client_id: int = 1) -> dict:
     return payload
 
 
-def _preview(factory, payload, *, client_id: int = 1):
+def _preview(factory, payload, *, client_id: int = 1, cbs_calculator=_cbs):
     with factory() as session:
         result = calculate_fixation_preview(
             payload,
             client_id=client_id,
             db_session=session,
-            cbs_calculator=_cbs,
+            cbs_calculator=cbs_calculator,
         )
     assert result.status == "success"
     assert result.preview_identity is not None
     return result
+
+
+def test_preview_identity_ignores_cbs_timestamp_but_binds_indexation_result(tmp_path):
+    load_all_models()
+    engine = create_engine(f"sqlite:///{tmp_path / 'fixation-cbs-identity.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as session:
+        payload = _seed(session)
+
+    timestamp_varying_cbs = _varying_timestamp_cbs()
+    preview = _preview(
+        factory,
+        payload,
+        cbs_calculator=timestamp_varying_cbs,
+    )
+    with factory() as session:
+        run_id = save_fixation_from_preview(
+            client_id=1,
+            input_data=payload,
+            preview_identity=preview.preview_identity,
+            db_session=session,
+            cbs_calculator=timestamp_varying_cbs,
+        )
+
+    changed_result_preview = _preview(
+        factory,
+        payload,
+        cbs_calculator=_varying_timestamp_cbs(index_factor=Decimal("1.2")),
+    )
+    assert changed_result_preview.preview_identity != preview.preview_identity
+    with factory() as session:
+        with pytest.raises(FixationPreviewConflictError) as caught:
+            save_fixation_from_preview(
+                client_id=1,
+                input_data=payload,
+                preview_identity=preview.preview_identity,
+                db_session=session,
+                cbs_calculator=_varying_timestamp_cbs(index_factor=Decimal("1.2")),
+            )
+        assert caught.value.code == "FIXATION_PREVIEW_STALE"
+        assert session.scalar(select(func.count()).select_from(FixationRun)) == 1
+        run = session.get(FixationRun, run_id)
+        assert run is not None and run.is_latest is True
+        assert run.fixation_result.result_payload["monthly_exempt_pension"] == (
+            preview.monthly_exempt_pension
+        )
+        saved_grant = run.fixation_input_snapshot.input_payload["grants"][0]
+        assert saved_grant["cbs_request_evidence"]["calculation_timestamp"]
+        assert saved_grant["cbs_response_evidence"]["calculation_timestamp"]
 
 
 def test_psycopg2_unique_preview_identity_conflict_is_classified_by_pgcode():
@@ -263,7 +339,12 @@ def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url)
         with factory() as session:
             payload = _seed(session)
 
-        stale_preview = _preview(factory, payload)
+        timestamp_varying_cbs = _varying_timestamp_cbs()
+        stale_preview = _preview(
+            factory,
+            payload,
+            cbs_calculator=timestamp_varying_cbs,
+        )
         with factory.begin() as writer:
             writer.get(Grant, "grant-1").nominal_amount = Decimal("2000.00")
         with factory() as session:
@@ -273,13 +354,17 @@ def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url)
                     input_data=payload,
                     preview_identity=stale_preview.preview_identity,
                     db_session=session,
-                    cbs_calculator=_cbs,
+                    cbs_calculator=timestamp_varying_cbs,
                 )
             assert caught.value.code == "FIXATION_PREVIEW_STALE"
         with factory() as session:
             assert session.scalar(select(func.count()).select_from(FixationRun)) == 0
 
-        current = _preview(factory, payload)
+        current = _preview(
+            factory,
+            payload,
+            cbs_calculator=timestamp_varying_cbs,
+        )
 
         def save_once():
             with factory() as session:
@@ -288,7 +373,7 @@ def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url)
                     input_data=payload,
                     preview_identity=current.preview_identity,
                     db_session=session,
-                    cbs_calculator=_cbs,
+                    cbs_calculator=timestamp_varying_cbs,
                 )
 
         with ThreadPoolExecutor(max_workers=2) as pool:

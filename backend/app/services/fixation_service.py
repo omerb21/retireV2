@@ -262,11 +262,25 @@ def _preview_identity(prepared: PreparedFixation) -> str | None:
         if hasattr(value, "model_dump"):
             value = value.model_dump(mode="json")
         if isinstance(value, dict):
-            return {
+            stable = {
                 key: stable_evidence(item)
                 for key, item in value.items()
                 if key != "calculation_timestamp"
             }
+            # Dependency-entry fingerprints are created before this preview
+            # projection. Rebind them to the normalized canonical content so a
+            # removed CBS invocation timestamp cannot remain influential via a
+            # nested, precomputed hash. Persisted audit manifests are untouched.
+            if {
+                "canonical_content",
+                "fingerprint",
+                "fingerprint_algorithm",
+                "fingerprint_schema_version",
+            }.issubset(stable) and stable["canonical_content"] is not None:
+                stable["fingerprint"] = dependency_fingerprint(
+                    stable["canonical_content"]
+                )
+            return stable
         if isinstance(value, list):
             return [stable_evidence(item) for item in value]
         return value

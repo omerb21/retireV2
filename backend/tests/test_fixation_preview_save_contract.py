@@ -12,10 +12,11 @@ import sys
 from threading import Lock
 
 import pytest
-from sqlalchemy import create_engine, func, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import create_engine, event, func, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+import app.services.fixation_service as fixation_service
 from app.db.base import Base, load_all_models
 from app.models.client import Client
 from app.models.fixation_run import FixationRun
@@ -239,6 +240,102 @@ def test_psycopg2_unique_preview_identity_conflict_is_classified_by_pgcode():
     )
 
 
+def test_real_postgresql_40001_retry_uses_new_transaction_and_revalidates(
+    postgres_url,
+    monkeypatch,
+):
+    """Controlled SQLSTATE injection over a real PostgreSQL transaction owner.
+
+    Real concurrent saves are covered separately below.  This oracle isolates
+    the retry contract so the rollback, new transaction, and repeated source /
+    preview validation are directly observable rather than inferred from the
+    final idempotent result.
+    """
+
+    load_all_models()
+    _migrate_fixation_schema(postgres_url)
+    engine = create_engine(postgres_url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    try:
+        with engine.connect() as connection:
+            server_version = connection.scalar(text("SHOW server_version"))
+            assert server_version.startswith("16.")
+        with factory() as session:
+            payload = _seed(session)
+        preview = _preview(factory, payload, cbs_calculator=_varying_timestamp_cbs())
+
+        original_prepare = fixation_service._prepare_fixation
+        original_run = fixation_service.run_fixation
+        prepare_observations: list[tuple[int, str | None]] = []
+        run_transaction_ids: list[int] = []
+
+        def tracing_prepare(*args, **kwargs):
+            session = kwargs["db_session"]
+            transaction_id = session.scalar(text("SELECT txid_current()"))
+            prepared = original_prepare(*args, **kwargs)
+            prepare_observations.append(
+                (transaction_id, fixation_service._preview_identity(prepared))
+            )
+            return prepared
+
+        class SerializationFailure:
+            pgcode = "40001"
+
+        def fail_first_run(*args, **kwargs):
+            session = kwargs["db_session"]
+            run_transaction_ids.append(session.scalar(text("SELECT txid_current()")))
+            if len(run_transaction_ids) == 1:
+                raise OperationalError("INSERT", {}, SerializationFailure())
+            return original_run(*args, **kwargs)
+
+        monkeypatch.setattr(fixation_service, "_prepare_fixation", tracing_prepare)
+        monkeypatch.setattr(fixation_service, "run_fixation", fail_first_run)
+
+        with factory() as session:
+            rollback_events: list[bool] = []
+            event.listen(
+                session,
+                "after_rollback",
+                lambda _session: rollback_events.append(True),
+            )
+            run_id = save_fixation_from_preview(
+                client_id=1,
+                input_data=payload,
+                preview_identity=preview.preview_identity,
+                db_session=session,
+                cbs_calculator=_varying_timestamp_cbs(),
+            )
+
+        assert rollback_events == [True]
+        assert len(prepare_observations) == 2
+        assert len(run_transaction_ids) == 2
+        assert prepare_observations[0][0] != prepare_observations[1][0]
+        assert run_transaction_ids[0] != run_transaction_ids[1]
+        assert [identity for _, identity in prepare_observations] == [
+            preview.preview_identity,
+            preview.preview_identity,
+        ]
+        with factory() as session:
+            runs = session.scalars(select(FixationRun)).all()
+            assert len(runs) == 1
+            assert runs[0].id == run_id
+            assert runs[0].fixation_run_id == preview.preview_identity
+            assert runs[0].is_latest is True
+
+        print(
+            "PG40001_EVIDENCE",
+            f"server={server_version}",
+            f"rollback_events={len(rollback_events)}",
+            f"prepare_txids={[item[0] for item in prepare_observations]}",
+            f"run_txids={run_transaction_ids}",
+            f"preview_revalidated={len(prepare_observations)}",
+            f"run_id={run_id}",
+            sep="|",
+        )
+    finally:
+        engine.dispose()
+
+
 def test_preview_identity_binds_authoritative_sources_and_save_is_idempotent(tmp_path):
     load_all_models()
     engine = create_engine(f"sqlite:///{tmp_path / 'fixation-preview.db'}")
@@ -328,14 +425,18 @@ def test_preview_identity_binds_authoritative_sources_and_save_is_idempotent(tmp
         assert caught.value.code == "FIXATION_PREVIEW_IDENTITY_REQUIRED"
 
 
-def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url):
+def test_real_postgresql_source_change_and_concurrent_same_preview(
+    postgres_url,
+    monkeypatch,
+):
     load_all_models()
     _migrate_fixation_schema(postgres_url)
     engine = create_engine(postgres_url, pool_size=6, max_overflow=2)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     try:
         with engine.connect() as connection:
-            assert connection.scalar(text("SHOW server_version")).startswith("16.")
+            server_version = connection.scalar(text("SHOW server_version"))
+            assert server_version.startswith("16.")
         with factory() as session:
             payload = _seed(session)
 
@@ -366,6 +467,41 @@ def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url)
             cbs_calculator=timestamp_varying_cbs,
         )
 
+        observed_conflicts: list[str] = []
+        conflict_lock = Lock()
+        original_serialization_classifier = (
+            fixation_service._is_fixation_save_serialization_failure
+        )
+        original_unique_classifier = fixation_service._is_fixation_run_identity_conflict
+
+        def trace_serialization(exc, *, dialect_name):
+            matched = original_serialization_classifier(
+                exc,
+                dialect_name=dialect_name,
+            )
+            if matched:
+                with conflict_lock:
+                    observed_conflicts.append(exc.orig.pgcode)
+            return matched
+
+        def trace_unique(exc, *, dialect_name):
+            matched = original_unique_classifier(exc, dialect_name=dialect_name)
+            if matched:
+                with conflict_lock:
+                    observed_conflicts.append(exc.orig.pgcode)
+            return matched
+
+        monkeypatch.setattr(
+            fixation_service,
+            "_is_fixation_save_serialization_failure",
+            trace_serialization,
+        )
+        monkeypatch.setattr(
+            fixation_service,
+            "_is_fixation_run_identity_conflict",
+            trace_unique,
+        )
+
         def save_once():
             with factory() as session:
                 return save_fixation_from_preview(
@@ -385,5 +521,40 @@ def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url)
             assert runs[0].id == run_ids[0]
             assert runs[0].is_latest is True
             assert runs[0].fixation_run_id == current.preview_identity
+
+            duplicate = FixationRun(
+                fixation_run_id=current.preview_identity,
+                client_id=1,
+                calculation_version="constraint-evidence",
+                status="success",
+                is_latest=False,
+            )
+            session.add(duplicate)
+            with pytest.raises(IntegrityError) as caught:
+                session.flush()
+            assert caught.value.orig.pgcode == "23505"
+            assert (
+                caught.value.orig.diag.constraint_name
+                == "fixation_runs_fixation_run_id_key"
+            )
+            assert _is_fixation_run_identity_conflict(
+                caught.value,
+                dialect_name="postgresql",
+            )
+            session.rollback()
+
+        assert observed_conflicts
+        assert set(observed_conflicts).issubset({"40001", "23505"})
+        print(
+            "PG_CONCURRENCY_EVIDENCE",
+            f"server={server_version}",
+            f"observed_service_conflicts={observed_conflicts}",
+            f"run_ids={run_ids}",
+            "run_count=1",
+            "is_latest=true",
+            "real_constraint_sqlstate=23505",
+            "real_constraint=fixation_runs_fixation_run_id_key",
+            sep="|",
+        )
     finally:
         engine.dispose()

@@ -113,6 +113,8 @@ export function CalculationResultScreen() {
   const [savedRunId, setSavedRunId] = useState<number | null>(null);
   const [savedStatus, setSavedStatus] = useState<string | null>(null);
   const [savedRunDate, setSavedRunDate] = useState<string | null>(null);
+  const [failedRunId, setFailedRunId] = useState<number | null>(null);
+  const [failedStatus, setFailedStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(clientId !== null && !routeStateMatchesClient);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -130,6 +132,8 @@ export function CalculationResultScreen() {
     setSavedRunId(null);
     setSavedStatus(null);
     setSavedRunDate(null);
+    setFailedRunId(null);
+    setFailedStatus(null);
     setIsSaving(false);
     setMessage(null);
 
@@ -188,7 +192,15 @@ export function CalculationResultScreen() {
   ]);
 
   async function handleSave() {
-    if (clientId === null || stateClientId !== clientId || input === null || result?.status !== "success") return;
+    const previewIdentity = result?.preview_identity;
+    if (
+      clientId === null
+      || stateClientId !== clientId
+      || input === null
+      || result?.status !== "success"
+      || typeof previewIdentity !== "string"
+      || !/^[0-9a-f]{64}$/.test(previewIdentity)
+    ) return;
     setIsSaving(true);
     setMessage(null);
     const clientContext = captureClientContext();
@@ -196,13 +208,24 @@ export function CalculationResultScreen() {
       const saved = await saveFixation({
         client_id: clientId,
         input_data: input as unknown as FixationInputPayload,
+        preview_identity: previewIdentity,
       });
       if (!isCurrentClientContext(clientContext)) return;
-      setSavedRunId(saved.run_id);
-      setSavedStatus(saved.status);
-      setSavedRunDate(saved.created_at);
+      if (saved.status === "success") {
+        setSavedRunId(saved.run_id);
+        setSavedStatus(saved.status);
+        setSavedRunDate(saved.created_at);
+      } else {
+        setFailedRunId(saved.run_id);
+        setFailedStatus(saved.status);
+        setResult(null);
+        setMessage("Save was not accepted. Recalculate from current source data before trying again.");
+      }
     } catch (error) {
-      if (isCurrentClientContext(clientContext)) setMessage(getErrorMessage(error));
+      if (isCurrentClientContext(clientContext)) {
+        setResult(null);
+        setMessage(`${getErrorMessage(error)} Recalculate from current source data before trying again.`);
+      }
     } finally {
       if (isCurrentClientContext(clientContext)) setIsSaving(false);
     }
@@ -227,7 +250,17 @@ export function CalculationResultScreen() {
       {isLoading ? <p>Loading latest successful saved run...</p> : null}
       {loadedRunId !== null ? <p>Reopened saved run: {loadedRunId}; saved at: {loadedRunDate ?? "unknown"}.</p> : null}
       {result && input ? <ResultPresentation result={result} input={input} clientId={clientId} /> : null}
-      <button type="button" disabled={isSaving || result?.status !== "success" || loadedRunId !== null} onClick={() => void handleSave()}>
+      <button
+        type="button"
+        disabled={
+          isSaving
+          || savedRunId !== null
+          || result?.status !== "success"
+          || typeof result?.preview_identity !== "string"
+          || loadedRunId !== null
+        }
+        onClick={() => void handleSave()}
+      >
         {isSaving ? "Saving Result..." : "Save Result"}
       </button>
       {savedRunId !== null ? (
@@ -235,6 +268,14 @@ export function CalculationResultScreen() {
           <p>Run saved. Run ID: {savedRunId}; status: {savedStatus}; saved at: {savedRunDate}.</p>
           <Link to={`/clients/${clientId}/fixation/runs/${savedRunId}`} state={navigationState}>
             Reopen saved run
+          </Link>
+        </section>
+      ) : null}
+      {failedRunId !== null ? (
+        <section>
+          <p>Save attempt was not accepted. Run ID: {failedRunId}; status: {failedStatus}.</p>
+          <Link to={`/clients/${clientId}/fixation/runs/${failedRunId}`} state={navigationState}>
+            Open unsuccessful save attempt
           </Link>
         </section>
       ) : null}

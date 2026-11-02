@@ -309,8 +309,16 @@ def test_direct_calculation_uses_persisted_grants_and_freezes_saved_evidence(
             },
             revision_id=revision_id,
         )
+        preview = client.post(
+            f"/api/clients/{client_id}/fixation/calculate", json=payload
+        )
         saved = client.post(
-            "/api/fixation/save", json={"client_id": client_id, "input_data": payload}
+            "/api/fixation/save",
+            json={
+                "client_id": client_id,
+                "input_data": payload,
+                "preview_identity": preview.json()["preview_identity"],
+            },
         )
         assert saved.status_code == 200
         run_id = saved.json()["run_id"]

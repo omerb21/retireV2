@@ -153,6 +153,7 @@ export interface FixationValidationErrorPayload {
 }
 
 export interface FixationResultResponse {
+  preview_identity?: string | null;
   calculation_id?: string | null;
   calculation_version?: string | null;
   status:
@@ -240,6 +241,7 @@ export interface InternalPlannerJudgmentPayload extends InternalPlannerJudgmentC
 export interface SaveFixationPayload {
   client_id: number;
   input_data: FixationInputPayload;
+  preview_identity?: string | null;
   planner_review_context?: PlannerReviewContextPayload;
 }
 

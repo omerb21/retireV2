@@ -687,7 +687,15 @@ def test_success_and_failure_evidence_is_immutable_and_client_scoped(
             lambda **_kwargs: _success(),
         )
         payload = owner_payload("cbs_system_calculation_required")
-        saved = client.post("/api/fixation/save", json={"client_id": owner, "input_data": payload})
+        preview = client.post(f"/api/clients/{owner}/fixation/calculate", json=payload)
+        saved = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": owner,
+                "input_data": payload,
+                "preview_identity": preview.json()["preview_identity"],
+            },
+        )
         assert saved.status_code == 200 and saved.json()["status"] == "success"
         run_id = saved.json()["run_id"]
         payload_before_mutation = copy.deepcopy(payload)

@@ -755,6 +755,7 @@ class FixationValidationErrors(RootModel[list[ValidationError]]):
 
 
 class FixationResult(BaseModel):
+    preview_identity: str | None = None
     calculation_id: str | None = None
     calculation_version: str | None = None
     status: Literal[
@@ -806,6 +807,8 @@ class FixationResult(BaseModel):
                 if key in allowed_fields and (value is not None or key in {"status", "validation_errors"})
             }
         serialized.pop("m07_resolution", None)
+        if self.preview_identity is None:
+            serialized.pop("preview_identity", None)
         return serialized
 
     @model_validator(mode="after")

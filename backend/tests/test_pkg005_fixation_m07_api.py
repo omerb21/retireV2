@@ -267,7 +267,11 @@ def test_complete_validate_calculate_save_and_reopen_workflow(
     calculated = client.post("/api/clients/1/fixation/calculate", json=payload)
     saved = client.post(
         "/api/fixation/save",
-        json={"client_id": 1, "input_data": payload},
+        json={
+            "client_id": 1,
+            "input_data": payload,
+            "preview_identity": calculated.json()["preview_identity"],
+        },
     )
 
     assert validated.status_code == 200
@@ -367,7 +371,11 @@ def test_ambiguous_selection_is_explicit_and_persisted(
     )
     saved = client.post(
         "/api/fixation/save",
-        json={"client_id": 1, "input_data": selected_payload},
+        json={
+            "client_id": 1,
+            "input_data": selected_payload,
+            "preview_identity": selected.json()["preview_identity"],
+        },
     )
 
     assert selected.json()["status"] == "success"

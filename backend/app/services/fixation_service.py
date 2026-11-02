@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from time import time_ns
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.engines.fixation_engine import (
@@ -42,7 +44,34 @@ from app.services.fixation_admission_service import (
 )
 from app.services.fixation_dependency_service import (
     _build_dependency_manifest,
+    dependency_fingerprint,
 )
+
+
+FIXATION_PREVIEW_IDENTITY_SCHEMA = "FIXATION_PREVIEW_IDENTITY_V1"
+
+
+class FixationPreviewConflictError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class FixationPreviewClientNotFoundError(LookupError):
+    pass
+
+
+@dataclass(frozen=True)
+class PreparedFixation:
+    client_id: int
+    raw_payload: dict
+    input_contract_version: str | None
+    admitted_context: object | None
+    m07_resolution: object | None
+    snapshot_payload: dict
+    result: FixationResult
+    run_calculation_version: str | None
 
 
 class InternalPlannerJudgmentRunNotFoundError(ValueError):
@@ -110,6 +139,63 @@ def _safe_failed_admission_snapshot(raw_payload: dict) -> dict:
     )
 
 
+def _prepare_fixation(
+    input_payload: dict,
+    *,
+    client_id: int,
+    db_session: Session,
+    cbs_calculator=None,
+    use_persisted_grants: bool = False,
+) -> PreparedFixation:
+    raw_payload = dict(input_payload)
+    admitted_context, engine_input, errors, resolution = parse_and_admit_fixation_payload(
+        raw_payload,
+        client_id=client_id,
+        db_session=db_session,
+        cbs_calculator=cbs_calculator,
+        use_persisted_grants=use_persisted_grants,
+    )
+    if errors:
+        status = _failure_status(errors)
+        result = validation_failed_result(
+            raw_payload,
+            errors,
+            status=status,
+            m07_resolution=resolution,
+        )
+    else:
+        assert engine_input is not None
+        result = calculate_fixation_engine(engine_input)
+
+    snapshot_payload = (
+        admitted_context.model_dump(mode="json")
+        if admitted_context is not None
+        else _safe_failed_admission_snapshot(raw_payload)
+    )
+    if resolution is not None and "m07_resolution" not in snapshot_payload:
+        snapshot_payload["m07_resolution"] = resolution.model_dump(mode="json")
+    input_contract_version = (
+        str(raw_payload["calculation_version"])
+        if "calculation_version" in raw_payload
+        else None
+    )
+    run_calculation_version = (
+        result.calculation_version
+        if _is_success_result(result) and result.calculation_version is not None
+        else input_contract_version
+    )
+    return PreparedFixation(
+        client_id=int(client_id),
+        raw_payload=raw_payload,
+        input_contract_version=input_contract_version,
+        admitted_context=admitted_context,
+        m07_resolution=resolution,
+        snapshot_payload=snapshot_payload,
+        result=result,
+        run_calculation_version=run_calculation_version,
+    )
+
+
 def calculate_fixation_payload(
     input_payload: dict,
     *,
@@ -118,23 +204,77 @@ def calculate_fixation_payload(
     cbs_calculator=None,
     use_persisted_grants: bool = False,
 ) -> FixationResult:
-    _, engine_input, errors, resolution = parse_and_admit_fixation_payload(
+    return _prepare_fixation(
         input_payload,
         client_id=client_id,
         db_session=db_session,
         cbs_calculator=cbs_calculator,
         use_persisted_grants=use_persisted_grants,
+    ).result
+
+
+def _preview_identity(prepared: PreparedFixation) -> str | None:
+    if not _is_success_result(prepared.result):
+        return None
+    manifest = _build_dependency_manifest(
+        run_id=0,
+        run_identity="preview",
+        client_id=prepared.client_id,
+        calculation_version=str(prepared.run_calculation_version),
+        input_contract_version=str(prepared.input_contract_version),
+        result_contract_version=str(prepared.run_calculation_version),
+        context=prepared.admitted_context,
+        resolution=prepared.m07_resolution,
     )
-    if errors:
-        status = _failure_status(errors)
-        return validation_failed_result(
-            input_payload,
-            errors,
-            status=status,
-            m07_resolution=resolution,
-        )
-    assert engine_input is not None
-    return calculate_fixation_engine(engine_input)
+    result_payload = prepared.result.model_dump(mode="json")
+    result_payload.pop("preview_identity", None)
+
+    def stable_evidence(value):
+        # CBS invocation timestamps describe when the same authoritative
+        # evidence was observed, not a source-value change. Binding them would
+        # make every immediate save stale because Save re-derives the evidence.
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return {
+                key: stable_evidence(item)
+                for key, item in value.items()
+                if key != "calculation_timestamp"
+            }
+        if isinstance(value, list):
+            return [stable_evidence(item) for item in value]
+        return value
+
+    return dependency_fingerprint(
+        {
+            "schema": FIXATION_PREVIEW_IDENTITY_SCHEMA,
+            "client_id": prepared.client_id,
+            "input_payload": prepared.raw_payload,
+            "admitted_snapshot": stable_evidence(prepared.snapshot_payload),
+            "dependency_manifest_schema": manifest.manifest_schema_version,
+            "dependency_entries": stable_evidence(manifest.dependencies),
+            "result": stable_evidence(result_payload),
+        }
+    )
+
+
+def calculate_fixation_preview(
+    input_payload: dict,
+    *,
+    client_id: int,
+    db_session: Session,
+    cbs_calculator=None,
+) -> FixationResult:
+    prepared = _prepare_fixation(
+        input_payload,
+        client_id=client_id,
+        db_session=db_session,
+        cbs_calculator=cbs_calculator,
+        use_persisted_grants=True,
+    )
+    return prepared.result.model_copy(
+        update={"preview_identity": _preview_identity(prepared)}
+    )
 
 
 def _is_success_result(result: FixationResult | list[ValidationError]) -> bool:
@@ -297,60 +437,36 @@ def run_fixation(
     db_session: Session,
     planner_review_context: PlannerReviewContextEnvelope | None = None,
     cbs_calculator=None,
+    *,
+    prepared: PreparedFixation | None = None,
+    run_identity: str | None = None,
 ) -> int:
     client_key = int(client_id)
 
-    run_trace_id = _new_id("run")
+    run_trace_id = run_identity or _new_id("run")
     snapshot_id = _new_id("snapshot")
 
     try:
-        input_contract_version: str | None = None
-
         raw_payload = (
             input_data.model_dump(mode="json")
             if isinstance(input_data, FixationInput)
             else dict(input_data)
         )
-        if "calculation_version" in raw_payload:
-            input_contract_version = str(raw_payload["calculation_version"])
-        (
-            admitted_context,
-            engine_input,
-            admission_errors,
-            m07_resolution,
-        ) = parse_and_admit_fixation_payload(
+        prepared_fixation = prepared or _prepare_fixation(
             raw_payload,
             client_id=client_key,
             db_session=db_session,
             cbs_calculator=cbs_calculator,
             use_persisted_grants=True,
         )
-        snapshot_payload = (
-            admitted_context.model_dump(mode="json")
-            if admitted_context is not None
-            else _safe_failed_admission_snapshot(raw_payload)
-        )
-        if m07_resolution is not None and "m07_resolution" not in snapshot_payload:
-            snapshot_payload["m07_resolution"] = m07_resolution.model_dump(
-                mode="json"
-            )
-        if admission_errors:
-            admission_status = _failure_status(admission_errors)
-            result = validation_failed_result(
-                raw_payload,
-                admission_errors,
-                status=admission_status,
-                m07_resolution=m07_resolution,
-            )
-        else:
-            assert engine_input is not None
-            result = calculate_fixation_engine(engine_input)
-
-        run_calculation_version = (
-            result.calculation_version
-            if _is_success_result(result) and result.calculation_version is not None
-            else input_contract_version
-        )
+        if prepared_fixation.client_id != client_key or prepared_fixation.raw_payload != raw_payload:
+            raise ValueError("prepared fixation does not match save request")
+        input_contract_version = prepared_fixation.input_contract_version
+        admitted_context = prepared_fixation.admitted_context
+        m07_resolution = prepared_fixation.m07_resolution
+        snapshot_payload = prepared_fixation.snapshot_payload
+        result = prepared_fixation.result
+        run_calculation_version = prepared_fixation.run_calculation_version
 
         for previous_latest_run in db_session.scalars(
             select(FixationRun).where(FixationRun.client_id == client_key, FixationRun.is_latest.is_(True))
@@ -460,6 +576,115 @@ def run_fixation(
         raise
 
     return int(run_id)
+
+
+def save_fixation_from_preview(
+    *,
+    client_id: int,
+    input_data: dict,
+    preview_identity: str | None,
+    db_session: Session,
+    planner_review_context: PlannerReviewContextEnvelope | None = None,
+    cbs_calculator=None,
+) -> int:
+    """Validate and persist exactly one server-derived preview.
+
+    The client row is the serialization point for all saves for one client.
+    The authoritative calculation is prepared once inside this transaction and
+    is the exact object persisted by ``run_fixation``.
+    """
+    try:
+        dialect_name = db_session.get_bind().dialect.name
+        if db_session.in_transaction() and dialect_name == "postgresql":
+            raise RuntimeError("fixation save requires a pristine database session")
+        if not db_session.in_transaction():
+            db_session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+        client = db_session.scalar(
+            select(Client).where(Client.client_id == int(client_id)).with_for_update()
+        )
+        if client is None:
+            raise FixationPreviewClientNotFoundError(str(client_id))
+
+        prepared = _prepare_fixation(
+            dict(input_data),
+            client_id=int(client_id),
+            db_session=db_session,
+            cbs_calculator=cbs_calculator,
+            use_persisted_grants=True,
+        )
+        current_identity = _preview_identity(prepared)
+
+        if preview_identity is None:
+            if _is_success_result(prepared.result):
+                raise FixationPreviewConflictError(
+                    "FIXATION_PREVIEW_IDENTITY_REQUIRED",
+                    "A successful fixation result must be recalculated before it can be saved.",
+                )
+            return run_fixation(
+                client_id=client_id,
+                input_data=input_data,
+                db_session=db_session,
+                planner_review_context=planner_review_context,
+                prepared=prepared,
+            )
+
+        if (
+            len(preview_identity) != 64
+            or any(character not in "0123456789abcdef" for character in preview_identity)
+            or current_identity is None
+            or preview_identity != current_identity
+        ):
+            raise FixationPreviewConflictError(
+                "FIXATION_PREVIEW_STALE",
+                "The fixation preview no longer matches current authoritative data. Recalculate before saving.",
+            )
+
+        existing = db_session.scalar(
+            select(FixationRun).where(
+                FixationRun.client_id == int(client_id),
+                FixationRun.fixation_run_id == preview_identity,
+            )
+        )
+        if existing is not None:
+            return int(existing.id)
+
+        try:
+            return run_fixation(
+                client_id=client_id,
+                input_data=input_data,
+                db_session=db_session,
+                planner_review_context=planner_review_context,
+                prepared=prepared,
+                run_identity=preview_identity,
+            )
+        except IntegrityError as exc:
+            # Two SERIALIZABLE transactions can take their snapshots before
+            # the first save commits. The unique preview identity is the final
+            # exactly-once guard. After rollback, a fresh snapshot may return
+            # the already committed run, but only for this named constraint.
+            original = exc.orig
+            diagnostic = getattr(original, "diag", None)
+            if not (
+                dialect_name == "postgresql"
+                and getattr(original, "sqlstate", None) == "23505"
+                and getattr(diagnostic, "constraint_name", None)
+                == "fixation_runs_fixation_run_id_key"
+            ):
+                raise
+            db_session.rollback()
+            concurrent_run = db_session.scalar(
+                select(FixationRun).where(
+                    FixationRun.client_id == int(client_id),
+                    FixationRun.fixation_run_id == preview_identity,
+                )
+            )
+            if concurrent_run is None:
+                raise
+            return int(concurrent_run.id)
+    except Exception:
+        if db_session.in_transaction():
+            db_session.rollback()
+        raise
 
 
 def get_latest_fixation_result(client_id: int | str, db_session: Session) -> FixationRun | None:

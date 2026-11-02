@@ -751,7 +751,15 @@ def test_api_persists_immutable_manifest_and_compares_without_side_effects_or_li
             return payload
 
         payload = api_payload()
-        saved = client.post("/api/fixation/save", json={"client_id": owner, "input_data": payload})
+        preview = client.post(f"/api/clients/{owner}/fixation/calculate", json=payload)
+        saved = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": owner,
+                "input_data": payload,
+                "preview_identity": preview.json()["preview_identity"],
+            },
+        )
         assert saved.status_code == 200 and saved.json()["status"] == "success"
         run_id = saved.json()["run_id"]
         detail_before = client.get(f"/api/clients/{owner}/fixation/runs/{run_id}").json()
@@ -977,11 +985,17 @@ def test_new_failure_runs_have_explicit_manifest_behavior_and_legacy_run_is_unkn
             "app.services.fixation_admission_service.calculate_cbs_indexation",
             lambda **_kwargs: _success(),
         )
+        cbs_payload = api_payload(mode="cbs_system_calculation_required")
+        cbs_preview = client.post(
+            f"/api/clients/{owner}/fixation/calculate",
+            json=cbs_payload,
+        )
         cbs_success = client.post(
             "/api/fixation/save",
             json={
                 "client_id": owner,
-                "input_data": api_payload(mode="cbs_system_calculation_required"),
+                "input_data": cbs_payload,
+                "preview_identity": cbs_preview.json()["preview_identity"],
             },
         ).json()
         assert cbs_success["status"] == "success"

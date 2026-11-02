@@ -642,9 +642,18 @@ def test_phase9_api_end_to_end(tmp_path: Path) -> None:
         assert validate_resp.json() == calculate_resp.json()
 
         # 12. Save fixation success
+        save_success_input = _fixation_input(calc_id="calc-save-success")
+        save_success_preview = client.post(
+            f"/api/clients/{created_client_id}/fixation/calculate",
+            json=save_success_input,
+        )
         save_success_resp = client.post(
             "/api/fixation/save",
-            json={"client_id": created_client_id, "input_data": _fixation_input(calc_id="calc-save-success")},
+            json={
+                "client_id": created_client_id,
+                "input_data": save_success_input,
+                "preview_identity": save_success_preview.json()["preview_identity"],
+            },
         )
         assert save_success_resp.status_code == 200
         assert save_success_resp.json()["status"] == "success"

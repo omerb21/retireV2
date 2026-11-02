@@ -165,6 +165,24 @@ def _fixation_input(
     )
 
 
+def _save_success(client, client_id: int, input_payload: dict, **extra):
+    preview = client.post(
+        f"/api/clients/{client_id}/fixation/calculate",
+        json=input_payload,
+    )
+    assert preview.status_code == 200
+    assert preview.json()["status"] == "success"
+    return client.post(
+        "/api/fixation/save",
+        json={
+            "client_id": client_id,
+            "input_data": input_payload,
+            "preview_identity": preview.json()["preview_identity"],
+            **extra,
+        },
+    )
+
+
 def _fixation_review_input(*, calc_id: str = "review-valid") -> dict:
     payload = {
         "calculation_id": calc_id,
@@ -513,9 +531,8 @@ def test_phase10_full_http_end_to_end_flow(tmp_path: Path) -> None:
         assert calculate_resp.status_code == 200
         assert validate_resp.json() == calculate_resp.json()
 
-        save_success_resp = client.post(
-            "/api/fixation/save",
-            json={"client_id": client_id, "input_data": _fixation_input(calc_id="calc-save-success")},
+        save_success_resp = _save_success(
+            client, client_id, _fixation_input(calc_id="calc-save-success"),
         )
         assert save_success_resp.status_code == 200
         assert save_success_resp.json()["status"] == "success"
@@ -592,9 +609,8 @@ def test_phase10_save_behavior_persistence_boundaries(tmp_path: Path) -> None:
     try:
         client_id = _create_client(client, session_local, id_number="3001")
 
-        success_resp = client.post(
-            "/api/fixation/save",
-            json={"client_id": client_id, "input_data": _fixation_input(calc_id="calc-success")},
+        success_resp = _save_success(
+            client, client_id, _fixation_input(calc_id="calc-success"),
         )
         assert success_resp.status_code == 200
         success_run_id = success_resp.json()["run_id"]
@@ -652,13 +668,11 @@ def test_phase10_save_persists_optional_planner_review_context_without_changing_
         )
         assert response.status_code == 422
 
-        save_resp = client.post(
-            "/api/fixation/save",
-            json={
-                "client_id": client_id,
-                "input_data": input_payload,
-                "planner_review_context": review_context,
-            },
+        save_resp = _save_success(
+            client,
+            client_id,
+            input_payload,
+            planner_review_context=review_context,
         )
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
@@ -696,9 +710,8 @@ def test_phase10_save_without_planner_review_context_remains_valid(tmp_path: Pat
     try:
         client_id = _create_client(client, session_local, id_number="3102")
 
-        save_resp = client.post(
-            "/api/fixation/save",
-            json={"client_id": client_id, "input_data": _fixation_input(calc_id="calc-no-review-context")},
+        save_resp = _save_success(
+            client, client_id, _fixation_input(calc_id="calc-no-review-context"),
         )
         assert save_resp.status_code == 200
 
@@ -722,13 +735,11 @@ def test_phase10_internal_planner_judgment_create_and_run_detail_are_immutable(
         input_payload = _fixation_input(calc_id="calc-internal-judgment")
         review_context = _planner_review_context()
 
-        save_resp = client.post(
-            "/api/fixation/save",
-            json={
-                "client_id": client_id,
-                "input_data": input_payload,
-                "planner_review_context": review_context,
-            },
+        save_resp = _save_success(
+            client,
+            client_id,
+            input_payload,
+            planner_review_context=review_context,
         )
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
@@ -792,12 +803,10 @@ def test_phase10_internal_planner_judgment_rejects_missing_run_invalid_status_an
         assert missing_resp.json()["detail"]["code"] == "FIXATION_RUN_NOT_FOUND"
 
         client_id = _create_client(client, session_local, id_number="3202")
-        save_resp = client.post(
-            "/api/fixation/save",
-            json={
-                "client_id": client_id,
-                "input_data": _fixation_input(calc_id="calc-internal-jgment-errors"),
-            },
+        save_resp = _save_success(
+            client,
+            client_id,
+            _fixation_input(calc_id="calc-internal-jgment-errors"),
         )
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
@@ -842,12 +851,10 @@ def test_phase10_immutability_and_snapshot_result_integrity(tmp_path: Path) -> N
     try:
         client_id = _create_client(client, session_local, id_number="4001")
 
-        save_resp = client.post(
-            "/api/fixation/save",
-            json={
-                "client_id": client_id,
-                "input_data": _fixation_input(calc_id="calc-immutable", monthly_cap=1000.0),
-            },
+        save_resp = _save_success(
+            client,
+            client_id,
+            _fixation_input(calc_id="calc-immutable", monthly_cap=1000.0),
         )
         assert save_resp.status_code == 200
         run_id = save_resp.json()["run_id"]
@@ -910,12 +917,10 @@ def test_phase10_latest_history_rules_and_strict_errors(tmp_path: Path) -> None:
         assert latest_failed_only_resp.json() == {"result": None}
 
         client_mixed = _create_client(client, session_local, id_number="5003")
-        success_resp = client.post(
-            "/api/fixation/save",
-            json={
-                "client_id": client_mixed,
-                "input_data": _fixation_input(calc_id="calc-mixed-success", client_id=client_mixed),
-            },
+        success_resp = _save_success(
+            client,
+            client_mixed,
+            _fixation_input(calc_id="calc-mixed-success", client_id=client_mixed),
         )
         failed_resp = client.post(
             "/api/fixation/save",
@@ -994,9 +999,8 @@ def test_phase10_transaction_safety_rollback_on_save_failure(
 
         monkeypatch.setattr(SASession, "commit", failing_commit)
 
-        save_resp = client.post(
-            "/api/fixation/save",
-            json={"client_id": client_id, "input_data": _fixation_input(calc_id="calc-rollback")},
+        save_resp = _save_success(
+            client, client_id, _fixation_input(calc_id="calc-rollback"),
         )
         assert save_resp.status_code == 500
 

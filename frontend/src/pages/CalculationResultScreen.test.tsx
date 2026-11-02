@@ -59,6 +59,7 @@ const admittedSnapshot = {
 };
 
 const successResult = {
+  preview_identity: "a".repeat(64),
   calculation_id: "calc-005",
   calculation_version: "pkg005-v1",
   status: "success",
@@ -184,7 +185,12 @@ describe("PKG-005 calculation result and saved-run workflow", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/fixation/save");
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
-    expect(body).toEqual({ client_id: 7, input_data: acceptedInput });
+    expect(body).toEqual({
+      client_id: 7,
+      input_data: acceptedInput,
+      preview_identity: "a".repeat(64),
+    });
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
   });
 
   it("clears stale route and save state, then loads the new client through its own route", async () => {
@@ -351,5 +357,29 @@ describe("PKG-005 calculation result and saved-run workflow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Result" }));
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("SAVE_FAILED"));
+    expect(screen.getByRole("status")).toHaveTextContent("Recalculate from current source data");
+    expect(screen.queryByText("Normalized eligibility date: 2026-02-01")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
+  });
+
+  it("does not present an HTTP-success validation failure as a saved result", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      run_id: 91,
+      status: "validation_failed",
+      created_at: "2026-05-01T08:00:00Z",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderCurrent();
+    fireEvent.click(screen.getByRole("button", { name: "Save Result" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Save was not accepted. Recalculate from current source data",
+    );
+    expect(screen.queryByText(/Run saved/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open unsuccessful save attempt" })).toHaveAttribute(
+      "href",
+      "/clients/7/fixation/runs/91",
+    );
+    expect(screen.getByRole("button", { name: "Save Result" })).toBeDisabled();
   });
 });

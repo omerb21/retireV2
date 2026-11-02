@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 import app.engines.fixation_engine as fixation_engine
@@ -18,6 +18,7 @@ from app.main import app
 from app.models.client import Client
 from app.models.fixation_audit_row import FixationAuditRow
 from app.models.fixation_input_snapshot import FixationInputSnapshot
+from app.models.fixation_run import FixationRun
 from app.schemas.fixation_contracts import FixationInput
 from app.services.fixation_admission_service import parse_and_admit_fixation_payload
 from app.services.fixation_service import calculate_fixation_payload
@@ -481,9 +482,29 @@ def test_saved_manifest_is_immutable_and_run_access_is_client_isolated(tmp_path:
         )
         payload["grants_collection_state"] = "confirmed_none"
         payload["grants"] = []
-        saved = client.post(
+        unverified = client.post(
             "/api/fixation/save",
             json={"client_id": owner, "input_data": payload},
+        )
+        assert unverified.status_code == 409
+        assert unverified.json()["detail"]["code"] == (
+            "FIXATION_PREVIEW_IDENTITY_REQUIRED"
+        )
+        with session_local() as session:
+            assert session.scalar(select(func.count()).select_from(FixationRun)) == 0
+        preview = client.post(
+            f"/api/clients/{owner}/fixation/calculate",
+            json=payload,
+        )
+        assert preview.status_code == 200
+        assert preview.json()["status"] == "success"
+        saved = client.post(
+            "/api/fixation/save",
+            json={
+                "client_id": owner,
+                "input_data": payload,
+                "preview_identity": preview.json()["preview_identity"],
+            },
         )
         assert saved.status_code == 200
         assert saved.json()["status"] == "success"

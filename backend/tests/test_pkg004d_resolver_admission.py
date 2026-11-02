@@ -579,9 +579,17 @@ def test_existing_api_operations_share_server_resolution(
     client = TestClient(app)
     try:
         if operation == "save":
+            preview = client.post(
+                "/api/clients/1/fixation/calculate",
+                json=payload,
+            )
             response = client.post(
                 "/api/fixation/save",
-                json={"client_id": 1, "input_data": payload},
+                json={
+                    "client_id": 1,
+                    "input_data": payload,
+                    "preview_identity": preview.json()["preview_identity"],
+                },
             )
         else:
             response = client.post(

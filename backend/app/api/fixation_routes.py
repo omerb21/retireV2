@@ -32,14 +32,18 @@ from app.schemas.fixation_review import (
     convert_review_to_fixation_input,
 )
 from app.services.fixation_service import (
+    FixationPreviewClientNotFoundError,
+    FixationPreviewConflictError,
     InternalPlannerJudgmentAlreadyExistsError,
     InternalPlannerJudgmentRunNotFoundError,
     calculate_fixation_payload,
+    calculate_fixation_preview,
     create_internal_planner_judgment,
     get_fixation_history,
     get_fixation_run_detail,
     get_latest_fixation_result,
     run_fixation,
+    save_fixation_from_preview,
 )
 from app.services.fixation_admission_service import (
     caller_supplied_cbs_system_evidence_paths,
@@ -61,6 +65,7 @@ class FixationSaveRequest(BaseModel):
 
     client_id: int
     input_data: dict[str, Any]
+    preview_identity: str | None = None
     planner_review_context: PlannerReviewContextEnvelope | None = None
 
 
@@ -181,11 +186,10 @@ def validate_fixation(
     db: Session = Depends(get_db),
 ) -> FixationResult:
     _require_client(db, client_id)
-    return calculate_fixation_payload(
+    return calculate_fixation_preview(
         payload,
         client_id=client_id,
         db_session=db,
-        use_persisted_grants=True,
     )
 
 
@@ -196,23 +200,30 @@ def calculate_fixation_endpoint(
     db: Session = Depends(get_db),
 ) -> FixationResult:
     _require_client(db, client_id)
-    return calculate_fixation_payload(
+    return calculate_fixation_preview(
         payload,
         client_id=client_id,
         db_session=db,
-        use_persisted_grants=True,
     )
 
 
 @router.post("/fixation/save", response_model=FixationSaveResponse)
 def save_fixation(payload: FixationSaveRequest, db: Session = Depends(get_db)) -> FixationSaveResponse:
-    _require_client(db, payload.client_id)
-    run_id = run_fixation(
-        client_id=payload.client_id,
-        input_data=payload.input_data,
-        db_session=db,
-        planner_review_context=payload.planner_review_context,
-    )
+    try:
+        run_id = save_fixation_from_preview(
+            client_id=payload.client_id,
+            input_data=payload.input_data,
+            preview_identity=payload.preview_identity,
+            db_session=db,
+            planner_review_context=payload.planner_review_context,
+        )
+    except FixationPreviewClientNotFoundError:
+        raise _client_not_found(payload.client_id)
+    except FixationPreviewConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
     run = db.get(FixationRun, run_id)
     if run is None:
         raise HTTPException(

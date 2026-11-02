@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import desc, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from app.engines.fixation_engine import (
@@ -70,6 +70,17 @@ def _is_fixation_run_identity_conflict(
         and getattr(original, "pgcode", None) == "23505"
         and getattr(diagnostic, "constraint_name", None)
         == "fixation_runs_fixation_run_id_key"
+    )
+
+
+def _is_fixation_save_serialization_failure(
+    exc: OperationalError,
+    *,
+    dialect_name: str,
+) -> bool:
+    return (
+        dialect_name == "postgresql"
+        and getattr(exc.orig, "pgcode", None) == "40001"
     )
 
 
@@ -593,7 +604,7 @@ def run_fixation(
     return int(run_id)
 
 
-def save_fixation_from_preview(
+def _save_fixation_from_preview_once(
     *,
     client_id: int,
     input_data: dict,
@@ -602,12 +613,6 @@ def save_fixation_from_preview(
     planner_review_context: PlannerReviewContextEnvelope | None = None,
     cbs_calculator=None,
 ) -> int:
-    """Validate and persist exactly one server-derived preview.
-
-    The client row is the serialization point for all saves for one client.
-    The authoritative calculation is prepared once inside this transaction and
-    is the exact object persisted by ``run_fixation``.
-    """
     try:
         dialect_name = db_session.get_bind().dialect.name
         if db_session.in_transaction() and dialect_name == "postgresql":
@@ -663,39 +668,69 @@ def save_fixation_from_preview(
         if existing is not None:
             return int(existing.id)
 
-        try:
-            return run_fixation(
-                client_id=client_id,
-                input_data=input_data,
-                db_session=db_session,
-                planner_review_context=planner_review_context,
-                prepared=prepared,
-                run_identity=preview_identity,
-            )
-        except IntegrityError as exc:
-            # Two SERIALIZABLE transactions can take their snapshots before
-            # the first save commits. The unique preview identity is the final
-            # exactly-once guard. After rollback, a fresh snapshot may return
-            # the already committed run, but only for this named constraint.
-            if not _is_fixation_run_identity_conflict(
-                exc,
-                dialect_name=dialect_name,
-            ):
-                raise
-            db_session.rollback()
-            concurrent_run = db_session.scalar(
-                select(FixationRun).where(
-                    FixationRun.client_id == int(client_id),
-                    FixationRun.fixation_run_id == preview_identity,
-                )
-            )
-            if concurrent_run is None:
-                raise
-            return int(concurrent_run.id)
+        return run_fixation(
+            client_id=client_id,
+            input_data=input_data,
+            db_session=db_session,
+            planner_review_context=planner_review_context,
+            prepared=prepared,
+            run_identity=preview_identity,
+        )
     except Exception:
         if db_session.in_transaction():
             db_session.rollback()
         raise
+
+
+def save_fixation_from_preview(
+    *,
+    client_id: int,
+    input_data: dict,
+    preview_identity: str | None,
+    db_session: Session,
+    planner_review_context: PlannerReviewContextEnvelope | None = None,
+    cbs_calculator=None,
+) -> int:
+    """Validate and persist exactly one server-derived preview.
+
+    The client row is the serialization point for all saves for one client.
+    PostgreSQL may resolve two SERIALIZABLE saves either through the unique
+    preview identity or by aborting one transaction with SQLSTATE 40001.  A
+    retry is therefore allowed once, but only after a complete rollback.  The
+    retry starts a new SERIALIZABLE snapshot and repeats source validation,
+    preview-identity verification, and the existing-run lookup before it can
+    return a run identifier.
+    """
+    dialect_name = db_session.get_bind().dialect.name
+    for attempt in range(2):
+        try:
+            return _save_fixation_from_preview_once(
+                client_id=client_id,
+                input_data=input_data,
+                preview_identity=preview_identity,
+                db_session=db_session,
+                planner_review_context=planner_review_context,
+                cbs_calculator=cbs_calculator,
+            )
+        except (IntegrityError, OperationalError) as exc:
+            retryable_conflict = (
+                isinstance(exc, IntegrityError)
+                and _is_fixation_run_identity_conflict(
+                    exc,
+                    dialect_name=dialect_name,
+                )
+            ) or (
+                isinstance(exc, OperationalError)
+                and _is_fixation_save_serialization_failure(
+                    exc,
+                    dialect_name=dialect_name,
+                )
+            )
+            if not retryable_conflict or attempt != 0:
+                raise
+            db_session.rollback()
+
+    raise RuntimeError("unreachable fixation preview save retry state")
 
 
 def get_latest_fixation_result(client_id: int | str, db_session: Session) -> FixationRun | None:

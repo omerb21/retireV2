@@ -4,7 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from uuid import uuid4
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
@@ -32,6 +35,31 @@ from test_recovery_migration_postgresql import postgres_url
 
 
 NOW = datetime(2026, 11, 1, 10, 0, tzinfo=timezone.utc)
+BACKEND = Path(__file__).resolve().parents[1]
+FIXATION_SCHEMA_REVISION = "f9a1c3e5b702"
+
+
+def _migrate_fixation_schema(database_url: str) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            FIXATION_SCHEMA_REVISION,
+        ],
+        cwd=BACKEND,
+        env={
+            **os.environ,
+            "DATABASE_URL": database_url,
+            "PYTHONIOENCODING": "utf-8",
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _cbs(*, amount, grant_date, work_end_date, eligibility_date):
@@ -226,16 +254,12 @@ def test_preview_identity_binds_authoritative_sources_and_save_is_idempotent(tmp
 
 def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url):
     load_all_models()
+    _migrate_fixation_schema(postgres_url)
     engine = create_engine(postgres_url, pool_size=6, max_overflow=2)
-    schema = "fixation_preview_" + uuid4().hex[:12]
-    scoped = engine.execution_options(schema_translate_map={None: schema})
-    factory = sessionmaker(bind=scoped, expire_on_commit=False)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
     try:
-        with engine.begin() as connection:
+        with engine.connect() as connection:
             assert connection.scalar(text("SHOW server_version")).startswith("16.")
-            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-        with scoped.begin() as connection:
-            Base.metadata.create_all(connection)
         with factory() as session:
             payload = _seed(session)
 
@@ -277,6 +301,4 @@ def test_real_postgresql_source_change_and_concurrent_same_preview(postgres_url)
             assert runs[0].is_latest is True
             assert runs[0].fixation_run_id == current.preview_identity
     finally:
-        with engine.begin() as connection:
-            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         engine.dispose()

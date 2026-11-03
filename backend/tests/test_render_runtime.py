@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
+from types import SimpleNamespace
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy.exc import OperationalError
 
+from app import main as app_main
 from app.main import create_app
 from app.security.config import AuthConfig
+from app.security.rate_limit import RateLimitUnavailable
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,6 +102,52 @@ def _render_config() -> AuthConfig:
     )
 
 
+def _render_headers() -> dict[str, str]:
+    return {
+        "host": "retirev2.onrender.com",
+        "cf-connecting-ip": "2001:db8::9",
+        "x-forwarded-proto": "https",
+    }
+
+
+def _database_error(message: str) -> OperationalError:
+    return OperationalError("SELECT 1", {}, RuntimeError(message))
+
+
+class _ReadinessSession:
+    def __init__(
+        self,
+        versions: list[str] | None = None,
+        *,
+        execute_error: OperationalError | None = None,
+        close_error: OperationalError | None = None,
+    ):
+        self.versions = versions or []
+        self.execute_error = execute_error
+        self.close_error = close_error
+        self.rollback_calls = 0
+        self.close_calls = 0
+        self.invalidate_calls = 0
+
+    def execute(self, _statement):
+        if self.execute_error is not None:
+            raise self.execute_error
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: self.versions)
+        )
+
+    def rollback(self):
+        self.rollback_calls += 1
+
+    def close(self):
+        self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error
+
+    def invalidate(self):
+        self.invalidate_calls += 1
+
+
 def test_docker_runtime_starts_original_application_without_test_runner() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
@@ -133,11 +184,7 @@ def test_railway_production_environment_contract_remains_unchanged(clean_platfor
 
 def test_render_edge_uses_cloudflare_identity_and_rejects_spoofed_or_wrong_host() -> None:
     client = TestClient(create_app(_render_config()))
-    accepted_headers = {
-        "host": "retirev2.onrender.com",
-        "cf-connecting-ip": "2001:db8::9",
-        "x-forwarded-proto": "https",
-    }
+    accepted_headers = _render_headers()
 
     accepted = client.get("/healthz/live", headers=accepted_headers)
     spoofed = client.get(
@@ -178,3 +225,134 @@ def test_render_cannot_enable_railway_only_stage6_routes(monkeypatch) -> None:
         )
         for route in application.routes
     )
+
+
+def test_readiness_turns_red_on_database_loss_and_recovers_without_restart(monkeypatch) -> None:
+    healthy_before = _ReadinessSession([app_main.EXPECTED_ALEMBIC_HEAD])
+    disconnected = _ReadinessSession(
+        execute_error=_database_error("database disconnected")
+    )
+    healthy_after = _ReadinessSession([app_main.EXPECTED_ALEMBIC_HEAD])
+    sessions = iter([healthy_before, disconnected, healthy_after])
+    monkeypatch.setattr(
+        app_main, "get_session_factory", lambda: lambda: next(sessions)
+    )
+    monkeypatch.setattr(app_main, "cleanup_batch", lambda _db: 0)
+    application = create_app(_render_config())
+    client = TestClient(application)
+
+    assert app_main._cleanup_once(application) is True
+    assert client.get("/healthz/ready", headers=_render_headers()).status_code == 200
+
+    assert app_main._cleanup_once(application) is False
+    unavailable = client.get("/healthz/ready", headers=_render_headers())
+    assert (unavailable.status_code, unavailable.json()) == (
+        503,
+        {"status": "unavailable"},
+    )
+    assert disconnected.rollback_calls == 1
+    assert disconnected.close_calls == 1
+
+    assert app_main._cleanup_once(application) is True
+    recovered = client.get("/healthz/ready", headers=_render_headers())
+    assert (recovered.status_code, recovered.json()) == (200, {"status": "ready"})
+    assert healthy_before.close_calls == healthy_after.close_calls == 1
+
+
+@pytest.mark.parametrize("versions", [[], ["wrong-head"]])
+def test_readiness_rejects_missing_or_wrong_migration_head(
+    monkeypatch, versions
+) -> None:
+    database = _ReadinessSession(versions)
+    monkeypatch.setattr(app_main, "get_session_factory", lambda: lambda: database)
+    monkeypatch.setattr(app_main, "cleanup_batch", lambda _db: 0)
+    application = create_app(_render_config())
+
+    assert app_main._cleanup_once(application) is False
+    response = TestClient(application).get(
+        "/healthz/ready", headers=_render_headers()
+    )
+    assert response.status_code == 503
+    assert database.rollback_calls == 1
+    assert database.close_calls == 1
+
+
+def test_cleanup_failure_rolls_back_and_never_leaves_readiness_green(monkeypatch) -> None:
+    database = _ReadinessSession([app_main.EXPECTED_ALEMBIC_HEAD])
+    monkeypatch.setattr(app_main, "get_session_factory", lambda: lambda: database)
+    monkeypatch.setattr(
+        app_main,
+        "cleanup_batch",
+        lambda _db: (_ for _ in ()).throw(
+            RateLimitUnavailable("injected cleanup failure")
+        ),
+    )
+    application = create_app(_render_config())
+    application.state.rate_limiter_ready = True
+
+    assert app_main._cleanup_once(application) is False
+    assert application.state.rate_limiter_ready is False
+    assert database.rollback_calls == 1
+    assert database.close_calls == 1
+
+
+def test_session_open_and_close_database_failures_are_fail_closed(monkeypatch) -> None:
+    application = create_app(_render_config())
+    application.state.rate_limiter_ready = True
+    monkeypatch.setattr(
+        app_main,
+        "get_session_factory",
+        lambda: lambda: (_ for _ in ()).throw(
+            _database_error("session acquisition failed")
+        ),
+    )
+
+    assert app_main._cleanup_once(application) is False
+    assert application.state.rate_limiter_ready is False
+
+    close_failure = _ReadinessSession(
+        [app_main.EXPECTED_ALEMBIC_HEAD],
+        close_error=_database_error("session close failed"),
+    )
+    monkeypatch.setattr(
+        app_main, "get_session_factory", lambda: lambda: close_failure
+    )
+    monkeypatch.setattr(app_main, "cleanup_batch", lambda _db: 0)
+
+    assert app_main._cleanup_once(application) is False
+    assert application.state.rate_limiter_ready is False
+    assert close_failure.close_calls == 1
+    assert close_failure.invalidate_calls == 1
+
+
+def test_periodic_cleanup_survives_transient_failure_and_runs_again(monkeypatch) -> None:
+    application = create_app(_render_config())
+    cleanup_calls = 0
+    sleep_calls = 0
+
+    def transient_cleanup(app):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            raise _database_error("temporary database failure")
+        app.state.rate_limiter_ready = True
+        return True
+
+    async def immediate_to_thread(function, *args):
+        return function(*args)
+
+    async def two_cycles_then_cancel(_interval):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(app_main, "_cleanup_once", transient_cleanup)
+    monkeypatch.setattr(app_main.asyncio, "to_thread", immediate_to_thread)
+    monkeypatch.setattr(app_main.asyncio, "sleep", two_cycles_then_cancel)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(app_main._scheduled_cleanup(application, interval_seconds=0))
+
+    assert cleanup_calls == 2
+    assert application.state.rate_limiter_ready is True

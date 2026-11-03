@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 import asyncio
 import json
 import os
@@ -36,6 +36,7 @@ from app.security.middleware import RTDIRSecurityMiddleware
 from app.security.rate_limit import RateLimitUnavailable, cleanup_batch
 from app.security.transport import NO_STORE, error, is_spa_path
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 load_all_models()
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -54,20 +55,50 @@ def _pointer(location: tuple[object, ...]) -> str:
 
 
 def _cleanup_once(app: FastAPI) -> bool:
-    db = get_session_factory()()
+    db = None
+    ready = False
     try:
+        db = get_session_factory()()
         heads = db.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
         if heads != [EXPECTED_ALEMBIC_HEAD]:
             raise RateLimitUnavailable("database migration head mismatch")
         while cleanup_batch(db) == 64:
             pass
-        app.state.rate_limiter_ready = True
-        return True
-    except RateLimitUnavailable:
-        app.state.rate_limiter_ready = False
-        return False
+        ready = True
+    except (RateLimitUnavailable, SQLAlchemyError):
+        if db is not None:
+            rollback = getattr(db, "rollback", None)
+            if callable(rollback):
+                try:
+                    rollback()
+                except SQLAlchemyError:
+                    try:
+                        db.invalidate()
+                    except SQLAlchemyError:
+                        pass
     finally:
-        db.close()
+        if db is not None:
+            try:
+                db.close()
+            except SQLAlchemyError:
+                ready = False
+                try:
+                    db.invalidate()
+                except SQLAlchemyError:
+                    pass
+        app.state.rate_limiter_ready = ready
+    return ready
+
+
+async def _scheduled_cleanup(app: FastAPI, interval_seconds: float = 900) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await asyncio.to_thread(_cleanup_once, app)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            app.state.rate_limiter_ready = False
 
 
 @asynccontextmanager
@@ -75,16 +106,12 @@ async def lifespan(app: FastAPI):
     task = None
     if app.state.auth_config.production:
         await asyncio.to_thread(_cleanup_once, app)
-
-        async def scheduled_cleanup():
-            while True:
-                await asyncio.sleep(900)
-                await asyncio.to_thread(_cleanup_once, app)
-
-        task = asyncio.create_task(scheduled_cleanup())
+        task = asyncio.create_task(_scheduled_cleanup(app))
     yield
     if task:
         task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def create_app(config: AuthConfig | None = None) -> FastAPI:

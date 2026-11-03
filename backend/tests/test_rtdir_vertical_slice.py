@@ -659,7 +659,7 @@ def test_mutation_public_route_health_and_edge_boundaries_are_detected_and_resto
     original_health = security_middleware.is_internal_health
     _assert_mutation_cycle(
         health_oracle,
-        lambda: monkeypatch.setattr(security_middleware, "is_internal_health", lambda request: request.url.path in {"/healthz/ready", "/healthz/live"}),
+        lambda: monkeypatch.setattr(security_middleware, "is_internal_health", lambda request, config: request.url.path in {"/healthz/ready", "/healthz/live"}),
         lambda: monkeypatch.setattr(security_middleware, "is_internal_health", original_health),
     )
 

@@ -49,8 +49,8 @@ def header_values(request: Request, name: str) -> list[str]:
     return [value.decode("latin-1") for key, value in request.scope.get("headers", []) if key.lower() == target]
 
 
-def canonical_client_ip(request: Request) -> str | None:
-    values = header_values(request, "x-real-ip")
+def canonical_client_ip(request: Request, header_name: str = "x-real-ip") -> str | None:
+    values = header_values(request, header_name)
     if len(values) != 1:
         return None
     raw = values[0]
@@ -70,9 +70,10 @@ def exact_header(request: Request, name: str) -> str | None:
     return values[0] if len(values) == 1 else None
 
 
-def is_internal_health(request: Request) -> bool:
+def is_internal_health(request: Request, config: AuthConfig) -> bool:
     return (
-        request.method == "GET"
+        (config.ingress_mode or "railway_public_edge") == "railway_public_edge"
+        and request.method == "GET"
         and request.url.path == "/healthz/ready"
         and exact_header(request, "host") is not None
         and exact_header(request, "host").lower() == "healthcheck.railway.app"
@@ -112,13 +113,20 @@ def is_public_path(method: str, path: str) -> bool:
 
 
 def validate_edge(request: Request, config: AuthConfig) -> tuple[str | None, JSONResponse | None]:
-    client_ip = canonical_client_ip(request)
+    ingress_mode = config.ingress_mode or "railway_public_edge"
+    client_ip_header = "cf-connecting-ip" if ingress_mode == "render_public_edge" else "x-real-ip"
+    client_ip = canonical_client_ip(request, client_ip_header)
     proto = exact_header(request, "x-forwarded-proto")
-    forwarded_host = exact_header(request, "x-forwarded-host")
     host = exact_header(request, "host")
-    if client_ip is None or proto != "https" or forwarded_host is None or host is None:
+    if client_ip is None or proto != "https" or host is None:
         return None, error(request, 400, "EDGE_REQUEST_INVALID")
-    if forwarded_host.lower() != config.public_authority or host.lower() != config.public_authority:
+    if host.lower() != config.public_authority:
+        return None, error(request, 400, "EDGE_REQUEST_INVALID")
+    forwarded_hosts = header_values(request, "x-forwarded-host")
+    if ingress_mode == "railway_public_edge":
+        if len(forwarded_hosts) != 1 or forwarded_hosts[0].lower() != config.public_authority:
+            return None, error(request, 400, "EDGE_REQUEST_INVALID")
+    elif len(forwarded_hosts) > 1 or (forwarded_hosts and forwarded_hosts[0].lower() != config.public_authority):
         return None, error(request, 400, "EDGE_REQUEST_INVALID")
     return client_ip, None
 

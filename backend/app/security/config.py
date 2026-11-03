@@ -75,6 +75,7 @@ def _phc(name: str, value: str | None) -> str:
 @dataclass(frozen=True)
 class AuthConfig:
     production: bool
+    ingress_mode: str | None = None
     public_origin: str | None = None
     public_authority: str | None = None
     username: str | None = None
@@ -91,8 +92,9 @@ class AuthConfig:
             os.getenv(name) is not None
             for name in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID")
         )
+        render_detected = os.getenv("RENDER") is not None
         if raw_environment is None:
-            if railway_detected:
+            if railway_detected or render_detected:
                 raise RuntimeError("APP_ENV is invalid")
             return cls(production=False)
         if raw_environment not in {"development", "test", "production"}:
@@ -100,16 +102,23 @@ class AuthConfig:
         production = raw_environment == "production"
         if not production:
             return cls(production=False)
-        if os.getenv("AUTH_INGRESS_MODE") != "railway_public_edge":
+        ingress_mode = os.getenv("AUTH_INGRESS_MODE")
+        if ingress_mode not in {"railway_public_edge", "render_public_edge"}:
             raise RuntimeError("AUTH_INGRESS_MODE is invalid")
         if os.getenv("WEB_CONCURRENCY") != "1":
             raise RuntimeError("WEB_CONCURRENCY is invalid")
-        if os.getenv("RAILWAY_DEPLOYMENT_OVERLAP_SECONDS") != "0":
-            raise RuntimeError("RAILWAY_DEPLOYMENT_OVERLAP_SECONDS is invalid")
         database_url = os.getenv("DATABASE_URL", "")
         if not database_url.startswith(("postgresql://", "postgresql+psycopg://", "postgresql+psycopg2://")):
             raise RuntimeError("DATABASE_URL is invalid")
         origin, authority = _origin(os.getenv("AUTH_PUBLIC_ORIGIN"))
+        if ingress_mode == "railway_public_edge":
+            if render_detected or os.getenv("RAILWAY_DEPLOYMENT_OVERLAP_SECONDS") != "0":
+                raise RuntimeError("RAILWAY_DEPLOYMENT_OVERLAP_SECONDS is invalid")
+        else:
+            if railway_detected or os.getenv("RENDER") != "true" or os.getenv("RENDER_SERVICE_TYPE") != "web":
+                raise RuntimeError("RENDER runtime is invalid")
+            if os.getenv("RENDER_EXTERNAL_HOSTNAME", "").lower() != authority:
+                raise RuntimeError("RENDER_EXTERNAL_HOSTNAME is invalid")
         username = os.getenv("AUTH_USERNAME")
         if (
             not isinstance(username, str)
@@ -128,6 +137,7 @@ class AuthConfig:
             raise RuntimeError("AUTH_DUMMY_PASSWORD_HASH is invalid")
         return cls(
             production=True,
+            ingress_mode=ingress_mode,
             public_origin=origin,
             public_authority=authority,
             username=username,

@@ -23,7 +23,7 @@ class RTDIRSecurityMiddleware(BaseHTTPMiddleware):
         request.state.request_id = secrets.token_urlsafe(18)
         if not self.config.production:
             return await call_next(request)
-        internal_health = is_internal_health(request)
+        internal_health = is_internal_health(request, self.config)
         if not internal_health:
             client_ip, rejected = validate_edge(request, self.config)
             if rejected:

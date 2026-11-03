@@ -102,6 +102,7 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
     # environment named staging; never mounted on the production environment.
     app.state.stage6_preview_enabled = (
         config.production
+        and (config.ingress_mode or "railway_public_edge") == "railway_public_edge"
         and os.getenv("STAGE6_PREVIEW_ENABLED") == "1"
         and os.getenv("RAILWAY_ENVIRONMENT_NAME") == "staging"
     )

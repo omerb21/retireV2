@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 
 import { AppRoutes } from "./routes/AppRoutes";
 import { AuthenticationGate } from "./components/AuthenticationGate";
@@ -14,21 +14,24 @@ const navLinks = [
 function AppFrame() {
   const { pathname } = useLocation();
   if (/^\/clients\/[1-9][0-9]*\/workspace\/?$/.test(pathname)) {
-    // New, owner-reviewed workspace owns its own navigation and hierarchy.
-    // Keep the legacy application shell unchanged on all other routes.
+    // The dedicated workspace maintains its own navigation and presentation.
     return <AppRoutes />;
   }
-  return <div dir="rtl" lang="he">
-    <h1>מערכת תכנון פרישה</h1>
-    <nav aria-label="ניווט ראשי">
-      <ul>
-        {navLinks.map(({ path, label }) => (
-          <li key={path}><Link to={path}>{label}</Link></li>
-        ))}
-      </ul>
-    </nav>
-    <AppRoutes />
-  </div>;
+  return (
+    <div className="app-shell" dir="rtl" lang="he">
+      <header className="app-shell__header">
+        <h1>מערכת תכנון פרישה</h1>
+        <nav className="app-shell__nav" aria-label="ניווט ראשי">
+          {navLinks.map(({ path, label }) => (
+            <NavLink key={path} to={path}>{label}</NavLink>
+          ))}
+        </nav>
+      </header>
+      <main className="app-shell__main">
+        <AppRoutes />
+      </main>
+    </div>
+  );
 }
 
 function App() {

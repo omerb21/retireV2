@@ -58,6 +58,34 @@ const comparisonFailure = {
   result_fingerprint: "5".repeat(64),
 };
 const response = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), {status: 200, headers: {"Content-Type": "application/json"}}));
+const sourceEntry = (overrides: Record<string, unknown> = {}) => ({
+  schema_version: "CRTISBA_SOURCE_BASIS_ENTRY_V1", source_id: "income:1",
+  source_kind: "RECURRING_INCOME", source_category: "RENTAL", admission_state: "INCLUDED",
+  rtisa_reason_codes: [], source_version: "d".repeat(64), source_fingerprint: "d".repeat(64),
+  amount_authority_fingerprint: "e".repeat(64), decision_version: 1,
+  decision_fingerprint: "f".repeat(64), decision_state: "CURRENT", income_basis: "GROSS",
+  income_basis_provenance: "UPSTREAM_RECURRING_AMOUNT_BASIS",
+  price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE", price_reference_date: null,
+  price_basis_provenance: "EXPLICIT_PROFESSIONAL", blockers: [], ...overrides,
+});
+const sourceCollection = (entries: unknown[] = [], clientId = 7) => ({
+  schema_version: "CRTISBA_COLLECTION_RESULT_V1", client_id: clientId,
+  planning_calculation_input_fingerprint: "a".repeat(64), retirement_target_date: "2035-04-01",
+  rtisa_admission_result_fingerprint: "1".repeat(64), source_basis_entries: entries,
+  partitions: {}, blockers: [], basis_readiness_state: "READY", basis_ready: true,
+  result_fingerprint: "2".repeat(64),
+});
+
+function stubReadinessFetch(fetcher: ReturnType<typeof vi.fn>, sources = sourceCollection()) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/source-bases") && (init?.method ?? "GET") === "GET") {
+      const clientId = Number(url.match(/\/clients\/(\d+)\//)?.[1] ?? sources.client_id);
+      return response({...sources, client_id: clientId});
+    }
+    return fetcher(input, init);
+  }));
+}
 
 function renderScreen() {
   return render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}><Routes>
@@ -90,7 +118,7 @@ test("renders exact readiness evidence and preserves block_no_result as a profes
     .mockImplementationOnce(() => response(context))
     .mockImplementationOnce(() => response(target))
     .mockImplementationOnce(() => response(comparisonFailure));
-  vi.stubGlobal("fetch", fetcher);
+  stubReadinessFetch(fetcher);
   renderScreen();
   expect(await screen.findByText("קלט התכנון מוכן")).toBeInTheDocument();
   expect(screen.getByText(/01\/04\/2035/)).toBeInTheDocument();
@@ -111,7 +139,7 @@ test("confirms only accepted fields, then discards and reloads context before ta
     .mockImplementationOnce(() => response(target))
     .mockImplementationOnce(() => response(context))
     .mockImplementationOnce(() => response(target));
-  vi.stubGlobal("fetch", fetcher);
+  stubReadinessFetch(fetcher);
   renderScreen();
   const amount = await screen.findByLabelText("סכום חודשי");
   fireEvent.change(amount, {target: {value: "13000.50"}});
@@ -134,7 +162,7 @@ test("confirms only accepted fields, then discards and reloads context before ta
 
 test.each(["0", "-1", "1.5", "abc", "9007199254740992"])(
   "rejects invalid client id %s before any readiness request", async clientId => {
-    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const fetcher = vi.fn(); stubReadinessFetch(fetcher);
     render(<MemoryRouter initialEntries={[`/clients/${clientId}/retirement-income-readiness`]}><Routes>
       <Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} />
     </Routes></MemoryRouter>);
@@ -151,7 +179,7 @@ test("A-to-B-to-A aborts old reads and generation guard rejects their late respo
     .mockImplementationOnce(() => response(targetFor(8, "22000.00")))
     .mockImplementationOnce(() => response(contextFor(7, "2045-03-03")))
     .mockImplementationOnce(() => response(targetFor(7, "33000.00")));
-  vi.stubGlobal("fetch", fetcher);
+  stubReadinessFetch(fetcher);
   render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}>
     <NavigationControls /><Routes><Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} /></Routes>
   </MemoryRouter>);
@@ -175,7 +203,7 @@ test("ordinary client-isolation oracle kills and restores disabled generation pr
       .mockImplementationOnce(() => response(contextFor(8, "2040-02-02")))
       .mockImplementationOnce(() => response(targetFor(8, "22000.00")))
       .mockImplementationOnce(() => response(targetFor(7, "99000.00")));
-    vi.stubGlobal("fetch", fetcher);
+    stubReadinessFetch(fetcher);
     const view = render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}>
       <NavigationControls /><Routes><Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} /></Routes>
     </MemoryRouter>);
@@ -215,7 +243,7 @@ test("CAS conflict is not retried and only explicit refresh requests fresh state
     .mockResolvedValueOnce(new Response(JSON.stringify({code: "TARGET_VERSION_CONFLICT"}), {status: 409}))
     .mockImplementationOnce(() => response(context))
     .mockImplementationOnce(() => response(targetFor(7, "14000.00")));
-  vi.stubGlobal("fetch", fetcher); renderScreen();
+  stubReadinessFetch(fetcher); renderScreen();
   expect(await screen.findByDisplayValue("12000.00")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", {name: "אישור מפורש של היעד"}));
   expect(await screen.findByRole("alert")).toHaveTextContent("יש לרענן לפני ניסיון נוסף");
@@ -232,7 +260,7 @@ test.each([
   ["UNAVAILABLE", "UNAVAILABLE", "אינו זמין"],
   ["CURRENT", "READY", "נוכחי"],
 ])("renders distinct target authority state %s", async (authorityState, readinessState, label) => {
-  vi.stubGlobal("fetch", vi.fn()
+  stubReadinessFetch(vi.fn()
     .mockImplementationOnce(() => response(context))
     .mockImplementationOnce(() => response({...target, authority_state: authorityState, target_readiness_state: readinessState, target_ready: authorityState === "CURRENT"})));
   renderScreen();
@@ -249,7 +277,7 @@ test("successful comparison preserves blocker source and reason order including 
     comparisonEntry({source_id: "income:1", comparison_state: "NORMALIZATION_REQUIRED", reason_codes: ["NORMALIZE_A", "NORMALIZE_B"], income_basis: "NET"}),
     comparisonEntry({source_id: "income:2", admission_state: "EXCLUDED", decision_state: "NOT_APPLICABLE_NOT_ADMITTED", comparison_state: "NOT_ADMITTED", reason_codes: ["RTICB_SOURCE_NOT_ADMITTED"], income_basis: null, income_basis_provenance: null, price_basis: null, price_basis_provenance: null, amount_authority_fingerprint: null, decision_version: null, decision_fingerprint: null}),
   ], {direct_comparison_state: "NOT_READY", direct_comparison_ready: false, blockers: ["RTICB_NORMALIZATION_REQUIRED"]});
-  vi.stubGlobal("fetch", vi.fn()
+  stubReadinessFetch(vi.fn()
     .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
     .mockImplementationOnce(() => response(comparison)));
   renderScreen(); await screen.findByDisplayValue("12000.00");
@@ -266,7 +294,7 @@ test("successful comparison preserves blocker source and reason order including 
 
 test("direct comparability does not invent income availability funding or portfolio readiness", async () => {
   const comparison = comparisonSuccess();
-  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
+  stubReadinessFetch(vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
   renderScreen(); await screen.findByDisplayValue("12000.00");
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
   const section = (await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).closest("section")!;
@@ -297,7 +325,7 @@ test("renders delegated unresolved nullable and NOT_READY V2 evidence without in
     direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
     blockers: ["RTICB_BASIS_UNRESOLVED"],
   });
-  vi.stubGlobal("fetch", vi.fn()
+  stubReadinessFetch(vi.fn()
     .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
     .mockImplementationOnce(() => response(comparison)));
   renderScreen(); await screen.findByDisplayValue("12000.00");
@@ -319,7 +347,7 @@ test("unknown technical and professional codes use neutral presentation and pres
   const comparison = comparisonSuccess([
     comparisonEntry({comparison_state: "BASIS_UNRESOLVED", reason_codes: ["UNKNOWN_REASON"]}),
   ], {direct_comparison_state: "NOT_READY", direct_comparison_ready: false, blockers: ["UNKNOWN_BLOCKER"]});
-  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
+  stubReadinessFetch(vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target)).mockImplementationOnce(() => response(comparison)));
   renderScreen(); await screen.findByDisplayValue("12000.00");
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
   await screen.findByText("UNKNOWN_BLOCKER");
@@ -337,7 +365,7 @@ test("ordinary comparison presentation oracle kills and restores ordering and vi
   ], {direct_comparison_state: "NOT_READY", direct_comparison_ready: false, blockers: ["RTICB_NORMALIZATION_REQUIRED"]});
 
   const ordinary = async () => {
-    vi.stubGlobal("fetch", vi.fn()
+    stubReadinessFetch(vi.fn()
       .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
       .mockImplementationOnce(() => response(comparison)));
     const view = renderScreen();
@@ -399,7 +427,7 @@ test("projects accepted UNKNOWN decision and missing income/price provenance wit
       direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
       blockers: ["RTICB_BASIS_UNRESOLVED"],
     })));
-  vi.stubGlobal("fetch", fetcher);
+  stubReadinessFetch(fetcher);
   renderScreen();
   await screen.findByText("קלט התכנון מוכן");
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
@@ -430,11 +458,110 @@ test("renders accepted pension OWNER_DECISION_OD2 and empty missing provenance",
       direct_comparison_state: "NOT_READY", direct_comparison_ready: false,
       blockers: ["RTICB_BASIS_UNRESOLVED"],
     })));
-  vi.stubGlobal("fetch", fetcher);
+  stubReadinessFetch(fetcher);
   renderScreen();
   await screen.findByText("קלט התכנון מוכן");
   fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
   expect(await screen.findByText(/RTICB_CRTISBA_DECISION_MISSING/)).toBeInTheDocument();
   expect(screen.getByText(/OWNER_DECISION_OD2/)).toBeInTheDocument();
   expect(screen.getByText(/בסיס ההשוואה אינו מוכן/)).toBeInTheDocument();
+});
+
+test("saves an exact pension CLASSIFY command with server CAS values and reloads authority", async () => {
+  const pension = sourceEntry({
+    source_id: "manual:9", source_kind: "PENSION", source_category: "PENSION",
+    source_version: 5, source_fingerprint: "6".repeat(64), amount_authority_fingerprint: "7".repeat(64),
+    decision_version: null, decision_fingerprint: null, decision_state: "MISSING",
+    income_basis: null, income_basis_provenance: null,
+    price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE", price_basis_provenance: "OWNER_DECISION_OD2",
+  });
+  const fetcher = vi.fn()
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response({client_id: 7, decision_state: "CURRENT"}))
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target));
+  stubReadinessFetch(fetcher, sourceCollection([pension]));
+  renderScreen();
+  const article = (await screen.findByRole("heading", {name: "manual:9"})).closest("article")!;
+  fireEvent.change(within(article).getByLabelText(/בסיס הכנסה למקור/), {target: {value: "NET"}});
+  fireEvent.click(within(article).getByRole("button", {name: "שמירת החלטת בסיס עבור manual:9"}));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
+  const request = fetcher.mock.calls[2];
+  expect(request[0]).toContain("/source-bases/manual%3A9");
+  expect(JSON.parse(request[1].body)).toEqual({
+    schema_version: "CRTISBA_PENSION_CLASSIFY_COMMAND_V1", operation: "CLASSIFY", source_kind: "PENSION",
+    expected_decision_version: 0, expected_planning_calculation_input_fingerprint: "a".repeat(64),
+    expected_source_version: 5, expected_source_fingerprint: "6".repeat(64),
+    expected_amount_authority_fingerprint: "7".repeat(64), income_basis: "NET",
+  });
+});
+
+test("saves exact recurring CLASSIFY and CLEAR commands without professional defaults", async () => {
+  const recurring = sourceEntry({decision_state: "MISSING", decision_version: null, decision_fingerprint: null,
+    price_basis: "UNKNOWN", price_basis_provenance: "MISSING"});
+  const fetcher = vi.fn()
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response({client_id: 7, decision_state: "CURRENT"}))
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target));
+  stubReadinessFetch(fetcher, sourceCollection([recurring]));
+  const first = renderScreen();
+  const article = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  const priceSelect = within(article).getByLabelText(/בסיס מחירים למקור/);
+  expect(priceSelect).toHaveValue("");
+  fireEvent.change(priceSelect, {target: {value: "REAL_AT_REFERENCE_DATE"}});
+  fireEvent.change(within(article).getByLabelText(/תאריך ייחוס למקור/), {target: {value: "03/02/2030"}});
+  fireEvent.click(within(article).getByRole("button", {name: "שמירת החלטת בסיס עבור income:1"}));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({
+    schema_version: "CRTISBA_RECURRING_CLASSIFY_COMMAND_V1", operation: "CLASSIFY", source_kind: "RECURRING_INCOME",
+    expected_decision_version: 0, expected_planning_calculation_input_fingerprint: "a".repeat(64),
+    expected_source_version: "d".repeat(64), expected_source_fingerprint: "d".repeat(64),
+    expected_amount_authority_fingerprint: "e".repeat(64), price_basis: "REAL_AT_REFERENCE_DATE",
+    price_reference_date: "2030-02-03",
+  });
+  first.unmount();
+
+  const clearFetcher = vi.fn()
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => response({client_id: 7, decision_state: "UNKNOWN"}))
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target));
+  stubReadinessFetch(clearFetcher, sourceCollection([sourceEntry()]));
+  const second = renderScreen();
+  const current = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  fireEvent.click(within(current).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:1"}));
+  await waitFor(() => expect(clearFetcher).toHaveBeenCalledTimes(5));
+  expect(JSON.parse(clearFetcher.mock.calls[2][1].body)).toEqual({
+    schema_version: "CRTISBA_RECURRING_CLEAR_COMMAND_V1", operation: "CLEAR", source_kind: "RECURRING_INCOME",
+    expected_decision_version: 1, expected_planning_calculation_input_fingerprint: "a".repeat(64),
+    expected_source_version: "d".repeat(64), expected_source_fingerprint: "d".repeat(64),
+    expected_amount_authority_fingerprint: "e".repeat(64),
+  });
+  second.unmount();
+});
+
+test("forbidden source has no decision controls", async () => {
+  const forbidden = sourceEntry({
+    source_id: "income:delegated", source_category: "PENSION_REPRESENTATION", admission_state: "UNRESOLVED",
+    decision_state: "DELEGATION_UNRESOLVED", amount_authority_fingerprint: null, decision_version: null,
+  });
+  const fetcher = vi.fn().mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target));
+  stubReadinessFetch(fetcher, sourceCollection([forbidden]));
+  renderScreen();
+  const article = (await screen.findByRole("heading", {name: "income:delegated"})).closest("article")!;
+  expect(within(article).getByText("לא ניתן לעדכן החלטה למקור זה לפי מצב הסמכות הנוכחי.")).toBeInTheDocument();
+  expect(within(article).queryByRole("button")).not.toBeInTheDocument();
+});
+
+test("409 source conflict is never retried and refreshes authority before another explicit write", async () => {
+  const fetcher = vi.fn()
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target))
+    .mockImplementationOnce(() => Promise.resolve(new Response(JSON.stringify({code: "CRTISBA_SOURCE_VERSION_STALE"}), {status: 409})))
+    .mockImplementationOnce(() => response(context)).mockImplementationOnce(() => response(target));
+  stubReadinessFetch(fetcher, sourceCollection([sourceEntry()]));
+  renderScreen();
+  const article = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  fireEvent.click(within(article).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:1"}));
+  expect(await screen.findByRole("alert")).toHaveTextContent("CRTISBA_SOURCE_VERSION_STALE");
+  expect(screen.getByRole("alert")).toHaveTextContent("נתוני הסמכות רועננו");
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  expect(fetcher.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
 });

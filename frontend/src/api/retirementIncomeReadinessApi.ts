@@ -91,10 +91,67 @@ export interface ComparisonFailureV2 {
 }
 export type ComparisonResult = ComparisonSuccessV2 | ComparisonFailureV2;
 
+export interface SourceBasisEntry {
+  schema_version: "CRTISBA_SOURCE_BASIS_ENTRY_V1";
+  source_id: string;
+  source_kind: "PENSION" | "RECURRING_INCOME";
+  source_category: string;
+  admission_state: "INCLUDED" | "EXCLUDED" | "UNRESOLVED";
+  rtisa_reason_codes: string[];
+  source_version: number | string | null;
+  source_fingerprint: string;
+  amount_authority_fingerprint: string | null;
+  decision_version: number | null;
+  decision_fingerprint: string | null;
+  decision_state: SourceBasisDecisionState;
+  income_basis: SourceIncomeBasis | null;
+  income_basis_provenance: IncomeBasisProvenance | null;
+  price_basis: SourcePriceBasis | null;
+  price_reference_date: string | null;
+  price_basis_provenance: PriceBasisProvenance | null;
+  blockers: string[];
+}
+
+export interface SourceBasisCollection {
+  schema_version: "CRTISBA_COLLECTION_RESULT_V1";
+  client_id: number;
+  planning_calculation_input_fingerprint: string;
+  retirement_target_date: string;
+  rtisa_admission_result_fingerprint: string;
+  source_basis_entries: SourceBasisEntry[];
+  partitions: Record<string, string[]>;
+  blockers: string[];
+  basis_readiness_state: "READY" | "NOT_READY";
+  basis_ready: boolean;
+  result_fingerprint: string;
+}
+
+type SourceBasisCas = {
+  source_kind: "PENSION" | "RECURRING_INCOME";
+  expected_decision_version: number;
+  expected_planning_calculation_input_fingerprint: string;
+  expected_source_version: number | string;
+  expected_source_fingerprint: string;
+  expected_amount_authority_fingerprint: string;
+};
+export type SourceBasisCommand = SourceBasisCas & (
+  | {schema_version: "CRTISBA_PENSION_CLASSIFY_COMMAND_V1"; operation: "CLASSIFY"; source_kind: "PENSION"; income_basis: "GROSS" | "NET"}
+  | {schema_version: "CRTISBA_PENSION_CLEAR_COMMAND_V1"; operation: "CLEAR"; source_kind: "PENSION"}
+  | {schema_version: "CRTISBA_RECURRING_CLASSIFY_COMMAND_V1"; operation: "CLASSIFY"; source_kind: "RECURRING_INCOME"; price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "REAL_AT_REFERENCE_DATE"; price_reference_date: string | null}
+  | {schema_version: "CRTISBA_RECURRING_CLEAR_COMMAND_V1"; operation: "CLEAR"; source_kind: "RECURRING_INCOME"}
+);
+
+export class ReadinessApiError extends Error {
+  constructor(public readonly status: number, public readonly code: string) {
+    super(code);
+    this.name = "ReadinessApiError";
+  }
+}
+
 async function call<T>(clientId: number, path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(buildApiUrl(`/clients/${clientId}/retirement-income-readiness${path}`), init);
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.code ?? "REQUEST_FAILED");
+  if (!response.ok) throw new ReadinessApiError(response.status, data?.code ?? "REQUEST_FAILED");
   if (data?.client_id !== null && data?.client_id !== clientId) throw new Error("RESPONSE_CLIENT_MISMATCH");
   return data as T;
 }
@@ -102,3 +159,8 @@ export const readContext = (clientId: number, signal?: AbortSignal) => call<Read
 export const readTarget = (clientId: number, signal?: AbortSignal) => call<TargetResult>(clientId, "/target", {signal});
 export const confirmTarget = (clientId: number, body: unknown, signal?: AbortSignal) => call<TargetResult>(clientId, "/target", {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal});
 export const compareIncome = (clientId: number, body: unknown, signal?: AbortSignal) => call<ComparisonResult>(clientId, "/comparison", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal});
+export const readSourceBases = (clientId: number, signal?: AbortSignal) => call<SourceBasisCollection>(clientId, "/source-bases", {signal});
+export const saveSourceBasis = (clientId: number, sourceId: string, body: SourceBasisCommand, signal?: AbortSignal) =>
+  call<unknown>(clientId, `/source-bases/${encodeURIComponent(sourceId)}`, {
+    method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body), signal,
+  });

@@ -165,7 +165,7 @@ function Workspace({clientId}: {clientId: number}) {
   }
 
   async function compare() {
-    if (!context?.retirement_target_date) return;
+    if (!context?.retirement_target_date || !sourceBases) return;
     activeMutation.current?.abort(); const controller = new AbortController(); activeMutation.current = controller;
     const active = ++generation.current;
     setBusy(true); setError("");
@@ -228,7 +228,7 @@ function Workspace({clientId}: {clientId: number}) {
           {priceBasis === "REAL_AT_REFERENCE_DATE" && <label>תאריך ייחוס<HebrewDateInput required value={referenceDate} onChange={setReferenceDate} /></label>}
           <label>מקור האישור<select value={sourceKind} onChange={e => setSourceKind(e.target.value as typeof sourceKind)}><option value="PLANNER_SUPPLIED">הוזן בידי המתכנן</option><option value="CLIENT_SUPPLIED">נמסר בידי הלקוח</option><option value="CLIENT_SUPPLIED_PLANNER_CONFIRMED">נמסר ואושר בידי המתכנן</option></select></label>
           <button disabled={busy || !context.retirement_target_date} type="submit">אישור מפורש של היעד</button></form>
-        <button disabled={busy || !target.target_ready} onClick={() => void compare()}>בדיקת בסיסי ההשוואה</button></section>
+        <button disabled={busy || !target.target_ready || !sourceBases} onClick={() => void compare()}>בדיקת בסיסי ההשוואה</button></section>
       <section><h2>החלטות בסיס למקורות הכנסה</h2>
         {!sourceBases ? <p>טוען החלטות מקור…</p> : sourceBases.source_basis_entries.length === 0 ? <p>לא נמצאו מקורות הכנסה להחלטת בסיס.</p> :
           sourceBases.source_basis_entries.map(entry => <SourceBasisEditor

@@ -585,6 +585,7 @@ test("unknown commit outcome hides stale authority, never retries PUT, and uses 
   let contextReads = 0;
   let sourceReads = 0;
   const putBodies: Array<Record<string, unknown>> = [];
+  let comparisonCount = 0;
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -593,7 +594,7 @@ test("unknown commit outcome hides stale authority, never retries PUT, and uses 
       return contextReads === 2 ? refreshContext.promise : response(context);
     }
     if (url.endsWith("/target")) return response(target);
-    if (url.endsWith("/comparison")) return response(comparisonSuccess());
+    if (url.endsWith("/comparison")) { comparisonCount += 1; return response(comparisonSuccess()); }
     if (url.includes("/source-bases/") && method === "PUT") {
       putBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return putBodies.length === 1
@@ -620,11 +621,16 @@ test("unknown commit outcome hides stale authority, never retries PUT, and uses 
   await waitFor(() => expect(contextReads).toBe(2));
   expect(screen.queryByRole("heading", {name: "income:1"})).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).not.toBeInTheDocument();
+  const blockedComparison = screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"});
+  expect(blockedComparison).toBeDisabled();
+  fireEvent.click(blockedComparison);
+  expect(comparisonCount).toBe(1);
   expect(putBodies).toHaveLength(1);
 
   refreshContext.resolve(await response(context));
   expect(await screen.findByRole("alert")).toHaveTextContent("לא ניתן לקבוע אם ההחלטה נשמרה");
   article = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  expect(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"})).toBeEnabled();
   expect(putBodies).toHaveLength(1);
   fireEvent.click(within(article).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:1"}));
   await waitFor(() => expect(putBodies).toHaveLength(2));
@@ -639,11 +645,18 @@ test("unknown commit outcome hides stale authority, never retries PUT, and uses 
 test("network failure after PUT keeps authority blocked when refresh fails until explicit refresh succeeds", async () => {
   let sourceReads = 0;
   let putCount = 0;
+  let comparisonCount = 0;
+  const comparisonBodies: Array<Record<string, unknown>> = [];
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.endsWith("/context")) return response(context);
     if (url.endsWith("/target")) return response(target);
+    if (url.endsWith("/comparison") && method === "POST") {
+      comparisonCount += 1;
+      comparisonBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return response(comparisonSuccess());
+    }
     if (url.includes("/source-bases/") && method === "PUT") {
       putCount += 1;
       return Promise.reject(new TypeError("network connection lost after request dispatch"));
@@ -663,9 +676,22 @@ test("network failure after PUT keeps authority blocked when refresh fails until
   expect(alert).toHaveTextContent("לא ניתן לקבוע אם ההחלטה נשמרה");
   expect(alert).toHaveTextContent("נדרש רענון מפורש");
   expect(screen.queryByRole("heading", {name: "income:1"})).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).not.toBeInTheDocument();
+  const blockedComparison = screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"});
+  expect(blockedComparison).toBeDisabled();
+  fireEvent.click(blockedComparison);
+  expect(comparisonCount).toBe(0);
   expect(putCount).toBe(1);
   fireEvent.click(screen.getByRole("button", {name: "רענון מפורש"}));
   expect(await screen.findByRole("heading", {name: "income:1"})).toBeInTheDocument();
+  const restoredComparison = screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"});
+  expect(restoredComparison).toBeEnabled();
+  fireEvent.click(restoredComparison);
+  await waitFor(() => expect(comparisonCount).toBe(1));
+  expect(comparisonBodies).toEqual([{
+    expected_planning_calculation_input_fingerprint: "a".repeat(64),
+    expected_retirement_target_date: "2035-04-01",
+  }]);
   expect(putCount).toBe(1);
 });
 

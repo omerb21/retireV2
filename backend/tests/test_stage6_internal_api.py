@@ -41,11 +41,53 @@ def test_render_preview_does_not_activate_by_render_environment_alone(monkeypatc
     monkeypatch.setenv("RENDER", "true")
     monkeypatch.setenv("STAGE6_PREVIEW_ENABLED", "1")
     monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME", raising=False)
-    app = create_app(AuthConfig(production=True))
+    app = create_app(AuthConfig(
+        production=True, ingress_mode="render_public_edge",
+        public_authority="review.onrender.com",
+    ))
     assert app.state.stage6_preview_enabled is False
     assert not any("/gross-estimate" in p for p in paths(app))
     assert not any("/factor-admissions" in p for p in paths(app))
     assert not any("/pension-elections" in p for p in paths(app))
+
+
+def test_approved_render_identity_mounts_capability_and_stage6_routes(monkeypatch):
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED", "1")
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-review")
+    monkeypatch.setenv("RENDER_EXTERNAL_HOSTNAME", "review.onrender.com")
+    monkeypatch.setenv("STAGE6_APPROVED_RENDER_SERVICE_ID", "srv-review")
+    monkeypatch.setenv("STAGE6_APPROVED_RENDER_HOSTNAME", "review.onrender.com")
+    monkeypatch.setenv("STAGE6_APPROVED_DATABASE_HOST", "review-db.internal")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@review-db.internal/retire_v2")
+    config = AuthConfig(
+        production=True, ingress_mode="render_public_edge",
+        public_authority="review.onrender.com",
+        public_origin="https://review.onrender.com",
+        actor_id="planner:stage6", session_secret=b"s" * 32,
+        rate_limit_secret=b"r" * 32,
+    )
+    app = create_app(config)
+    p = paths(app)
+    assert app.state.stage6_preview_enabled is True
+    assert "/api/clients/{client_id}/scenario-drafts/capabilities/gross-scenario-results" in p
+    assert any("/gross-estimate" in value for value in p)
+    assert any("/monthly-income-comparison" in value for value in p)
+
+    client = TestClient(app)
+    headers = {
+        "host": "review.onrender.com", "cf-connecting-ip": "2001:db8::7",
+        "x-forwarded-proto": "https", "x-forwarded-host": "review.onrender.com",
+    }
+    capability_path = (
+        "/api/clients/1/scenario-drafts/capabilities/gross-scenario-results"
+    )
+    missing = client.get(capability_path, headers=headers)
+    token, _ = issue(config)
+    client.cookies.set(COOKIE_NAME, token)
+    accepted = client.get(capability_path, headers=headers)
+    assert (missing.status_code, missing.json()["code"]) == (401, "SESSION_MISSING")
+    assert accepted.status_code == 200
+    assert accepted.json() == {"stage6_gross_scenario_results": True}
 
 
 def test_staging_preview_mounts_only_with_production_style_auth(monkeypatch):
@@ -96,6 +138,21 @@ def test_preview_disabled_even_with_valid_actor():
     assert result=="not-found"
     reject.assert_called_once_with(r,404,"ROUTE_NOT_FOUND")
     estimate.assert_not_called()
+
+
+def test_capability_requires_trusted_actor_and_returns_closed_envelope():
+    missing = request()
+    with patch.object(route, "validate_session", return_value=None), patch.object(
+        route, "error", return_value="unauthorized",
+    ) as reject:
+        assert route.internal_gross_scenario_results_capability(missing) == "unauthorized"
+    reject.assert_called_once_with(missing, 401, "AUTHENTICATION_REQUIRED")
+
+    accepted = request(actor="planner:authenticated")
+    with patch.object(route, "validate_session", return_value=None):
+        response = route.internal_gross_scenario_results_capability(accepted)
+    assert response.body == b'{"stage6_gross_scenario_results":true}'
+    assert response.headers["cache-control"] == "no-store, private"
 
 
 def test_valid_staging_session_calls_canonical_service_once():
@@ -295,11 +352,16 @@ def test_real_middleware_requires_session_origin_and_csrf_for_comparison(monkeyp
         token,session=issue(config)
         client.cookies.set(COOKIE_NAME,token)
         rejected=client.post(path,json=body,headers=headers)
+        wrong_origin=client.post(path,json=body,headers={
+            **_edge_headers(origin="https://evil.example"),
+            "x-rtdir-csrf":session["csrf"],
+        })
         accepted=client.post(path,json=body,headers={
             **headers,"x-rtdir-csrf":session["csrf"],
         })
     assert (missing.status_code,missing.json()["code"])==(401,"SESSION_MISSING")
     assert (rejected.status_code,rejected.json()["code"])==(403,"CSRF_INVALID")
+    assert (wrong_origin.status_code,wrong_origin.json()["code"])==(403,"ORIGIN_FORBIDDEN")
     assert accepted.status_code==200
     compare.assert_called_once_with(
         "factory",client_id=1,scenario_a_id="a",scenario_a_version=2,

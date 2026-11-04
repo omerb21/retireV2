@@ -36,11 +36,45 @@ from app.security.middleware import RTDIRSecurityMiddleware
 from app.security.rate_limit import RateLimitUnavailable, cleanup_batch
 from app.security.transport import NO_STORE, error, is_spa_path
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 load_all_models()
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 EXPECTED_ALEMBIC_HEAD = "d6f1a9c3b704"
+ACTIVE_RENDER_SERVICE_HOSTNAME = "retirev2.onrender.com"
+
+
+def _stage6_preview_enabled(config: AuthConfig) -> bool:
+    """Enable Stage 6 only for an explicitly approved runtime identity."""
+    if not config.production or os.getenv("STAGE6_PREVIEW_ENABLED") != "1":
+        return False
+    ingress = config.ingress_mode or "railway_public_edge"
+    if ingress == "railway_public_edge":
+        return os.getenv("RAILWAY_ENVIRONMENT_NAME") == "staging"
+    if ingress != "render_public_edge":
+        return False
+
+    service_id = os.getenv("RENDER_SERVICE_ID")
+    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").lower()
+    approved_service_id = os.getenv("STAGE6_APPROVED_RENDER_SERVICE_ID")
+    approved_hostname = os.getenv("STAGE6_APPROVED_RENDER_HOSTNAME", "").lower()
+    approved_database_host = os.getenv("STAGE6_APPROVED_DATABASE_HOST", "").lower()
+    try:
+        database_host = (make_url(os.getenv("DATABASE_URL", "")).host or "").lower()
+    except Exception:
+        return False
+    return bool(
+        service_id
+        and approved_service_id
+        and service_id == approved_service_id
+        and hostname
+        and hostname != ACTIVE_RENDER_SERVICE_HOSTNAME
+        and hostname == approved_hostname
+        and config.public_authority == hostname
+        and database_host
+        and database_host == approved_database_host
+    )
 
 
 def _pointer(location: tuple[object, ...]) -> str:
@@ -124,15 +158,10 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.auth_config = config
-    # Unavailable by default, including in the real production environment.
-    # Requires authenticated production-mode middleware in a dedicated Railway
-    # environment named staging; never mounted on the production environment.
-    app.state.stage6_preview_enabled = (
-        config.production
-        and (config.ingress_mode or "railway_public_edge") == "railway_public_edge"
-        and os.getenv("STAGE6_PREVIEW_ENABLED") == "1"
-        and os.getenv("RAILWAY_ENVIRONMENT_NAME") == "staging"
-    )
+    # Unavailable by default, including in every live service.  Railway staging
+    # retains its accepted gate; an isolated Render review service additionally
+    # requires exact service, hostname and database-host approval bindings.
+    app.state.stage6_preview_enabled = _stage6_preview_enabled(config)
     app.state.rate_limiter_ready = not config.production
     app.add_middleware(RTDIRSecurityMiddleware, config=config)
     if not config.production:
@@ -150,8 +179,8 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         m09_cashflow_router, m10_comparison_router, scenario_permission_preview_router, scenario_draft_router,
     ):
         app.include_router(router)
-    # Explicitly unavailable by default. Both routes need the authenticated
-    # production-mode security middleware on the dedicated staging environment.
+    # Both route families require authenticated production-mode middleware and
+    # the verified runtime capability above.
     if app.state.stage6_preview_enabled:
         app.include_router(scenario_stage6_internal_router)
         app.include_router(scenario_stage6_factor_admission_router)

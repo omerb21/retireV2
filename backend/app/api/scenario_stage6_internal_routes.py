@@ -41,6 +41,17 @@ class MonthlyComparisonRequest(BaseModel):
     end_month: str = Field(min_length=7, max_length=7)
 
 
+@router.get("/capabilities/gross-scenario-results")
+def internal_gross_scenario_results_capability(request: Request):
+    if not getattr(request.app.state, "stage6_preview_enabled", False):
+        return error(request, 404, "ROUTE_NOT_FOUND")
+    if _verified_internal_actor(request) is None:
+        return error(request, 401, "AUTHENTICATION_REQUIRED")
+    return JSONResponse(
+        content={"stage6_gross_scenario_results": True}, headers=NO_STORE,
+    )
+
+
 @router.post("/monthly-income-comparison")
 def internal_monthly_income_comparison(
     request: Request,

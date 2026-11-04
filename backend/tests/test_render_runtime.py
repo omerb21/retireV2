@@ -35,7 +35,11 @@ PLATFORM_ENV = {
     "RAILWAY_SERVICE_ID",
     "RENDER",
     "RENDER_EXTERNAL_HOSTNAME",
+    "RENDER_SERVICE_ID",
     "RENDER_SERVICE_TYPE",
+    "STAGE6_APPROVED_DATABASE_HOST",
+    "STAGE6_APPROVED_RENDER_HOSTNAME",
+    "STAGE6_APPROVED_RENDER_SERVICE_ID",
     "STAGE6_PREVIEW_ENABLED",
     "WEB_CONCURRENCY",
 }
@@ -93,6 +97,21 @@ def _render_config() -> AuthConfig:
         ingress_mode="render_public_edge",
         public_origin="https://retirev2.onrender.com",
         public_authority="retirev2.onrender.com",
+        username="planner",
+        password_hash="unused-by-this-test",
+        dummy_password_hash="unused-by-this-test-too",
+        actor_id="planner:render",
+        session_secret=b"s" * 32,
+        rate_limit_secret=b"r" * 32,
+    )
+
+
+def _isolated_render_config() -> AuthConfig:
+    return AuthConfig(
+        production=True,
+        ingress_mode="render_public_edge",
+        public_origin="https://retirev2-stage6-review.onrender.com",
+        public_authority="retirev2-stage6-review.onrender.com",
         username="planner",
         password_hash="unused-by-this-test",
         dummy_password_hash="unused-by-this-test-too",
@@ -225,6 +244,38 @@ def test_render_cannot_enable_railway_only_stage6_routes(monkeypatch) -> None:
         )
         for route in application.routes
     )
+
+
+def test_active_render_service_stays_blocked_even_with_explicit_stage6_values(monkeypatch) -> None:
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED", "1")
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-active")
+    monkeypatch.setenv("RENDER_EXTERNAL_HOSTNAME", "retirev2.onrender.com")
+    monkeypatch.setenv("STAGE6_APPROVED_RENDER_SERVICE_ID", "srv-active")
+    monkeypatch.setenv("STAGE6_APPROVED_RENDER_HOSTNAME", "retirev2.onrender.com")
+    monkeypatch.setenv("STAGE6_APPROVED_DATABASE_HOST", "db.internal")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://u:p@db.internal/retire_v2")
+
+    application = create_app(_render_config())
+
+    assert application.state.stage6_preview_enabled is False
+
+
+def test_isolated_render_stage6_requires_exact_service_host_and_database_identity(monkeypatch) -> None:
+    monkeypatch.setenv("STAGE6_PREVIEW_ENABLED", "1")
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-stage6-review")
+    monkeypatch.setenv("RENDER_EXTERNAL_HOSTNAME", "retirev2-stage6-review.onrender.com")
+    monkeypatch.setenv("STAGE6_APPROVED_RENDER_SERVICE_ID", "srv-stage6-review")
+    monkeypatch.setenv("STAGE6_APPROVED_RENDER_HOSTNAME", "retirev2-stage6-review.onrender.com")
+    monkeypatch.setenv("STAGE6_APPROVED_DATABASE_HOST", "stage6-db.internal")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://u:p@stage6-db.internal/retire_v2")
+
+    assert create_app(_isolated_render_config()).state.stage6_preview_enabled is True
+
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-other")
+    assert create_app(_isolated_render_config()).state.stage6_preview_enabled is False
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-stage6-review")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://u:p@other-db.internal/retire_v2")
+    assert create_app(_isolated_render_config()).state.stage6_preview_enabled is False
 
 
 def test_readiness_turns_red_on_database_loss_and_recovers_without_restart(monkeypatch) -> None:

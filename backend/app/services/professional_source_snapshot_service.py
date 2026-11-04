@@ -72,7 +72,8 @@ def snapshot(db, client_id, *, as_of=None):
 
 
 def _snapshot(db, client_id, *, as_of):
-    if db.get(Client, client_id) is None:
+    client = db.get(Client, client_id)
+    if client is None:
         raise PensionProductError("CLIENT_NOT_FOUND", "הלקוח לא נמצא", 404)
     products = db.scalars(select(PensionProduct).where(PensionProduct.client_id == client_id).order_by(PensionProduct.product_id)).all()
     product_map = {p.product_id: p for p in products}
@@ -207,7 +208,16 @@ def _snapshot(db, client_id, *, as_of):
     if any(c["status"] == "active" and cid not in represented for cid, c in conv.items()):
         invalid()
     profile = db.scalar(select(ClientProfile).where(ClientProfile.client_id == client_id))
-    client_warnings = [field + "_missing" for field in ("birth_date", "gender") if not profile or getattr(profile, field) is None]
+    # M01 owns the factual birth date on Client. ClientProfile intentionally
+    # carries the remaining professional-identification fields, while its API
+    # response projects the birth date from Client. Reading the legacy profile
+    # column here made a saved M01 birth date appear missing in the canonical
+    # professional-source snapshot.
+    client_warnings = []
+    if client.birth_date is None:
+        client_warnings.append("birth_date_missing")
+    if profile is None or profile.gender is None:
+        client_warnings.append("gender_missing")
     if db.scalar(select(EmploymentRecord.employment_record_id).where(EmploymentRecord.client_id == client_id).limit(1)) is None:
         client_warnings.append("employment_facts_missing")
     timing = db.scalars(select(RetirementTimingWorkIntention).where(

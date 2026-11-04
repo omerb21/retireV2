@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.main import app
 from app.db.session import get_db
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource as Manual
+from app.models.client import Client
+from app.models.client_profile import ClientProfile
 from app.models.pension_product import PensionProductComponent
 from app.models.retirement_facts import CapitalAsset, RecurringIncome
 from app.schemas.canonical_manual_pension_source import ManualPensionInput, ManualPensionUpdate, ManualPensionSupersede
@@ -29,6 +31,27 @@ def facts(**kwargs):
     return ManualPensionInput(**(dict(input_mode="entered", payer_name="משלם", monthly_amount="100.00",
         pension_start_date=date(2040, 1, 1), base_amount_effective_date=date(2026, 9, 1),
         tax_treatment="taxable", temporal_authority={"authority_kind": "none"}) | kwargs))
+
+
+def test_client_fact_warnings_use_m01_birth_date_authority(engine):
+    with Session(engine) as db, db.begin():
+        client = db.get(Client, 1)
+        client.birth_date = date(1960, 1, 1)
+        db.add(ClientProfile(
+            client_profile_id="CP-1",
+            client_id=1,
+            birth_date=None,
+            gender="זכר",
+        ))
+
+    view = read(engine)
+
+    assert "birth_date_missing" not in view["client_fact_warnings"]
+    assert "gender_missing" not in view["client_fact_warnings"]
+    assert set(view["client_fact_warnings"]) == {
+        "employment_facts_missing",
+        "retirement_date_facts_missing",
+    }
 
 
 @pytest.mark.parametrize("mode,amount", [("entered", "0.00"), ("entered", "0.01"),

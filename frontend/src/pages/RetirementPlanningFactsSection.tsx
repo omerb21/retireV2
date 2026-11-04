@@ -26,6 +26,7 @@ import { formatIsoDate } from "../utils/dateFormat";
 
 export type RetirementPlanningFactsSectionProps = {
   clientId: number;
+  onFactSaved?: () => void;
 };
 
 type FieldKind = "text" | "date" | "amount" | "select" | "textarea";
@@ -236,7 +237,11 @@ function renderField(
   );
 }
 
-function FactMaintenanceSection({ clientId, config }: { clientId: number; config: FactSectionConfig }) {
+function FactMaintenanceSection({ clientId, config, onFactSaved }: {
+  clientId: number;
+  config: FactSectionConfig;
+  onFactSaved?: () => void;
+}) {
   const [items, setItems] = useState<FactItem[]>([]);
   const [lifecycleStatus, setLifecycleStatus] = useState<LifecycleStatusFilter>("current");
   const [isLoading, setIsLoading] = useState(true);
@@ -318,6 +323,7 @@ function FactMaintenanceSection({ clientId, config }: { clientId: number; config
         await config.update(clientId, editingId, payloadFromForm(config.fields, formState, touchedFields));
       }
       await refreshList();
+      onFactSaved?.();
       resetForm();
     } catch (error) {
       setMutationErrorMessage(getErrorMessage(error));
@@ -645,12 +651,12 @@ const factSectionConfigs: FactSectionConfig[] = [
   }
 ];
 
-export function RetirementPlanningFactsSection({ clientId }: RetirementPlanningFactsSectionProps) {
+export function RetirementPlanningFactsSection({ clientId, onFactSaved }: RetirementPlanningFactsSectionProps) {
   return (
     <section aria-labelledby="retirement-planning-facts-heading">
       <h3 id="retirement-planning-facts-heading">עובדות תכנון פרישה</h3>
       {factSectionConfigs.map((config) => (
-        <FactMaintenanceSection key={config.key} clientId={clientId} config={config} />
+        <FactMaintenanceSection key={config.key} clientId={clientId} config={config} onFactSaved={onFactSaved} />
       ))}
     </section>
   );

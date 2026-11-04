@@ -19,6 +19,7 @@ import { formatIsoDate } from "../utils/dateFormat";
 
 type RetirementPlanningConsolidatedReviewSectionProps = {
   clientId: number;
+  refreshRevision?: number;
 };
 
 type GroupState<T> = {
@@ -106,7 +107,8 @@ function ReadOnlyGroup<T>({
 }
 
 export function RetirementPlanningConsolidatedReviewSection({
-  clientId
+  clientId,
+  refreshRevision = 0,
 }: RetirementPlanningConsolidatedReviewSectionProps) {
   const [recurringIncomes, setRecurringIncomes] = useState<GroupState<RecurringIncomeItem>>(
     emptyGroupState<RecurringIncomeItem>()
@@ -151,7 +153,7 @@ export function RetirementPlanningConsolidatedReviewSection({
     return () => {
       isActive = false;
     };
-  }, [clientId]);
+  }, [clientId, refreshRevision]);
 
   return (
     <section aria-labelledby="retirement-planning-consolidated-review-heading">

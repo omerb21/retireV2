@@ -1007,7 +1007,10 @@ export function ClientDetailScreen() {
         <h3 id="retirement-planning-data-matrix-heading">מפת נתוני תכנון הפרישה</h3>
         <ul>
           <li>
-            <RetirementPlanningFactsSection clientId={parsedClientId} />
+            <RetirementPlanningFactsSection
+              clientId={parsedClientId}
+              onFactSaved={() => setReadinessContextRevision((current) => current + 1)}
+            />
           </li>
           <li>
             <PlannerAssumptionsSection clientId={parsedClientId} />
@@ -1016,7 +1019,11 @@ export function ClientDetailScreen() {
             <AdvisoryMissingInformationSection clientId={parsedClientId} />
           </li>
           <li>
-            <RetirementPlanningConsolidatedReviewSection clientId={parsedClientId} />
+            <RetirementPlanningConsolidatedReviewSection
+              key={`${parsedClientId}:${readinessContextRevision}`}
+              clientId={parsedClientId}
+              refreshRevision={readinessContextRevision}
+            />
           </li>
           <li>מסמכים</li>
           <li>תוצרים מחושבים</li>

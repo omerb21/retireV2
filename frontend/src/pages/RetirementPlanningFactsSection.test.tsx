@@ -485,9 +485,10 @@ describe("RetirementPlanningFactsSection", () => {
 
   it.each(resourceConfigs)("proves inline create payload and refresh behavior for $heading", async (config) => {
     const fetchMock = makeFetchMockWithRows();
+    const onFactSaved = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<RetirementPlanningFactsSection clientId={7} />);
+    render(<RetirementPlanningFactsSection clientId={7} onFactSaved={onFactSaved} />);
     expect(await screen.findByText(config.rowText)).toBeInTheDocument();
     const initialResourceCalls = callsFor(fetchMock, config.resourceName, "GET").length;
 
@@ -512,6 +513,7 @@ describe("RetirementPlanningFactsSection", () => {
     await waitFor(() => {
       expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 1);
     });
+    expect(onFactSaved).toHaveBeenCalledTimes(1);
     const postCallIndex = fetchMock.mock.calls.findIndex((call) => call === postCall);
     const callsAfterPost = fetchMock.mock.calls.slice(postCallIndex + 1).map(requestUrl);
     expect(callsAfterPost).toEqual([`/api/clients/7/${config.resourceName}?lifecycle_status=current`]);

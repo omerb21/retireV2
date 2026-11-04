@@ -232,4 +232,55 @@ describe("RetirementPlanningConsolidatedReviewSection", () => {
     expect(screen.getAllByText(/LOAD_FAILED/)).toHaveLength(5);
 
   });
+
+  it("reloads all authoritative groups when the parent refresh revision advances", async () => {
+    let incomeReads = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/clients/7/recurring-incomes?lifecycle_status=current") {
+        incomeReads += 1;
+        const rows = rowsForUrl(url) as Array<Record<string, unknown>>;
+        return Promise.resolve(jsonResponse(rows.map(item => ({
+          ...item,
+          description: incomeReads === 1 ? "Current salary" : "Updated salary",
+          amount: incomeReads === 1 ? "3000.00" : "3500.00",
+        }))));
+      }
+      return Promise.resolve(jsonResponse(rowsForUrl(url)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<RetirementPlanningConsolidatedReviewSection key="7:0" clientId={7} refreshRevision={0} />);
+    expect(await screen.findByText("Current salary")).toBeInTheDocument();
+    view.rerender(<RetirementPlanningConsolidatedReviewSection key="7:1" clientId={7} refreshRevision={1} />);
+    expect(await screen.findByText("Updated salary")).toBeInTheDocument();
+    expect(screen.queryByText("Current salary")).not.toBeInTheDocument();
+    expect(incomeReads).toBe(2);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(12));
+  });
+
+  it("rejects an obsolete same-client response after a refresh revision", async () => {
+    let resolveOld!: (value: ReturnType<typeof jsonResponse>) => void;
+    const oldIncome = new Promise<ReturnType<typeof jsonResponse>>((resolve) => { resolveOld = resolve; });
+    let incomeReads = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/clients/7/recurring-incomes?lifecycle_status=current") {
+        incomeReads += 1;
+        if (incomeReads === 1) return oldIncome;
+        const rows = rowsForUrl(url) as Array<Record<string, unknown>>;
+        return Promise.resolve(jsonResponse(rows.map(item => ({...item, description: "Fresh salary"}))));
+      }
+      return Promise.resolve(jsonResponse(rowsForUrl(url)));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<RetirementPlanningConsolidatedReviewSection clientId={7} refreshRevision={0} />);
+    await waitFor(() => expect(incomeReads).toBe(1));
+    view.rerender(<RetirementPlanningConsolidatedReviewSection clientId={7} refreshRevision={1} />);
+    expect(await screen.findByText("Fresh salary")).toBeInTheDocument();
+    resolveOld(jsonResponse((rowsForUrl("/api/clients/7/recurring-incomes?lifecycle_status=current") as Array<Record<string, unknown>>)
+      .map(item => ({...item, description: "Obsolete salary"}))));
+    await Promise.resolve();
+    expect(screen.queryByText("Obsolete salary")).not.toBeInTheDocument();
+    expect(screen.getByText("Fresh salary")).toBeInTheDocument();
+  });
 });

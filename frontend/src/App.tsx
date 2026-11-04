@@ -7,8 +7,7 @@ const navLinks = [
   { path: "/clients", label: "לקוחות" },
   { path: "/fixation/input", label: "נתוני קיבוע זכויות" },
   { path: "/fixation/result", label: "תוצאת חישוב" },
-  { path: "/fixation/history", label: "היסטוריית חישובים" },
-  { path: "/fixation/runs/placeholder", label: "פרטי הרצה" }
+  { path: "/fixation/history", label: "היסטוריית חישובים" }
 ];
 
 function AppFrame() {

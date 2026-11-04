@@ -44,8 +44,13 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
   const [contextLoading, setContextLoading] = useState(false);
   const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: CheckedPermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
-  const [stage6Enabled, setStage6Enabled] = useState(false);
-  const [stage6CapabilityLoading, setStage6CapabilityLoading] = useState(true);
+  // Store the client identity with the approval. A rerender for a different
+  // client must fail closed before the capability-fetch effect can run.
+  const [stage6Capability, setStage6Capability] = useState({
+    clientId, enabled: false, loading: true,
+  });
+  const stage6Enabled = stage6Capability.clientId === clientId && stage6Capability.enabled;
+  const stage6CapabilityLoading = stage6Capability.clientId !== clientId || stage6Capability.loading;
   const permissionEpoch = useRef(0);
   const stage6CapabilityEpoch = useRef(0);
   // Invalidate already displayed permission evidence when the visible factual snapshot changes.
@@ -62,7 +67,9 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
   }
   const latestContext = useRef({ clientId, selected, products, drafts });
   latestContext.current = { clientId, selected, products, drafts };
-  const active = drafts.find(item => item.scenario_id === selected) ?? null;
+  // In-flight data from client A must never be displayed in client B's view.
+  const visibleDrafts = drafts.filter(item => item.client_id === clientId);
+  const active = visibleDrafts.find(item => item.scenario_id === selected) ?? null;
   useEffect(() => {
     setPermissions({});
     setCheckingPermission(null);
@@ -109,18 +116,19 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
   useEffect(() => {
     const epoch = ++stage6CapabilityEpoch.current;
     const controller = new AbortController();
-    setStage6Enabled(false);
-    setStage6CapabilityLoading(true);
+    setStage6Capability({ clientId, enabled: false, loading: true });
     void readStage6GrossResultsCapability(clientId, controller.signal)
       .then(enabled => {
         if (stage6CapabilityEpoch.current === epoch && !controller.signal.aborted) {
-          setStage6Enabled(enabled);
+          setStage6Capability({ clientId, enabled, loading: false });
         }
       })
       .catch(() => undefined)
       .finally(() => {
         if (stage6CapabilityEpoch.current === epoch && !controller.signal.aborted) {
-          setStage6CapabilityLoading(false);
+          setStage6Capability(current =>
+            current.clientId === clientId ? { ...current, loading: false } : current,
+          );
         }
       });
     return () => {
@@ -252,7 +260,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
       <button type="submit" disabled={busy || !name.trim()}>צור ושמור חלופה</button>
     </form>
     <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
-    <ul>{drafts.map(item => <li key={item.scenario_id}>
+    <ul>{visibleDrafts.map(item => <li key={item.scenario_id}>
       <button type="button" onClick={() => selectScenario(item.scenario_id)} disabled={busy}>
         {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
       </button>
@@ -272,12 +280,12 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
         <p>מוכנות בסיס התיק אינה הרשאה לחשב תרחיש שמור או לבצע המרה כספית.</p>
       </div>}
     </section>
-    {drafts.length > 0 && <section aria-label="השוואת חלופות טיוטה">
+    {visibleDrafts.length > 0 && <section aria-label="השוואת חלופות טיוטה">
       <h3>השוואת חלופות — תכנון בלבד</h3>
       <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>
       <table>
         <thead><tr><th scope="col">חלופה</th><th scope="col">ניווט</th><th scope="col">מצב</th><th scope="col">החלטות</th><th scope="col">מתוכנן לקצבה (₪)</th><th scope="col">מתוכנן להון (₪)</th><th scope="col">חסמים לתחקור</th></tr></thead>
-        <tbody>{drafts.map(draft => {
+        <tbody>{visibleDrafts.map(draft => {
           const summary = summarizeScenarioDraft(draft, products);
           return <tr key={summary.scenarioId}>
             <th scope="row">{summary.name}</th><td><button type="button" disabled={busy} aria-current={selected === summary.scenarioId ? "true" : undefined} onClick={() => selectScenario(summary.scenarioId)}>הצג החלטות</button></td><td>{summary.status}</td><td>{summary.decisionCount}</td>
@@ -292,7 +300,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
       </table>
     </section>}
     {stage6Enabled &&
-      <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={drafts}/>}
+      <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={visibleDrafts}/>}
     {active && <div>
       <h3>{active.name}</h3>
       <section aria-label="רצף עבודה בחלופה">

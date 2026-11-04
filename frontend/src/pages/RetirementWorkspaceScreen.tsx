@@ -753,7 +753,7 @@ export function RetirementWorkspaceScreen() {
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>
         <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent} />
-        <p className="professional-workspace__boundary">חלופות נשמרות בשרת בנפרד מיתרות התיק. אין עדיין חישוב קצבה, מס או תוצאות כספיות לתרחיש.</p>
+        <p className="professional-workspace__boundary">חלופות נשמרות בשרת בנפרד מיתרות התיק. בסביבת Stage 6 מורשית בלבד ניתן לקבל אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו לתרחיש, בכפוף לשערי המוכנות המקצועיים. אין במסלול זה חישובי מס או נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>

@@ -87,6 +87,20 @@ function stubReadinessFetch(fetcher: ReturnType<typeof vi.fn>, sources = sourceC
   }));
 }
 
+function stubDynamicSourceFetch(
+  fetcher: ReturnType<typeof vi.fn>,
+  readSources: (clientId: number) => Promise<Response>,
+) {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/source-bases") && (init?.method ?? "GET") === "GET") {
+      const clientId = Number(url.match(/\/clients\/(\d+)\//)?.[1]);
+      return readSources(clientId);
+    }
+    return fetcher(input, init);
+  }));
+}
+
 function renderScreen() {
   return render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}><Routes>
     <Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} />
@@ -564,4 +578,132 @@ test("409 source conflict is never retried and refreshes authority before anothe
   expect(screen.getByRole("alert")).toHaveTextContent("נתוני הסמכות רועננו");
   expect(fetcher).toHaveBeenCalledTimes(5);
   expect(fetcher.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
+});
+
+test("unknown commit outcome hides stale authority, never retries PUT, and uses only refreshed CAS", async () => {
+  const refreshContext = deferred<Response>();
+  let contextReads = 0;
+  let sourceReads = 0;
+  const putBodies: Array<Record<string, unknown>> = [];
+  const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/context")) {
+      contextReads += 1;
+      return contextReads === 2 ? refreshContext.promise : response(context);
+    }
+    if (url.endsWith("/target")) return response(target);
+    if (url.endsWith("/comparison")) return response(comparisonSuccess());
+    if (url.includes("/source-bases/") && method === "PUT") {
+      putBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return putBodies.length === 1
+        ? Promise.resolve(new Response(JSON.stringify({code: "CRTISBA_COMMIT_OUTCOME_UNKNOWN"}), {status: 503}))
+        : response({client_id: 7, decision_state: "UNKNOWN"});
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  });
+  stubDynamicSourceFetch(fetcher, clientId => {
+    sourceReads += 1;
+    const entry = sourceReads === 1 ? sourceEntry() : sourceEntry({
+      decision_version: 9, decision_fingerprint: "9".repeat(64),
+      source_version: "8".repeat(64), source_fingerprint: "8".repeat(64),
+      amount_authority_fingerprint: "7".repeat(64),
+    });
+    return response(sourceCollection([entry], clientId));
+  });
+
+  renderScreen();
+  let article = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  fireEvent.click(screen.getByRole("button", {name: "בדיקת בסיסי ההשוואה"}));
+  expect(await screen.findByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).toBeInTheDocument();
+  fireEvent.click(within(article).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:1"}));
+  await waitFor(() => expect(contextReads).toBe(2));
+  expect(screen.queryByRole("heading", {name: "income:1"})).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", {name: "תוצאת בדיקת בסיסי השוואה"})).not.toBeInTheDocument();
+  expect(putBodies).toHaveLength(1);
+
+  refreshContext.resolve(await response(context));
+  expect(await screen.findByRole("alert")).toHaveTextContent("לא ניתן לקבוע אם ההחלטה נשמרה");
+  article = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  expect(putBodies).toHaveLength(1);
+  fireEvent.click(within(article).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:1"}));
+  await waitFor(() => expect(putBodies).toHaveLength(2));
+  expect(putBodies[1]).toMatchObject({
+    expected_decision_version: 9,
+    expected_source_version: "8".repeat(64),
+    expected_source_fingerprint: "8".repeat(64),
+    expected_amount_authority_fingerprint: "7".repeat(64),
+  });
+});
+
+test("network failure after PUT keeps authority blocked when refresh fails until explicit refresh succeeds", async () => {
+  let sourceReads = 0;
+  let putCount = 0;
+  const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/context")) return response(context);
+    if (url.endsWith("/target")) return response(target);
+    if (url.includes("/source-bases/") && method === "PUT") {
+      putCount += 1;
+      return Promise.reject(new TypeError("network connection lost after request dispatch"));
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  });
+  stubDynamicSourceFetch(fetcher, clientId => {
+    sourceReads += 1;
+    if (sourceReads === 2) return Promise.reject(new TypeError("authority refresh unavailable"));
+    return response(sourceCollection([sourceEntry()], clientId));
+  });
+
+  renderScreen();
+  const article = (await screen.findByRole("heading", {name: "income:1"})).closest("article")!;
+  fireEvent.click(within(article).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:1"}));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("לא ניתן לקבוע אם ההחלטה נשמרה");
+  expect(alert).toHaveTextContent("נדרש רענון מפורש");
+  expect(screen.queryByRole("heading", {name: "income:1"})).not.toBeInTheDocument();
+  expect(putCount).toBe(1);
+  fireEvent.click(screen.getByRole("button", {name: "רענון מפורש"}));
+  expect(await screen.findByRole("heading", {name: "income:1"})).toBeInTheDocument();
+  expect(putCount).toBe(1);
+});
+
+test("late unknown-outcome refresh from client A cannot alter client B authority or error state", async () => {
+  const lateAContext = deferred<Response>();
+  let aContextReads = 0;
+  const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const clientId = Number(url.match(/\/clients\/(\d+)\//)?.[1]);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/context")) {
+      if (clientId === 7) {
+        aContextReads += 1;
+        return aContextReads === 2 ? lateAContext.promise : response(contextFor(7));
+      }
+      return response(contextFor(8, "2040-02-02"));
+    }
+    if (url.endsWith("/target")) return response(targetFor(clientId, clientId === 8 ? "22000.00" : "12000.00"));
+    if (url.includes("/source-bases/") && method === "PUT") {
+      return Promise.resolve(new Response(JSON.stringify({code: "CRTISBA_COMMIT_OUTCOME_UNKNOWN"}), {status: 503}));
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  });
+  stubDynamicSourceFetch(fetcher, clientId => response(sourceCollection([
+    sourceEntry({source_id: `income:${clientId}`}),
+  ], clientId)));
+
+  render(<MemoryRouter initialEntries={["/clients/7/retirement-income-readiness"]}>
+    <NavigationControls /><Routes><Route path="/clients/:clientId/retirement-income-readiness" element={<RetirementIncomeReadinessScreen />} /></Routes>
+  </MemoryRouter>);
+  const articleA = (await screen.findByRole("heading", {name: "income:7"})).closest("article")!;
+  fireEvent.click(within(articleA).getByRole("button", {name: "ניקוי החלטת בסיס עבור income:7"}));
+  await waitFor(() => expect(aContextReads).toBe(2));
+  fireEvent.click(screen.getByRole("button", {name: "לקוח B"}));
+  expect(await screen.findByRole("heading", {name: "income:8"})).toBeInTheDocument();
+  lateAContext.resolve(await response(contextFor(7, "1999-01-01")));
+  await Promise.resolve();
+  expect(screen.queryByText(/לא ניתן לקבוע אם ההחלטה נשמרה/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", {name: "income:7"})).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", {name: "income:8"})).toBeInTheDocument();
 });

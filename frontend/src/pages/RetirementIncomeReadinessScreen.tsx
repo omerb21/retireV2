@@ -116,7 +116,7 @@ function Workspace({clientId}: {clientId: number}) {
   const [referenceDate, setReferenceDate] = useState("");
   const [sourceKind, setSourceKind] = useState<"CLIENT_SUPPLIED" | "PLANNER_SUPPLIED" | "CLIENT_SUPPLIED_PLANNER_CONFIRMED">("PLANNER_SUPPLIED");
 
-  async function load(signal?: AbortSignal) {
+  async function load(signal?: AbortSignal): Promise<boolean> {
     if (!signal) {
       activeMutation.current?.abort();
       const controller = new AbortController();
@@ -129,15 +129,17 @@ function Workspace({clientId}: {clientId: number}) {
       const nextContext = await readContext(clientId, signal);
       const nextTarget = await readTarget(clientId, signal);
       const nextSourceBases = await readSourceBases(clientId, signal);
-      if (!generationGuard.generationPolicy.isCurrent(active, generation.current)) return;
+      if (!generationGuard.generationPolicy.isCurrent(active, generation.current)) return false;
       if (!Array.isArray(nextSourceBases.source_basis_entries)) throw new Error("SOURCE_BASES_INVALID");
       setContext(nextContext); setTarget(nextTarget); setSourceBases(nextSourceBases);
       if (nextTarget.target) {
         setAmount(nextTarget.target.monthly_amount); setIncomeBasis(nextTarget.target.income_basis as "GROSS" | "NET");
         setPriceBasis(nextTarget.target.price_basis as typeof priceBasis); setReferenceDate(nextTarget.target.price_reference_date ?? "");
       }
+      return true;
     } catch (reason) {
       if (generationGuard.generationPolicy.isCurrent(active, generation.current) && !(reason instanceof DOMException && reason.name === "AbortError")) setError("טעינת מצב המוכנות נכשלה. יש לרענן במפורש.");
+      return false;
     }
   }
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => { generation.current += 1; controller.abort(); activeMutation.current?.abort(); }; }, [clientId]);
@@ -182,10 +184,28 @@ function Workspace({clientId}: {clientId: number}) {
       setComparison(null); setSourceBases(null); await load();
     } catch (reason) {
       if (!generationGuard.generationPolicy.isCurrent(active, generation.current) || (reason instanceof DOMException && reason.name === "AbortError")) return;
+      const unknownOutcome = !(reason instanceof ReadinessApiError)
+        || reason.code === "CRTISBA_COMMIT_OUTCOME_UNKNOWN";
+      if (unknownOutcome) {
+        setComparison(null); setSourceBases(null);
+        const refresh = load();
+        const refreshGeneration = generation.current;
+        const refreshed = await refresh;
+        if (!generationGuard.generationPolicy.isCurrent(refreshGeneration, generation.current)) return;
+        setError(refreshed
+          ? "לא ניתן לקבוע אם ההחלטה נשמרה. יש לרענן ולבדוק את מצב הסמכות לפני ניסיון נוסף."
+          : "לא ניתן לקבוע אם ההחלטה נשמרה. יש לרענן ולבדוק את מצב הסמכות לפני ניסיון נוסף. רענון הסמכות נכשל; נדרש רענון מפורש.");
+        return;
+      }
       if (reason instanceof ReadinessApiError && reason.status === 409) {
         setComparison(null); setSourceBases(null);
-        await load();
-        setError(`החלטת המקור לא נשמרה (${reason.code}). נתוני הסמכות רועננו; יש לבדוק אותם לפני ניסיון נוסף.`);
+        const refresh = load();
+        const refreshGeneration = generation.current;
+        const refreshed = await refresh;
+        if (!generationGuard.generationPolicy.isCurrent(refreshGeneration, generation.current)) return;
+        setError(refreshed
+          ? `החלטת המקור לא נשמרה (${reason.code}). נתוני הסמכות רועננו; יש לבדוק אותם לפני ניסיון נוסף.`
+          : `החלטת המקור לא נשמרה (${reason.code}). רענון הסמכות נכשל; נדרש רענון מפורש.`);
       } else {
         setError("החלטת המקור לא נשמרה. יש לרענן את נתוני הסמכות לפני ניסיון נוסף.");
       }

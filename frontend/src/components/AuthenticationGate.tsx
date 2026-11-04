@@ -56,15 +56,15 @@ export function AuthenticationGate({children, enforce = import.meta.env.MODE !==
   }
 
   if (!enforce) return <>{children}</>;
-  if (checking) return <main dir="rtl"><p>בודק חיבור מאובטח…</p></main>;
-  if (!session) return <main dir="rtl"><h1>כניסה למערכת תכנון הפרישה</h1>
+  if (checking) return <main className="auth-shell" dir="rtl"><p>בודק חיבור מאובטח…</p></main>;
+  if (!session) return <main className="auth-shell" dir="rtl"><h1>כניסה למערכת תכנון הפרישה</h1>
     <form onSubmit={submit}><label>שם משתמש<input autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} /></label>
       <label>סיסמה<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
       <button type="submit">כניסה</button></form>{message && <p role="alert">{message}</p>}</main>;
-  if (logoutUncertain) return <main dir="rtl"><h1>אימות מצב ההתנתקות</h1>
+  if (logoutUncertain) return <main className="auth-shell" dir="rtl"><h1>אימות מצב ההתנתקות</h1>
     {message && <p role="alert">{message}</p>}
     <button type="button" onClick={() => void signOut()}>ניסיון התנתקות נוסף</button>
     <button type="button" onClick={() => void checkAfterFailedLogout()}>בדיקת מצב החיבור</button>
   </main>;
-  return <><div dir="rtl"><button type="button" onClick={() => void signOut()}>התנתקות</button></div>{children}</>;
+  return <><div className="auth-toolbar" dir="rtl"><button type="button" onClick={() => void signOut()}>התנתקות</button></div>{children}</>;
 }

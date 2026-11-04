@@ -27,7 +27,7 @@ vi.mock("./ScenarioMonthlyComparisonPanel", () => ({
   ScenarioMonthlyComparisonPanel: () => <section aria-label="Stage 6 comparison">Comparison enabled</section>,
 }));
 mocks.capability.mockResolvedValue(false);
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); mocks.capability.mockResolvedValue(false); });
 
 function draft(id: string, status: ScenarioDraft["status"] = "draft"): ScenarioDraft {
   return {
@@ -62,6 +62,36 @@ it("shows Stage 6 only after an affirmative backend capability", async () => {
   expect(await screen.findByRole("region", { name: "Stage 6 scenario result" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Stage 6 comparison" })).toBeTruthy();
   expect(mocks.capability).toHaveBeenCalledWith(1, expect.any(AbortSignal));
+});
+
+it("revokes client A Stage 6 immediately while client B capability and drafts are pending", async () => {
+  const pendingB = pending<boolean>();
+  const pendingDraftsB = pending<ScenarioDraft[]>();
+  mocks.capability.mockResolvedValueOnce(true).mockReturnValueOnce(pendingB.promise);
+  mocks.list.mockImplementation((id: number) =>
+    id === 1 ? Promise.resolve([draft("only-client-A")]) : pendingDraftsB.promise,
+  );
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
+  expect(await screen.findByRole("region", { name: "Stage 6 scenario result" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Stage 6 comparison" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /only-client-A — גרסה/ })).toBeTruthy();
+
+  // B renders synchronously before its useEffect has cleared A's old approval.
+  view.rerender(<ScenarioDraftPanel clientId={2} products={products} />);
+  expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Stage 6 comparison" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /only-client-A — גרסה/ })).toBeNull();
+  await waitFor(() => expect(mocks.capability).toHaveBeenCalledWith(2, expect.any(AbortSignal)));
+
+  // Even if B's draft list finishes first, Stage 6 must remain absent.
+  pendingDraftsB.resolve([{ ...draft("only-client-B"), client_id: 2 }]);
+  await screen.findByRole("button", { name: /only-client-B — גרסה/ });
+  expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Stage 6 comparison" })).toBeNull();
+  pendingB.resolve(false);
+  await waitFor(() => expect(screen.getByRole("region", { name: "רצף עבודה בחלופה" }))
+    .toHaveTextContent("אינם מורשים בסביבה זו"));
+  expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
 });
 
 it("keeps Stage 6 hidden when capability is denied and drops a late prior-client approval", async () => {

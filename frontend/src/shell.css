@@ -22,3 +22,16 @@ a:hover { color: #123e82; }
 .app-shell__main ul:has(> li > article) { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
 .app-shell__main li > article { padding: 18px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fafcff; }
 @media (max-width: 650px) { .app-shell { padding: 0 12px 30px; margin-top: 12px; } .app-shell__header, .app-shell__main > section { padding: 18px; } .app-shell__nav { gap: 6px; } .app-shell__nav a { font-size: .85rem; padding: 9px; } }
+
+/* Authentication controls use their own scoped presentation. */
+.auth-toolbar { display: flex; justify-content: flex-start; padding: 10px 24px; background: #142b49; }
+.auth-toolbar button { font: inherit; font-size: .85rem; padding: 7px 15px; background: #fff; color: #183c69; border: 1px solid #b7c8df; border-radius: 7px; cursor: pointer; }
+.auth-toolbar button:hover { background: #e9f1fa; }
+.auth-shell { direction: rtl; max-width: 440px; margin: min(12vh, 90px) auto; padding: 30px; background: #fff; border: 1px solid #e2e7ef; border-radius: 14px; box-shadow: 0 8px 28px rgba(27,49,81,.08); }
+.auth-shell h1 { font-size: 1.5rem; margin: 0 0 25px; }
+.auth-shell form { display: grid; gap: 17px; }
+.auth-shell label { display: grid; gap: 7px; font-weight: 600; }
+.auth-shell input { display: block; width: 100%; padding: 12px; border: 1px solid #bdcadd; border-radius: 8px; }
+.auth-shell button { font: inherit; background: #245caa; color: #fff; border: 0; border-radius: 8px; padding: 11px 17px; cursor: pointer; margin-inline-end: 8px; }
+.auth-shell [role="alert"] { color: #a52d2d; }
+@media (max-width: 500px) { .auth-shell { margin: 20px 12px; padding: 20px; } .auth-toolbar { padding: 9px 12px; } }

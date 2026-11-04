@@ -157,6 +157,20 @@ interface ScenarioComparisonIdentity {
   }>;
 }
 
+export async function readStage6GrossResultsCapability(
+  clientId: number, signal?: AbortSignal,
+): Promise<boolean> {
+  const response = await apiFetch(buildApiUrl(
+    `/clients/${clientId}/scenario-drafts/capabilities/gross-scenario-results`,
+  ), { method: "GET", signal });
+  if (!response.ok) return false;
+  const value: unknown = await response.json();
+  return !!value && typeof value === "object"
+    && Object.keys(value).length === 1
+    && (value as { stage6_gross_scenario_results?: unknown })
+      .stage6_gross_scenario_results === true;
+}
+
 async function read<T>(clientId: number, scenarioId: string, suffix: string,
                        options: RequestInit = {}): Promise<T> {
   const url = buildApiUrl(`/clients/${clientId}/scenario-drafts/${encodeURIComponent(scenarioId)}${suffix}`);

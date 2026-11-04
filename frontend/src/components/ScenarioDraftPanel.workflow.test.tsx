@@ -6,6 +6,7 @@ import type { PensionProduct } from "../api/pensionProductsApi";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), preview: vi.fn(), create: vi.fn(), replace: vi.fn(), rename: vi.fn(), duplicate: vi.fn(),
+  capability: vi.fn(),
 }));
 vi.mock("../api/scenarioDraftsApi", () => ({
   listScenarioDrafts: mocks.list,
@@ -16,6 +17,16 @@ vi.mock("../api/scenarioDraftsApi", () => ({
 vi.mock("../api/scenarioDraftPermissionApi", () => ({
   previewDraftDecision: mocks.preview,
 }));
+vi.mock("../api/scenarioStage6Api", () => ({
+  readStage6GrossResultsCapability: mocks.capability,
+}));
+vi.mock("./ScenarioStage6Panel", () => ({
+  ScenarioStage6Panel: () => <section aria-label="Stage 6 scenario result">Stage 6 enabled</section>,
+}));
+vi.mock("./ScenarioMonthlyComparisonPanel", () => ({
+  ScenarioMonthlyComparisonPanel: () => <section aria-label="Stage 6 comparison">Comparison enabled</section>,
+}));
+mocks.capability.mockResolvedValue(false);
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 function draft(id: string, status: ScenarioDraft["status"] = "draft"): ScenarioDraft {
@@ -43,6 +54,29 @@ function pending<T>() {
   const promise = new Promise<T>(r => { resolve = r; });
   return { promise, resolve };
 }
+
+it("shows Stage 6 only after an affirmative backend capability", async () => {
+  mocks.list.mockResolvedValue([draft("approved")]);
+  mocks.capability.mockResolvedValue(true);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  expect(await screen.findByRole("region", { name: "Stage 6 scenario result" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Stage 6 comparison" })).toBeTruthy();
+  expect(mocks.capability).toHaveBeenCalledWith(1, expect.any(AbortSignal));
+});
+
+it("keeps Stage 6 hidden when capability is denied and drops a late prior-client approval", async () => {
+  const oldClient = pending<boolean>();
+  mocks.capability.mockReturnValueOnce(oldClient.promise).mockResolvedValueOnce(false);
+  mocks.list.mockImplementation(async (clientId: number) => [{ ...draft("client-" + clientId), client_id: clientId }]);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
+  view.rerender(<ScenarioDraftPanel clientId={2} products={products} />);
+  await waitFor(() => expect(mocks.capability).toHaveBeenCalledTimes(2));
+  oldClient.resolve(true);
+  await waitFor(() => expect(screen.getByRole("region", { name: "רצף עבודה בחלופה" }))
+    .toHaveTextContent("אינם מורשים בסביבה זו"));
+  expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Stage 6 comparison" })).toBeNull();
+});
 
 it("discards a late allowed preview after switching to another saved scenario", async () => {
   mocks.list.mockResolvedValue([draft("a"), draft("b")]);

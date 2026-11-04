@@ -3,12 +3,27 @@ import {
   listScenarioPensionElections, saveScenarioPensionElections,
   readFactorAdmissionCursor, submitProfessionalFactorAdmission,
   readScenarioAllocationEvidence, validScenarioAllocationEvidence,
-  readScenarioMonthlyComparison,
+  readScenarioMonthlyComparison, readStage6GrossResultsCapability,
 } from "./scenarioStage6Api";
 
 const network=vi.hoisted(() => ({ fetch:vi.fn(), url:vi.fn((x:string)=>"/api"+x) }));
 vi.mock("./apiBase",() => ({ apiFetch:network.fetch, buildApiUrl:network.url }));
 afterEach(() => { vi.clearAllMocks(); });
+
+it("trusts only the exact backend Stage 6 capability envelope", async () => {
+  network.fetch.mockResolvedValueOnce({
+    ok: true, json: async () => ({ stage6_gross_scenario_results: true }),
+  }).mockResolvedValueOnce({
+    ok: true, json: async () => ({ stage6_gross_scenario_results: true, extra: true }),
+  }).mockResolvedValueOnce({ ok: false, json: async () => ({ code: "ROUTE_NOT_FOUND" }) });
+  const abort = new AbortController();
+  await expect(readStage6GrossResultsCapability(7, abort.signal)).resolves.toBe(true);
+  const [url, options] = network.fetch.mock.calls[0] as [string, RequestInit];
+  expect(url).toBe("/api/clients/7/scenario-drafts/capabilities/gross-scenario-results");
+  expect(options).toEqual({ method: "GET", signal: abort.signal });
+  await expect(readStage6GrossResultsCapability(7)).resolves.toBe(false);
+  await expect(readStage6GrossResultsCapability(7)).resolves.toBe(false);
+});
 
 it("posts only two version-bound scenario identities and the requested common month range", async () => {
   const response = { schema_version:"STAGE6_SCENARIO_MONTHLY_COMPARISON_V1" };

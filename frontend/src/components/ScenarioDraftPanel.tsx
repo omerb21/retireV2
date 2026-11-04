@@ -4,6 +4,7 @@ import { readRetirementCalculationContext, type RetirementCalculationContext } f
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
 import { ScenarioMonthlyComparisonPanel } from "./ScenarioMonthlyComparisonPanel";
+import { readStage6GrossResultsCapability } from "../api/scenarioStage6Api";
 import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComparison";
 import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import {
@@ -43,7 +44,10 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
   const [contextLoading, setContextLoading] = useState(false);
   const [permissions, setPermissions] = useState<Record<string, { status: "ready" | "error"; component?: CheckedPermissionComponent; error?: string }>>({});
   const [checkingPermission, setCheckingPermission] = useState<string | null>(null);
+  const [stage6Enabled, setStage6Enabled] = useState(false);
+  const [stage6CapabilityLoading, setStage6CapabilityLoading] = useState(true);
   const permissionEpoch = useRef(0);
+  const stage6CapabilityEpoch = useRef(0);
   // Invalidate already displayed permission evidence when the visible factual snapshot changes.
   const sourceSnapshot = JSON.stringify(products.map(product => ({
     id: product.product_id, version: product.version, type: product.product_type,
@@ -101,6 +105,28 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
     }).catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; permissionEpoch.current += 1; };
+  }, [clientId]);
+  useEffect(() => {
+    const epoch = ++stage6CapabilityEpoch.current;
+    const controller = new AbortController();
+    setStage6Enabled(false);
+    setStage6CapabilityLoading(true);
+    void readStage6GrossResultsCapability(clientId, controller.signal)
+      .then(enabled => {
+        if (stage6CapabilityEpoch.current === epoch && !controller.signal.aborted) {
+          setStage6Enabled(enabled);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (stage6CapabilityEpoch.current === epoch && !controller.signal.aborted) {
+          setStage6CapabilityLoading(false);
+        }
+      });
+    return () => {
+      stage6CapabilityEpoch.current += 1;
+      controller.abort();
+    };
   }, [clientId]);
   useEffect(() => {
     if (!initialSource) return;
@@ -265,7 +291,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
         })}</tbody>
       </table>
     </section>}
-    {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" &&
+    {stage6Enabled &&
       <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={drafts}/>}
     {active && <div>
       <h3>{active.name}</h3>
@@ -279,17 +305,19 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
             ? "נדרש אימות מחדש של נתונים שהתיישנו"
             : active.status === "archived"
             ? "החלופה בארכיון"
-            : import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.length > 0
+            : stage6Enabled && active.decisions.length > 0
             ? "בקרת ההקצאות נטענת בהמשך המסך"
             : "בקרת ההקצאות זמינה בסביבת בדיקות מאובטחת בלבד"}</li>
           <li>בחירת קצבה: {active.decisions.some(decision => decision.action === "pension")
             ? "ניתן להגדיר תנאי קצבה ולבדוק אומדן מאושר ברוטו בהמשך"
             : "אין החלטת קצבה בחלופה הזאת"}</li>
-          <li>תזרים חודשי והשוואה כספית: זמינים בסביבת Stage 6 המאובטחת כאשר קיימות שתי חלופות פעילות</li>
+          <li>תזרים חודשי והשוואה כספית: {stage6Enabled
+            ? "זמינים בסביבת Stage 6 המאובטחת כאשר קיימות שתי חלופות פעילות"
+            : stage6CapabilityLoading ? "נבדקת הרשאת סביבת Stage 6" : "אינם מורשים בסביבה זו"}</li>
         </ol>
       </section>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
-      {import.meta.env.VITE_STAGE6_PREVIEW_ENABLED === "1" && active.decisions.length > 0 &&
+      {stage6Enabled && active.decisions.length > 0 &&
         <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`} clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/> }
       {active.status !== "archived" && <>
         <form onSubmit={renameActive}>

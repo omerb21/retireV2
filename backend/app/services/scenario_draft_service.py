@@ -396,11 +396,11 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
 
 def rename(db: Session, client_id: int, scenario_id: str, name: str,
            expected: int, actor: str) -> dict:
-    """Rename draft metadata without re-reviewing or replacing decisions.
+    """Rename draft metadata without refreshing canonical or professional evidence.
 
-    Source fingerprints and pension elections are version-bound evidence. A
-    display-name edit is not a factual review and therefore may not refresh,
-    delete, or otherwise rewrite that evidence.
+    Valid draft pension elections are kept current across a name-only change;
+    stale elections are discarded. Decision fingerprints and immutable
+    professional factor admissions are never reissued or promoted.
     """
     scenario = _scenario(db, client_id, scenario_id)
     _cas(db, scenario, expected, actor, name=name)

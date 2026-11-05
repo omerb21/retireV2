@@ -304,3 +304,24 @@ it("never presents a negative amount as an available remainder", async () => {
   expect(section.textContent).toContain("נדרש אימות מחדש; אין אישור להקצאה");
   expect(section.textContent).not.toContain("-0.01 ₪");
 });
+
+it("keeps the selected alternative when moving from planning to results", async () => {
+  mocks.list.mockResolvedValue([draft("alternative-a"), draft("alternative-b")]);
+  const selected = vi.fn();
+  const planning = render(<ScenarioDraftPanel clientId={1} products={products}
+    onScenarioSelected={selected} />);
+  fireEvent.click(await screen.findByRole("button", { name: "alternative-b" }));
+  expect(selected).toHaveBeenCalledWith("alternative-b");
+  planning.unmount();
+  render(<ScenarioDraftPanel clientId={1} products={products}
+    view="results" preferredScenarioId="alternative-b" />);
+  expect(await screen.findByRole("heading", { name: "alternative-b" })).toBeInTheDocument();
+});
+
+it("never selects a stale alternative ID when the client changes", async () => {
+  mocks.list.mockResolvedValue([{ ...draft("client-b-alternative"), client_id: 2 }]);
+  render(<ScenarioDraftPanel clientId={2} products={products}
+    view="results" preferredScenarioId="client-a-alternative" />);
+  expect(await screen.findByRole("heading", { name: "client-b-alternative" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "client-a-alternative" })).toBeNull();
+});

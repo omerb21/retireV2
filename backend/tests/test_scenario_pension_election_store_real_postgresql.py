@@ -254,7 +254,7 @@ def test_atomic_pension_election_store_real_postgresql():
                     ],
                 ), "test")
                 assert changed["version"] == 5
-                with engine.begin() as updater:
+                with scoped.begin() as updater:
                     updater.execute(PensionProductComponent.__table__.update().where(
                         PensionProductComponent.component_id == "c"
                     ).values(balance=Decimal("39.00")))

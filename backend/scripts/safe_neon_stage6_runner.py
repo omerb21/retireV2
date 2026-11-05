@@ -43,14 +43,14 @@ def validate_connection_string(value: str) -> None:
 
 def show_safe_failure_summary(stderr: str) -> None:
     """Print only allowlisted Alembic revision IDs and database error types."""
-    revs = re.findall(r"Running upgrade[^\\r\\n]*?->\\s+([0-9a-f]{12})", stderr)
+    revs = re.findall(r"Running upgrade[^\r\n]*?->\s+([0-9a-f]{12})", stderr)
     if revs:
         print("LAST_ATTEMPTED_MIGRATION: " + revs[-1])
     else:
         print("LAST_ATTEMPTED_MIGRATION: not reported")
 
     pg = re.search(
-        r"(?m)^\\s*psycopg2\\.errors\\.([A-Za-z][A-Za-z0-9_]*):\\s*([^\\r\\n]*)",
+        r"(?m)^\s*psycopg2\.errors\.([A-Za-z][A-Za-z0-9_]*):\s*([^\r\n]*)",
         stderr,
     )
     if pg:
@@ -62,7 +62,7 @@ def show_safe_failure_summary(stderr: str) -> None:
         return
 
     kind = re.search(
-        r"(?m)^\\s*(?:sqlalchemy\\.exc\\.|alembic\\.util\\.exc\\.)?"
+        r"(?m)^\s*(?:sqlalchemy\.exc\.|alembic\.util\.exc\.)?"
         r"([A-Za-z][A-Za-z0-9_]*(?:Error|Exception)):",
         stderr,
     )

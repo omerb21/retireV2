@@ -489,6 +489,8 @@ def test_stale_source_cannot_be_silently_reanchored_by_unrelated_conversion(env)
     elected = _save_test_election(factory, 1, saved, original["decision_id"])
     with factory.begin() as db:
         db.get(PensionProduct, "stale-keep").version = 2
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == []
 
     changed = client.put(url, json={
         "name": "Stale", "expected_version": elected["version"],

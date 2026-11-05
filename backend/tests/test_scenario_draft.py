@@ -1,5 +1,6 @@
 """Synthetic isolated draft workflow acceptance tests."""
 from decimal import Decimal
+from datetime import date
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import create_engine, select
@@ -664,3 +665,44 @@ def test_metadata_rename_preserves_valid_draft_election_but_not_source_staleness
     assert stale_rename.json()["status"] == "needs_revalidation"
     with factory() as db:
         assert current_elections(db, 1, created["scenario_id"]) == []
+
+
+def test_historical_overallocation_is_explicitly_stale_and_not_admissible(env):
+    from app.models.scenario_draft import ScenarioDraftDecision
+    from app.services.scenario_draft_service import _source_digest
+    from app.models.pension_product import PensionProduct, PensionProductComponent
+    from app.services.scenario_calculation_admission_service import assess
+    client, factory = env
+    component = _make_scoped_source(factory, "historical-overspend", 1, "100.00")
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Legacy invalid"}).json()
+    with factory.begin() as db:
+        product = db.get(PensionProduct, "historical-overspend")
+        source = db.get(PensionProductComponent, component)
+        evidence = _source_digest(product, source)
+        db.add_all([
+            ScenarioDraftDecision(
+                decision_id="legacy-a", scenario_id=created["scenario_id"],
+                source_product_id=product.product_id, source_component_id=component,
+                component_code="תגמולי_עובד_עד_2000", amount=Decimal("60.00"),
+                action="pension", effective_date=date(2027, 1, 1),
+                validation_state="unverified", product_version_at_review=1,
+                source_fingerprint_at_review=evidence,
+            ),
+            ScenarioDraftDecision(
+                decision_id="legacy-b", scenario_id=created["scenario_id"],
+                source_product_id=product.product_id, source_component_id=component,
+                component_code="תגמולי_עובד_עד_2000", amount=Decimal("40.01"),
+                action="pension", effective_date=date(2027, 1, 1),
+                validation_state="unverified", product_version_at_review=1,
+                source_fingerprint_at_review=evidence,
+            ),
+        ])
+    row = client.get(f"/api/clients/1/scenario-drafts/{created['scenario_id']}").json()
+    assert row["status"] == "needs_revalidation"
+    assert {decision["validation_state"] for decision in row["decisions"]} == {
+        "needs_revalidation"
+    }
+    with factory() as db:
+        status = assess(db, 1, created["scenario_id"])
+        assert status["financial_result"] is None
+        assert "SOURCE_OVERALLOCATED" in {x["code"] for x in status["blockers"]}

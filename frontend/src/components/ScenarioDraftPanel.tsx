@@ -247,7 +247,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource, view = "
       if (latestContext.current.clientId === clientId) setContextLoading(false);
     }
   }
-  return <section aria-label="חלופות שמורות בשרת">
+  return <section aria-label="חלופות שמורות בשרת" className="scenario-workflow">
     <h2>{view === "planning" ? "בחר חלופה ותכנן" : "תוצאות החלופה"}</h2>
     <p className="professional-workspace__boundary">
       {view === "planning"

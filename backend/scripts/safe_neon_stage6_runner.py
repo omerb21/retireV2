@@ -71,6 +71,30 @@ def show_safe_failure_summary(stderr: str) -> None:
     else:
         print("MIGRATION_ERROR_TYPE: unknown; inspect local environment")
 
+    # Report code location without dumping any Python source or filesystem
+    # directory (the traceback itself may include a credential-bearing URL).
+    frames = re.findall(
+        r'(?m)^\\s*File "[^"\\r\\n]*[/\\\\]([^/\\\\"]+\\.py)", line (\\d+), in ([A-Za-z_][A-Za-z_0-9]*)',
+        stderr,
+    )
+    if frames:
+        filename, line, function = frames[-1]
+        print("FAILURE_LOCATION: " + filename + ":" + line + " (" + function + ")")
+
+    # Restrict the textual detail to safe non-connection-related messages.
+    failure = re.findall(
+        r"(?m)^\\s*(?:TypeError|ValueError|RuntimeError|ImportError|AttributeError):\\s*([^\\r\\n]+)",
+        stderr,
+    )
+    if failure:
+        detail = failure[-1].strip()
+        forbidden = (
+            "://", "password", "npg_", "channel_binding", "sslmode",
+            "postgresql", "token", "secret", "@",
+        )
+        if not any(token in detail.lower() for token in forbidden):
+            print("MIGRATION_ERROR_DETAIL: " + detail[:200])
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safe, isolated Neon Stage 6 bootstrap")

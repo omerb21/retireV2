@@ -629,3 +629,38 @@ def test_clone_does_not_carry_pension_elections_or_professional_authority(env):
     with factory() as db:
         assert current_elections(db, 1, clone["scenario_id"]) == []
         assert len(current_elections(db, 1, created["scenario_id"])) == 1
+
+
+def test_metadata_rename_preserves_valid_draft_election_but_not_source_staleness(env):
+    from app.models.pension_product import PensionProduct
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    component = _make_scoped_source(factory, "rename-election", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Before"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={"name": "Before", "expected_version": 1,
+        "decisions": [_decision_input("rename-election", component)]}).json()
+    before = saved["decisions"][0]
+    elected = _save_test_election(factory, 1, saved, before["decision_id"])
+
+    renamed = client.post(url + "/rename", json={
+        "name": "After", "expected_version": elected["version"],
+    })
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["version"] == 4
+    assert renamed.json()["decisions"][0]["source_fingerprint_at_review"] == (
+        before["source_fingerprint_at_review"])
+    with factory() as db:
+        elections = current_elections(db, 1, created["scenario_id"])
+        assert len(elections) == 1
+        assert elections[0]["decision_id"] == before["decision_id"]
+
+    with factory.begin() as db:
+        db.get(PensionProduct, "rename-election").version = 2
+    stale_rename = client.post(url + "/rename", json={
+        "name": "After two", "expected_version": 4,
+    })
+    assert stale_rename.status_code == 200
+    assert stale_rename.json()["status"] == "needs_revalidation"
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == []

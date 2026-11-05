@@ -3,6 +3,8 @@ WORKDIR /src/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+# Staging acceptance only: execute frontend regressions inside the build.
+RUN npm test -- --reporter=dot
 RUN npm run build
 
 FROM python:3.11-slim

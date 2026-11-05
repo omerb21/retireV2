@@ -53,7 +53,7 @@ it("saves an entire program with multiple components in one atomic draft call", 
     disabled={false} busy={false} onApply={onApply} />);
   fireEvent.click(screen.getByRole("button", { name: "המר תוכנית Program A" }));
   fireEvent.change(screen.getByLabelText("יעד ההמרה"), { target: { value: "capital_asset" } });
-  fireEvent.change(screen.getByLabelText("תאריך ביצוע מתוכנן"), { target: { value: "2029-01-01" } });
+  fireEvent.change(screen.getByLabelText("ברירת מחדל לתאריך ביצוע"), { target: { value: "2029-01-01" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור 2 המרות בחלופה" }));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
   expect(onApply.mock.calls[0][0]).toEqual([
@@ -69,7 +69,7 @@ it("saves an entire column spanning two distinct programs", async () => {
     product("p2", "Program B", { [second]: "90.00" }),
   ]} scenario={scenario} disabled={false} busy={false} onApply={onApply} />);
   fireEvent.click(screen.getByRole("button", { name: `המר טור ${PORTFOLIO_COMPONENT_COLUMNS[6][1]}` }));
-  fireEvent.change(screen.getByLabelText("תאריך ביצוע מתוכנן"), { target: { value: "2030-04-02" } });
+  fireEvent.change(screen.getByLabelText("ברירת מחדל לתאריך ביצוע"), { target: { value: "2030-04-02" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור 2 המרות בחלופה" }));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
   expect(onApply.mock.calls[0][0].map((row: { source_product_id: string }) => row.source_product_id))
@@ -92,4 +92,29 @@ it("never enables a conversion action for archived drafts", () => {
   render(<ScenarioConversionMatrix products={[p]} scenario={{ ...scenario, status: "archived" }}
     disabled busy={false} onApply={vi.fn()} />);
   expect((screen.getByRole("button", { name: "המר תוכנית Program A" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("lets every component in a whole-column conversion use a different amount and date", async () => {
+  const onApply = vi.fn().mockResolvedValue(true);
+  const label = PORTFOLIO_COMPONENT_COLUMNS[6][1];
+  render(<ScenarioConversionMatrix products={[
+    product("p1", "Program A", { [second]: "180.00" }),
+    product("p2", "Program B", { [second]: "90.00" }),
+  ]} scenario={scenario} disabled={false} busy={false} onApply={onApply} />);
+  fireEvent.click(screen.getByRole("button", { name: `המר טור ${label}` }));
+  fireEvent.change(screen.getByLabelText("ברירת מחדל לתאריך ביצוע"), {
+    target: { value: "2030-01-01" },
+  });
+  fireEvent.change(screen.getByLabelText(`סכום ${label} Program B`), {
+    target: { value: "40.50" },
+  });
+  fireEvent.change(screen.getByLabelText(`תאריך ${label} Program B`), {
+    target: { value: "2031-08-25" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "שמור 2 המרות בחלופה" }));
+  await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  expect(onApply.mock.calls[0][0]).toEqual([
+    expect.objectContaining({ amount: "180.00", effective_date: "2030-01-01" }),
+    expect.objectContaining({ amount: "40.50", effective_date: "2031-08-25" }),
+  ]);
 });

@@ -173,7 +173,8 @@ it("shows a read-only side-by-side summary for distinct saved scenarios", async 
   mocks.list.mockResolvedValue([first, second]);
   render(<ScenarioDraftPanel clientId={1} products={products} />);
   fireEvent.click(await screen.findByText("פירוט הקצאות לכל החלופות"));
-  const table = await screen.findByRole("table");
+  const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
+  const table = comparison.querySelector("table")!;
   expect(table.textContent).toContain("comparison-a");
   expect(table.textContent).toContain("comparison-b");
   expect(table.textContent).toContain("30.00");

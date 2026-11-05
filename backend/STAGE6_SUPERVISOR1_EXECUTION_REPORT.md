@@ -23,7 +23,7 @@ PR: https://github.com/omerb21/retireV2/pull/7
 | --- | --- |
 | `backend/app/services/scenario_draft_service.py` | CAS נשאר בראש פעולת ההחלפה; בדיקת הבעלות והזיהוי של מקור; סכום מצטבר לכל רכיב; שמירת החלטה ללא ריענון אוטומטי של טביעת מקור ישנה; שמירת בחירות קצבה **רק** בהחלטות שלא השתנו ובמקור שעדיין תקף; פסילת אחרות; שימור בחירות תקפות גם בעת שינוי שם; audit של בחירות שנשמרו או נפסלו. |
 | `backend/app/services/scenario_pension_election_store_service.py` | שאילתה מחודשת להחלטות ומקורות כדי לא להציג בחירה שהתיישנה או קשורה להקצאת יתר, גם לפני כתיבה נוספת. |
-| `backend/tests/test_scenario_draft.py` | תשעה test functions חדשים (אחד מהם פרמטרי עם שלוש חלופות): הוספת המרה ללא מחיקת בחירה קיימת, עריכה והחלפת סכום/מועד/יעד, מקור מיושן, לקוח אחר, הקצאת יתר, CAS, גרסאות, שכפול, Rename, התאמת מענקי DB וטיוטה ישנה. |
+| `backend/tests/test_scenario_draft.py` | עשרה test functions חדשים (אחד מהם פרמטרי עם שלוש חלופות): הוספת המרה ללא מחיקת בחירה קיימת, עריכה והחלפת סכום/מועד/יעד, מקור מיושן, לקוח אחר, הקצאת יתר, CAS, גרסאות, שכפול, Rename, התאמת מענקי DB וטיוטה ישנה. |
 | `backend/tests/test_stage6_p1d_postgresql.py` | בדיקות שליליות ב-PostgreSQL אמיתי נגד לקוח אחר והחלטה מחלופה אחרת, גם כשקיימות ראיות מקצועיות סינתטיות לחלופה הנכונה. |
 | `backend/STAGE6_SUPERVISOR1_FRONTEND_TEST_COVERAGE_MATRIX.md` | מטריצת שמונה בדיקות Frontend שנמחקו בגרסה הקודמת, דרישת הבטיחות, תחליף קיים ופערים פתוחים. |
 | `backend/scripts/run_supervisor1_offline_acceptance_win.ps1` | מסלול בדיקות שמנטרל URL חיצוני ל-DB, מפעיל Backend suite ואחריו כל Frontend Vitest + build, ללא Deploy וללא GitHub Actions. |
@@ -52,6 +52,7 @@ PR: https://github.com/omerb21/retireV2/pull/7
 | PostgreSQL integration לאחר התיקון | **NOT RUN** | נדרש PostgreSQL 16 מקומי מבודד והרצת הקבצים החדשים. |
 | Frontend all tests לאחר התיקון | **NOT RUN** | לא נערכה בניית Render כי נדרש אישור מפקח לפריסת Staging. |
 | Synthetic positive gross in live Neon | **NOT RUN / BLOCKED** | אין הרשאה ליצור אסמכתה מקצועית או להזין נתוני Staging. |
+| חישוב ביקורת עצמאי ב-Decimal | **PASS - 1 בדיקת חשבון מנותקת** | A=4.00, B=10.00, תזרים A=1204.00 ו-B=1210.00, הפרש 6.00. אינה בדיקת התוכנה. |
 
 אין לסווג בדיקה שלא הורצה כ-PASS. ניתן לבצע את הבדיקות האופליין במחשב בעל checkout קיים בסקריפט שצורף לענף, ואת בדיקות PostgreSQL בסקריפט Docker המבודד שכבר קיים: `backend/scripts/run_stage6_pg_integration_win.ps1`.
 

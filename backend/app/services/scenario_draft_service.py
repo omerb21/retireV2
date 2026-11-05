@@ -384,7 +384,14 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     for attributes in retained_elections:
         db.add(ScenarioDraftPensionElection(**attributes))
     db.flush()
-    return _revision(db, scenario, "replace", actor)
+    old_choice_ids = {item.decision_id for item in elections}
+    surviving_ids = {item["decision_id"] for item in retained_elections}
+    return _revision(db, scenario, "replace", actor, audit_extra={
+        "retained_pension_election_decision_ids": sorted(surviving_ids),
+        "invalidated_pension_election_decision_ids": sorted(
+            old_choice_ids - surviving_ids),
+        "professional_admission_carryover": False,
+    })
 
 
 def rename(db: Session, client_id: int, scenario_id: str, name: str,
@@ -433,7 +440,13 @@ def rename(db: Session, client_id: int, scenario_id: str, name: str,
     for values in preserved:
         db.add(ScenarioDraftPensionElection(**values))
     db.flush()
-    return _revision(db, scenario, "rename", actor)
+    surviving_ids = {item["decision_id"] for item in preserved}
+    return _revision(db, scenario, "rename", actor, audit_extra={
+        "retained_pension_election_decision_ids": sorted(surviving_ids),
+        "invalidated_pension_election_decision_ids": sorted(
+            {item.decision_id for item in previous} - surviving_ids),
+        "professional_admission_carryover": False,
+    })
 
 
 def archive(db: Session, client_id: int, scenario_id: str, expected: int, actor: str) -> dict:

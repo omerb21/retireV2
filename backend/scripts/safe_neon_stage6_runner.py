@@ -96,10 +96,21 @@ def show_safe_failure_summary(stderr: str) -> None:
             print("MIGRATION_ERROR_DETAIL: " + detail[:200])
 
 
+def supported_migration_python(version_info) -> bool:
+    """Match the pinned SQLAlchemy/Alembic runtime to supported Python versions."""
+    return tuple(version_info[:2]) in {(3, 11), (3, 12)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Safe, isolated Neon Stage 6 bootstrap")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+
+    if not supported_migration_python(sys.version_info):
+        print("STOP: pinned SQLAlchemy 2.0.36 is incompatible with Python " +
+              str(sys.version_info.major) + "." + str(sys.version_info.minor) +
+              "; run the migration with Python 3.11 (recommended) or 3.12.")
+        return 2
 
     backend_dir = Path(__file__).resolve().parents[1]
     target = backend_dir / "scripts" / "neon_stage6_bootstrap.py"

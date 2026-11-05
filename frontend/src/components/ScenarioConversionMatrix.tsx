@@ -28,6 +28,8 @@ export function ScenarioConversionMatrix({
   const [target, setTarget] = useState<DraftDecisionInput["action"]>("pension");
   const [when, setWhen] = useState("");
   const [partial, setPartial] = useState("");
+  const [rowDates, setRowDates] = useState<Record<string, string>>({});
+  const [rowAmounts, setRowAmounts] = useState<Record<string, string>>({});
   const [issue, setIssue] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const all = rows.flatMap(row => row.cells);
@@ -36,6 +38,8 @@ export function ScenarioConversionMatrix({
   );
   const total = selectedCells.reduce((sum, cell) => sum + (cell.available ?? 0n), 0n);
   const unable = disabled || busy || saving;
+  const datesReady = chosen.length === 1 ? !!when : chosen.length > 1
+    && chosen.every(key => !!(rowDates[key] ?? when));
 
   useEffect(() => {
     if (!initialSource) return;
@@ -45,6 +49,8 @@ export function ScenarioConversionMatrix({
     setChosen([cell.key]);
     setScope("רכיב בודד");
     setPartial(planMoney(cell.available!));
+    setRowDates({});
+    setRowAmounts({});
   }, [initialSource?.productId, initialSource?.componentCode]);
 
   function chooseOne(cell: PlanCell) {
@@ -56,6 +62,8 @@ export function ScenarioConversionMatrix({
     setChosen([cell.key]);
     setScope("רכיב בודד");
     setPartial(planMoney(cell.available));
+    setRowDates({});
+    setRowAmounts({});
     setIssue(null);
   }
 
@@ -69,6 +77,8 @@ export function ScenarioConversionMatrix({
       setChosen(keys);
       setScope(label);
       setPartial("");
+      setRowDates({});
+      setRowAmounts({});
       setIssue(null);
     } catch (cause) {
       setIssue(cause instanceof Error ? cause.message : "לא ניתן לבחור את ההיקף.");
@@ -79,7 +89,13 @@ export function ScenarioConversionMatrix({
     event.preventDefault();
     if (unable) return;
     try {
-      const decisions = buildPlanDecisions(rows, chosen, target, when, partial);
+      // Each selected source may have its own amount and execution date.
+      // A bulk plan remains a single atomic, versioned draft replacement.
+      const decisions = chosen.length > 1
+        ? chosen.flatMap(key => buildPlanDecisions(
+            rows, [key], target, rowDates[key] ?? when, rowAmounts[key] ?? "",
+          ))
+        : buildPlanDecisions(rows, chosen, target, when, partial);
       if (scenario.decisions.length + decisions.length > 500) {
         throw Error("יותר מדי החלטות בחלופה זו.");
       }
@@ -89,6 +105,8 @@ export function ScenarioConversionMatrix({
       if (saved) {
         setChosen([]);
         setPartial("");
+        setRowDates({});
+        setRowAmounts({});
         setScope("רכיב בודד");
       } else {
         setIssue("ההמרה לא נשמרה. יש לבדוק את הודעת השגיאה של החלופה.");
@@ -171,7 +189,7 @@ export function ScenarioConversionMatrix({
           <option value="capital_asset">להון</option>
         </select>
       </label>
-      <label>תאריך ביצוע מתוכנן
+      <label>{chosen.length > 1 ? "ברירת מחדל לתאריך ביצוע" : "תאריך ביצוע מתוכנן"}
         <input type="date" value={when} disabled={unable}
           onChange={event => setWhen(event.target.value)} />
       </label>
@@ -180,11 +198,32 @@ export function ScenarioConversionMatrix({
           onChange={event => setPartial(event.target.value)}
           aria-label="סכום להמרה" />
       </label>}
-      <button type="submit" disabled={unable || !chosen.length || !when}>
+      {chosen.length > 1 && <div className="scenario-conversion__bulk-detail"
+        aria-label="תזמון המרות לפי רכיב">
+        <h4>סכומים ומועדים לכל רכיב</h4>
+        <p>כל רכיב ניתן לתזמון בנפרד. התאריך הכללי חל רק על רכיבים ללא תאריך משלהם.</p>
+        <table>
+          <thead><tr><th>תוכנית</th><th>רכיב</th><th>יתרה פנויה (₪)</th>
+            <th>סכום להמרה (₪)</th><th>תאריך ביצוע מתוכנן</th></tr></thead>
+          <tbody>{selectedCells.map(cell => <tr key={cell.key}>
+            <th scope="row">{cell.productName}</th>
+            <td>{cell.label}</td><td>{planMoney(cell.available ?? 0n)}</td>
+            <td><input inputMode="decimal" disabled={unable}
+              aria-label={`סכום ${cell.label} ${cell.productName}`}
+              value={rowAmounts[cell.key] ?? planMoney(cell.available ?? 0n)}
+              onChange={event => setRowAmounts(old => ({ ...old, [cell.key]: event.target.value }))}/></td>
+            <td><input type="date" disabled={unable}
+              aria-label={`תאריך ${cell.label} ${cell.productName}`}
+              value={rowDates[cell.key] ?? when}
+              onChange={event => setRowDates(old => ({ ...old, [cell.key]: event.target.value }))}/></td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+      <button type="submit" disabled={unable || !chosen.length || !datesReady}>
         {saving ? "שומר..." : chosen.length > 1 ? `שמור ${chosen.length} המרות בחלופה` : "שמור המרה בחלופה"}
       </button>
       {chosen.length > 0 && <button type="button" disabled={unable} onClick={() => {
-        setChosen([]); setPartial(""); setIssue(null);
+        setChosen([]); setPartial(""); setRowDates({}); setRowAmounts({}); setIssue(null);
       }}>בטל בחירה</button>}
       {issue && <p className="scenario-conversion__error" role="alert">{issue}</p>}
     </form>

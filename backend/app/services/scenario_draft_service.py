@@ -6,7 +6,7 @@ import hashlib
 import json
 import unicodedata
 from uuid import uuid4
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
@@ -265,8 +265,7 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
         ))
     } if component_ids else {}
     amounts_by_source: dict[tuple[str, str], Decimal] = {}
-    resolved: list[tuple[object, PensionProduct | None,
-                         PensionProductComponent | None, str | None, bool]] = []
+    resolved: list[tuple] = []
     retained_election_ids: set[str] = set()
 
     for row in payload.decisions:
@@ -316,18 +315,32 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     )).all()
     submitted_by_id = {row.decision_id: row for row in payload.decisions
                        if row.decision_id is not None}
+    retained_elections = []
     for election in elections:
         incoming = submitted_by_id.get(election.decision_id)
         if (election.scenario_version == payload.expected_version
                 and election.decision_id in retained_election_ids
                 and incoming is not None
                 and election.pension_start_date >= incoming.effective_date):
-            election.scenario_version = scenario.version
-        else:
-            db.delete(election)
+            retained_elections.append({
+                "election_id": election.election_id,
+                "scenario_id": election.scenario_id,
+                "decision_id": election.decision_id,
+                "scenario_version": scenario.version,
+                "pension_start_date": election.pension_start_date,
+                "target_year": election.target_year,
+                "survivors_option": election.survivors_option,
+                "spouse_age_diff": election.spouse_age_diff,
+                "coefficient_selection": election.coefficient_selection,
+                "company_name": election.company_name,
+                "option_name": election.option_name,
+            })
+        db.delete(election)
 
-    # This order leaves no mixed old/new decision set even for bulk updates.
-    # The API owns commit/rollback; a failed insert rolls everything back.
+    # The restricted application role intentionally has SELECT, INSERT,
+    # DELETE but *not UPDATE* on draft elections. Re-create only surviving
+    # selections with the new draft version. No professional authority copies.
+    # No partial persistence: this all executes within the caller transaction.
     for previous in existing:
         db.delete(previous)
     db.flush()
@@ -349,6 +362,9 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
             ruleset_digest_at_review=None,
             permission_preview_id_at_review=None,
         ))
+    db.flush()
+    for attributes in retained_elections:
+        db.add(ScenarioDraftPensionElection(**attributes))
     db.flush()
     return _revision(db, scenario, "replace", actor)
 

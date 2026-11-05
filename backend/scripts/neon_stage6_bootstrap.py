@@ -44,7 +44,7 @@ def validate_url(database_url: str) -> str:
     if parsed.database != EXPECTED_DATABASE:
         raise RuntimeError("Wrong database: refuse to touch anything else")
     if parsed.query.get("sslmode") not in {"require", "verify-ca", "verify-full"}:
-        raise RuntimeError("An explicit TLS-verified Neon connection is required")
+        raise RuntimeError("An explicit TLS-encrypted Neon connection is required")
     if not parsed.username or not parsed.password:
         raise RuntimeError("A database owner connection with credentials is required")
     return database_url

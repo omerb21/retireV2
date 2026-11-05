@@ -14,6 +14,7 @@ $savedDatabaseUrl = [Environment]::GetEnvironmentVariable("DATABASE_URL", "Proce
 $savedTestUrl = [Environment]::GetEnvironmentVariable("SCENARIO_TEST_POSTGRES_URL", "Process")
 $savedAppEnv = [Environment]::GetEnvironmentVariable("APP_ENV", "Process")
 $savedPreview = [Environment]::GetEnvironmentVariable("STAGE6_PREVIEW_ENABLED", "Process")
+$savedRecoveryTest = [Environment]::GetEnvironmentVariable("RECOVERY_POSTGRES_TEST", "Process")
 
 function Restore-ProcessEnv([string]$name, [AllowNull()][string]$value) {
     [Environment]::SetEnvironmentVariable($name, $value, "Process")
@@ -91,6 +92,9 @@ try {
     $env:SCENARIO_TEST_POSTGRES_URL = "postgresql+psycopg2://postgres:${secret}@127.0.0.1:${port}/retire_v2_scenario_test"
     $env:APP_ENV = "test"
     $env:STAGE6_PREVIEW_ENABLED = "0"
+    # The scenario draft PostgreSQL tests provision their own isolated
+    # disposable postgres:16 containers via the pre-existing fixture.
+    $env:RECOVERY_POSTGRES_TEST = "1"
 
     $suite = @(
         "tests/test_stage6_p1b_postgresql.py",
@@ -101,7 +105,8 @@ try {
         "tests/test_scenario_coefficient_input_inventory_real_postgresql.py",
         "tests/test_scenario_snapshot_candidate_postgresql.py",
         "tests/test_scenario_admission_postgresql_isolation.py",
-        "tests/test_scenario_admission_postgresql_tables.py"
+        "tests/test_scenario_admission_postgresql_tables.py",
+        "tests/test_scenario_draft_postgresql.py"
     )
 
     Write-Host "STAGE6_PG16_LOCAL_READY"
@@ -122,6 +127,7 @@ finally {
     Restore-ProcessEnv "SCENARIO_TEST_POSTGRES_URL" $savedTestUrl
     Restore-ProcessEnv "APP_ENV" $savedAppEnv
     Restore-ProcessEnv "STAGE6_PREVIEW_ENABLED" $savedPreview
+    Restore-ProcessEnv "RECOVERY_POSTGRES_TEST" $savedRecoveryTest
     Pop-Location
 }
 Write-Host "STAGE6_PG_INTEGRATION_EXIT_CODE=$exitCode"

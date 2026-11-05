@@ -451,3 +451,81 @@
     width: 100%; text-align: right;
   }
 }
+
+
+/* Plan conversions directly from the same full-width pension portfolio grid. */
+.scenario-conversion {
+  margin: 12px 0 22px;
+  padding: 16px;
+  border: 1px solid #d2e1ef;
+  border-radius: 12px;
+  background: #fff;
+}
+.scenario-conversion__heading {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px; margin-bottom: 14px;
+}
+.scenario-conversion__heading h3 { margin: 0 0 5px; color: #163a60; font-size: 18px; }
+.scenario-conversion__heading p { margin: 0; font-size: 13px; color: #58718b; }
+.scenario-conversion__heading > span {
+  font-size: 12px; color: #38628a; background: #eff6fc;
+  border-radius: 20px; padding: 6px 11px;
+}
+.scenario-conversion__ledger { max-height: 58vh; overflow: auto; }
+.scenario-conversion__ledger thead th { position: sticky; top: 0; z-index: 4; }
+.scenario-conversion__ledger thead th:first-child { z-index: 6; }
+.scenario-conversion__ledger thead th:nth-child(2) { z-index: 5; }
+.scenario-conversion__ledger thead th button {
+  display: block; margin: 8px 0 0; padding: 5px 9px;
+  color: #175a96; font-size: 11px; font-weight: 700;
+  border: 1px solid #a9c9e6; border-radius: 6px; background: #fff;
+  cursor: pointer;
+}
+.scenario-conversion__ledger tbody th button {
+  display: block; margin-top: 8px; padding: 6px 9px;
+  border-radius: 6px; border: 1px solid #9ebee0;
+  background: #eef6ff; color: #155895; font-weight: 700;
+}
+.scenario-conversion__ledger button:disabled { opacity: .45; cursor: not-allowed; }
+.scenario-conversion__ledger .professional-workspace__cell {
+  min-width: 90px; text-align: center; font-weight: 600;
+}
+.scenario-conversion__ledger .professional-workspace__cell small {
+  display: block; font-size: 10px; font-weight: 400;
+  white-space: normal; color: #6b7d90;
+}
+.scenario-conversion__plan {
+  display: flex; gap: 12px; align-items: end; flex-wrap: wrap;
+  margin-top: 14px !important; padding: 16px !important;
+  background: #f3f8ff !important;
+}
+.scenario-conversion__plan > div:first-child { flex: 1 1 210px; min-width: 190px; }
+.scenario-conversion__plan > div:first-child strong { font-size: 15px; }
+.scenario-conversion__plan > div:first-child p { margin: 5px 0 0; color: #526d89; font-size: 12px; }
+.scenario-conversion__plan label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.scenario-conversion__plan input, .scenario-conversion__plan select {
+  min-height: 42px; border: 1px solid #adcae7;
+  border-radius: 7px; background: #fff;
+}
+.scenario-conversion__plan button[type="submit"] {
+  min-height: 42px; background: #185ea5 !important; color: #fff !important;
+}
+.scenario-conversion__plan button:disabled { opacity: .55; cursor: not-allowed; }
+.scenario-conversion__error { width: 100%; color: #a4422c !important; }
+.scenario-conversion__saved {
+  list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px;
+}
+.scenario-conversion__saved > li {
+  border: 1px solid #e2eaf4; background: #fbfdff;
+  border-radius: 8px; padding: 10px 12px; font-size: 13px;
+}
+.scenario-conversion__saved > li button {
+  margin-inline-start: 8px; padding: 6px 9px; background: white;
+  border: 1px solid #c5d5e8; border-radius: 6px;
+}
+.scenario-conversion__saved > li details { margin-top: 8px; }
+@media (max-width: 760px) {
+  .scenario-conversion { padding: 8px; }
+  .scenario-conversion__plan > label, .scenario-conversion__plan > label input,
+  .scenario-conversion__plan > label select { width: 100%; }
+}

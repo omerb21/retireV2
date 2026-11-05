@@ -701,7 +701,10 @@ it("keeps detailed professional inputs closed until the user opens them", async 
   mock.list.mockResolvedValue([election]);
   testingRender(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()} />);
   expect(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeNull();
+  const advanced = screen.getByText("בחירות קצבה, שאירים ואישור מקדם").closest("details") as HTMLDetailsElement;
+  expect(advanced).toBeTruthy();
+  expect(advanced.open).toBe(false);
   fireEvent.click(screen.getByText("בחירות קצבה, שאירים ואישור מקדם"));
+  expect(advanced.open).toBe(true);
   expect(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeTruthy();
 });

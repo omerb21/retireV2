@@ -471,7 +471,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
     <h4>{pensionDecisions.length > 0 ? "תוצאת קצבה" : "נתוני הקצאה"}</h4>
-    <p className="professional-workspace__boundary">קצבה חודשית ברוטו בלבד. ללא אישור מקצועי תקף לא יוצג סכום מחושב.</p>}
+    <p className="professional-workspace__boundary">קצבה חודשית ברוטו בלבד. ללא אישור מקצועי תקף לא יוצג סכום מחושב.</p>
     {error && <p role="alert">{error}</p>}
     <details>
       <summary>פירוט הקצאות ויתרות</summary>
@@ -603,7 +603,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
       {aggregate && aggregate.blockers.length > 0
         && <ul aria-label="חסימות סיכום הקצבה">{aggregate.blockers.map(code => <li key={code}>{code}</li>)}</ul>}
       </details>
-    </section>
+    </section>}
     {loaded && pensionDecisions.length > 0 && <details>
       <summary>תזרים חודשי ברוטו (מתקדם)</summary>
       <section aria-label="תזרים הכנסות חודשי מבוקר">

@@ -3,6 +3,7 @@ import type { PensionProduct } from "../api/pensionProductsApi";
 import { readRetirementCalculationContext, type RetirementCalculationContext } from "../api/retirementCalculationContextApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
+import { ScenarioConversionMatrix } from "./ScenarioConversionMatrix";
 import { ScenarioMonthlyComparisonPanel } from "./ScenarioMonthlyComparisonPanel";
 import { readStage6GrossResultsCapability } from "../api/scenarioStage6Api";
 import { formatScenarioCents, summarizeScenarioDraft } from "./scenarioDraftComparison";
@@ -179,6 +180,21 @@ export function ScenarioDraftPanel({
     } catch (cause) { setError(message(cause)); return false; }
     finally { setBusy(false); }
   }
+  async function saveConversionBatch(batch: DraftDecisionInput[]): Promise<boolean> {
+    if (!active || active.status !== "draft") return false;
+    // One versioned API request for an entire program or column. It is a
+    // planning draft, never a canonical conversion or a factual product write.
+    const existing: DraftDecisionInput[] = active.decisions.map(decision => ({
+      decision_id: decision.decision_id,
+      source_product_id: decision.source_product_id,
+      source_component_id: decision.source_component_id,
+      component_code: decision.component_code,
+      amount: decision.amount,
+      action: decision.action,
+      effective_date: decision.effective_date,
+    }));
+    return run(() => replaceScenarioDraft(clientId, active, [...existing, ...batch]));
+  }
   async function create(event: FormEvent) {
     event.preventDefault();
     if (name.trim()) {
@@ -327,6 +343,11 @@ export function ScenarioDraftPanel({
     </details>}
     {active && <div>
       <h3>{active.name}</h3>
+      {view === "planning" && <ScenarioConversionMatrix
+        key={`${clientId}:${active.scenario_id}`}
+        products={products} scenario={active} disabled={active.status !== "draft"}
+        busy={busy} initialSource={initialSource}
+        onApply={saveConversionBatch} />}
       {view === "results" && stage6Enabled && active.decisions.length > 0 &&
         <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`}
           clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/>}
@@ -369,7 +390,8 @@ export function ScenarioDraftPanel({
         <button type="button" disabled={busy} onClick={() => void run(() => duplicateScenarioDraft(clientId, active.scenario_id, active.name + " — העתק"))}>שכפל חלופה</button>
         <button type="button" disabled={busy} onClick={() => void run(() => archiveScenarioDraft(clientId, active))}>העבר לארכיון</button>
         </details>
-        <h4>הוסף החלטת תכנון</h4>
+        <details open={editingDecisionId !== null}>
+          <summary>{editingDecisionId ? "עריכת החלטה קיימת" : "הזנת החלטה ידנית (אפשרות מתקדמת)"}</summary>
         <form onSubmit={addDecision}>
           <label>רכיב מתוך התיק
             <select value={source} onChange={event => setSource(event.target.value)}>
@@ -386,10 +408,20 @@ export function ScenarioDraftPanel({
           <button type="submit" disabled={busy || !source || !exactAmount(amount) || !effectiveDate}>{editingDecisionId ? "שמור עריכת טיוטה" : "שמור החלטה כטיוטה"}</button>
           {editingDecisionId && <button type="button" onClick={() => { setEditingDecisionId(null); setAmount(""); }}>בטל עריכה</button>}
         </form>
+        </details>
       </>}
-      <ul>{active.decisions.map((decision, index) => <li key={decision.decision_id}>
-        {decision.component_code} — {decision.amount} ₪ — {decision.action === "pension" ? "לקצבה" : "להון"} — לא מאומת
-        {" "}— הרשאת בסיס: {(active.status === "needs_revalidation" || decision.validation_state === "needs_revalidation") ? "מקור השתנה — אימות מחדש נדרש"
+      <h4>המרות מתוכננות בחלופה ({active.decisions.length})</h4>
+      <ul className="scenario-conversion__saved">{active.decisions.map((decision, index) => <li key={decision.decision_id}>
+        <strong>{sources.find(item => item.componentId === decision.source_component_id)?.label ?? decision.component_code}</strong>
+        {" "} - {decision.amount} ₪ {decision.action === "pension" ? "לקצבה" : "להון"}
+        {" "} - ביצוע מתוכנן: {decision.effective_date}
+        {active.status !== "archived" && <>
+          <button disabled={busy} type="button" onClick={() => beginEdit(decision)}>ערוך</button>
+          <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק החלטת טיוטה</button>
+        </>}
+        <details>
+        <summary>בדיקת הרשאה</summary>
+        {" "}הרשאת בסיס: {(active.status === "needs_revalidation" || decision.validation_state === "needs_revalidation") ? "מקור השתנה — אימות מחדש נדרש"
           : permissions[decision.decision_id]?.status === "ready"
           ? permissions[decision.decision_id].component?.permission_status === "allowed" ? "מותר לפי מטריצת בסיס בלבד"
           : permissions[decision.decision_id].component?.permission_status === "blocked" ? "חסום לפי מטריצת בסיס"
@@ -434,10 +466,7 @@ export function ScenarioDraftPanel({
               .catch(cause => { if (permissionEpoch.current === epoch) setPermissions(old => ({ ...old, [currentDecision]: { status: "error", error: message(cause) } })); })
               .finally(() => { if (permissionEpoch.current === epoch) setCheckingPermission(null); });
           }}>בדוק הרשאת בסיס (קריאה בלבד)</button>
-        {active.status !== "archived" && <>
-          <button disabled={busy} type="button" onClick={() => beginEdit(decision)}>ערוך</button>
-          <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק החלטת טיוטה</button>
-        </>}
+        </details>
       </li>)}</ul>
       <details>
       <summary>יתרות מקורות ובדיקת הרשאות מפורטת</summary>

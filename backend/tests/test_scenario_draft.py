@@ -571,3 +571,61 @@ def test_version_conflict_does_not_discard_existing_pension_election(env):
     assert (stale.status_code, stale.json()["code"]) == (409, "SCENARIO_VERSION_CONFLICT")
     with factory() as db:
         assert len(current_elections(db, 1, created["scenario_id"])) == 1
+
+
+def test_preserved_election_uses_restricted_insert_delete_without_update(env):
+    from sqlalchemy import event
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    c1 = _make_scoped_source(factory, "grant-A1", 1)
+    c2 = _make_scoped_source(factory, "grant-A2", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Grant"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={"name": "Grant", "expected_version": 1,
+        "decisions": [_decision_input("grant-A1", c1)]}).json()
+    elected = _save_test_election(factory, 1, saved, saved["decisions"][0]["decision_id"])
+    statements = []
+    engine = factory.kw["bind"]
+
+    def observe(_connection, _cursor, sql, _params, _context, _many):
+        statements.append(sql.strip().upper())
+
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        response = client.put(url, json={
+            "name": "Grant", "expected_version": elected["version"],
+            "decisions": [
+                {"decision_id": saved["decisions"][0]["decision_id"],
+                 **_decision_input("grant-A1", c1)},
+                _decision_input("grant-A2", c2, "25.00"),
+            ],
+        })
+    finally:
+        event.remove(engine, "before_cursor_execute", observe)
+    assert response.status_code == 200, response.text
+    target = "SCENARIO_DRAFT_PENSION_ELECTIONS"
+    assert any(row.startswith("DELETE FROM " + target) for row in statements)
+    assert any(row.startswith("INSERT INTO " + target) for row in statements)
+    assert not any(row.startswith("UPDATE " + target) for row in statements)
+    with factory() as db:
+        assert len(current_elections(db, 1, created["scenario_id"])) == 1
+
+
+def test_clone_does_not_carry_pension_elections_or_professional_authority(env):
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    component = _make_scoped_source(factory, "clone-proof", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Original"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={"name": "Original", "expected_version": 1,
+        "decisions": [_decision_input("clone-proof", component)]}).json()
+    _save_test_election(factory, 1, saved, saved["decisions"][0]["decision_id"])
+    result = client.post(url + "/duplicate", json={"name": "Cloned"})
+    assert result.status_code == 200, result.text
+    clone = result.json()
+    assert clone["scenario_id"] != created["scenario_id"]
+    assert clone["decisions"][0]["decision_id"] != saved["decisions"][0]["decision_id"]
+    assert clone["decisions"][0]["ruleset_digest_at_review"] is None
+    with factory() as db:
+        assert current_elections(db, 1, clone["scenario_id"]) == []
+        assert len(current_elections(db, 1, created["scenario_id"])) == 1

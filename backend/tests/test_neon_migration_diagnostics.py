@@ -32,3 +32,17 @@ def test_reports_non_sql_error_class(capsys):
     output = capsys.readouterr().out
     assert "LAST_ATTEMPTED_MIGRATION: not reported" in output
     assert "MIGRATION_ERROR_TYPE: ValueError" in output
+
+
+def test_reports_windows_python_type_error_location(capsys):
+    trace = (
+        'Traceback (most recent call last):\\n'
+        '  File "C:\\\\work\\\\backend\\\\alembic\\\\env.py", line 32, in <module>\\n'
+        '    configure()\\n'
+        'TypeError: unsupported operand type(s) for +: NoneType and str\\n'
+    )
+    show_safe_failure_summary(trace)
+    output = capsys.readouterr().out
+    assert "MIGRATION_ERROR_TYPE: TypeError" in output
+    assert "FAILURE_LOCATION: env.py:32 (<module>)" in output
+    assert "MIGRATION_ERROR_DETAIL: unsupported operand type(s)" in output

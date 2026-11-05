@@ -753,12 +753,11 @@ export function RetirementWorkspaceScreen() {
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>
         <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent} />
-        <p className="professional-workspace__boundary">חלופות נשמרות בשרת בנפרד מיתרות התיק. בסביבת Stage 6 מורשית בלבד ניתן לקבל אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו לתרחיש, בכפוף לשערי המוכנות המקצועיים. אין במסלול זה חישובי מס או נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
+        <p className="professional-workspace__boundary">הסכומים כאן הם החלטות תכנון, לא קצבאות מחושבות. לצפייה בתוצאה עבור ללשונית "תוצאות והשוואה".</p>
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
-        <p className="professional-workspace__boundary">השוואת הקצאות הטיוטה השמורות מוצגת להלן. בסביבת Stage 6 מאושרת ניתן לבדוק אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו מאומת. אין במסלול זה מס, נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
-        <ScenarioDraftPanel clientId={clientId} products={products} />
+        <ScenarioDraftPanel clientId={clientId} products={products} view="results" />
         <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
       </section>}
     </div>

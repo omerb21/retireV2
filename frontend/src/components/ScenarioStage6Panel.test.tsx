@@ -700,7 +700,7 @@ it("drops a late cashflow after switching client and alternative generation", as
 it("keeps detailed professional inputs closed until the user opens them", async () => {
   mock.list.mockResolvedValue([election]);
   testingRender(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()} />);
-  expect(screen.getByRole("button", { name: "בדוק תוצאת קצבה" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeNull();
   fireEvent.click(screen.getByText("בחירות קצבה, שאירים ואישור מקדם"));
   expect(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeTruthy();

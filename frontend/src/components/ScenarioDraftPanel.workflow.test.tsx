@@ -58,7 +58,7 @@ function pending<T>() {
 it("shows Stage 6 only after an affirmative backend capability", async () => {
   mocks.list.mockResolvedValue([draft("approved")]);
   mocks.capability.mockResolvedValue(true);
-  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
   expect(await screen.findByRole("region", { name: "Stage 6 scenario result" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Stage 6 comparison" })).toBeTruthy();
   expect(mocks.capability).toHaveBeenCalledWith(1, expect.any(AbortSignal));
@@ -71,26 +71,26 @@ it("revokes client A Stage 6 immediately while client B capability and drafts ar
   mocks.list.mockImplementation((id: number) =>
     id === 1 ? Promise.resolve([draft("only-client-A")]) : pendingDraftsB.promise,
   );
-  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
   expect(await screen.findByRole("region", { name: "Stage 6 scenario result" })).toBeTruthy();
   expect(screen.getByRole("region", { name: "Stage 6 comparison" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: /only-client-A — גרסה/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /only-client-A/ })).toBeTruthy();
 
   // B renders synchronously before its useEffect has cleared A's old approval.
-  view.rerender(<ScenarioDraftPanel clientId={2} products={products} />);
+  view.rerender(<ScenarioDraftPanel clientId={2} products={products} view="results" />);
   expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Stage 6 comparison" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /only-client-A — גרסה/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /only-client-A/ })).toBeNull();
   await waitFor(() => expect(mocks.capability).toHaveBeenCalledWith(2, expect.any(AbortSignal)));
 
   // Even if B's draft list finishes first, Stage 6 must remain absent.
   pendingDraftsB.resolve([{ ...draft("only-client-B"), client_id: 2 }]);
-  await screen.findByRole("button", { name: /only-client-B — גרסה/ });
+  await screen.findByRole("button", { name: /only-client-B/ });
   expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Stage 6 comparison" })).toBeNull();
   pendingB.resolve(false);
-  await waitFor(() => expect(screen.getByRole("region", { name: "רצף עבודה בחלופה" }))
-    .toHaveTextContent("אינם מורשים בסביבה זו"));
+  await waitFor(() => expect(screen.getByText("חישובי קצבה אינם מורשים בסביבה הזאת."))
+    .toHaveTextContent("חישובי קצבה אינם מורשים בסביבה הזאת."));
   expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
 });
 
@@ -98,12 +98,12 @@ it("keeps Stage 6 hidden when capability is denied and drops a late prior-client
   const oldClient = pending<boolean>();
   mocks.capability.mockReturnValueOnce(oldClient.promise).mockResolvedValueOnce(false);
   mocks.list.mockImplementation(async (clientId: number) => [{ ...draft("client-" + clientId), client_id: clientId }]);
-  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
-  view.rerender(<ScenarioDraftPanel clientId={2} products={products} />);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  view.rerender(<ScenarioDraftPanel clientId={2} products={products} view="results" />);
   await waitFor(() => expect(mocks.capability).toHaveBeenCalledTimes(2));
   oldClient.resolve(true);
-  await waitFor(() => expect(screen.getByRole("region", { name: "רצף עבודה בחלופה" }))
-    .toHaveTextContent("אינם מורשים בסביבה זו"));
+  await waitFor(() => expect(screen.getByText("חישובי קצבה אינם מורשים בסביבה הזאת."))
+    .toHaveTextContent("חישובי קצבה אינם מורשים בסביבה הזאת."));
   expect(screen.queryByRole("region", { name: "Stage 6 scenario result" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Stage 6 comparison" })).toBeNull();
 });
@@ -114,11 +114,11 @@ it("discards a late allowed preview after switching to another saved scenario", 
   mocks.preview.mockReturnValue(deferred.promise);
   render(<ScenarioDraftPanel clientId={1} products={products} />);
   fireEvent.click(await screen.findByRole("button", { name: /בדוק הרשאת בסיס/ }));
-  fireEvent.click(screen.getByRole("button", { name: /b — גרסה/ }));
+  fireEvent.click(screen.getByRole("button", { name: /b/ }));
   deferred.resolve(allowed);
   await waitFor(() => expect(mocks.preview).toHaveBeenCalledTimes(1));
   expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull();
-  expect(screen.getByText(/b — גרסה/)).toBeTruthy();
+  expect(screen.getByText(/b/)).toBeTruthy();
 });
 it("does not offer a permission check for a source-stale decision", async () => {
   mocks.list.mockResolvedValue([draft("stale", "needs_revalidation")]);
@@ -172,6 +172,7 @@ it("shows a read-only side-by-side summary for distinct saved scenarios", async 
   second.decisions[0].amount = "70.00";
   mocks.list.mockResolvedValue([first, second]);
   render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByText("פירוט הקצאות לכל החלופות"));
   const table = await screen.findByRole("table");
   expect(table.textContent).toContain("comparison-a");
   expect(table.textContent).toContain("comparison-b");
@@ -183,6 +184,7 @@ it("shows a read-only side-by-side summary for distinct saved scenarios", async 
 it("opens the selected scenario from comparison without altering saved data", async () => {
   mocks.list.mockResolvedValue([draft("compare-one"), draft("compare-two")]);
   render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByText("פירוט הקצאות לכל החלופות"));
   const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
   const buttons = Array.from(comparison.querySelectorAll("button"));
   expect(buttons).toHaveLength(2);
@@ -196,7 +198,7 @@ it("prefills the canonical component ID from the ledger selection without creati
   mocks.list.mockResolvedValue([draft("saved")]);
   render(<ScenarioDraftPanel clientId={1} products={products}
     initialSource={{ productId: "p1", componentCode: "תגמולי_עובד_עד_2000" }} />);
-  await screen.findByRole("button", { name: /saved — גרסה/ });
+  await screen.findByRole("button", { name: /saved/ });
   await waitFor(() => {
     const choices = Array.from(document.querySelectorAll("select"));
     expect(choices.some(select => select.value === "p1|c1")).toBe(true);
@@ -259,6 +261,7 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   fireEvent.change(screen.getByRole("textbox", { name: "סכום מתוכנן (₪)" }), { target: { value: "35.00" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור עריכת טיוטה" }));
   await waitFor(() => expect(revisions[0].decisions[0]?.amount).toBe("35.00"));
+  fireEvent.click(screen.getByText("ניהול חלופה: שינוי שם, שכפול וארכיון"));
   fireEvent.change(screen.getByRole("textbox", { name: "שינוי שם חלופה" }), { target: { value: "חלופה ששמה שונה" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור שם" }));
   await screen.findByRole("heading", { name: "חלופה ששמה שונה" });
@@ -273,6 +276,7 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   await waitFor(() => expect(revisions[1].decisions).toHaveLength(0));
   expect(revisions[0].decisions).toHaveLength(1);
   expect(revisions[0].decisions[0].amount).toBe("35.00");
+  fireEvent.click(await screen.findByText("פירוט הקצאות לכל החלופות"));
   const comparison = await screen.findByRole("region", { name: "השוואת חלופות טיוטה" });
   expect(comparison.textContent).toContain("חלופה ששמה שונה — העתק");
   expect(comparison.textContent).toContain("35.00");
@@ -282,7 +286,8 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   expect(mocks.duplicate).toHaveBeenCalledTimes(1);
   view.unmount();
   render(<ScenarioDraftPanel clientId={1} products={products} />);
-  await screen.findByRole("button", { name: /חלופה ששמה שונה — גרסה/ });
+  await screen.findByRole("button", { name: /חלופה ששמה שונה/ });
+  fireEvent.click(await screen.findByText("פירוט הקצאות לכל החלופות"));
   expect((await screen.findByRole("region", { name: "השוואת חלופות טיוטה" })).textContent)
     .toContain("חלופה ששמה שונה — העתק");
 });
@@ -292,6 +297,7 @@ it("never presents a negative amount as an available remainder", async () => {
   overallocated.decisions[0].amount = "100.01";
   mocks.list.mockResolvedValue([overallocated]);
   render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByText("יתרות מקורות ובדיקת הרשאות מפורטת"));
   const balances = await screen.findByRole("heading", { name: "יתרות טיוטה לפי המקור שנטען" });
   const section = balances.parentElement!;
   expect(section.textContent).toContain("יתרה זמינה לתצוגה חסומה");

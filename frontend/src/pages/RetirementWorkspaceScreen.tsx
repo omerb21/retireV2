@@ -750,7 +750,6 @@ export function RetirementWorkspaceScreen() {
           onScenarioSelected={scenarioId => {
             if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
           }} />
-        <p className="professional-workspace__boundary">הסכומים כאן הם החלטות תכנון, לא קצבאות מחושבות. לצפייה בתוצאה עבור ללשונית "תוצאות והשוואה".</p>
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
@@ -759,7 +758,6 @@ export function RetirementWorkspaceScreen() {
           onScenarioSelected={scenarioId => {
             if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
           }} />
-        <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
       </section>}
     </div>
   </main>;

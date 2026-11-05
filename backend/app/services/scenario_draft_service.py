@@ -139,6 +139,7 @@ def read(db: Session, client_id: int, scenario_id: str) -> dict:
                 PensionProductComponent.component_id.in_(component_ids)
             ))
         }
+        allocated: dict[tuple[str, str], Decimal] = {}
         for item in tracked:
             product = products.get(item["source_product_id"])
             component = components.get(item["source_component_id"])
@@ -146,7 +147,23 @@ def read(db: Session, client_id: int, scenario_id: str) -> dict:
                 or component.product_id != item["source_product_id"]
                 or component.component_code != item["component_code"]
                 or item["source_fingerprint_at_review"] is None
+                or item["product_version_at_review"] != product.version
                 or _source_digest(product, component) != item["source_fingerprint_at_review"]):
+                item["validation_state"] = "needs_revalidation"
+            if component is not None and product is not None and (
+                component.product_id == product.product_id
+                and component.component_code == item["component_code"]
+            ):
+                key = (product.product_id, component.component_id)
+                allocated[key] = allocated.get(key, Decimal("0.00")) + Decimal(item["amount"])
+        for item in tracked:
+            product = products.get(item["source_product_id"])
+            component = components.get(item["source_component_id"])
+            if (product is not None and component is not None
+                    and component.product_id == product.product_id
+                    and component.component_code == item["component_code"]
+                    and allocated.get((product.product_id, component.component_id),
+                                      Decimal("0.00")) > component.balance):
                 item["validation_state"] = "needs_revalidation"
     return {
         "scenario_id": scenario.scenario_id, "client_id": scenario.client_id,

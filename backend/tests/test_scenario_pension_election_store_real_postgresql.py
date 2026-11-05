@@ -229,6 +229,47 @@ def test_atomic_pension_election_store_real_postgresql():
                 if row["decision_id"] != "d"
             )
 
+        # A failed re-insert after the CAS and decision DELETE must roll
+        # back the entire transaction, including the old election and revision.
+        def reject_election_insert(_connection, _cursor, statement, *_args):
+            if ("scenario_draft_pension_elections" in statement.lower()
+                    and statement.lstrip().lower().startswith("insert")):
+                raise RuntimeError("INJECTED_ELECTION_INSERT_FAILURE")
+
+        event.listen(scoped, "before_cursor_execute", reject_election_insert)
+        try:
+            with pytest.raises(RuntimeError, match="INJECTED_ELECTION_INSERT_FAILURE"):
+                with SessionFactory() as db, db.begin():
+                    db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+                    replace(db, 7, "s", DraftReplace(
+                        expected_version=4, name="Should rollback",
+                        decisions=[
+                            DraftDecisionWrite(
+                                decision_id="d", source_product_id="p",
+                                source_component_id="c",
+                                component_code=COMPONENT_CODES[0],
+                                amount=Decimal("40.00"), action="pension",
+                                effective_date=date(2026, 10, 24),
+                            ),
+                            DraftDecisionWrite(
+                                decision_id=second_decision_id,
+                                source_product_id="p", source_component_id="c1",
+                                component_code=COMPONENT_CODES[1],
+                                amount=Decimal("20.00"), action="capital_asset",
+                                effective_date=date(2026, 10, 25),
+                            ),
+                        ],
+                    ), "test")
+        finally:
+            event.remove(scoped, "before_cursor_execute", reject_election_insert)
+        with SessionFactory() as db:
+            assert db.scalar(select(ScenarioDraft.version).where(
+                ScenarioDraft.scenario_id == "s")) == 4
+            assert len(current_elections(db, 7, "s")) == 1
+            assert db.scalar(select(func.count()).select_from(
+                ScenarioDraftRevision).where(
+                    ScenarioDraftRevision.scenario_id == "s")) == 3
+
         # Simulate a canonical balance change committed by another session
         # while the draft replacement transaction is still open. The draft
         # writer must never be able to present stale source facts as current

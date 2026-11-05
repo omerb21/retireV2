@@ -326,3 +326,28 @@ it("never selects a stale alternative ID when the client changes", async () => {
   expect(await screen.findByRole("heading", { name: "client-b-alternative" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "client-a-alternative" })).toBeNull();
 });
+
+it("saves a whole-program conversion as one versioned draft replacement, keeping prior decisions", async () => {
+  const prior = draft("batch-planning");
+  mocks.list.mockResolvedValue([prior]);
+  mocks.replace.mockResolvedValue(prior);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByRole("button", { name: "המר תוכנית Product" }));
+  fireEvent.change(screen.getByLabelText("תאריך ביצוע מתוכנן"), {
+    target: { value: "2028-01-15" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "שמור המרה בחלופה" }));
+  await waitFor(() => expect(mocks.replace).toHaveBeenCalledOnce());
+  const [id, expectedDraft, decisionBatch] = mocks.replace.mock.calls[0] as [
+    number, ScenarioDraft, Array<{ decision_id?: string; amount: string; effective_date: string }>,
+  ];
+  expect(id).toBe(1);
+  expect(expectedDraft.scenario_id).toBe("batch-planning");
+  expect(decisionBatch).toHaveLength(2);
+  expect(decisionBatch[0]).toEqual(expect.objectContaining({
+    decision_id: "decision-batch-planning", amount: "30.00",
+  }));
+  expect(decisionBatch[1]).toEqual(expect.objectContaining({
+    amount: "70.00", effective_date: "2028-01-15",
+  }));
+});

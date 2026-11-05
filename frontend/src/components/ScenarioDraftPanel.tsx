@@ -249,6 +249,9 @@ export function ScenarioDraftPanel({
         {stage6CapabilityLoading ? "בודק אפשרות להצגת תוצאות..." : "חישובי קצבה אינם מורשים בסביבה הזאת."}
       </p>}
       {view === "planning" && <>
+      {active.status === "needs_revalidation" && <p role="status" className="professional-workspace__error">
+        נתוני המקור של החלופה השתנו. יש לעדכן את ההחלטות הרלוונטיות לפני המשך התכנון.
+      </p>}
       {active.status !== "archived" && <>
         <details>
           <summary>ניהול חלופה: שינוי שם, שכפול וארכיון</summary>
@@ -261,12 +264,7 @@ export function ScenarioDraftPanel({
         </details>
         {editingDecisionId !== null && <form onSubmit={addDecision} aria-label="עריכת המרה מתוכננת">
           <h4>עריכת המרה</h4>
-          <label>רכיב מתוך התיק
-            <select value={source} onChange={event => setSource(event.target.value)}>
-              <option value="">בחר מקור</option>
-              {sources.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
-            </select>
-          </label>
+          <p>רכיב: <strong>{sources.find(item => item.key === source)?.label ?? "המקור אינו זמין בתיק"}</strong></p>
           <label>סכום מתוכנן (₪) <input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)}/></label>
           <label>יעד <select value={action} onChange={event => setAction(event.target.value as DraftDecisionInput["action"])}>
             <option value="pension">קצבה — טיוטה</option>

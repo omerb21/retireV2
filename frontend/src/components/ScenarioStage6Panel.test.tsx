@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as testingRender, screen, waitFor } from "@testing-library/react";
 import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 
@@ -23,6 +23,21 @@ vi.mock("../api/scenarioStage6Api", () => ({
     && value.execution_allowed === false && value.financial_result === null
     && value.manifest_fingerprint === value.allocation_evidence.manifest_fingerprint,
 }));
+// Existing financial-contract tests inspect controls inside intentionally collapsed
+// professional sections. Expand them in the harness without changing runtime UX.
+function render(ui: Parameters<typeof testingRender>[0]) {
+  const view = testingRender(ui);
+  const reveal = () => {
+    view.container.querySelectorAll("details").forEach(element => { element.open = true; });
+  };
+  reveal();
+  const rerender = view.rerender;
+  return { ...view, rerender: (next: Parameters<typeof testingRender>[0]) => {
+    rerender(next);
+    reveal();
+  } };
+}
+
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const scenario: ScenarioDraft = {
@@ -294,7 +309,7 @@ it("shows a single-decision gross total only from a complete aggregate envelope"
   mock.list.mockResolvedValue([election]);
   mock.aggregate.mockResolvedValue(aggregate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   const status = await screen.findByLabelText("מצב חישוב החלופה");
   expect(status).toHaveTextContent("החישוב הושלם");
   expect(status).toHaveTextContent("סך קצבה חודשית ברוטו: 5.00 ₪");
@@ -317,7 +332,7 @@ it("shows the exact total for two comparable authorized decisions", async () => 
   }));
   render(<ScenarioStage6Panel clientId={1}
     scenario={{ ...scenario, decisions: [...scenario.decisions, d2] }} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   const status = await screen.findByLabelText("מצב חישוב החלופה");
   expect(status).toHaveTextContent("סך קצבה חודשית ברוטו: 12.35 ₪");
   expect(screen.getByText(/אומדן קצבה חודשית ברוטו: 5.00/)).toBeInTheDocument();
@@ -340,7 +355,7 @@ it("keeps one ready decision visible but never totals a partial aggregate", asyn
   }));
   render(<ScenarioStage6Panel clientId={1}
     scenario={{ ...scenario, decisions: [...scenario.decisions, d2] }} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   const status = await screen.findByLabelText("מצב חישוב החלופה");
   expect(status).toHaveTextContent("תוצאה חלקית");
   expect(status).toHaveTextContent("לא מוצג סכום כולל");
@@ -364,7 +379,7 @@ it("blocks a total for different time bases", async () => {
   }));
   render(<ScenarioStage6Panel clientId={1}
     scenario={{ ...scenario, decisions: [...scenario.decisions, d2] }} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   const status = await screen.findByLabelText("מצב חישוב החלופה");
   expect(status).toHaveTextContent("החישוב חסום");
   expect(status).toHaveTextContent("STAGE6_AGGREGATE_RETIREMENT_TARGET_DATE_MISMATCH");
@@ -375,7 +390,7 @@ it("rejects a malformed aggregate fingerprint without presenting its total", asy
   mock.list.mockResolvedValue([election]);
   mock.aggregate.mockResolvedValue(aggregate({ aggregate_fingerprint: "not-a-hash" }));
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   await screen.findByText("STAGE6_AGGREGATE_AUTHORITY_INCOMPLETE");
   expect(screen.queryByText(/סך קצבה חודשית ברוטו/)).toBeNull();
 });
@@ -385,7 +400,7 @@ it("discards a late aggregate after the scenario version changes", async () => {
   const waiting = deferred<any>();
   mock.aggregate.mockReturnValue(waiting.promise);
   const view = render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   view.rerender(<ScenarioStage6Panel clientId={1}
     scenario={{ ...scenario, version: 4 }} onSaved={vi.fn()}/>);
   waiting.resolve(aggregate());
@@ -397,7 +412,7 @@ it("immediately invalidates an aggregate after pension terms change", async () =
   mock.list.mockResolvedValue([election]);
   mock.aggregate.mockResolvedValue(aggregate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "חשב סיכום קצבאות מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק תוצאת קצבה" }));
   await screen.findByText(/סך קצבה חודשית ברוטו: 5.00/);
   fireEvent.change(screen.getByLabelText("בחירת שאירים"), {
     target: { value: "changed terms" },
@@ -680,4 +695,13 @@ it("drops a late cashflow after switching client and alternative generation", as
   waiting.resolve(cashflow());
   await waitFor(() => expect(mock.list).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("1205.00 ₪")).toBeNull();
+});
+
+it("keeps detailed professional inputs closed until the user opens them", async () => {
+  mock.list.mockResolvedValue([election]);
+  testingRender(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "בדוק תוצאת קצבה" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeNull();
+  fireEvent.click(screen.getByText("בחירות קצבה, שאירים ואישור מקדם"));
+  expect(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeTruthy();
 });

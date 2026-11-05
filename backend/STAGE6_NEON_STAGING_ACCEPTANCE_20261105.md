@@ -47,7 +47,7 @@ Provide the **staging-only** login password when prompted. The smoke script chec
 - Stage 6 capability on both clients.
 - Missing-client handling and logout.
 
-The live HTTP check has **not yet run successfully** and must not be marked PASS.
+The authenticated live HTTP check was completed successfully on 2026-11-05: all 13 steps passed and the user supplied `STAGE6_LIVE_SMOKE_PASS`. Readiness, unauthenticated denial, login, session, A/B client list and details, capability on both, missing-client handling, logout and session invalidation passed.
 This staging environment does not establish correctness of all user-interface flows,
 all financial results, tax/net computation, or production deploy readiness.
 
@@ -57,3 +57,12 @@ all financial results, tax/net computation, or production deploy readiness.
 - Do not merge the PR until live HTTP and manual browser review acceptance.
 - Use synthetic data only in staging.
 - Do not trigger GitHub Actions.
+
+## Next gate prepared
+- Created `backend/scripts/stage6_live_workflow.py` on the review branch.
+- It is idempotent for named synthetic records: creates one canonical pension product for each fixture client, two planning alternatives for A and one for B.
+- It checks that the draft contains canonical source fingerprints, that a gross result remains BLOCKED without professional admission, and that A/B cannot cross-read scenario IDs.
+- It uses authenticated Staging APIs, not direct table inserts, and refuses to alter non-synthetic clients.
+- **Not yet executed:** do not mark this synthetic scenario workflow test PASS until its actual output is received.
+
+The browser showed authenticated client list A and B; the scenario UI with calculated/blocking evidence still requires user verification. No production changes.

@@ -708,3 +708,45 @@ def test_historical_overallocation_is_explicitly_stale_and_not_admissible(env):
         status = assess(db, 1, created["scenario_id"])
         assert status["financial_result"] is None
         assert "SOURCE_OVERALLOCATED" in {x["code"] for x in status["blockers"]}
+
+
+def test_a1_a2_b1_api_isolation_on_read_mutation_clone_archive_and_reload(env):
+    client, factory = env
+    cases = [(1, "A1"), (1, "A2"), (2, "B1")]
+    saved = {}
+    for tenant, title in cases:
+        created = client.post(f"/api/clients/{tenant}/scenario-drafts",
+                              json={"name": title})
+        assert created.status_code == 200, created.text
+        saved[title] = (tenant, created.json()["scenario_id"])
+    for title, (owner, scenario_id) in saved.items():
+        stranger = 2 if owner == 1 else 1
+        target = f"/api/clients/{stranger}/scenario-drafts/{scenario_id}"
+        assert client.get(target).status_code == 404
+        assert client.put(target, json={
+            "name": "Cross-tenant", "expected_version": 1, "decisions": [],
+        }).status_code == 404
+        assert client.post(target + "/rename", json={
+            "name": "Cross-tenant", "expected_version": 1,
+        }).status_code == 404
+        assert client.post(target + "/archive", json={
+            "expected_version": 1,
+        }).status_code == 404
+        assert client.post(target + "/duplicate", json={
+            "name": "Cross-tenant clone",
+        }).status_code == 404
+
+    # A1 and A2 share client A but are distinct drafts with independent state.
+    a1 = f"/api/clients/1/scenario-drafts/{saved['A1'][1]}"
+    a2 = f"/api/clients/1/scenario-drafts/{saved['A2'][1]}"
+    edited = client.put(a1, json={
+        "name": "A1 updated", "expected_version": 1, "decisions": [],
+    })
+    assert edited.status_code == 200
+    assert client.get(a2).json()["name"] == "A2"
+    assert client.get(a2).json()["version"] == 1
+
+    # Reload using the persisted DB through a distinct HTTP request.
+    result = client.get("/api/clients/1/scenario-drafts").json()
+    assert {row["name"] for row in result} == {"A1 updated", "A2"}
+    assert client.get("/api/clients/2/scenario-drafts").json()[0]["name"] == "B1"

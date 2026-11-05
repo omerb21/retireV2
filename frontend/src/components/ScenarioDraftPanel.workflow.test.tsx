@@ -168,6 +168,7 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   fireEvent.click(screen.getByRole("button", { name: "שמור המרה בחלופה" }));
   await waitFor(() => expect(revisions[0].decisions[0]?.amount).toBe("25.00"));
   fireEvent.click(await screen.findByRole("button", { name: "ערוך" }));
+  expect(screen.queryByRole("combobox", { name: "רכיב מתוך התיק" })).toBeNull();
   fireEvent.change(screen.getByRole("textbox", { name: "סכום מתוכנן (₪)" }), { target: { value: "35.00" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור שינוי" }));
   await waitFor(() => expect(revisions[0].decisions[0]?.amount).toBe("35.00"));

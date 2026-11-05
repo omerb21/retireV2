@@ -74,7 +74,7 @@ def show_safe_failure_summary(stderr: str) -> None:
     # Report code location without dumping any Python source or filesystem
     # directory (the traceback itself may include a credential-bearing URL).
     frames = re.findall(
-        r'(?m)^\\s*File "[^"\\r\\n]*[/\\\\]([^/\\\\"]+\\.py)", line (\\d+), in ([A-Za-z_][A-Za-z_0-9]*)',
+        r'(?m)^\s*File "[^"\r\n]*[/\\]([^/\\"]+\.py)", line (\d+), in ([A-Za-z_][A-Za-z_0-9]*)',
         stderr,
     )
     if frames:
@@ -83,7 +83,7 @@ def show_safe_failure_summary(stderr: str) -> None:
 
     # Restrict the textual detail to safe non-connection-related messages.
     failure = re.findall(
-        r"(?m)^\\s*(?:TypeError|ValueError|RuntimeError|ImportError|AttributeError):\\s*([^\\r\\n]+)",
+        r"(?m)^\s*(?:TypeError|ValueError|RuntimeError|ImportError|AttributeError):\s*([^\r\n]+)",
         stderr,
     )
     if failure:

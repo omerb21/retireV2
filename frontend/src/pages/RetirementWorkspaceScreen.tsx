@@ -65,6 +65,9 @@ export function RetirementWorkspaceScreen() {
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
   const [chosenComponent, setChosenComponent] = useState<{ productId: string; componentCode: string } | null>(null);
+  const [scenarioChoice, setScenarioChoice] = useState<{ clientId: number; scenarioId: string } | null>(null);
+  // Never reuse another client's scenario, including during A -> B async transitions.
+  const chosenScenarioId = scenarioChoice?.clientId === clientId ? scenarioChoice.scenarioId : null;
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
@@ -100,6 +103,7 @@ export function RetirementWorkspaceScreen() {
     setRead({ state: "loading" });
     setStep("portfolio");
     setChosenComponent(null);
+    setScenarioChoice(null);
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
@@ -752,12 +756,20 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>
-        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent} />
+        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent}
+          preferredScenarioId={chosenScenarioId}
+          onScenarioSelected={scenarioId => {
+            if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
+          }} />
         <p className="professional-workspace__boundary">הסכומים כאן הם החלטות תכנון, לא קצבאות מחושבות. לצפייה בתוצאה עבור ללשונית "תוצאות והשוואה".</p>
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
-        <ScenarioDraftPanel clientId={clientId} products={products} view="results" />
+        <ScenarioDraftPanel clientId={clientId} products={products} view="results"
+          preferredScenarioId={chosenScenarioId}
+          onScenarioSelected={scenarioId => {
+            if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
+          }} />
         <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
       </section>}
     </div>

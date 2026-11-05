@@ -9,6 +9,7 @@ Does not create, modify, export, or delete any customer records.
 from __future__ import annotations
 
 import getpass
+import os
 import sys
 
 import httpx
@@ -38,7 +39,7 @@ def expect(response: httpx.Response, status: int, label: str) -> dict | list | N
 
 
 def main() -> int:
-    password = getpass.getpass("Staging password (hidden): ")
+    password = os.environ.get("STAGE6_SMOKE_PASSWORD") or getpass.getpass("Staging password (hidden): ")
     if not password:
         print("STOP: staging password is required")
         return 2

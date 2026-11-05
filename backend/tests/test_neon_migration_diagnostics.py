@@ -46,3 +46,12 @@ def test_reports_windows_python_type_error_location(capsys):
     assert "MIGRATION_ERROR_TYPE: TypeError" in output
     assert "FAILURE_LOCATION: env.py:32 (<module>)" in output
     assert "MIGRATION_ERROR_DETAIL: unsupported operand type(s)" in output
+
+def test_python_version_gate_matches_deployed_runtime():
+    from scripts.safe_neon_stage6_runner import supported_migration_python
+
+    assert supported_migration_python((3, 11, 9))
+    assert supported_migration_python((3, 12, 8))
+    assert not supported_migration_python((3, 14, 1))
+    assert not supported_migration_python((3, 13, 5))
+

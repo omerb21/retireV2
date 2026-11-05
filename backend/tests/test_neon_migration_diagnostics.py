@@ -36,10 +36,10 @@ def test_reports_non_sql_error_class(capsys):
 
 def test_reports_windows_python_type_error_location(capsys):
     trace = (
-        'Traceback (most recent call last):\\n'
-        '  File "C:\\\\work\\\\backend\\\\alembic\\\\env.py", line 32, in <module>\\n'
-        '    configure()\\n'
-        'TypeError: unsupported operand type(s) for +: NoneType and str\\n'
+        'Traceback (most recent call last):\n'
+        '  File "C:\\\\work\\\\backend\\\\alembic\\\\env.py", line 32, in <module>\n'
+        '    configure()\n'
+        'TypeError: unsupported operand type(s) for +: NoneType and str\n'
     )
     show_safe_failure_summary(trace)
     output = capsys.readouterr().out

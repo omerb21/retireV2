@@ -5,7 +5,7 @@ Verification date: 2026-11-05
 ## Runtime and isolation
 - Staging Render web service: `srv-dbm5nerbc2fs738d4kqg`, Frankfurt, Free.
 - Public staging URL: https://retirev2-stage6-review-20261105.onrender.com
-- Auto deploy disabled. Currently deployed staging app commit: `bc637bf6335d148cafc2ac4c764a9679a9f8a2d4`.
+- Auto deploy disabled. Current validated deployed staging app commit: `8df8629b2df42d5291393754f3afbeda6df28bbb` (deploy `dep-dbm6op8ae00c738h2utg`).
 - Source branch: `feature/neon-stage6-db-reconnect-20261105`.
 - Neon: `broad-moon-42906584`, DB `retire_v2_stage6_validation`, PostgreSQL 16.15.
 - DB connection uses the restricted application role `retire_v2_stage6_app`.
@@ -19,7 +19,8 @@ Verification date: 2026-11-05
 - Windows Python 3.11 bootstrap: 15 tests passed.
 - Stage 6 unit/API: 201 tests passed; one non-blocking library deprecation warning.
 - Disposable localhost PostgreSQL 16 Docker integration: 9 tests passed; container removed.
-- Render staging Docker deployment: status `live`.
+- Render staging Docker deployment: status `live`, with frontend TypeScript/Vite build validated.
+- Full frontend Vitest gate (run in staging Docker build, no GitHub Actions): **371/371 passed across 45 test files**. The scenario UI refactor and selected-alternative tab transitions are covered.
 - Authenticated live HTTP smoke: `STAGE6_LIVE_SMOKE_PASS` with 13 individually reported PASS outcomes (readiness, negative auth, login, session, A/B clients and capability, missing client, logout/session invalidation).
 - Authenticated synthetic product/scenario workflow: `STAGE6_SYNTHETIC_WORKFLOW_PASS`. Product creation, two A alternatives, one B alternative, professional-admission fail-closed responses, and cross-client scenario isolation all passed.
 
@@ -37,10 +38,17 @@ Read-only SQL against staging Neon after workflow:
 
 ## Acceptance limitation and next gate
 - Fail-closed gross estimations have been verified with missing professional evidence; **a positive READY gross pension value has NOT been verified live**.
-- The user has seen and confirmed the authenticated A/B client list, but **manual scenario screen acceptance is pending**: open A workspace, choose `תכנון תרחישים`, review A1/A2, check Stage 6 panel and blockers, switch to B and verify B-only context.
+- The user reviewed the scenario workflow screenshots and confirmed the simplified UI looks good. The redesigned interface separates planning and results, hides secondary professional diagnostics behind expandable sections, and preserves the selected alternative between tabs while respecting client scope.
+- A later manual positive-amount check with controlled documentary evidence remains out of scope of this UX acceptance.
 - Further positive financial-estimate acceptance requires explicit synthetic professional evidence with controlled admission; tax, net, actual retirement advice, and production release are out of scope.
 - No merge into development/main, no production deployment, no manual GitHub Actions run.
-- Keep this PR as draft pending UI review and subsequent release decision.
+- Keep this PR as draft pending **live positive-amount review and subsequent release decision**.
+- The real PostgreSQL 16 Stage 6 P1D integration test does exercise a synthetic `RESULT_READY` gross calculation, aggregate and comparison successfully. It is not a substitute for a positive result on the persistent Staging Neon service.
+
+## Frontend acceptance details
+- Full suite was executed as `npm test -- --reporter=dot` in a Docker build stage, followed by a successful TypeScript/Vite build.
+- One async UI test and a browser-like `<details>` disclosure assertion were repaired; all 371 final tests passed.
+- Production Render remains on branch `codex/render-v2-runtime-recovery-01`, with auto-deploy off.
 
 ## Runbook
 `backend/scripts/stage6_live_smoke.py`: authenticated read-only HTTP checks.

@@ -12,7 +12,7 @@ import {
   renameScenarioDraft, replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
 
-interface Props { clientId: number; products: PensionProduct[]; initialSource?: { productId: string; componentCode: string } | null }
+interface Props { clientId: number; products: PensionProduct[]; initialSource?: { productId: string; componentCode: string } | null; view?: "planning" | "results" }
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "אירעה שגיאה בשמירת הטיוטה.";
 }
@@ -26,7 +26,7 @@ function displayCents(value: bigint): string {
   const abs = value < 0n ? -value : value;
   return (value < 0n ? "-" : "") + (abs / 100n).toString() + "." + (abs % 100n).toString().padStart(2, "0");
 }
-export function ScenarioDraftPanel({ clientId, products, initialSource }: Props) {
+export function ScenarioDraftPanel({ clientId, products, initialSource, view = "planning" }: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -248,23 +248,32 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
     }
   }
   return <section aria-label="חלופות שמורות בשרת">
-    <h2>חלופות תכנון שמורות</h2>
+    <h2>{view === "planning" ? "בחר חלופה ותכנן" : "תוצאות החלופה"}</h2>
     <p className="professional-workspace__boundary">
-      החלופות נשמרות בשרת בנפרד מנתוני תיק הלקוח. כל החלטה היא טיוטה לא מאומתת:
-      לא בוצעה בדיקת זכאות, הרשאה מקצועית, מס, קצבה או המרה כספית.
+      {view === "planning"
+        ? "בחר חלופה קיימת או צור חדשה, והקצה סכומים ממקורות התיק."
+        : "מוצגות רק תוצאות ברוטו שקיבלו אישור מקצועי. ללא אישור יוצגו החסמים במקום סכום."}
     </p>
     {loading && <p>טוען טיוטות...</p>}
     {error && <p role="alert">{error}</p>}
-    <form onSubmit={create}>
-      <label>שם חלופה חדשה <input value={name} maxLength={255} onChange={event => setName(event.target.value)} /></label>
-      <button type="submit" disabled={busy || !name.trim()}>צור ושמור חלופה</button>
-    </form>
-    <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
-    <ul>{visibleDrafts.map(item => <li key={item.scenario_id}>
-      <button type="button" onClick={() => selectScenario(item.scenario_id)} disabled={busy}>
-        {item.name} — גרסה {item.version} {item.status === "archived" ? "(בארכיון)" : ""}
-      </button>
-    </li>)}</ul>
+    {view === "planning" && <details open={visibleDrafts.length === 0}>
+      <summary>יצירת חלופה חדשה</summary>
+      <form onSubmit={create}>
+        <label>שם חלופה חדשה <input value={name} maxLength={255} onChange={event => setName(event.target.value)} /></label>
+        <button type="submit" disabled={busy || !name.trim()}>צור ושמור חלופה</button>
+      </form>
+    </details>}
+    {visibleDrafts.length > 0 && <div role="group" aria-label="בחירת חלופה">
+      <strong>חלופה פעילה: </strong>
+      {visibleDrafts.map(item => <button type="button" key={item.scenario_id}
+        aria-pressed={selected === item.scenario_id}
+        onClick={() => selectScenario(item.scenario_id)} disabled={busy}>
+        {item.name}{item.status === "archived" ? " (בארכיון)" : ""}
+      </button>)}
+    </div>}
+    <details>
+      <summary>רענון ובדיקות בסיס התיק</summary>
+      <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
     <section aria-label="מוכנות חישוב התיק הקיים">
       <h3>מוכנות מנועי החישוב — תיק קיים</h3>
       <p className="professional-workspace__boundary">זו בדיקה לקריאה בלבד של בסיס התיק הנוכחי, ולא חישוב עבור אחת החלופות. לא ניתן עדיין להסיק ממנה קצבה, הון או פער הכנסה של חלופה.</p>
@@ -280,7 +289,10 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
         <p>מוכנות בסיס התיק אינה הרשאה לחשב תרחיש שמור או לבצע המרה כספית.</p>
       </div>}
     </section>
-    {visibleDrafts.length > 0 && <section aria-label="השוואת חלופות טיוטה">
+    </details>
+    {view === "planning" && visibleDrafts.length > 0 && <details>
+      <summary>פירוט הקצאות לכל החלופות</summary>
+      <section aria-label="השוואת חלופות טיוטה">
       <h3>השוואת חלופות — תכנון בלבד</h3>
       <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>
       <table>
@@ -298,11 +310,21 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
           </tr>;
         })}</tbody>
       </table>
-    </section>}
-    {stage6Enabled &&
+      </section>
+    </details>}
+    {view === "results" && stage6Enabled &&
       <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={visibleDrafts}/>}
     {active && <div>
       <h3>{active.name}</h3>
+      {view === "results" && stage6Enabled && active.decisions.length > 0 &&
+        <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`}
+          clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/>}
+      {view === "results" && !stage6Enabled && <p role="status">
+        {stage6CapabilityLoading ? "בודק אפשרות להצגת תוצאות..." : "חישובי קצבה אינם מורשים בסביבה הזאת."}
+      </p>}
+      {view === "planning" && <>
+      <details>
+        <summary>שלבי העבודה והבדיקות המקצועיות</summary>
       <section aria-label="רצף עבודה בחלופה">
         <h4>רצף עבודה — {active.name}</h4>
         <ol>
@@ -324,16 +346,19 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
             : stage6CapabilityLoading ? "נבדקת הרשאת סביבת Stage 6" : "אינם מורשים בסביבה זו"}</li>
         </ol>
       </section>
+      </details>
       <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
-      {stage6Enabled && active.decisions.length > 0 &&
-        <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`} clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/> }
       {active.status !== "archived" && <>
+        <details>
+          <summary>ניהול חלופה: שינוי שם, שכפול וארכיון</summary>
         <form onSubmit={renameActive}>
           <label>שינוי שם חלופה <input maxLength={255} value={rename} onChange={event => setRename(event.target.value)} placeholder={active.name}/></label>
           <button type="submit" disabled={busy || !rename.trim()}>שמור שם</button>
         </form>
         <button type="button" disabled={busy} onClick={() => void run(() => duplicateScenarioDraft(clientId, active.scenario_id, active.name + " — העתק"))}>שכפל חלופה</button>
         <button type="button" disabled={busy} onClick={() => void run(() => archiveScenarioDraft(clientId, active))}>העבר לארכיון</button>
+        </details>
+        <h4>הוסף החלטת תכנון</h4>
         <form onSubmit={addDecision}>
           <label>רכיב מתוך התיק
             <select value={source} onChange={event => setSource(event.target.value)}>
@@ -403,6 +428,8 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
           <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק החלטת טיוטה</button>
         </>}
       </li>)}</ul>
+      <details>
+      <summary>יתרות מקורות ובדיקת הרשאות מפורטת</summary>
       <p className="professional-workspace__boundary">בדיקת הרשאת הבסיס אינה אישור זכאות, מס, סכום הקצאה או ביצוע המרה. התוצאה זמנית ונמחקת עם טעינת החלופה מחדש.</p>
       <h4>יתרות טיוטה לפי המקור שנטען</h4>
       <p className="professional-workspace__boundary">
@@ -420,6 +447,8 @@ export function ScenarioDraftPanel({ clientId, products, initialSource }: Props)
           {(base === null || assigned > base) && <strong role="alert"> — נדרש אימות מחדש; אין אישור להקצאה</strong>}
         </li>;
       })}</ul>
+      </details>
+      </>}
     </div>}
   </section>;
 }

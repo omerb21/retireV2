@@ -224,6 +224,48 @@ def test_atomic_pension_election_store_real_postgresql():
             renamed = rename(db, 7, "s", "Renamed", 3, "test")
             assert renamed["version"] == 4
             assert len(current_elections(db, 7, "s")) == 1
+            second_decision_id = next(
+                row["decision_id"] for row in renamed["decisions"]
+                if row["decision_id"] != "d"
+            )
+
+        # Simulate a canonical balance change committed by another session
+        # while the draft replacement transaction is still open. The draft
+        # writer must never be able to present stale source facts as current
+        # on a fresh read or retain the stale election as usable.
+        with SessionFactory() as draft_db:
+            with draft_db.begin():
+                draft_db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+                changed = replace(draft_db, 7, "s", DraftReplace(
+                    expected_version=4, name="Renamed",
+                    decisions=[
+                        DraftDecisionWrite(
+                            decision_id="d", source_product_id="p",
+                            source_component_id="c", component_code=COMPONENT_CODES[0],
+                            amount=Decimal("40.00"), action="pension",
+                            effective_date=date(2026, 10, 24),
+                        ),
+                        DraftDecisionWrite(
+                            decision_id=second_decision_id, source_product_id="p",
+                            source_component_id="c1", component_code=COMPONENT_CODES[1],
+                            amount=Decimal("20.00"), action="capital_asset",
+                            effective_date=date(2026, 10, 25),
+                        ),
+                    ],
+                ), "test")
+                assert changed["version"] == 5
+                with engine.begin() as updater:
+                    updater.execute(PensionProductComponent.__table__.update().where(
+                        PensionProductComponent.component_id == "c"
+                    ).values(balance=Decimal("39.00")))
+        with SessionFactory() as db:
+            from app.services.scenario_draft_service import read as read_draft
+            stale = read_draft(db, 7, "s")
+            assert stale["status"] == "needs_revalidation"
+            assert next(row for row in stale["decisions"]
+                        if row["decision_id"] == "d")["validation_state"] == (
+                            "needs_revalidation")
+            assert current_elections(db, 7, "s") == []
 
         # Material change removes only the relevant old pension election.
         with SessionFactory() as db, db.begin():
@@ -232,7 +274,7 @@ def test_atomic_pension_election_store_real_postgresql():
                 ScenarioDraftDecision.scenario_id == "s")).all()
             second = next(row for row in rows if row.decision_id != "d")
             draft = replace(db, 7, "s", DraftReplace(
-                expected_version=4, name="Changed",
+                expected_version=5, name="Changed",
                 decisions=[
                     DraftDecisionWrite(
                         decision_id="d", source_product_id="p",
@@ -248,7 +290,7 @@ def test_atomic_pension_election_store_real_postgresql():
                     ),
                 ],
             ), "test")
-            assert draft["version"] == 5
+            assert draft["version"] == 6
             assert current_elections(db, 7, "s") == []
             assert db.scalar(select(func.count()).select_from(
                 ScenarioDraftPensionElection)) == 0

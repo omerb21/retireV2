@@ -34,6 +34,7 @@ Read-only SQL against staging Neon after workflow:
 - B1: one ILS 90,000.00 draft pension allocation, version 2.
 - All three draft decisions have source fingerprints and `validation_state=unverified`.
 - Zero professional factor admissions and zero pension election records.
+- Latest read-only Neon verification: 0 planning-input decisions/retirement targets. Therefore a persistent-Staging `RESULT_READY` gross calculation cannot be responsibly demonstrated using current fixtures: no pension election, no planning target and no factor evidence have been set.
 - Alembic revision remains `d6f1a9c3b704`.
 
 ## Acceptance limitation and next gate

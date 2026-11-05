@@ -12,7 +12,14 @@ import {
   renameScenarioDraft, replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
 
-interface Props { clientId: number; products: PensionProduct[]; initialSource?: { productId: string; componentCode: string } | null; view?: "planning" | "results" }
+interface Props {
+  clientId: number;
+  products: PensionProduct[];
+  initialSource?: { productId: string; componentCode: string } | null;
+  view?: "planning" | "results";
+  preferredScenarioId?: string | null;
+  onScenarioSelected?: (scenarioId: string) => void;
+}
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "אירעה שגיאה בשמירת הטיוטה.";
 }
@@ -26,7 +33,10 @@ function displayCents(value: bigint): string {
   const abs = value < 0n ? -value : value;
   return (value < 0n ? "-" : "") + (abs / 100n).toString() + "." + (abs % 100n).toString().padStart(2, "0");
 }
-export function ScenarioDraftPanel({ clientId, products, initialSource, view = "planning" }: Props) {
+export function ScenarioDraftPanel({
+  clientId, products, initialSource, view = "planning",
+  preferredScenarioId = null, onScenarioSelected,
+}: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -80,6 +90,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource, view = "
     setPermissions({});
     setCheckingPermission(null);
     setSelected(id);
+    onScenarioSelected?.(id);
     setEditingDecisionId(null);
     setAmount("");
     setRename("");
@@ -92,6 +103,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource, view = "
     setPermissions({});
     setCheckingPermission(null);
     setSelected(current => prefer ?? (list.some(item => item.scenario_id === current) ? current : list[0]?.scenario_id ?? null));
+    if (prefer && list.some(item => item.scenario_id === prefer)) onScenarioSelected?.(prefer);
   }
   useEffect(() => {
     let mounted = true;
@@ -108,7 +120,8 @@ export function ScenarioDraftPanel({ clientId, products, initialSource, view = "
       if (!mounted) return;
       if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
       setDrafts(list);
-      setSelected(list[0]?.scenario_id ?? null);
+      setSelected(list.some(item => item.scenario_id === preferredScenarioId)
+        ? preferredScenarioId : list[0]?.scenario_id ?? null);
     }).catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; permissionEpoch.current += 1; };

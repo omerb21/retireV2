@@ -386,3 +386,68 @@
 .professional-workspace__identity:has(> section) > section.is-empty p {
   margin: 5px 0;
 }
+
+
+/* Scenario workbench: keep everyday planning focused, disclose technical
+   controls only when a planner deliberately expands them. */
+.scenario-workflow { display: grid; gap: 15px; }
+.scenario-workflow > h2 { margin: 0; font-size: 19px; }
+.scenario-workflow > .professional-workspace__boundary { margin: 0; }
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 9px;
+  border: 1px solid #d5e2ef; border-radius: 10px;
+  padding: 12px 14px; background: #f7faff;
+}
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] strong {
+  margin-inline-end: 6px;
+}
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] button {
+  border: 1px solid #b5cce4; border-radius: 8px; background: white;
+  color: #20547f; padding: 8px 13px; font-weight: 600;
+}
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] button[aria-pressed="true"] {
+  background: #175b9e; color: white; border-color: #175b9e;
+}
+.scenario-workflow details {
+  border: 1px solid #dce6f1; border-radius: 9px;
+  background: #fbfdff; padding: 0 13px;
+}
+.scenario-workflow details > summary {
+  cursor: pointer; padding: 11px 4px; font-size: 13px;
+  font-weight: 700; color: #355a7a;
+}
+.scenario-workflow details[open] {
+  padding-bottom: 13px;
+}
+.scenario-workflow details[open] > summary {
+  border-bottom: 1px solid #e1e9f3; margin-bottom: 10px;
+}
+.scenario-workflow form {
+  margin-top: 12px; padding: 13px;
+  background: #f8fbff; border: 1px solid #dae6f2;
+  border-radius: 9px;
+}
+.scenario-workflow > div > h3 { margin: 2px 0 9px; }
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] {
+  padding: 16px; border: 1px solid #c9ddee; border-radius: 10px;
+  background: #f5faff;
+}
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] > h5 {
+  margin: 0 0 9px; font-size: 16px;
+}
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] > button {
+  border: 0; background: #175b9e; color: white;
+  padding: 10px 15px; border-radius: 7px; font-weight: 700;
+}
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] > button:disabled {
+  background: #a7b8c9;
+}
+.scenario-workflow [role="alert"] { overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .scenario-workflow [role="group"][aria-label="בחירת חלופה"] {
+    align-items: stretch; flex-direction: column;
+  }
+  .scenario-workflow [role="group"][aria-label="בחירת חלופה"] button {
+    width: 100%; text-align: right;
+  }
+}

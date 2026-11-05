@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -38,6 +39,37 @@ def validate_connection_string(value: str) -> None:
         raise ValueError("TLS is required")
     if parsed.query.get("channel_binding", "require") != "require":
         raise ValueError("Duplicated or invalid channel_binding")
+
+
+def show_safe_failure_summary(stderr: str) -> None:
+    """Print only allowlisted Alembic revision IDs and database error types."""
+    revs = re.findall(r"Running upgrade[^\\r\\n]*?->\\s+([0-9a-f]{12})", stderr)
+    if revs:
+        print("LAST_ATTEMPTED_MIGRATION: " + revs[-1])
+    else:
+        print("LAST_ATTEMPTED_MIGRATION: not reported")
+
+    pg = re.search(
+        r"(?m)^\\s*psycopg2\\.errors\\.([A-Za-z][A-Za-z0-9_]*):\\s*([^\\r\\n]*)",
+        stderr,
+    )
+    if pg:
+        print("POSTGRES_ERROR_TYPE: " + pg.group(1))
+        detail = pg.group(2).strip()
+        forbidden = ("postgresql://", "postgresql+", "password", "npg_", "secret", "://")
+        if detail and not any(token in detail.lower() for token in forbidden):
+            print("POSTGRES_ERROR_DETAIL: " + detail[:180])
+        return
+
+    kind = re.search(
+        r"(?m)^\\s*(?:sqlalchemy\\.exc\\.|alembic\\.util\\.exc\\.)?"
+        r"([A-Za-z][A-Za-z0-9_]*(?:Error|Exception)):",
+        stderr,
+    )
+    if kind:
+        print("MIGRATION_ERROR_TYPE: " + kind.group(1))
+    else:
+        print("MIGRATION_ERROR_TYPE: unknown; inspect local environment")
 
 
 def main() -> int:
@@ -82,6 +114,7 @@ def main() -> int:
     if result.returncode == 0 and (migration_ok if args.apply else preflight_ok):
         print("MIGRATION PASS" if args.apply else "PREFLIGHT COMPLETE")
         return 0
+    show_safe_failure_summary(result.stderr)
     print("STOP: bootstrap failed. Check database state before retrying --apply.")
     return 1
 

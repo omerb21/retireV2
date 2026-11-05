@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from datetime import date
 import hashlib
 import json
 import unicodedata
@@ -396,6 +397,42 @@ def rename(db: Session, client_id: int, scenario_id: str, name: str,
     """
     scenario = _scenario(db, client_id, scenario_id)
     _cas(db, scenario, expected, actor, name=name)
+
+    # Renaming is metadata-only: it must not erase a valid draft election.
+    # Rebind its scenario revision using SELECT/DELETE/INSERT, since the app
+    # role deliberately lacks UPDATE grants on pension-election rows.
+    assessment = read(db, client_id, scenario_id)
+    valid_decisions = {
+        row["decision_id"]: row for row in assessment["decisions"]
+        if row["action"] == "pension" and row["validation_state"] == "unverified"
+    }
+    previous = db.scalars(select(ScenarioDraftPensionElection).where(
+        ScenarioDraftPensionElection.scenario_id == scenario_id
+    )).all()
+    preserved = []
+    for election in previous:
+        decision = valid_decisions.get(election.decision_id)
+        if (election.scenario_version == expected and decision is not None
+                and election.pension_start_date >= date.fromisoformat(
+                    decision["effective_date"])):
+            preserved.append({
+                "election_id": election.election_id,
+                "scenario_id": scenario_id,
+                "decision_id": election.decision_id,
+                "scenario_version": scenario.version,
+                "pension_start_date": election.pension_start_date,
+                "target_year": election.target_year,
+                "survivors_option": election.survivors_option,
+                "spouse_age_diff": election.spouse_age_diff,
+                "coefficient_selection": election.coefficient_selection,
+                "company_name": election.company_name,
+                "option_name": election.option_name,
+            })
+        db.delete(election)
+    db.flush()
+    for values in preserved:
+        db.add(ScenarioDraftPensionElection(**values))
+    db.flush()
     return _revision(db, scenario, "rename", actor)
 
 

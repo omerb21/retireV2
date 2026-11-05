@@ -193,6 +193,33 @@ def test_atomic_pension_election_store_real_postgresql():
                 "table": f'{schema}.scenario_draft_pension_elections',
             })
 
+        # A direct overallocated group must abort its CAS, decisions and any
+        # election changes, even under the real restricted PostgreSQL role.
+        with pytest.raises(DraftError, match="SCENARIO_SOURCE_OVERALLOCATED"):
+            with SessionFactory() as db, db.begin():
+                db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+                replace(db, 7, "s", DraftReplace(
+                    expected_version=2, name="Should not save",
+                    decisions=[
+                        DraftDecisionWrite(
+                            decision_id="d", source_product_id="p",
+                            source_component_id="c", component_code=COMPONENT_CODES[0],
+                            amount=Decimal("60.00"), action="pension",
+                            effective_date=date(2026, 10, 24),
+                        ),
+                        DraftDecisionWrite(
+                            source_product_id="p", source_component_id="c",
+                            component_code=COMPONENT_CODES[0],
+                            amount=Decimal("40.01"), action="capital_asset",
+                            effective_date=date(2026, 10, 25),
+                        ),
+                    ],
+                ), "test")
+        with SessionFactory() as db:
+            assert db.scalar(select(ScenarioDraft.version).where(
+                ScenarioDraft.scenario_id == "s")) == 2
+            assert len(current_elections(db, 7, "s")) == 1
+
         # Add a separate pension component. The existing election MUST survive
         # the draft version change, even with restricted PostgreSQL DML grants.
         with SessionFactory() as db, db.begin():

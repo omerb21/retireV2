@@ -312,8 +312,6 @@ export function ScenarioDraftPanel({ clientId, products, initialSource, view = "
       </table>
       </section>
     </details>}
-    {view === "results" && stage6Enabled &&
-      <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={visibleDrafts}/>}
     {active && <div>
       <h3>{active.name}</h3>
       {view === "results" && stage6Enabled && active.decisions.length > 0 &&
@@ -450,5 +448,7 @@ export function ScenarioDraftPanel({ clientId, products, initialSource, view = "
       </details>
       </>}
     </div>}
+    {view === "results" && stage6Enabled &&
+      <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={visibleDrafts}/>}
   </section>;
 }

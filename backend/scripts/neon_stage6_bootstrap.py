@@ -24,6 +24,7 @@ from sqlalchemy.engine import make_url
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 EXPECTED_DATABASE = "retire_v2_stage6_validation"
+EXPECTED_HOST = "ep-raspy-mouse-b90m3k25.c-7.eu-central-1.aws.neon.tech"
 EXPECTED_HEAD = "d6f1a9c3b704"
 APPLICATION_ROLE = "retire_v2_stage6_app"
 
@@ -39,8 +40,8 @@ def validate_url(database_url: str) -> str:
         "postgresql", "postgresql+psycopg2", "postgresql+psycopg",
     }:
         raise RuntimeError("Only a PostgreSQL connection is permitted")
-    if not host.endswith(".neon.tech") or "-pooler" in host:
-        raise RuntimeError("A direct Neon PostgreSQL endpoint is required")
+    if host != EXPECTED_HOST:
+        raise RuntimeError("Wrong Neon endpoint: refuse unrelated projects or poolers")
     if parsed.database != EXPECTED_DATABASE:
         raise RuntimeError("Wrong database: refuse to touch anything else")
     if parsed.query.get("sslmode") not in {"require", "verify-ca", "verify-full"}:

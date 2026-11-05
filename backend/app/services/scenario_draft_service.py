@@ -203,46 +203,151 @@ def _cas(db: Session, scenario: ScenarioDraft, expected: int, actor: str, **valu
     db.refresh(scenario)
 
 
+def _materially_unchanged_decision(previous: ScenarioDraftDecision, incoming) -> bool:
+    """Only a true no-op retains an election across the draft revision.
+
+    Decision IDs alone are insufficient: a changed amount, source, date, action
+    or component changes the pension decision's financial meaning.
+    """
+    return (
+        previous.source_product_id == incoming.source_product_id
+        and previous.source_component_id == incoming.source_component_id
+        and previous.component_code == incoming.component_code
+        and previous.amount == incoming.amount
+        and previous.action == incoming.action
+        and previous.effective_date == incoming.effective_date
+    )
+
+
 def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) -> dict:
+    """Atomically replace one draft, preserving only valid *draft elections*.
+
+    This is NOT an admission or an execution. Professional factor admissions and
+    earlier monetary results remain bound to their old scenario revision.
+    A new scenario version always requires fresh professional verification.
+    """
     scenario = _scenario(db, client_id, scenario_id)
     _cas(db, scenario, payload.expected_version, actor, name=payload.name)
+
     existing = db.scalars(select(ScenarioDraftDecision).where(
         ScenarioDraftDecision.scenario_id == scenario_id
     )).all()
-    known_ids = {item.decision_id for item in existing}
-    supplied_ids = [item.decision_id for item in payload.decisions if item.decision_id is not None]
-    if len(supplied_ids) != len(set(supplied_ids)) or not set(supplied_ids).issubset(known_ids):
+    previous_by_id = {row.decision_id: row for row in existing}
+    supplied_ids = [row.decision_id for row in payload.decisions if row.decision_id is not None]
+    if (len(supplied_ids) != len(set(supplied_ids))
+            or not set(supplied_ids).issubset(previous_by_id)):
         raise DraftError("SCENARIO_DECISION_ID_MISMATCH", 422)
-    # Any changed decision set invalidates all existing pension elections.
-    db.execute(delete(ScenarioDraftPensionElection).where(ScenarioDraftPensionElection.scenario_id == scenario_id))
-    for item in existing:
-        db.delete(item)
-    db.flush()
-    product_ids = {item.source_product_id for item in payload.decisions}
+
+    # The server, not the browser, owns source identity and allocation limits.
+    # Legacy references with *no matching source at all* may remain editable
+    # placeholders, but are explicitly needs_revalidation and never admitted.
+    product_ids = {row.source_product_id for row in payload.decisions}
     products = {
         p.product_id: p
         for p in db.scalars(select(PensionProduct).where(
-            PensionProduct.client_id == client_id, PensionProduct.product_id.in_(product_ids)
+            PensionProduct.client_id == client_id,
+            PensionProduct.product_id.in_(product_ids),
         ))
     } if product_ids else {}
-    for item in payload.decisions:
-        product = products.get(item.source_product_id)
-        # Capture source version only when a canonical row really exists.
-        # It is a staleness anchor, NEVER a professional approval.
-        component = db.scalar(select(PensionProductComponent).where(
-            PensionProductComponent.product_id == item.source_product_id,
-            PensionProductComponent.component_id == item.source_component_id,
-            PensionProductComponent.component_code == item.component_code,
-        )) if product is not None else None
-        version = product.version if component is not None else None
+    missing_ids = product_ids - set(products)
+    if missing_ids:
+        foreign_ids = set(db.scalars(select(PensionProduct.product_id).where(
+            PensionProduct.product_id.in_(missing_ids)
+        )).all())
+        if foreign_ids:
+            raise DraftError("SCENARIO_SOURCE_CLIENT_MISMATCH", 422)
+
+    component_ids = {row.source_component_id for row in payload.decisions}
+    components = {
+        c.component_id: c
+        for c in db.scalars(select(PensionProductComponent).where(
+            PensionProductComponent.component_id.in_(component_ids)
+        ))
+    } if component_ids else {}
+    amounts_by_source: dict[tuple[str, str], Decimal] = {}
+    resolved: list[tuple[object, PensionProduct | None,
+                         PensionProductComponent | None, str | None, bool]] = []
+    retained_election_ids: set[str] = set()
+
+    for row in payload.decisions:
+        product = products.get(row.source_product_id)
+        component = components.get(row.source_component_id)
+        if component is not None and (
+            product is None or component.product_id != row.source_product_id
+            or component.component_code != row.component_code
+        ):
+            raise DraftError("SCENARIO_SOURCE_COMPONENT_MISMATCH", 422)
+        if component is None:
+            # A missing canonical source is a *blocked* placeholder, not an
+            # approval. It must never be represented as a valid allocation.
+            digest = None
+        else:
+            digest = _source_digest(product, component)
+            key = (product.product_id, component.component_id)
+            amounts_by_source[key] = amounts_by_source.get(key, Decimal("0.00")) + row.amount
+            if amounts_by_source[key] > component.balance:
+                raise DraftError("SCENARIO_SOURCE_OVERALLOCATED", 422)
+
+        previous = previous_by_id.get(row.decision_id) if row.decision_id else None
+        unchanged = previous is not None and _materially_unchanged_decision(previous, row)
+        # An unchanged stale source must NOT silently acquire a fresh
+        # fingerprint simply because another decision was edited.
+        if unchanged:
+            fingerprint = previous.source_fingerprint_at_review
+            version = previous.product_version_at_review
+            stale = (digest is None or fingerprint is None
+                     or digest != fingerprint or version != product.version
+                     or previous.validation_state == "needs_revalidation")
+        else:
+            fingerprint = digest
+            version = product.version if digest is not None else None
+            stale = digest is None
+        if (unchanged and not stale and row.action == "pension"):
+            retained_election_ids.add(row.decision_id)
+        resolved.append((row, product, component, fingerprint,
+                         stale, version))
+
+    # Existing selections are *not* financial authority, but must survive a
+    # separate conversion being added to the scenario. After the version CAS,
+    # retag only unchanged, still-current choices to the new draft version.
+    # The immutable professional factor-admission ledger is NEVER retagged.
+    elections = db.scalars(select(ScenarioDraftPensionElection).where(
+        ScenarioDraftPensionElection.scenario_id == scenario_id
+    )).all()
+    submitted_by_id = {row.decision_id: row for row in payload.decisions
+                       if row.decision_id is not None}
+    for election in elections:
+        incoming = submitted_by_id.get(election.decision_id)
+        if (election.scenario_version == payload.expected_version
+                and election.decision_id in retained_election_ids
+                and incoming is not None
+                and election.pension_start_date >= incoming.effective_date):
+            election.scenario_version = scenario.version
+        else:
+            db.delete(election)
+
+    # This order leaves no mixed old/new decision set even for bulk updates.
+    # The API owns commit/rollback; a failed insert rolls everything back.
+    for previous in existing:
+        db.delete(previous)
+    db.flush()
+    for row, _product, _component, fingerprint, stale, version in resolved:
         db.add(ScenarioDraftDecision(
-            decision_id=item.decision_id or uuid4().hex, scenario_id=scenario_id,
-            source_product_id=item.source_product_id,
-            source_component_id=item.source_component_id,
-            component_code=item.component_code, amount=item.amount,
-            action=item.action, effective_date=item.effective_date,
-            validation_state="unverified", product_version_at_review=version,
-            source_fingerprint_at_review=_source_digest(product, component) if component is not None else None,
+            decision_id=row.decision_id or uuid4().hex,
+            scenario_id=scenario_id,
+            source_product_id=row.source_product_id,
+            source_component_id=row.source_component_id,
+            component_code=row.component_code,
+            amount=row.amount,
+            action=row.action,
+            effective_date=row.effective_date,
+            validation_state="needs_revalidation" if stale else "unverified",
+            product_version_at_review=version,
+            source_fingerprint_at_review=fingerprint,
+            # An old ruleset, permission preview or professional admission
+            # can never be promoted by a draft replacement.
+            ruleset_digest_at_review=None,
+            permission_preview_id_at_review=None,
         ))
     db.flush()
     return _revision(db, scenario, "replace", actor)

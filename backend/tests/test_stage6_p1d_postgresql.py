@@ -260,6 +260,23 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             )
             assert admitted["admission_revision"] == 1
 
+        # No financial response may be borrowed from client B or from another
+        # alternative's decision, even when all source/factor rows are READY.
+        for other_client, other_scenario, other_decision in (
+            (28, "scenario", "decision"),
+            (28, "scenario-b", "decision-b"),
+            (27, "scenario", "decision-b"),
+            (27, "scenario-b", "decision"),
+        ):
+            denied = subject.estimate_single_pension_decision(
+                factory, client_id=other_client,
+                scenario_id=other_scenario, decision_id=other_decision,
+            )
+            assert denied["result_state"] == "BLOCKED"
+            assert denied["monthly_estimate_gross_ils"] is None
+            assert denied["execution_allowed"] is False
+            assert denied["professional_admission_fingerprint"] is None
+
         calls = 0
         real = subject.execute_from_planning_result
 

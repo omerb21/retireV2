@@ -13,10 +13,16 @@ try {
 
     $selected = $null
     foreach ($candidate in @("3.11", "3.12")) {
-        & py "-$candidate" -c "import sys; print(sys.version.split()[0])" 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            $selected = $candidate
-            break
+        try {
+            & py "-$candidate" -c "import sys; print(sys.version.split()[0])" 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $selected = $candidate
+                break
+            }
+        }
+        catch {
+            # The launcher returns an error when this version is not installed.
+            continue
         }
     }
     if (-not $selected) {

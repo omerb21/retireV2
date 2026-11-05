@@ -114,11 +114,11 @@ it("discards a late allowed preview after switching to another saved scenario", 
   mocks.preview.mockReturnValue(deferred.promise);
   render(<ScenarioDraftPanel clientId={1} products={products} />);
   fireEvent.click(await screen.findByRole("button", { name: /בדוק הרשאת בסיס/ }));
-  fireEvent.click(screen.getByRole("button", { name: /b/ }));
+  fireEvent.click(screen.getByRole("button", { name: "b" }));
   deferred.resolve(allowed);
   await waitFor(() => expect(mocks.preview).toHaveBeenCalledTimes(1));
   expect(screen.queryByText("מותר לפי מטריצת בסיס בלבד")).toBeNull();
-  expect(screen.getByText(/b/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "b" })).toBeTruthy();
 });
 it("does not offer a permission check for a source-stale decision", async () => {
   mocks.list.mockResolvedValue([draft("stale", "needs_revalidation")]);
@@ -286,7 +286,7 @@ it("uses one versioned saved-draft API for create, allocation, edit, clone and c
   expect(mocks.duplicate).toHaveBeenCalledTimes(1);
   view.unmount();
   render(<ScenarioDraftPanel clientId={1} products={products} />);
-  await screen.findByRole("button", { name: /חלופה ששמה שונה/ });
+  await screen.findByRole("button", { name: "חלופה ששמה שונה" });
   fireEvent.click(await screen.findByText("פירוט הקצאות לכל החלופות"));
   expect((await screen.findByRole("region", { name: "השוואת חלופות טיוטה" })).textContent)
     .toContain("חלופה ששמה שונה — העתק");

@@ -300,47 +300,6 @@ export function ScenarioDraftPanel({
         {item.name}{item.status === "archived" ? " (בארכיון)" : ""}
       </button>)}
     </div>}
-    <details>
-      <summary>רענון ובדיקות בסיס התיק</summary>
-      <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
-    <section aria-label="מוכנות חישוב התיק הקיים">
-      <h3>מוכנות מנועי החישוב — תיק קיים</h3>
-      <p className="professional-workspace__boundary">זו בדיקה לקריאה בלבד של בסיס התיק הנוכחי, ולא חישוב עבור אחת החלופות. לא ניתן עדיין להסיק ממנה קצבה, הון או פער הכנסה של חלופה.</p>
-      <button type="button" disabled={contextLoading} onClick={() => void showCalculationContext()}>בדוק מוכנות בסיס התיק</button>
-      {calculationContextError && <p role="alert">{calculationContextError}</p>}
-      {calculationContext && <div>
-        <p>נתוני תכנון: {calculationContext.planning_input_ready ? "מוכנים בבסיס התיק" : "אינם מוכנים"}</p>
-        <p>יעד פרישה: {calculationContext.retirement_target_date ?? "לא נקבע"} — {calculationContext.retirement_target_ready ? "מוכן" : "לא מוכן"}</p>
-        <p>חסמי תיק: {calculationContext.blocking_facts.length}</p>
-        {calculationContext.blocking_facts.length > 0 && <ul>{calculationContext.blocking_facts.map((item, index) =>
-          <li key={index}>{item.source_id ?? "כללי"}: {item.code}</li>
-        )}</ul>}
-        <p>מוכנות בסיס התיק אינה הרשאה לחשב תרחיש שמור או לבצע המרה כספית.</p>
-      </div>}
-    </section>
-    </details>
-    {view === "planning" && visibleDrafts.length > 0 && <details>
-      <summary>פירוט הקצאות לכל החלופות</summary>
-      <section aria-label="השוואת חלופות טיוטה">
-      <h3>השוואת חלופות — תכנון בלבד</h3>
-      <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>
-      <table>
-        <thead><tr><th scope="col">חלופה</th><th scope="col">ניווט</th><th scope="col">מצב</th><th scope="col">החלטות</th><th scope="col">מתוכנן לקצבה (₪)</th><th scope="col">מתוכנן להון (₪)</th><th scope="col">חסמים לתחקור</th></tr></thead>
-        <tbody>{visibleDrafts.map(draft => {
-          const summary = summarizeScenarioDraft(draft, products);
-          return <tr key={summary.scenarioId}>
-            <th scope="row">{summary.name}</th><td><button type="button" disabled={busy} aria-current={selected === summary.scenarioId ? "true" : undefined} onClick={() => selectScenario(summary.scenarioId)}>הצג החלטות</button></td><td>{summary.status}</td><td>{summary.decisionCount}</td>
-            <td>{formatScenarioCents(summary.pensionCents)}</td><td>{formatScenarioCents(summary.capitalCents)}</td>
-            <td>
-              <div>מקור: {summary.missingSources ? `חסרים ${summary.missingSources}` : "לא זוהו מקורות חסרים"}; {summary.staleDecisions || summary.status === "needs_revalidation" ? "נדרש אימות מחדש" : "לא דווח על התיישנות"}</div>
-              <div>כמותי: {summary.overAllocatedSources ? `הקצאות יתר ${summary.overAllocatedSources}` : "לא זוהתה הקצאת יתר"}; {summary.invalidAmounts ? `סכומים שגויים ${summary.invalidAmounts}` : "סכומים תקינים בתצוגה"}</div>
-              <div>מקצועי: זכאות, מס והרשאת ביצוע — לא נבדקו</div>
-            </td>
-          </tr>;
-        })}</tbody>
-      </table>
-      </section>
-    </details>}
     {active && <div>
       <h3>{active.name}</h3>
       {view === "planning" && <ScenarioConversionMatrix
@@ -355,31 +314,6 @@ export function ScenarioDraftPanel({
         {stage6CapabilityLoading ? "בודק אפשרות להצגת תוצאות..." : "חישובי קצבה אינם מורשים בסביבה הזאת."}
       </p>}
       {view === "planning" && <>
-      <details>
-        <summary>שלבי העבודה והבדיקות המקצועיות</summary>
-      <section aria-label="רצף עבודה בחלופה">
-        <h4>רצף עבודה — {active.name}</h4>
-        <ol>
-          <li>החלטות והקצאות: {active.decisions.length === 0
-            ? "יש להוסיף החלטה לחלופה"
-            : `${active.decisions.length} החלטות שמורות`}</li>
-          <li>בקרת מקור: {active.status === "needs_revalidation"
-            ? "נדרש אימות מחדש של נתונים שהתיישנו"
-            : active.status === "archived"
-            ? "החלופה בארכיון"
-            : stage6Enabled && active.decisions.length > 0
-            ? "בקרת ההקצאות נטענת בהמשך המסך"
-            : "בקרת ההקצאות זמינה בסביבת בדיקות מאובטחת בלבד"}</li>
-          <li>בחירת קצבה: {active.decisions.some(decision => decision.action === "pension")
-            ? "ניתן להגדיר תנאי קצבה ולבדוק אומדן מאושר ברוטו בהמשך"
-            : "אין החלטת קצבה בחלופה הזאת"}</li>
-          <li>תזרים חודשי והשוואה כספית: {stage6Enabled
-            ? "זמינים בסביבת Stage 6 המאובטחת כאשר קיימות שתי חלופות פעילות"
-            : stage6CapabilityLoading ? "נבדקת הרשאת סביבת Stage 6" : "אינם מורשים בסביבה זו"}</li>
-        </ol>
-      </section>
-      </details>
-      <p>גרסה: {active.version} · {active.decisions.length} החלטות בטיוטה · מצב: {active.status}</p>
       {active.status !== "archived" && <>
         <details>
           <summary>ניהול חלופה: שינוי שם, שכפול וארכיון</summary>
@@ -492,5 +426,50 @@ export function ScenarioDraftPanel({
     </div>}
     {view === "results" && stage6Enabled &&
       <ScenarioMonthlyComparisonPanel clientId={clientId} scenarios={visibleDrafts}/>}
+    {view === "planning" && <details className="scenario-workflow__advanced">
+      <summary>בדיקות מקצועיות ואבחון (לפי צורך)</summary>
+    <details>
+      <summary>רענון ובדיקות בסיס התיק</summary>
+      <button type="button" disabled={busy} onClick={() => void reload().catch(cause => setError(message(cause)))}>רענן חלופות</button>
+    <section aria-label="מוכנות חישוב התיק הקיים">
+      <h3>מוכנות מנועי החישוב — תיק קיים</h3>
+      <p className="professional-workspace__boundary">זו בדיקה לקריאה בלבד של בסיס התיק הנוכחי, ולא חישוב עבור אחת החלופות. לא ניתן עדיין להסיק ממנה קצבה, הון או פער הכנסה של חלופה.</p>
+      <button type="button" disabled={contextLoading} onClick={() => void showCalculationContext()}>בדוק מוכנות בסיס התיק</button>
+      {calculationContextError && <p role="alert">{calculationContextError}</p>}
+      {calculationContext && <div>
+        <p>נתוני תכנון: {calculationContext.planning_input_ready ? "מוכנים בבסיס התיק" : "אינם מוכנים"}</p>
+        <p>יעד פרישה: {calculationContext.retirement_target_date ?? "לא נקבע"} — {calculationContext.retirement_target_ready ? "מוכן" : "לא מוכן"}</p>
+        <p>חסמי תיק: {calculationContext.blocking_facts.length}</p>
+        {calculationContext.blocking_facts.length > 0 && <ul>{calculationContext.blocking_facts.map((item, index) =>
+          <li key={index}>{item.source_id ?? "כללי"}: {item.code}</li>
+        )}</ul>}
+        <p>מוכנות בסיס התיק אינה הרשאה לחשב תרחיש שמור או לבצע המרה כספית.</p>
+      </div>}
+    </section>
+    </details>
+    {view === "planning" && visibleDrafts.length > 0 && <details>
+      <summary>פירוט הקצאות לכל החלופות</summary>
+      <section aria-label="השוואת חלופות טיוטה">
+      <h3>השוואת חלופות — תכנון בלבד</h3>
+      <p className="professional-workspace__boundary">הסכומים הם חיבור החלטות הטיוטה, לא תחזית קצבה או הון זמין. חסרים אימותי מס, זכאות והרשאת ביצוע. כל חלופה מחושבת בנפרד על סמך מקורות התיק שנטענו.</p>
+      <table>
+        <thead><tr><th scope="col">חלופה</th><th scope="col">ניווט</th><th scope="col">מצב</th><th scope="col">החלטות</th><th scope="col">מתוכנן לקצבה (₪)</th><th scope="col">מתוכנן להון (₪)</th><th scope="col">חסמים לתחקור</th></tr></thead>
+        <tbody>{visibleDrafts.map(draft => {
+          const summary = summarizeScenarioDraft(draft, products);
+          return <tr key={summary.scenarioId}>
+            <th scope="row">{summary.name}</th><td><button type="button" disabled={busy} aria-current={selected === summary.scenarioId ? "true" : undefined} onClick={() => selectScenario(summary.scenarioId)}>הצג החלטות</button></td><td>{summary.status}</td><td>{summary.decisionCount}</td>
+            <td>{formatScenarioCents(summary.pensionCents)}</td><td>{formatScenarioCents(summary.capitalCents)}</td>
+            <td>
+              <div>מקור: {summary.missingSources ? `חסרים ${summary.missingSources}` : "לא זוהו מקורות חסרים"}; {summary.staleDecisions || summary.status === "needs_revalidation" ? "נדרש אימות מחדש" : "לא דווח על התיישנות"}</div>
+              <div>כמותי: {summary.overAllocatedSources ? `הקצאות יתר ${summary.overAllocatedSources}` : "לא זוהתה הקצאת יתר"}; {summary.invalidAmounts ? `סכומים שגויים ${summary.invalidAmounts}` : "סכומים תקינים בתצוגה"}</div>
+              <div>מקצועי: זכאות, מס והרשאת ביצוע — לא נבדקו</div>
+            </td>
+          </tr>;
+        })}</tbody>
+      </table>
+      </section>
+    </details>}
+
+    </details>}
   </section>;
 }

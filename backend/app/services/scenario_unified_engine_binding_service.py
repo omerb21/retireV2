@@ -16,6 +16,9 @@ from app.services.scenario_snapshot_candidate_service import (
 from app.services.scenario_unified_result_service import (
     _assemble, FINANCIAL_DOMAINS, CONTRACT as BASE_CONTRACT,
 )
+from app.services.scenario_financial_evidence_service import (
+    collect_scenario_financial_evidence,
+)
 from app.services.scenario_stage6_single_pension_estimate_service import (
     _aggregate_extension, _valid_sealed_result,
     AGGREGATE_CONTRACT,
@@ -167,6 +170,10 @@ def _assemble_bound(db, pair, client_id, scenario_id, *, start_month, end_month)
             domains[name] = _bound_domain(
                 state="BLOCKED", blockers=[INERT_DOMAINS[name]],
             )
+    # Scenario-scoped factual sources may be shown independently of payment,
+    # withdrawal, tax, and government approval. They never create a positive
+    # financial domain result or gain permission to execute source conversions.
+    financial_evidence = collect_scenario_financial_evidence(db, base)
     domains["pension_gross"] = _pension(db, pair, base)
     if (start_month is None and end_month is None):
         domains["monthly_cashflow"] = _bound_domain(
@@ -184,6 +191,7 @@ def _assemble_bound(db, pair, client_id, scenario_id, *, start_month, end_month)
         "base": base,
         "identity": deepcopy(base["identity"]),
         "domain_results": {k: domains[k] for k in FINANCIAL_DOMAINS},
+        "financial_evidence": financial_evidence,
         "net_income": _bound_domain(
             state="BLOCKED", blockers=["NET_TAX_EXECUTION_NOT_AUTHORIZED"],
         ),

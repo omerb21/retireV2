@@ -19,6 +19,9 @@ from app.services.scenario_unified_result_service import (
 from app.services.scenario_financial_evidence_service import (
     collect_scenario_financial_evidence,
 )
+from app.services.scenario_capital_projection_service import (
+    build_scenario_capital_projection,
+)
 from app.services.scenario_stage6_single_pension_estimate_service import (
     _aggregate_extension, _valid_sealed_result,
     AGGREGATE_CONTRACT,
@@ -174,6 +177,9 @@ def _assemble_bound(db, pair, client_id, scenario_id, *, start_month, end_month)
     # withdrawal, tax, and government approval. They never create a positive
     # financial domain result or gain permission to execute source conversions.
     financial_evidence = collect_scenario_financial_evidence(db, base)
+    domains["capital"] = build_scenario_capital_projection(
+        db, base, financial_evidence,
+    )
     domains["pension_gross"] = _pension(db, pair, base)
     if (start_month is None and end_month is None):
         domains["monthly_cashflow"] = _bound_domain(

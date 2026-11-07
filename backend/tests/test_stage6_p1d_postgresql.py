@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base, load_all_models
+from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
@@ -96,6 +97,7 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 batches, conversions,
                 CapitalAsset.__table__, EmploymentRecord.__table__,
                 Grant.__table__, ActualCapitalization.__table__,
+                CapitalProjectionBasisDecision.__table__,
                 FixationRun.__table__,
             ))
             monkeypatch.setenv("CRTISBA_APPLICATION_DB_ROLE", role)

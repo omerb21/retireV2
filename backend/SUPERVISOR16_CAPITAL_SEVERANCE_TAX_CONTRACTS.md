@@ -207,6 +207,13 @@ reuse the engine's validated `planning.derive`, `basis.derive`,
 opening another transaction. The current evidence layer has
 `available_to_withdraw_ils=None` and never records a cash payment.
 
+The factual capital adapter also reads canonical
+`CapitalProjectionBasisDecision` rows when present, including exact
+return assumption and its original planning, timing and source
+fingerprints. They are explicitly labeled
+`CLIENT_LEVEL_BASIS_NOT_SCENARIO_ADMITTED`; the calculation engine is
+not silently invoked and no projected capital is added to spendable cash.
+
 **Severance:** historical employment records and grants are joined by
 explicit employment IDs and client ownership. Monetary figures are labeled
 `reported_nominal_amount_ils` or `reported_indexed_amount_ils`, never

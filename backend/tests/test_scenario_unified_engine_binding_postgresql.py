@@ -9,6 +9,7 @@ from datetime import date
 from decimal import Decimal
 from sqlalchemy import select, text
 
+from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
@@ -57,6 +58,7 @@ def pg16(pg16_base):
             batches, conversions,
             CapitalAsset.__table__, EmploymentRecord.__table__,
             Grant.__table__, ActualCapitalization.__table__,
+            CapitalProjectionBasisDecision.__table__,
             FixationRun.__table__,
         ], checkfirst=True)
     return factory, scoped

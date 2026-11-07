@@ -8,6 +8,12 @@ from __future__ import annotations
 from decimal import Decimal
 from sqlalchemy import select
 
+from app.models.actual_capitalization import ActualCapitalization
+from app.models.employment_record import EmploymentRecord
+from app.models.grant import Grant
+from app.models.fixation_run import FixationRun
+from app.models.retirement_facts import CapitalAsset
+from app.models.canonical_conversion import batches, conversions
 from app.models.client_profile import ClientProfile
 from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.pension_product import PensionProduct, PensionProductComponent
@@ -43,6 +49,10 @@ def pg16(pg16_base):
             ScenarioPensionFactorAdmission.__table__,
             RecurringIncome.__table__,
             PensionIncomeResolution.__table__,
+            batches, conversions,
+            CapitalAsset.__table__, EmploymentRecord.__table__,
+            Grant.__table__, ActualCapitalization.__table__,
+            FixationRun.__table__,
         ], checkfirst=True)
     return factory, scoped
 

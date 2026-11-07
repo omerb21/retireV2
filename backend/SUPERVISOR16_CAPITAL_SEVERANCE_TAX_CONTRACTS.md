@@ -178,3 +178,66 @@ new rate formulas or invented net income.
 
 Do not implement steps 1-4 until the supervisor approves the professional
 contract choices above. No package 3 work follows from this analysis.
+
+
+## Supervisor 19 implemented integration boundary
+
+Added `scenario_financial_evidence_service.collect_scenario_financial_evidence`
+to the existing `build_unified_scenario_engine_bindings` read-only snapshot.
+The response now has `financial_evidence` (capital, severance,
+fixation_tax), separate from `domain_results`. Package 1 base identity,
+versioning, pension Stage 6 and gross cashflow execution are unchanged.
+
+Each factual evidence domain includes `client_id`, `scenario_id`,
+`scenario_version`, `evidence_fingerprint`, and explicit blockers.
+The overall unified envelope hash also includes all newly read facts.
+
+**Capital:** source-component decisions have one source ledger keyed by
+`(product_id, component_id)`. Their planned exact amounts and effective
+dates are recorded along with source and dependency fingerprints, and
+over-allocation raises `CAPITAL_SOURCE_OVERALLOCATED`. Canonical capital
+assets are read once, kept separate from scenario allocations, and retain
+their reported value and valuation date. The existing client-level Capital
+Projection is referenced as a producer contract, but not invoked or
+reclassified as an admitted scenario projection. It owns an independent
+`begin_read` transaction boundary and cannot safely be called inside the
+already active unified snapshot. A future same-snapshot capital adapter must
+reuse the engine's validated `planning.derive`, `basis.derive`,
+`execute` primitives with their complete source coverage and without
+opening another transaction. The current evidence layer has
+`available_to_withdraw_ils=None` and never records a cash payment.
+
+**Severance:** historical employment records and grants are joined by
+explicit employment IDs and client ownership. Monetary figures are labeled
+`reported_nominal_amount_ils` or `reported_indexed_amount_ils`, never
+tax-exempt or already paid. Every grant has
+`payment_classification=UNKNOWN_NOT_VERIFIED`; historical payment, future
+claim and continuity elections cannot be inferred from a dated grant.
+
+**Fixation/tax:** factual records include historical actual capitalization
+entries and prior `FixationRun` calculation *references* only.
+A historical successful calculation is not a current scenario computation
+and is not an official determination. No tax exemption, personal income tax
+or net result is generated. Fields `scenario_tax_year`,
+`scenario_eligibility_admission`, `scenario_fixation_result` and
+`tax_authority_approval` remain null. Positive domain result remains
+BLOCKED, with `professional_authority=False`.
+
+All factual amount fields are original client/source records, not predicted
+cash amounts. No canonical balance, pension allocation, grant or fixation
+record is modified by the integration.
+
+**Acceptance evidence to run locally:** existing real PG16 package-2 fixture
+now creates the exact extra source FK tables (canonical conversion batches
+and conversions for the asset FK, capital assets, employment records, grants,
+actual capitalizations and fixation runs). Tests cover source uniqueness and
+over-allocation, scenario and client isolation, grant edits invalidating the
+unified fingerprint, and the absence of invented payout or tax authority.
+These tests are NOT RUN in the executor environment.
+
+**Still requires separate implementation:** genuinely admitted
+scenario-specific Capital Projection results; legally admissible withdrawal
+and severance election contracts; scenario-specific fixation calculations
+with entitlement evidence and official tax parameters; full personal-net
+tax engine; authorized monthly outflow and expenses. No historical M06/M09
+execution path is reopened. No decision about tax eligibility is implied.

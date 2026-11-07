@@ -1,5 +1,6 @@
 """Synthetic isolated draft workflow acceptance tests."""
 from decimal import Decimal
+from datetime import date
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import create_engine, select
@@ -349,3 +350,403 @@ def test_mid_replace_insert_failure_rolls_back_version_decisions_and_revisions(e
         assert len(db.scalars(select(ScenarioDraftRevision).where(
             ScenarioDraftRevision.scenario_id == scenario["scenario_id"]
         )).all()) == 2
+
+
+def _make_scoped_source(factory, product_id: str, client_id: int, amount="200.00"):
+    """Only synthetic sources for tests; never call a production database."""
+    from app.models.pension_product import PensionProduct, PensionProductComponent
+    component_id = product_id + "-component"
+    with factory.begin() as db:
+        db.add(PensionProduct(
+            product_id=product_id, client_id=client_id, source_kind="manual",
+            source_identity=product_id + "-source", product_name=product_id,
+            product_type="קרן פנסיה", account_reference="test",
+            version=1, created_by="test", updated_by="test",
+        ))
+        db.add(PensionProductComponent(
+            component_id=component_id, product_id=product_id,
+            component_code="תגמולי_עובד_עד_2000", balance=Decimal(amount),
+        ))
+    return component_id
+
+
+def _decision_input(product: str, component: str, amount="100.00",
+                    action="pension", effective_date="2027-01-01"):
+    return {
+        "source_product_id": product, "source_component_id": component,
+        "component_code": "תגמולי_עובד_עד_2000",
+        "amount": amount, "action": action, "effective_date": effective_date,
+    }
+
+
+def _save_test_election(factory, client_id: int, scenario: dict, decision_id: str):
+    from app.services.scenario_pension_election_store_service import replace_elections
+    from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
+    with factory.begin() as db:
+        return replace_elections(db, client_id, scenario["scenario_id"],
+            ScenarioPensionElectionSet.model_validate({
+                "expected_scenario_version": scenario["version"],
+                "elections": [{
+                    "decision_id": decision_id, "pension_start_date": "2028-01-01",
+                    "target_year": 2028, "survivors_option": "תקנוני",
+                    "spouse_age_diff": 0,
+                    "coefficient_selection": "manual_review_required",
+                }],
+            }), "test")
+
+
+def test_unrelated_conversion_preserves_existing_election_without_professional_admission(env):
+    from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
+    from app.models.scenario_draft import ScenarioDraftDecision
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    c1 = _make_scoped_source(factory, "scoped-A1", 1, "200.00")
+    c2 = _make_scoped_source(factory, "scoped-A2", 1, "300.00")
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Continuity"}).json()
+    route = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    existing = client.put(route, json={
+        "name": "Continuity", "expected_version": 1,
+        "decisions": [_decision_input("scoped-A1", c1)],
+    }).json()
+    original = existing["decisions"][0]
+    assert original["validation_state"] == "unverified"
+    election_state = _save_test_election(factory, 1, existing, original["decision_id"])
+    assert election_state["version"] == 3
+
+    appended = client.put(route, json={
+        "name": "Continuity", "expected_version": 3,
+        "decisions": [
+            {"decision_id": original["decision_id"],
+             **_decision_input("scoped-A1", c1)},
+            _decision_input("scoped-A2", c2, amount="40.00"),
+        ],
+    })
+    assert appended.status_code == 200, appended.text
+    data = appended.json()
+    assert (data["version"], len(data["decisions"])) == (4, 2)
+    prior = next(d for d in data["decisions"] if d["decision_id"] == original["decision_id"])
+    assert prior["source_fingerprint_at_review"] == original["source_fingerprint_at_review"]
+    assert prior["product_version_at_review"] == original["product_version_at_review"]
+    assert prior["ruleset_digest_at_review"] is None
+    assert prior["permission_preview_id_at_review"] is None
+    with factory() as db:
+        elections = current_elections(db, 1, created["scenario_id"])
+        assert len(elections) == 1
+        assert elections[0]["decision_id"] == original["decision_id"]
+        row = db.scalar(select(ScenarioDraftPensionElection).where(
+            ScenarioDraftPensionElection.scenario_id == created["scenario_id"]))
+        assert row.scenario_version == 4
+        assert db.scalar(select(ScenarioDraftDecision).where(
+            ScenarioDraftDecision.decision_id == original["decision_id"])) is not None
+
+    # Hard refresh must produce the same election, not a browser-only selection.
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == elections
+    assert client.get(f"/api/clients/2/scenario-drafts/{created['scenario_id']}").status_code == 404
+
+
+@pytest.mark.parametrize("change", [
+    {"amount": "90.00"},
+    {"effective_date": "2027-03-01"},
+    {"action": "capital_asset"},
+])
+def test_material_change_invalidates_that_pension_election(env, change):
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    c = _make_scoped_source(factory, "factor-edited", 1, "200.00")
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Change"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={
+        "name": "Change", "expected_version": 1,
+        "decisions": [_decision_input("factor-edited", c)],
+    }).json()
+    ident = saved["decisions"][0]["decision_id"]
+    election = _save_test_election(factory, 1, saved, ident)
+    modified = client.put(url, json={
+        "name": "Change", "expected_version": election["version"],
+        "decisions": [{"decision_id": ident, **{
+            **_decision_input("factor-edited", c), **change,
+        }}],
+    })
+    assert modified.status_code == 200, modified.text
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == []
+
+
+def test_stale_source_cannot_be_silently_reanchored_by_unrelated_conversion(env):
+    from app.models.pension_product import PensionProduct
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    c1 = _make_scoped_source(factory, "stale-keep", 1, "200.00")
+    c2 = _make_scoped_source(factory, "stale-extra", 1, "300.00")
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Stale"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={
+        "name": "Stale", "expected_version": 1,
+        "decisions": [_decision_input("stale-keep", c1)],
+    }).json()
+    original = saved["decisions"][0]
+    elected = _save_test_election(factory, 1, saved, original["decision_id"])
+    with factory.begin() as db:
+        db.get(PensionProduct, "stale-keep").version = 2
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == []
+
+    changed = client.put(url, json={
+        "name": "Stale", "expected_version": elected["version"],
+        "decisions": [
+            {"decision_id": original["decision_id"], **_decision_input("stale-keep", c1)},
+            _decision_input("stale-extra", c2, "50.00"),
+        ],
+    })
+    assert changed.status_code == 200, changed.text
+    row = next(d for d in changed.json()["decisions"]
+               if d["decision_id"] == original["decision_id"])
+    assert row["validation_state"] == "needs_revalidation"
+    assert row["source_fingerprint_at_review"] == original["source_fingerprint_at_review"]
+    assert row["product_version_at_review"] == original["product_version_at_review"]
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == []
+
+
+def test_server_rejects_overallocation_foreign_component_and_foreign_client_atomically(env):
+    from app.models.scenario_draft import ScenarioDraftDecision, ScenarioDraftRevision
+    client, factory = env
+    c1 = _make_scoped_source(factory, "safe-A", 1, "100.00")
+    c2 = _make_scoped_source(factory, "safe-B", 2, "100.00")
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Atomic"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    good = _decision_input("safe-A", c1, "30.00")
+    bad_payloads = [
+        ([
+            good, _decision_input("safe-A", c1, "70.01"),
+        ], "SCENARIO_SOURCE_OVERALLOCATED"),
+        ([
+            good, _decision_input("safe-A", c2, "1.00"),
+        ], "SCENARIO_SOURCE_COMPONENT_MISMATCH"),
+        ([
+            good, _decision_input("safe-B", c2, "1.00"),
+        ], "SCENARIO_SOURCE_CLIENT_MISMATCH"),
+    ]
+    for proposed, code in bad_payloads:
+        response = client.put(url, json={
+            "name": "Atomic", "expected_version": 1,
+            "decisions": proposed,
+        })
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == code
+        actual = client.get(url).json()
+        assert actual["version"] == 1 and actual["decisions"] == []
+    with factory() as db:
+        assert db.scalars(select(ScenarioDraftDecision).where(
+            ScenarioDraftDecision.scenario_id == created["scenario_id"])).all() == []
+        assert [revision.version for revision in db.scalars(
+            select(ScenarioDraftRevision).where(
+                ScenarioDraftRevision.scenario_id == created["scenario_id"]))] == [1]
+
+    # Same foreign tenant must not read, duplicate, archive, replace or amend.
+    forbidden = f"/api/clients/2/scenario-drafts/{created['scenario_id']}"
+    assert client.get(forbidden).status_code == 404
+    assert client.post(forbidden + "/duplicate", json={"name": "Foreign"}).status_code == 404
+    assert client.post(forbidden + "/archive", json={"expected_version": 1}).status_code == 404
+    assert client.put(forbidden, json={
+        "name": "Foreign", "expected_version": 1, "decisions": [],
+    }).status_code == 404
+    assert client.post(forbidden + "/rename", json={
+        "name": "Foreign", "expected_version": 1,
+    }).status_code == 404
+
+
+def test_version_conflict_does_not_discard_existing_pension_election(env):
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    c = _make_scoped_source(factory, "version-source", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Version"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={
+        "name": "Version", "expected_version": 1,
+        "decisions": [_decision_input("version-source", c)],
+    }).json()
+    _save_test_election(factory, 1, saved, saved["decisions"][0]["decision_id"])
+    stale = client.put(url, json={
+        "name": "Invalid CAS", "expected_version": 2, "decisions": [],
+    })
+    assert (stale.status_code, stale.json()["code"]) == (409, "SCENARIO_VERSION_CONFLICT")
+    with factory() as db:
+        assert len(current_elections(db, 1, created["scenario_id"])) == 1
+
+
+def test_preserved_election_uses_restricted_insert_delete_without_update(env):
+    from sqlalchemy import event
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    c1 = _make_scoped_source(factory, "grant-A1", 1)
+    c2 = _make_scoped_source(factory, "grant-A2", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Grant"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={"name": "Grant", "expected_version": 1,
+        "decisions": [_decision_input("grant-A1", c1)]}).json()
+    elected = _save_test_election(factory, 1, saved, saved["decisions"][0]["decision_id"])
+    statements = []
+    engine = factory.kw["bind"]
+
+    def observe(_connection, _cursor, sql, _params, _context, _many):
+        statements.append(sql.strip().upper())
+
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        response = client.put(url, json={
+            "name": "Grant", "expected_version": elected["version"],
+            "decisions": [
+                {"decision_id": saved["decisions"][0]["decision_id"],
+                 **_decision_input("grant-A1", c1)},
+                _decision_input("grant-A2", c2, "25.00"),
+            ],
+        })
+    finally:
+        event.remove(engine, "before_cursor_execute", observe)
+    assert response.status_code == 200, response.text
+    target = "SCENARIO_DRAFT_PENSION_ELECTIONS"
+    assert any(row.startswith("DELETE FROM " + target) for row in statements)
+    assert any(row.startswith("INSERT INTO " + target) for row in statements)
+    assert not any(row.startswith("UPDATE " + target) for row in statements)
+    with factory() as db:
+        assert len(current_elections(db, 1, created["scenario_id"])) == 1
+
+
+def test_clone_does_not_carry_pension_elections_or_professional_authority(env):
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    component = _make_scoped_source(factory, "clone-proof", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Original"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={"name": "Original", "expected_version": 1,
+        "decisions": [_decision_input("clone-proof", component)]}).json()
+    _save_test_election(factory, 1, saved, saved["decisions"][0]["decision_id"])
+    result = client.post(url + "/duplicate", json={"name": "Cloned"})
+    assert result.status_code == 200, result.text
+    clone = result.json()
+    assert clone["scenario_id"] != created["scenario_id"]
+    assert clone["decisions"][0]["decision_id"] != saved["decisions"][0]["decision_id"]
+    assert clone["decisions"][0]["ruleset_digest_at_review"] is None
+    with factory() as db:
+        assert current_elections(db, 1, clone["scenario_id"]) == []
+        assert len(current_elections(db, 1, created["scenario_id"])) == 1
+
+
+def test_metadata_rename_preserves_valid_draft_election_but_not_source_staleness(env):
+    from app.models.pension_product import PensionProduct
+    from app.services.scenario_pension_election_store_service import current_elections
+    client, factory = env
+    component = _make_scoped_source(factory, "rename-election", 1)
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Before"}).json()
+    url = f"/api/clients/1/scenario-drafts/{created['scenario_id']}"
+    saved = client.put(url, json={"name": "Before", "expected_version": 1,
+        "decisions": [_decision_input("rename-election", component)]}).json()
+    before = saved["decisions"][0]
+    elected = _save_test_election(factory, 1, saved, before["decision_id"])
+
+    renamed = client.post(url + "/rename", json={
+        "name": "After", "expected_version": elected["version"],
+    })
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["version"] == 4
+    assert renamed.json()["decisions"][0]["source_fingerprint_at_review"] == (
+        before["source_fingerprint_at_review"])
+    with factory() as db:
+        elections = current_elections(db, 1, created["scenario_id"])
+        assert len(elections) == 1
+        assert elections[0]["decision_id"] == before["decision_id"]
+
+    with factory.begin() as db:
+        db.get(PensionProduct, "rename-election").version = 2
+    stale_rename = client.post(url + "/rename", json={
+        "name": "After two", "expected_version": 4,
+    })
+    assert stale_rename.status_code == 200
+    assert stale_rename.json()["status"] == "needs_revalidation"
+    with factory() as db:
+        assert current_elections(db, 1, created["scenario_id"]) == []
+
+
+def test_historical_overallocation_is_explicitly_stale_and_not_admissible(env):
+    from app.models.scenario_draft import ScenarioDraftDecision
+    from app.services.scenario_draft_service import _source_digest
+    from app.models.pension_product import PensionProduct, PensionProductComponent
+    from app.services.scenario_calculation_admission_service import assess
+    client, factory = env
+    component = _make_scoped_source(factory, "historical-overspend", 1, "100.00")
+    created = client.post("/api/clients/1/scenario-drafts", json={"name": "Legacy invalid"}).json()
+    with factory.begin() as db:
+        product = db.get(PensionProduct, "historical-overspend")
+        source = db.get(PensionProductComponent, component)
+        evidence = _source_digest(product, source)
+        db.add_all([
+            ScenarioDraftDecision(
+                decision_id="legacy-a", scenario_id=created["scenario_id"],
+                source_product_id=product.product_id, source_component_id=component,
+                component_code="תגמולי_עובד_עד_2000", amount=Decimal("60.00"),
+                action="pension", effective_date=date(2027, 1, 1),
+                validation_state="unverified", product_version_at_review=1,
+                source_fingerprint_at_review=evidence,
+            ),
+            ScenarioDraftDecision(
+                decision_id="legacy-b", scenario_id=created["scenario_id"],
+                source_product_id=product.product_id, source_component_id=component,
+                component_code="תגמולי_עובד_עד_2000", amount=Decimal("40.01"),
+                action="pension", effective_date=date(2027, 1, 1),
+                validation_state="unverified", product_version_at_review=1,
+                source_fingerprint_at_review=evidence,
+            ),
+        ])
+    row = client.get(f"/api/clients/1/scenario-drafts/{created['scenario_id']}").json()
+    assert row["status"] == "needs_revalidation"
+    assert {decision["validation_state"] for decision in row["decisions"]} == {
+        "needs_revalidation"
+    }
+    with factory() as db:
+        status = assess(db, 1, created["scenario_id"])
+        assert status["financial_result"] is None
+        assert "SOURCE_OVERALLOCATED" in {x["code"] for x in status["blockers"]}
+
+
+def test_a1_a2_b1_api_isolation_on_read_mutation_clone_archive_and_reload(env):
+    client, factory = env
+    cases = [(1, "A1"), (1, "A2"), (2, "B1")]
+    saved = {}
+    for tenant, title in cases:
+        created = client.post(f"/api/clients/{tenant}/scenario-drafts",
+                              json={"name": title})
+        assert created.status_code == 200, created.text
+        saved[title] = (tenant, created.json()["scenario_id"])
+    for title, (owner, scenario_id) in saved.items():
+        stranger = 2 if owner == 1 else 1
+        target = f"/api/clients/{stranger}/scenario-drafts/{scenario_id}"
+        assert client.get(target).status_code == 404
+        assert client.put(target, json={
+            "name": "Cross-tenant", "expected_version": 1, "decisions": [],
+        }).status_code == 404
+        assert client.post(target + "/rename", json={
+            "name": "Cross-tenant", "expected_version": 1,
+        }).status_code == 404
+        assert client.post(target + "/archive", json={
+            "expected_version": 1,
+        }).status_code == 404
+        assert client.post(target + "/duplicate", json={
+            "name": "Cross-tenant clone",
+        }).status_code == 404
+
+    # A1 and A2 share client A but are distinct drafts with independent state.
+    a1 = f"/api/clients/1/scenario-drafts/{saved['A1'][1]}"
+    a2 = f"/api/clients/1/scenario-drafts/{saved['A2'][1]}"
+    edited = client.put(a1, json={
+        "name": "A1 updated", "expected_version": 1, "decisions": [],
+    })
+    assert edited.status_code == 200
+    assert client.get(a2).json()["name"] == "A2"
+    assert client.get(a2).json()["version"] == 1
+
+    # Reload using the persisted DB through a distinct HTTP request.
+    result = client.get("/api/clients/1/scenario-drafts").json()
+    assert {row["name"] for row in result} == {"A1 updated", "A2"}
+    assert client.get("/api/clients/2/scenario-drafts").json()[0]["name"] == "B1"

@@ -1,23 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
+import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
-const FIXED_CODES: Array<[string, string, "פיצויים" | "תגמולים"]> = [
-  ["פיצויים_מעסיק_נוכחי", "פיצויים מעסיק נוכחי", "פיצויים"],
-  ["פיצויים_לאחר_התחשבנות", "פיצויים לאחר התחשבנות", "פיצויים"],
-  ["פיצויים_שלא_עברו_התחשבנות", "פיצויים שלא עברו התחשבנות", "פיצויים"],
-  ["פיצויים_ממעסיקים_קודמים_רצף_זכויות", "פיצויים קודמים — רצף זכויות", "פיצויים"],
-  ["פיצויים_ממעסיקים_קודמים_רצף_קצבה", "פיצויים קודמים — רצף קצבה", "פיצויים"],
-  ["תגמולי_עובד_עד_2000", "תגמולי עובד עד 2000", "תגמולים"],
-  ["תגמולי_עובד_אחרי_2000", "תגמולי עובד אחרי 2000", "תגמולים"],
-  ["תגמולי_עובד_אחרי_2008_לא_משלמת", "תגמולי עובד אחרי 2008 — לא משלמת", "תגמולים"],
-  ["תגמולי_מעביד_עד_2000", "תגמולי מעביד עד 2000", "תגמולים"],
-  ["תגמולי_מעביד_אחרי_2000", "תגמולי מעביד אחרי 2000", "תגמולים"],
-  ["תגמולי_מעביד_אחרי_2008_לא_משלמת", "תגמולי מעביד אחרי 2008 — לא משלמת", "תגמולים"],
-];
+const FIXED_CODES = PORTFOLIO_COMPONENT_COLUMNS;
 type Step = "client" | "portfolio" | "supplement" | "scenario" | "results";
 type Selection = { productId: string; code: string };
 type Draft = { productId: string; version: number; components: Record<string, string> };
@@ -65,6 +54,9 @@ export function RetirementWorkspaceScreen() {
   const [read, setRead] = useState<ReadState>({ state: "loading" });
   const [step, setStep] = useState<Step>("portfolio");
   const [chosenComponent, setChosenComponent] = useState<{ productId: string; componentCode: string } | null>(null);
+  const [scenarioChoice, setScenarioChoice] = useState<{ clientId: number; scenarioId: string } | null>(null);
+  // Never reuse another client's scenario, including during A -> B async transitions.
+  const chosenScenarioId = scenarioChoice?.clientId === clientId ? scenarioChoice.scenarioId : null;
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
@@ -100,6 +92,7 @@ export function RetirementWorkspaceScreen() {
     setRead({ state: "loading" });
     setStep("portfolio");
     setChosenComponent(null);
+    setScenarioChoice(null);
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
@@ -752,14 +745,19 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>
-        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent} />
-        <p className="professional-workspace__boundary">חלופות נשמרות בשרת בנפרד מיתרות התיק. בסביבת Stage 6 מורשית בלבד ניתן לקבל אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו לתרחיש, בכפוף לשערי המוכנות המקצועיים. אין במסלול זה חישובי מס או נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
+        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent}
+          preferredScenarioId={chosenScenarioId}
+          onScenarioSelected={scenarioId => {
+            if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
+          }} />
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
-        <p className="professional-workspace__boundary">השוואת הקצאות הטיוטה השמורות מוצגת להלן. בסביבת Stage 6 מאושרת ניתן לבדוק אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו מאומת. אין במסלול זה מס, נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
-        <ScenarioDraftPanel clientId={clientId} products={products} />
-        <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
+        <ScenarioDraftPanel clientId={clientId} products={products} view="results"
+          preferredScenarioId={chosenScenarioId}
+          onScenarioSelected={scenarioId => {
+            if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
+          }} />
       </section>}
     </div>
   </main>;

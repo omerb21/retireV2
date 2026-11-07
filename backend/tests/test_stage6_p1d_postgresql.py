@@ -10,6 +10,12 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base, load_all_models
+from app.models.actual_capitalization import ActualCapitalization
+from app.models.employment_record import EmploymentRecord
+from app.models.grant import Grant
+from app.models.fixation_run import FixationRun
+from app.models.retirement_facts import CapitalAsset
+from app.models.canonical_conversion import batches, conversions
 from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.pension_product import (
@@ -87,6 +93,10 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 PensionIncomeResolution.__table__,
                 RecurringIncome.__table__, PlannerAssumption.__table__,
                 RetirementMonthlyIncomeTargetElection.__table__,
+                batches, conversions,
+                CapitalAsset.__table__, EmploymentRecord.__table__,
+                Grant.__table__, ActualCapitalization.__table__,
+                FixationRun.__table__,
             ))
             monkeypatch.setenv("CRTISBA_APPLICATION_DB_ROLE", role)
             original_operation = migration.op

@@ -8,8 +8,12 @@ from __future__ import annotations
 from decimal import Decimal
 from sqlalchemy import select
 
+from app.models.client_profile import ClientProfile
+from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.pension_product import PensionProduct, PensionProductComponent
+from app.models.retirement_facts import RecurringIncome
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
+from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services.scenario_unified_engine_binding_service import (
     build_unified_scenario_engine_bindings, CONTRACT, FINANCIAL_DOMAINS,
 )
@@ -21,17 +25,25 @@ from tests.test_scenario_unified_result_real_postgresql import pg16 as pg16_base
 
 @pytest.fixture
 def pg16(pg16_base):
-    """Install genuine read dependencies in the same disposable PG16 schema.
+    """Install only the extra Stage 6 read dependencies in the existing schema.
 
-    Package-1's fixture intentionally creates only tables used by its inert
-    envelope. Stage 6 admission may consult additional tables: no mocks or
-    external databases are used, and this setup runs before the read-only
-    subject is invoked.
+    The package-1 fixture already creates clients, canonical products/components,
+    drafts/decisions, elections, planning decisions, income targets and planner
+    assumptions. Stage 6 reads the client's profile and factor admissions;
+    cashflow additionally reads recurring income and its pension-resolution
+    records. All four tables have FK parents already present in this schema,
+    except pension_income_resolutions -> recurring_income, created first below.
+    No global metadata creation, mocks, or external databases.
     """
     factory, scoped = pg16_base
     load_all_models()
     with scoped.begin() as connection:
-        Base.metadata.create_all(connection, checkfirst=True)
+        Base.metadata.create_all(connection, tables=[
+            ClientProfile.__table__,
+            ScenarioPensionFactorAdmission.__table__,
+            RecurringIncome.__table__,
+            PensionIncomeResolution.__table__,
+        ], checkfirst=True)
     return factory, scoped
 
 

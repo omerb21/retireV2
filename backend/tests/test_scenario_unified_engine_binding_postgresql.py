@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
@@ -45,6 +45,10 @@ def pg16(pg16_base):
     factory, scoped = pg16_base
     load_all_models()
     with scoped.begin() as connection:
+        # The canonical capital-asset DDL listener installs PG guard
+        # functions. Keep them in this disposable schema, never in public.
+        schema = scoped.get_execution_options()["schema_translate_map"][None]
+        connection.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
         Base.metadata.create_all(connection, tables=[
             ClientProfile.__table__,
             ScenarioPensionFactorAdmission.__table__,

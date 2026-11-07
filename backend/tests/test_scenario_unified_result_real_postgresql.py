@@ -34,7 +34,7 @@ load_all_models()
 CODE = "תגמולי_עובד_עד_2000"
 HASH = "a" * 64
 MUTATING_SQL = re.compile(
-    r"\\b(?:INSERT|UPDATE|DELETE|UPSERT|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|COPY|CALL)\\b",
+    r"\b(?:INSERT|UPDATE|DELETE|UPSERT|MERGE|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|COPY|CALL)\b",
     re.IGNORECASE,
 )
 
@@ -58,7 +58,7 @@ def pg16():
     factory = sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
     try:
         with engine.begin() as conn:
-            assert conn.scalar(text("SHOW server_version_num")) // 10000 == 16
+            assert int(conn.scalar(text("SHOW server_version_num"))) // 10000 == 16
             conn.execute(text(f'CREATE SCHEMA "{schema}"'))
         with scoped.begin() as conn:
             # All foreign-key targets are created in the same isolated schema.

@@ -1,5 +1,5 @@
 # RETIRE V2 Stage 6 - isolated PostgreSQL 16 integration runner.
-# Requires Docker Desktop with a running Linux engine and the existing Python 3.11 venv.
+# Requires Docker Desktop (Linux engine); uses existing venv or Windows py -3.11.
 # Run from backend:
 # powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_stage6_pg_integration_win.ps1
 #
@@ -22,15 +22,32 @@ function Restore-ProcessEnv([string]$name, [AllowNull()][string]$value) {
 
 Push-Location $backend
 try {
+    # Prefer the existing project venv. If none is present, use the
+    # installed Python 3.11 through the Windows Python Launcher, without
+    # creating an environment, checkout, worktree, or installing packages.
     $python = Join-Path $backend ".venv-py311\Scripts\python.exe"
+    $pythonArgs = @()
+    $allowedVersions = "((3, 11),)"
     if (-not (Test-Path $python)) {
         $python = Join-Path $backend ".venv-py312\Scripts\python.exe"
+        $allowedVersions = "((3, 11), (3, 12))"
     }
     if (-not (Test-Path $python)) {
-        throw "Python 3.11/3.12 environment missing; first run run_neon_stage6_win.ps1"
+        $launcher = Get-Command py -ErrorAction SilentlyContinue
+        if ($null -eq $launcher) {
+            throw "PYTHON311_NOT_FOUND: no project venv and Windows Python Launcher unavailable"
+        }
+        $python = $launcher.Source
+        $pythonArgs = @("-3.11")
+        $allowedVersions = "((3, 11),)"
+        Write-Host "STAGE6_PYTHON311_LAUNCHER_FALLBACK"
     }
-    & $python -c "import sys; assert sys.version_info[:2] in ((3,11),(3,12))"
-    if ($LASTEXITCODE -ne 0) { throw "Incompatible Python interpreter" }
+    & $python @pythonArgs -c "import sys; assert sys.version_info[:2] in $allowedVersions, sys.version"
+    if ($LASTEXITCODE -ne 0) { throw "PYTHON_VERSION_UNAVAILABLE_OR_INCOMPATIBLE" }
+    # Fail before Docker startup if any required dependency is absent.
+    # No package installation or changes to the user's Python installation.
+    & $python @pythonArgs -c "import pytest, sqlalchemy, psycopg2, fastapi, httpx, alembic"
+    if ($LASTEXITCODE -ne 0) { throw "PYTHON_TEST_DEPENDENCIES_MISSING" }
 
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         throw "Docker Desktop is not installed. This test requires Docker Desktop."
@@ -113,7 +130,7 @@ try {
 
     Write-Host "STAGE6_PG16_LOCAL_READY"
     Write-Host "STAGE6_PG_INTEGRATION_START (localhost only)"
-    & $python -m pytest -q -ra @suite
+    & $python @pythonArgs -m pytest -q -ra @suite
     $exitCode = $LASTEXITCODE
 }
 catch {

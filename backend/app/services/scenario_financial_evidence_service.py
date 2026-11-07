@@ -61,6 +61,15 @@ def _capital(db, base):
     projection_by_asset = {row.capital_asset_id: row for row in projection_rows}
     if len(projection_by_asset) != len(projection_rows):
         raise ValueError("CAPITAL_PROJECTION_BASIS_DUPLICATE")
+    # A malformed basis row can claim this client while pointing at a capital
+    # asset of another client. Do not emit even that other client's asset ID.
+    owned_asset_ids = {row.id for row in assets}
+    foreign_basis_present = any(
+        row.capital_asset_id not in owned_asset_ids for row in projection_rows
+    )
+    projection_rows = [
+        row for row in projection_rows if row.capital_asset_id in owned_asset_ids
+    ]
     decisions = []
     used = defaultdict(Decimal)
     caps = {}
@@ -114,8 +123,8 @@ def _capital(db, base):
         "available_to_withdraw_ils": None,
     } for row in assets]
     asset_ids = {row["asset_id"] for row in records}
-    if any(row.capital_asset_id not in asset_ids for row in projection_rows):
-        blockers.add("CAPITAL_PROJECTION_BASIS_OUTSIDE_ACTIVE_ASSETS")
+    if foreign_basis_present:
+        blockers.add("CAPITAL_PROJECTION_BASIS_CLIENT_ASSET_MISMATCH")
     projection_evidence = [{
         "capital_asset_id": row.capital_asset_id,
         "annual_rate_text": format(row.annual_rate, "f"),

@@ -506,3 +506,17 @@ def test_live_pg16_package2_capital_target_and_allocations_block(admitted_capita
     assert blocked["domain_results"]["capital"]["result"] is None
     assert blocked["financial_evidence"]["capital"]["facts"][
         "source_components_consumed_once"][0]["planned_allocations_total_ils"] == "200.00"
+
+
+def test_live_pg16_package2_capital_unverified_value_not_projected(admitted_capital):
+    factory, capital_id = admitted_capital
+    assert build(factory)["domain_results"]["capital"]["state"] == "NONBINDING_PROJECTION"
+    with factory.begin() as db:
+        db.get(CapitalAsset, capital_id).verification_state = "partially verified"
+    blocked = build(factory)
+    cell = blocked["domain_results"]["capital"]
+    assert cell["state"] == "BLOCKED"
+    assert cell["result"] is None
+    assert "CAPITAL_SOURCE_VERIFICATION_INCOMPLETE" in cell["blockers"]
+    assert blocked["financial_evidence"]["capital"]["facts"][
+        "canonical_assets"][0]["available_to_withdraw_ils"] is None

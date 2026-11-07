@@ -9,13 +9,19 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from sqlalchemy import select, text
 
+from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
+from app.models.pension_product import COMPONENT_CODES
+from app.models.retirement_facts import RecurringExpense, RetirementTimingWorkIntention
+from app.services import planning_input_service as planning
+from app.services import capital_projection_basis_service as capital_basis
+from app.services import capital_projection_execution_service as capital_execution
 from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
 from app.models.fixation_run import FixationRun
 from app.models.retirement_facts import CapitalAsset
-from app.models.canonical_conversion import batches, conversions
+from app.models.canonical_conversion import batches, conversions, pensions, allocations
 from app.models.client_profile import ClientProfile
 from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.pension_product import PensionProduct, PensionProductComponent
@@ -60,6 +66,8 @@ def pg16(pg16_base):
             Grant.__table__, ActualCapitalization.__table__,
             CapitalProjectionBasisDecision.__table__,
             FixationRun.__table__,
+            pensions, allocations, CanonicalManualPensionSource.__table__,
+            RecurringExpense.__table__, RetirementTimingWorkIntention.__table__,
         ], checkfirst=True)
     return factory, scoped
 

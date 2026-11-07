@@ -362,3 +362,147 @@ def test_live_pg16_package2_rejects_foreign_asset_basis_without_id_leak(pg16):
     other = build(factory, client=8, scenario="b1")
     assert other["financial_evidence"]["capital"]["facts"]["canonical_assets"][0][
         "reported_current_value_ils"] == "900.00"
+
+
+@pytest.fixture
+def admitted_capital(pg16):
+    """A real, approved canonical capital basis, not a posted forecast.
+
+    The fixture supplies the other ten factual pension-product components
+    required by the existing professional-source snapshot. No engine is mocked
+    and the rate decision fingerprints come from the current canonical plan.
+    """
+    factory, scoped = pg16
+    with factory.begin() as db:
+        for code in COMPONENT_CODES:
+            if code == "תגמולי_עובד_עד_2000":
+                continue
+            db.add(PensionProductComponent(
+                component_id="extra-" + str(COMPONENT_CODES.index(code)),
+                product_id="p7", component_code=code, balance=Decimal("0.00"),
+            ))
+        capital = CapitalAsset(
+            client_id=7, asset_category="bank deposit",
+            asset_description="Synthetic independent deposit",
+            known_value_amount=Decimal("800.00"),
+            value_as_of_date=date(2026, 10, 1),
+            lifecycle_status="current", verification_state="verified",
+            source_status="external statement", origin_kind="manual",
+        )
+        db.add(capital)
+        db.flush()
+        capital_id = capital.id
+    with factory.begin() as db:
+        plan = planning.derive(db, 7)
+        source = next(
+            entry for entry in plan["capital_inputs"]
+            if entry["id"] == capital_id
+        )
+        db.add(CapitalProjectionBasisDecision(
+            capital_asset_id=capital_id, client_id=7,
+            annual_rate=Decimal("0.05"), return_basis="NET",
+            price_basis="NOMINAL",
+            contract_version="canonical-pre-retirement-projection-basis-v1",
+            source_semantic_fingerprint_at_decision=capital_basis.source_fingerprint(source),
+            timing_context_fingerprint_at_decision=capital_basis.timing_fingerprint(plan),
+            planning_calculation_input_fingerprint_at_decision=
+                plan["planning_calculation_input_fingerprint"],
+            actor="synthetic-professional",
+            provenance="explicit_professional_capital_projection_basis",
+            decided_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        ))
+    return factory, capital_id
+
+
+def test_live_pg16_package2_positive_canonical_capital_projection(admitted_capital):
+    factory, capital_id = admitted_capital
+    result = build(factory)
+    cell = result["domain_results"]["capital"]
+    assert cell["state"] == "NONBINDING_PROJECTION", cell["blockers"]
+    assert cell["professional_authority"] is False
+    assert result["execution_allowed"] is False
+    assert result["net_income"]["result"] is None
+    projection = cell["result"]
+    assert projection["client_id"] == 7
+    assert projection["scenario_id"] == "a1"
+    assert projection["scenario_version"] == 1
+    assert projection["planning_base_date"] == "2026-11-01"
+    assert projection["retirement_target_date"] == "2032-01-01"
+    assert projection["withdrawable_amount_ils"] is None
+    assert projection["actual_withdrawal_ils"] is None
+    assert projection["tax_effect_ils"] is None
+    native = projection["projection"]
+    assert native["execution_status"] == "AUTHORITATIVE_RESULT"
+    assert len(native["projected_sources"]) == 1
+    source = native["projected_sources"][0]
+    assert source["source_id"] == f"capital:{capital_id}"
+    assert Decimal(source["projected_amount"]) > Decimal("800.00")
+    assert len(source["projection_result_fingerprint"]) == 64
+    assert len(projection["native_execution_fingerprint"]) == 64
+    assert len(cell["result_fingerprint"]) == 64
+
+    # Prove the adapter uses exactly the existing engine's result rather than
+    # a second formula or an arbitrary financial adjustment.
+    with factory() as db:
+        plan = planning.derive(db, 7)
+        authority = capital_basis.derive(db, 7, plan)
+        canonical = capital_execution.execute(7, plan, authority)
+        db.rollback()
+    assert native == canonical
+    other_scenario = build(factory, client=7, scenario="a2")
+    assert other_scenario["domain_results"]["capital"]["state"] == "NONBINDING_PROJECTION"
+    assert (other_scenario["domain_results"]["capital"]["result_fingerprint"]
+            != cell["result_fingerprint"])
+    foreign = build(factory, client=8, scenario="b1")
+    assert foreign["domain_results"]["capital"]["state"] == "BLOCKED"
+    assert foreign["domain_results"]["capital"]["result"] is None
+
+
+def test_live_pg16_package2_capital_rate_and_source_invalidation(admitted_capital):
+    factory, capital_id = admitted_capital
+    before = build(factory)
+    assert before["domain_results"]["capital"]["state"] == "NONBINDING_PROJECTION"
+    with factory.begin() as db:
+        basis = db.get(CapitalProjectionBasisDecision, capital_id)
+        basis.annual_rate = Decimal("0.06")
+    rate_changed = build(factory)
+    assert rate_changed["result_fingerprint"] != before["result_fingerprint"]
+    assert (rate_changed["domain_results"]["capital"]["result_fingerprint"]
+            != before["domain_results"]["capital"]["result_fingerprint"])
+    with factory.begin() as db:
+        asset = db.get(CapitalAsset, capital_id)
+        asset.known_value_amount = Decimal("850.00")
+    source_changed = build(factory)
+    assert source_changed["domain_results"]["capital"]["state"] == "BLOCKED"
+    assert source_changed["domain_results"]["capital"]["result"] is None
+    assert source_changed["result_fingerprint"] != rate_changed["result_fingerprint"]
+
+
+def test_live_pg16_package2_capital_target_and_allocations_block(admitted_capital):
+    factory, _ = admitted_capital
+    prior = build(factory)
+    assert prior["domain_results"]["capital"]["state"] == "NONBINDING_PROJECTION"
+    with factory.begin() as db:
+        from app.models.planning_input_decision import PlanningInputDecision
+        db.get(PlanningInputDecision, 7).retirement_target_date = date(2033, 1, 1)
+    after = build(factory)
+    assert after["domain_results"]["capital"]["state"] == "BLOCKED"
+    assert after["domain_results"]["capital"]["result"] is None
+    assert after["result_fingerprint"] != prior["result_fingerprint"]
+
+    # A pension-product component withdrawal cannot be mistaken for a
+    # projection of the independent deposit or counted twice.
+    with factory.begin() as db:
+        db.add(ScenarioDraftDecision(
+            decision_id="capital-option", scenario_id="a1",
+            source_product_id="p7", source_component_id="c7",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("160.00"), action="capital_asset",
+            effective_date=date(2027, 1, 1),
+            validation_state="unverified", product_version_at_review=1,
+        ))
+    blocked = build(factory)
+    assert blocked["domain_results"]["capital"]["state"] == "BLOCKED"
+    assert blocked["domain_results"]["capital"]["result"] is None
+    assert blocked["financial_evidence"]["capital"]["facts"][
+        "source_components_consumed_once"][0]["planned_allocations_total_ils"] == "200.00"

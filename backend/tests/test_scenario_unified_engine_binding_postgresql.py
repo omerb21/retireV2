@@ -264,3 +264,27 @@ def test_live_pg16_package2_fact_evidence_binds_source_and_is_never_cash(pg16):
     assert foreign["financial_evidence"]["capital"]["facts"]["canonical_assets"] == []
     assert foreign["financial_evidence"]["fixation_tax"]["facts"][
         "historical_fixation_run_references"] == []
+
+
+def test_live_pg16_package2_duplicate_source_allocation_never_counts_twice(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(ScenarioDraftDecision(
+            decision_id="extra_a1", scenario_id="a1",
+            source_product_id="p7", source_component_id="c7",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("180.00"), action="capital_asset",
+            effective_date=date(2027, 1, 1),
+            validation_state="unverified", product_version_at_review=1,
+        ))
+    result = build(factory)
+    capital = result["financial_evidence"]["capital"]
+    assert capital["facts"]["source_components_consumed_once"] == [{
+        "product_id": "p7", "component_id": "c7",
+        "capacity_ils": "200.00",
+        "planned_allocations_total_ils": "220.00",
+    }]
+    assert "CAPITAL_SOURCE_OVERALLOCATED" in capital["blockers"]
+    assert result["domain_results"]["capital"]["state"] == "BLOCKED"
+    assert result["domain_results"]["capital"]["result"] is None
+    assert result["execution_allowed"] is False

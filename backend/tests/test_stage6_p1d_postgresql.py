@@ -22,6 +22,10 @@ from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services import scenario_stage6_single_pension_estimate_service as subject
+from app.services.scenario_unified_engine_binding_service import (
+    build_unified_scenario_engine_bindings,
+)
+from app.services.scenario_unified_result_service import assert_unified_result_current
 from app.services import scenario_stage6_monthly_comparison_service as comparison_subject
 from app.services.scenario_stage6_monthly_cashflow_service import (
     build_scenario_monthly_cashflow,
@@ -230,6 +234,17 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 "coefficient_selection": "manual_review_required", "option_name": "standard-b-2",
             }])
 
+        # Match the canonical planning target to the synthetic Stage 6 target
+        # before admission, so the unified base has a fully explicit date.
+        with scoped.begin() as connection:
+            connection.execute(PlanningInputDecision.__table__.insert(), {
+                "client_id": 27, "version": 1,
+                "retirement_target_date": date(2027, 9, 30),
+                "retirement_target_decision_actor": "synthetic-test",
+                "retirement_target_reference_fingerprint": "a" * 64,
+                "actor": "synthetic-test",
+            })
+
         factory = sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
         admission = append_authenticated_serializable_factor_admission(
             factory, request=_request(), client_id=27, scenario_id="scenario",
@@ -340,6 +355,48 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
         assert all(len(row["contributions"]) == 3 for row in cashflow["monthly_rows"])
         assert cashflow["execution_allowed"] is False
         assert len(cashflow["cashflow_fingerprint"]) == 64
+
+        # Supervisor 16: this is an actual positive end-to-end unified result,
+        # not a mock producer nor a new coefficient or financial formula.
+        unified = build_unified_scenario_engine_bindings(
+            factory, client_id=27, scenario_id="scenario",
+            start_month="2027-10", end_month="2027-11",
+        )
+        assert unified["identity"] == {
+            "client_id": 27, "scenario_id": "scenario",
+            "scenario_version": 1, "scenario_status": "draft",
+        }
+        gross_pension = unified["domain_results"]["pension_gross"]
+        assert gross_pension["state"] == "NONBINDING_ESTIMATE"
+        assert gross_pension["result"]["monthly_pension_gross_total_ils"] == "4.00"
+        assert gross_pension["result_fingerprint"] == aggregate["aggregate_fingerprint"]
+        monthly = unified["domain_results"]["monthly_cashflow"]
+        assert monthly["state"] == "NONBINDING_GROSS"
+        assert monthly["result_fingerprint"] == cashflow["cashflow_fingerprint"]
+        assert [r["gross_income_total_ils"] for r in monthly["result"]["monthly_rows"]] == [
+            "1204.00", "1204.00",
+        ]
+        for row in monthly["result"]["monthly_rows"]:
+            contributions = row["contributions"]
+            assert len({c["source_id"] for c in contributions}) == len(contributions)
+            pension_sum = sum(
+                (Decimal(c["amount_monthly_gross_ils"]) for c in contributions
+                 if c["source_kind"] == "CALCULATED_PENSION"), Decimal("0.00"),
+            )
+            rent_sum = sum(
+                (Decimal(c["amount_monthly_gross_ils"]) for c in contributions
+                 if c["source_kind"] == "KNOWN_RECURRING_INCOME"), Decimal("0.00"),
+            )
+            assert pension_sum == Decimal("4.00")
+            assert rent_sum == Decimal("1200.00")
+            assert Decimal(row["gross_income_total_ils"]) == pension_sum + rent_sum
+        assert unified["execution_allowed"] is False
+        assert unified["professional_authority"] is False
+        assert unified["net_income"]["result"] is None
+        assert assert_unified_result_current(
+            factory, client_id=27, scenario_id="scenario",
+            expected_result_fingerprint=unified["base"]["result_fingerprint"],
+        )
         comparison = compare_scenario_monthly_cashflows(
             factory, client_id=27, scenario_a_id="scenario", scenario_a_version=1,
             scenario_b_id="scenario-b", scenario_b_version=1,
@@ -411,6 +468,17 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             connection.execute(ScenarioDraftPensionElection.__table__.update().where(
                 ScenarioDraftPensionElection.election_id == "election",
             ).values(option_name="changed-route"))
+        changed_unified = build_unified_scenario_engine_bindings(
+            factory, client_id=27, scenario_id="scenario",
+            start_month="2027-10", end_month="2027-11",
+        )
+        assert changed_unified["result_fingerprint"] != unified["result_fingerprint"]
+        assert changed_unified["domain_results"]["pension_gross"]["state"] == "BLOCKED"
+        assert changed_unified["domain_results"]["pension_gross"]["result"] is None
+        assert not assert_unified_result_current(
+            factory, client_id=27, scenario_id="scenario",
+            expected_result_fingerprint=unified["base"]["result_fingerprint"],
+        )
         monkeypatch.undo()
         _assert_blocked_without_pte(
             factory, monkeypatch, "STAGE6_P1C_FACTOR_ADMISSION_BLOCKED")
@@ -441,13 +509,10 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             connection.execute(PensionProductComponent.__table__.update().where(
                 PensionProductComponent.component_id == "component",
             ).values(balance=Decimal("1000.00")))
-            connection.execute(PlanningInputDecision.__table__.insert(), {
-                "client_id": 27, "version": 1,
-                "retirement_target_date": date(2028, 9, 30),
-                "retirement_target_decision_actor": "planner-1",
-                "retirement_target_reference_fingerprint": "a" * 64,
-                "actor": "planner-1",
-            })
+            connection.execute(PlanningInputDecision.__table__.update().where(
+                PlanningInputDecision.client_id == 27,
+            ).values(version=2, retirement_target_date=date(2028, 9, 30),
+                     retirement_target_decision_actor="planner-1", actor="planner-1"))
         monkeypatch.undo()
         _assert_blocked_without_pte(
             factory, monkeypatch, "SCENARIO_GLOBAL_TARGET_CONFLICT")

@@ -5,6 +5,7 @@ The Stage 6 engines execute through the existing read-only snapshot owner.
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from sqlalchemy import select
 
@@ -166,3 +167,100 @@ def test_live_pg16_package2_decision_change_invalidates_binding(pg16):
     assert after["identity"]["scenario_version"] == 2
     assert after["domain_results"]["pension_gross"]["result"] is None
     assert after["base"]["decisions"][0]["election_state"] == "BLOCKED_STALE"
+
+
+def test_live_pg16_package2_fact_evidence_binds_source_and_is_never_cash(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(EmploymentRecord(
+            employment_record_id="work7", client_id=7,
+            employer_name="Synthetic employer", work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 12, 31), is_current=False,
+            exempt_grant_status="not_reviewed",
+        ))
+        db.add(CapitalAsset(
+            client_id=7, asset_category="bank deposit",
+            asset_description="Synthetic deposit",
+            known_value_amount=Decimal("800.00"),
+            value_as_of_date=date(2026, 10, 1),
+            lifecycle_status="current", verification_state="verified",
+            source_status="external statement", origin_kind="manual",
+        ))
+        db.add(ActualCapitalization(
+            capitalization_id="cap7", client_id=7,
+            amount=Decimal("60.00"), capitalization_date=date(2022, 1, 1),
+            source_label="Test historical capitalization",
+        ))
+        db.add(FixationRun(
+            client_id=7, calculation_version="test-only",
+            status="success", is_latest=True,
+        ))
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="grant7", client_id=7, employment_record_id="work7",
+            employer_name="Synthetic employer",
+            nominal_amount=Decimal("500.00"),
+            grant_date=date(2025, 12, 31),
+            work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 12, 31),
+        ))
+    before = build(factory)
+    facts = before["financial_evidence"]
+    assert set(facts) == {"capital", "severance", "fixation_tax"}
+    for name in facts:
+        assert facts[name]["client_id"] == 7
+        assert facts[name]["scenario_id"] == "a1"
+        assert facts[name]["scenario_version"] == 1
+        assert facts[name]["authority_state"] == "FACTUAL_EVIDENCE_ONLY"
+        assert facts[name]["estimated_withdrawable_amount_ils"] is None
+        assert facts[name]["tax_effect_ils"] is None
+        assert len(facts[name]["evidence_fingerprint"]) == 64
+
+    capital = facts["capital"]["facts"]
+    assert capital["canonical_assets"][0]["reported_current_value_ils"] == "800.00"
+    assert capital["canonical_assets"][0]["available_to_withdraw_ils"] is None
+    assert capital["source_components_consumed_once"] == [{
+        "product_id": "p7", "component_id": "c7",
+        "capacity_ils": "200.00",
+        "planned_allocations_total_ils": "40.00",
+    }]
+    assert capital["decisions"][0]["cash_paid"] is False
+    assert capital["decisions"][0]["amount_planned_ils"] == "40.00"
+
+    grants = facts["severance"]["facts"]["grants"]
+    assert len(grants) == 1
+    assert grants[0]["reported_nominal_amount_ils"] == "500.00"
+    assert grants[0]["payment_classification"] == "UNKNOWN_NOT_VERIFIED"
+    assert grants[0]["actual_payment_ils"] is None
+    assert grants[0]["tax_exemption_ils"] is None
+    fixation = facts["fixation_tax"]["facts"]
+    assert fixation["historical_actual_capitalizations"][0]["reported_amount_ils"] == "60.00"
+    assert fixation["historical_fixation_run_references"][0]["calculation_status"] == "success"
+    assert fixation["historical_fixation_run_references"][0]["authority_state"] == (
+        "HISTORICAL_CALCULATION_NOT_TAX_AUTHORITY_APPROVAL"
+    )
+    assert fixation["tax_authority_approval"] is None
+    for name in ("capital", "severance", "fixation_tax"):
+        assert before["domain_results"][name]["state"] == "BLOCKED"
+        assert before["domain_results"][name]["result"] is None
+    assert before["net_income"]["state"] == "BLOCKED"
+
+    # A factual grant edit must invalidate the entire envelope without changing
+    # the independent client/scenario or implying the grant was ever paid.
+    with factory.begin() as db:
+        grant = db.get(Grant, "grant7")
+        grant.nominal_amount = Decimal("550.00")
+    after = build(factory)
+    assert after["identity"] == before["identity"]
+    assert after["result_fingerprint"] != before["result_fingerprint"]
+    assert (after["financial_evidence"]["severance"]["evidence_fingerprint"]
+            != facts["severance"]["evidence_fingerprint"])
+    assert after["financial_evidence"]["severance"]["facts"]["grants"][0][
+        "reported_nominal_amount_ils"] == "550.00"
+    assert after["domain_results"]["severance"]["result"] is None
+    assert build(factory, client=7, scenario="a2")["identity"]["scenario_id"] == "a2"
+    foreign = build(factory, client=8, scenario="b1")
+    assert foreign["financial_evidence"]["severance"]["facts"]["grants"] == []
+    assert foreign["financial_evidence"]["capital"]["facts"]["canonical_assets"] == []
+    assert foreign["financial_evidence"]["fixation_tax"]["facts"][
+        "historical_fixation_run_references"] == []

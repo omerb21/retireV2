@@ -312,3 +312,45 @@ def test_live_pg16_package2_duplicate_source_allocation_never_counts_twice(pg16)
     assert result["domain_results"]["capital"]["state"] == "BLOCKED"
     assert result["domain_results"]["capital"]["result"] is None
     assert result["execution_allowed"] is False
+
+
+def test_live_pg16_package2_rejects_foreign_asset_basis_without_id_leak(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        foreign = CapitalAsset(
+            client_id=8, asset_category="bank deposit",
+            asset_description="Other client private asset",
+            known_value_amount=Decimal("900.00"),
+            value_as_of_date=date(2026, 10, 1),
+            lifecycle_status="current", source_status="external statement",
+            verification_state="verified", origin_kind="manual",
+        )
+        db.add(foreign)
+        db.flush()
+        foreign_id = foreign.id
+        db.add(CapitalProjectionBasisDecision(
+            capital_asset_id=foreign_id, client_id=7,
+            annual_rate=Decimal("0.05"), return_basis="NET",
+            price_basis="NOMINAL",
+            contract_version="canonical-pre-retirement-projection-basis-v1",
+            source_semantic_fingerprint_at_decision="a" * 64,
+            timing_context_fingerprint_at_decision="b" * 64,
+            planning_calculation_input_fingerprint_at_decision="c" * 64,
+            actor="synthetic-planner",
+            provenance="explicit_professional_capital_projection_basis",
+            decided_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        ))
+    result = build(factory, client=7, scenario="a1")
+    capital = result["financial_evidence"]["capital"]
+    assert "CAPITAL_PROJECTION_BASIS_CLIENT_ASSET_MISMATCH" in capital["blockers"]
+    assert capital["facts"]["capital_projection_basis_evidence"] == []
+    assert capital["facts"]["canonical_assets"] == []
+    assert str(foreign_id) not in [
+        str(row["capital_asset_id"])
+        for row in capital["facts"]["capital_projection_basis_evidence"]
+    ]
+    assert result["domain_results"]["capital"]["result"] is None
+    assert result["professional_authority"] is False
+    other = build(factory, client=8, scenario="b1")
+    assert other["financial_evidence"]["capital"]["facts"]["canonical_assets"][0][
+        "reported_current_value_ils"] == "900.00"

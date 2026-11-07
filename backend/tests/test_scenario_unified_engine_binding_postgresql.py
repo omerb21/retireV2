@@ -14,7 +14,25 @@ from app.services.scenario_unified_engine_binding_service import (
     build_unified_scenario_engine_bindings, CONTRACT, FINANCIAL_DOMAINS,
 )
 from app.services.scenario_unified_result_service import assert_unified_result_current
-from tests.test_scenario_unified_result_real_postgresql import pg16, _source_state
+import pytest
+from app.db.base import Base, load_all_models
+from tests.test_scenario_unified_result_real_postgresql import pg16 as pg16_base, _source_state
+
+
+@pytest.fixture
+def pg16(pg16_base):
+    """Install genuine read dependencies in the same disposable PG16 schema.
+
+    Package-1's fixture intentionally creates only tables used by its inert
+    envelope. Stage 6 admission may consult additional tables: no mocks or
+    external databases are used, and this setup runs before the read-only
+    subject is invoked.
+    """
+    factory, scoped = pg16_base
+    load_all_models()
+    with scoped.begin() as connection:
+        Base.metadata.create_all(connection, checkfirst=True)
+    return factory, scoped
 
 
 def build(factory, client=7, scenario="a1", start=None, end=None):

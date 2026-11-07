@@ -41,7 +41,8 @@ def _verified_result(engine, authority, plan, client_id, target):
             or engine.get("covered_source_count") != len(rows)):
         return False
     expected_ids = [source["source_id"] for source in admitted]
-    if sorted(row["source_id"] for row in rows) != sorted(expected_ids):
+    if (len(set(expected_ids)) != len(expected_ids)
+            or sorted(row["source_id"] for row in rows) != sorted(expected_ids)):
         return False
     for row in rows:
         if (row.get("retirement_target_date") != target
@@ -89,6 +90,13 @@ def build_scenario_capital_projection(db, base, financial_evidence):
         return _blocked("CAPITAL_SOURCE_VERIFICATION_INCOMPLETE")
     if not capital["facts"]["canonical_assets"]:
         return _blocked("CAPITAL_NO_ELIGIBLE_SOURCES")
+    expected_asset_sources = {
+        f'capital:{asset["asset_id"]}'
+        for asset in capital["facts"]["canonical_assets"]
+    }
+    if not expected_asset_sources or len(expected_asset_sources) != len(
+            capital["facts"]["canonical_assets"]):
+        return _blocked("CAPITAL_SCENARIO_ASSET_IDENTITY_INVALID")
     try:
         plan = planning.derive(db, client_id)
         authority = basis.derive(db, client_id, plan)
@@ -105,6 +113,8 @@ def build_scenario_capital_projection(db, base, financial_evidence):
         target = plan["retirement_target"]["retirement_target_date"]
         if not _verified_result(engine, authority, plan, client_id, target):
             return _blocked("CAPITAL_PROJECTION_ENGINE_RESULT_INVALID")
+        if {row["source_id"] for row in engine["projected_sources"]} != expected_asset_sources:
+            return _blocked("CAPITAL_SCENARIO_PROJECTION_SOURCE_MISMATCH")
     except PensionProductError as error:
         # Original engine error codes are preserved for auditing, not
         # converted into a guessed result or silently defaulted values.

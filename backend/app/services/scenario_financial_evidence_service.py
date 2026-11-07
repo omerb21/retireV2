@@ -12,6 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.models.retirement_facts import CapitalAsset
+from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
 from app.models.actual_capitalization import ActualCapitalization
@@ -54,6 +55,12 @@ def _capital(db, base):
         CapitalAsset.client_id == client_id,
         CapitalAsset.lifecycle_status == "current",
     ).order_by(CapitalAsset.id)).all()
+    projection_rows = db.scalars(select(CapitalProjectionBasisDecision).where(
+        CapitalProjectionBasisDecision.client_id == client_id,
+    ).order_by(CapitalProjectionBasisDecision.capital_asset_id)).all()
+    projection_by_asset = {row.capital_asset_id: row for row in projection_rows}
+    if len(projection_by_asset) != len(projection_rows):
+        raise ValueError("CAPITAL_PROJECTION_BASIS_DUPLICATE")
     decisions = []
     used = defaultdict(Decimal)
     caps = {}
@@ -106,6 +113,26 @@ def _capital(db, base):
         "projection_is_admitted": False,
         "available_to_withdraw_ils": None,
     } for row in assets]
+    asset_ids = {row["asset_id"] for row in records}
+    if any(row.capital_asset_id not in asset_ids for row in projection_rows):
+        blockers.add("CAPITAL_PROJECTION_BASIS_OUTSIDE_ACTIVE_ASSETS")
+    projection_evidence = [{
+        "capital_asset_id": row.capital_asset_id,
+        "annual_rate_text": format(row.annual_rate, "f"),
+        "return_basis": row.return_basis,
+        "price_basis": row.price_basis,
+        "contract_version": row.contract_version,
+        "source_semantic_fingerprint_at_decision":
+            row.source_semantic_fingerprint_at_decision,
+        "timing_context_fingerprint_at_decision":
+            row.timing_context_fingerprint_at_decision,
+        "planning_calculation_input_fingerprint_at_decision":
+            row.planning_calculation_input_fingerprint_at_decision,
+        "decided_at": _date(row.decided_at),
+        "updated_at": _date(row.updated_at),
+        "state": "CLIENT_LEVEL_BASIS_NOT_SCENARIO_ADMITTED",
+        "projected_amount_ils": None,
+    } for row in projection_rows]
     if any(r["origin_kind"] == "conversion" or r["conversion_id"] for r in records):
         blockers.add("CAPITAL_CONVERTED_ASSET_NOT_ADMITTED_FOR_SCENARIO")
     return _pack(identity, "capital", {
@@ -113,6 +140,7 @@ def _capital(db, base):
         "retirement_target_date": base["reference_dates"]["retirement_target_date"],
         "decisions": decisions,
         "canonical_assets": records,
+        "capital_projection_basis_evidence": projection_evidence,
         "source_components_consumed_once": [
             {
                 "product_id": product_id,

@@ -105,6 +105,7 @@ try {
         "tests/test_scenario_coefficient_input_inventory_real_postgresql.py",
         "tests/test_scenario_snapshot_candidate_postgresql.py",
         "tests/test_scenario_unified_result_real_postgresql.py",
+        "tests/test_scenario_unified_engine_binding_postgresql.py",
         "tests/test_scenario_admission_postgresql_isolation.py",
         "tests/test_scenario_admission_postgresql_tables.py",
         "tests/test_scenario_draft_postgresql.py"

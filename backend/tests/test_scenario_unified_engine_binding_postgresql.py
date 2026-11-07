@@ -5,7 +5,7 @@ The Stage 6 engines execute through the existing read-only snapshot owner.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from sqlalchemy import select, text
 
@@ -184,13 +184,27 @@ def test_live_pg16_package2_fact_evidence_binds_source_and_is_never_cash(pg16):
             work_end_date=date(2025, 12, 31), is_current=False,
             exempt_grant_status="not_reviewed",
         ))
-        db.add(CapitalAsset(
+        asset = CapitalAsset(
             client_id=7, asset_category="bank deposit",
             asset_description="Synthetic deposit",
             known_value_amount=Decimal("800.00"),
             value_as_of_date=date(2026, 10, 1),
             lifecycle_status="current", verification_state="verified",
             source_status="external statement", origin_kind="manual",
+        )
+        db.add(asset)
+        db.flush()
+        db.add(CapitalProjectionBasisDecision(
+            capital_asset_id=asset.id, client_id=7,
+            annual_rate=Decimal("0.05"), return_basis="NET",
+            price_basis="NOMINAL",
+            contract_version="canonical-pre-retirement-projection-basis-v1",
+            source_semantic_fingerprint_at_decision="a" * 64,
+            timing_context_fingerprint_at_decision="b" * 64,
+            planning_calculation_input_fingerprint_at_decision="c" * 64,
+            actor="synthetic-planner",
+            provenance="explicit_professional_capital_projection_basis",
+            decided_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
         ))
         db.add(ActualCapitalization(
             capitalization_id="cap7", client_id=7,
@@ -225,6 +239,10 @@ def test_live_pg16_package2_fact_evidence_binds_source_and_is_never_cash(pg16):
     capital = facts["capital"]["facts"]
     assert capital["canonical_assets"][0]["reported_current_value_ils"] == "800.00"
     assert capital["canonical_assets"][0]["available_to_withdraw_ils"] is None
+    assert capital["capital_projection_basis_evidence"][0]["annual_rate_text"] == "0.05"
+    assert capital["capital_projection_basis_evidence"][0][
+        "state"] == "CLIENT_LEVEL_BASIS_NOT_SCENARIO_ADMITTED"
+    assert capital["capital_projection_basis_evidence"][0]["projected_amount_ils"] is None
     assert capital["source_components_consumed_once"] == [{
         "product_id": "p7", "component_id": "c7",
         "capacity_ils": "200.00",

@@ -1239,6 +1239,12 @@ def test_live_pg16_fixation_readiness_grant_employment_capitalization_fingerprin
         ))
     first = build(factory)
     before = _fixation_readiness(first)
+    # Non-semantic free-text audit notes are deliberately excluded from
+    # readiness provenance, even if the general evidence envelope changes.
+    with factory.begin() as db:
+        db.get(ActualCapitalization, "readiness-cap7").notes = "internal display note only"
+    assert _fixation_readiness(build(factory))["readiness_fingerprint"] == before[
+        "readiness_fingerprint"]
     assert before["source_evidence"]["historical_fixation_run_references"][0][
         "authority_state"] == "HISTORICAL_CALCULATION_NOT_TAX_AUTHORITY_APPROVAL"
     assert before["mapping"]["tax_authority_approval"]["verified"] is False

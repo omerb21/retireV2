@@ -15,6 +15,7 @@ from app.models.retirement_facts import CapitalAsset
 from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
+from app.services.scenario_severance_planning_service import read_choices
 from app.models.pension_product import PensionProduct, PensionProductComponent, SEVERANCE_CODES
 from app.services.professional_source_snapshot_service import record, serialize
 from app.models.actual_capitalization import ActualCapitalization
@@ -243,7 +244,10 @@ def _severance(db, base):
         "grants": items,
         "pension_severance_component_candidates": component_evidence,
         "cross_source_reconciliation": "NOT_ESTABLISHED",
-        "scenario_severance_election": "NOT_DEFINED",
+        "scenario_severance_election": "DRAFT_PLANNING_ONLY",
+        "scenario_planning_choices": read_choices(
+            db, client_id, identity["scenario_id"],
+        ),
     }, blockers)
 
 def _fixation(db, base):

@@ -31,6 +31,7 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
   });
   const failures: string[] = [];
   const consoleErrors: string[] = [];
+  let missingStage6CapabilityCount = 0;
   const apiEvidence: Array<{ method: string; url: string; status: number; body: unknown }> = [];
   page.on("console", message => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -48,7 +49,12 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
       const expectedOverAllocation = method === "PUT"
         && pathname === API + "/scenario-drafts/" + B + "/severance-planning"
         && response.status() === 422;
-      if (response.status() >= 400 && !expectedOverAllocation) {
+      const expectedStage6CapabilityMissing = method === "GET"
+        && pathname === API + "/scenario-drafts/capabilities/gross-scenario-results"
+        && response.status() === 404;
+      if (expectedStage6CapabilityMissing) missingStage6CapabilityCount += 1;
+      if (response.status() >= 400
+          && !expectedOverAllocation && !expectedStage6CapabilityMissing) {
         failures.push(method + " " + pathname + " HTTP " + response.status());
       }
     }
@@ -178,8 +184,12 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
     // resource error. Record it, but never mask other failures.
     const expected422Logs = consoleErrors.filter(message =>
       /Failed to load resource/.test(message) && /422/.test(message));
+    const expectedCapabilityLogs = consoleErrors.filter(message =>
+      /Failed to load resource/.test(message) && /404/.test(message));
     expect(expected422Logs.length).toBeLessThanOrEqual(1);
-    expect(consoleErrors.filter(message => !expected422Logs.includes(message)),
+    expect(expectedCapabilityLogs.length).toBeLessThanOrEqual(missingStage6CapabilityCount);
+    expect(consoleErrors.filter(message =>
+      !expected422Logs.includes(message) && !expectedCapabilityLogs.includes(message)),
       "Unexpected browser console errors").toEqual([]);
     expect(failures, "Unexpected browser API failures").toEqual([]);
   } finally {

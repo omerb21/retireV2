@@ -81,11 +81,38 @@ def read_choices(db: Session, client_id: int, scenario_id: str) -> dict:
             PensionProductComponent.component_code.in_(SEVERANCE_CODES),
             PensionProductComponent.balance > 0).limit(1)) is not None
     overlap = grant_present and severance_components
+    component_choices = {
+        item["source_id"]: Decimal(item["planned_amount_ils"])
+        for item in saved
+        if item["source_kind"] == "pension_component"
+        and item["planned_amount_ils"] is not None
+    }
+    component_overallocated = set()
+    if component_choices:
+        already_allocated = db.scalars(select(ScenarioDraftDecision).where(
+            ScenarioDraftDecision.scenario_id == scenario_id,
+            ScenarioDraftDecision.source_component_id.in_(component_choices),
+        )).all()
+        combined = dict(component_choices)
+        for row in already_allocated:
+            combined[row.source_component_id] += row.amount
+        for source_id, total in combined.items():
+            try:
+                _, current_balance = _source(db, client_id, "pension_component", source_id)
+            except DraftError:
+                component_overallocated.add(source_id)
+                continue
+            if total > current_balance:
+                component_overallocated.add(source_id)
     output = []
     for item in saved:
         state = _current_state(db, client_id, scenario_id, item)
         if scenario.status != "draft":
             state = "BLOCKED_SCENARIO_NOT_ACTIVE"
+        elif state == "DRAFT_ONLY" and (
+                item["source_kind"] == "pension_component"
+                and item["source_id"] in component_overallocated):
+            state = "BLOCKED_COMPONENT_OVERALLOCATED"
         elif state == "DRAFT_ONLY" and overlap:
             state = "BLOCKED_GRANT_COMPONENT_OVERLAP_UNRECONCILED"
         output.append({

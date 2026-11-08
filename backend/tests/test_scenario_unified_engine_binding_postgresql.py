@@ -1174,3 +1174,163 @@ def test_live_pg16_unified_severance_changed_choice_updates_only_planning_author
         second["domain_results"]["severance"], second["net_income"],
     ))
     _all_unapproved(second)
+
+
+def _fixation_readiness(result):
+    cell = result["domain_results"]["fixation_tax"]
+    assert cell["state"] == "BLOCKED"
+    assert cell["result"] is None
+    assert cell["result_fingerprint"] is None
+    assert cell["professional_authority"] is False
+    ready = cell["readiness"]
+    assert ready["contract"] == "SCENARIO_FIXATION_READINESS_V1"
+    assert ready["readiness_state"] == "BLOCKED"
+    assert ready["execution_allowed"] is False
+    assert ready["professional_authority"] is False
+    assert ready["client_id"] == result["identity"]["client_id"]
+    assert ready["scenario_id"] == result["identity"]["scenario_id"]
+    assert ready["scenario_version"] == result["identity"]["scenario_version"]
+    assert ready["manifest_fingerprint"] == result["base"]["manifest_fingerprint"]
+    assert len(ready["readiness_fingerprint"]) == 64
+    assert ready["approved_monthly_exemption_ils"] is None
+    assert ready["tax_due_ils"] is None
+    assert ready["net_cashflow_ils"] is None
+    assert result["net_income"]["state"] == "BLOCKED"
+    assert result["net_income"]["result"] is None
+    return ready
+
+
+def test_live_pg16_fixation_readiness_blocked_contract_and_no_inferred_year(pg16, monkeypatch):
+    factory, _ = pg16
+    from app.services import fixation_service
+    from app.engines import fixation_engine
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("FIXATION_ENGINE_MUST_NOT_BE_CALLED")
+
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    first = build(factory)
+    second = build(factory)
+    ready = _fixation_readiness(first)
+    assert first == second
+    assert ready["source_evidence"]["tax_year"] is None
+    assert ready["source_evidence"]["official_parameter_set"] is None
+    assert ready["mapping"]["parameter_set"]["present"] is False
+    assert ready["mapping"]["parameter_set"]["blocker"] == "FIXATION_SCENARIO_TAX_YEAR_MISSING"
+    assert ready["mapping"]["m07_input_reference"]["verified"] is False
+    assert "FIXATION_ELIGIBILITY_SCENARIO_BINDING_MISSING" in ready["blockers"]
+    assert first["domain_results"]["fixation_tax"]["producer_contract"] == "SCENARIO_FIXATION_READINESS_V1"
+    _all_unapproved(first)
+
+
+def test_live_pg16_fixation_readiness_grant_employment_capitalization_fingerprint(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        db.add(ActualCapitalization(
+            capitalization_id="readiness-cap7", client_id=7,
+            amount=Decimal("50.00"), capitalization_date=date(2023, 1, 1),
+            source_label="Synthetic capitalization", source_basis="reported",
+        ))
+        db.add(FixationRun(
+            client_id=7, calculation_version="historical-only",
+            status="success", is_latest=True,
+        ))
+    first = build(factory)
+    before = _fixation_readiness(first)
+    assert before["source_evidence"]["historical_fixation_run_references"][0][
+        "authority_state"] == "HISTORICAL_CALCULATION_NOT_TAX_AUTHORITY_APPROVAL"
+    assert before["mapping"]["tax_authority_approval"]["verified"] is False
+    with factory.begin() as db:
+        db.get(Grant, "choice-grant7").nominal_amount = Decimal("120.00")
+    changed_grant = build(factory)
+    second = _fixation_readiness(changed_grant)
+    assert second["readiness_fingerprint"] != before["readiness_fingerprint"]
+    with factory.begin() as db:
+        db.get(EmploymentRecord, "choice-work7").notes = "Changed verified source context"
+    changed_employment = build(factory)
+    third = _fixation_readiness(changed_employment)
+    assert third["readiness_fingerprint"] != second["readiness_fingerprint"]
+    with factory.begin() as db:
+        db.get(ActualCapitalization, "readiness-cap7").amount = Decimal("70.00")
+    changed_capitalization = build(factory)
+    fourth = _fixation_readiness(changed_capitalization)
+    assert fourth["readiness_fingerprint"] != third["readiness_fingerprint"]
+    assert fourth["source_evidence"]["historical_capitalizations"][0]["reported_amount_ils"] == "70.00"
+    _all_unapproved(changed_capitalization)
+
+
+def test_live_pg16_fixation_readiness_severance_choice_overlap_and_client_isolation(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        db.add(PensionProductComponent(
+            component_id="readiness-sev-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי", balance=Decimal("100.00"),
+        ))
+    unselected = build(factory, client=7, scenario="a1")
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_PENSION_CONTINUITY", "planned_amount_ils": "40.00",
+        }], actor="readiness-test")
+    selected = build(factory, client=7, scenario="a1")
+    ready = _fixation_readiness(selected)
+    assert ready["readiness_fingerprint"] != _fixation_readiness(unselected)["readiness_fingerprint"]
+    assert ready["mapping"]["future_grant_reservation"]["present"] is True
+    assert ready["mapping"]["future_grant_reservation"]["verified"] is False
+    assert "FIXATION_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in ready["blockers"]
+    assert ready["source_evidence"]["severance_choice_source_ids"][0]["source_kind"] == "grant"
+    assert ready["approved_monthly_exemption_ils"] is None
+    other_scenario = _fixation_readiness(build(factory, client=7, scenario="a2"))
+    other_client = _fixation_readiness(build(factory, client=8, scenario="b1"))
+    assert other_scenario["mapping"]["future_grant_reservation"]["present"] is False
+    assert other_client["source_evidence"]["grants"] == []
+    assert other_client["source_evidence"]["severance_choice_source_ids"] == []
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="readiness-foreign-grant8", client_id=8,
+            nominal_amount=Decimal("777.00"), grant_date=date(2024, 1, 1),
+            work_start_date=date(2010, 1, 1), work_end_date=date(2024, 1, 1),
+        ))
+    assert build(factory, client=7, scenario="a1") == selected
+
+
+def test_live_pg16_fixation_readiness_finalized_m07_evidence_is_not_admission(pg16):
+    factory, _ = pg16
+    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    def add_revision(db, revision_id, number, fingerprint):
+        db.add(M07EvidenceRevision(
+            m07_evidence_revision_id=revision_id, profile_id="synthetic-fixation",
+            client_id=7, revision_number=number, tax_year=2026,
+            event_year=2026, event_type="fixation",
+            schema_version="test-v1", rule_version="test-v1",
+            status="finalized",
+            authority_classification="EVIDENCE_ONLY_NOT_PROFESSIONAL_AUTHORITY",
+            technical_outcomes=[], canonical_payload={"eligibility_date": "2026-10-01"},
+            evidence_fingerprint=fingerprint,
+            source_snapshot_fingerprint="a" * 64,
+            fingerprint_algorithm_version="sha256-v1",
+            created_at=t, created_by="synthetic-test",
+            finalized_at=t, finalized_by="synthetic-test",
+        ))
+    with factory.begin() as db:
+        add_revision(db, "readiness-m07-1", 1, "b" * 64)
+    first = build(factory)
+    one = _fixation_readiness(first)
+    assert one["mapping"]["m07_input_reference"]["present"] is True
+    assert one["mapping"]["m07_input_reference"]["verified"] is False
+    assert one["source_evidence"]["tax_year"] is None
+    assert one["source_evidence"]["official_parameter_set"] is None
+    assert one["source_evidence"]["m07"][0]["tax_year_on_client_evidence_not_scenario_tax_year"] == 2026
+    with factory.begin() as db:
+        add_revision(db, "readiness-m07-2", 2, "c" * 64)
+    second = build(factory)
+    two = _fixation_readiness(second)
+    assert two["readiness_fingerprint"] != one["readiness_fingerprint"]
+    assert len(two["source_evidence"]["m07"]) == 2
+    assert two["readiness_state"] == "BLOCKED"
+    assert second["net_income"]["result"] is None
+    assert _fixation_readiness(build(factory, client=8, scenario="b1"))[
+        "source_evidence"]["m07"] == []

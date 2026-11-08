@@ -3,6 +3,7 @@ import type { PensionProduct } from "../api/pensionProductsApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
 import { ScenarioConversionMatrix } from "./ScenarioConversionMatrix";
+import { ScenarioSeverancePlanningPanel } from "./ScenarioSeverancePlanningPanel";
 import { ScenarioMonthlyComparisonPanel } from "./ScenarioMonthlyComparisonPanel";
 import { readStage6GrossResultsCapability } from "../api/scenarioStage6Api";
 import {
@@ -242,6 +243,10 @@ export function ScenarioDraftPanel({
         products={products} scenario={active} disabled={active.status !== "draft"}
         busy={busy} initialSource={initialSource}
         onApply={saveConversionBatch} />}
+      {view === "planning" && <ScenarioSeverancePlanningPanel
+        key={`severance:${clientId}:${active.scenario_id}`}
+        clientId={clientId} scenario={active} products={products}
+        onSaved={async id => { await reload(id); }} />}
       {view === "results" && stage6Enabled && active.decisions.length > 0 &&
         <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`}
           clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/>}

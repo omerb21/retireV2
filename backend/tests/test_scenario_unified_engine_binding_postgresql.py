@@ -5,8 +5,10 @@ The Stage 6 engines execute through the existing read-only snapshot owner.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from threading import Barrier
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
@@ -20,8 +22,13 @@ from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
+from app.services import scenario_severance_planning_service as severance_choices_service
 from app.services.scenario_severance_planning_service import replace_choices, read_choices
-from app.services.scenario_draft_service import DraftError, rename as rename_draft
+from app.services.scenario_draft_service import (
+    DraftError, archive as archive_draft, duplicate as duplicate_draft,
+    read as read_draft, rename as rename_draft, replace as replace_draft,
+)
+from app.schemas.scenario_draft import DraftDecisionWrite, DraftReplace
 from app.models.fixation_run import FixationRun
 from app.models.retirement_facts import CapitalAsset
 from app.models.canonical_conversion import batches, conversions, pensions, allocations, reversals
@@ -842,3 +849,125 @@ def test_live_pg16_severance_choice_blocks_new_draft_overallocation(pg16):
     bound = build(factory, client=7, scenario="a1")
     assert bound["domain_results"]["severance"]["result"] is None
     assert bound["net_income"]["result"] is None
+
+
+def test_live_pg16_severance_choice_lifecycle_never_reactivates_stale_source(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    planned = [{
+        "source_kind": "grant", "source_id": "choice-grant7",
+        "choice": "PLANNED_SEVERANCE_CONTINUITY",
+        "planned_amount_ils": "90.00",
+    }]
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=planned, actor="test")
+    with factory.begin() as db:
+        rename_draft(db, 7, "a1", "Metadata only", expected=2, actor="test")
+    with factory() as db:
+        current = read_choices(db, 7, "a1")["choices"][0]
+        assert current["saved_from_scenario_version"] == 3
+        assert current["state"] == "DRAFT_ONLY"
+
+    with factory.begin() as db:
+        db.get(EmploymentRecord, "choice-work7").notes = "materially revised employment evidence"
+    with factory() as db:
+        assert read_choices(db, 7, "a1")["choices"][0]["state"] == "BLOCKED_SOURCE_STALE"
+    with factory.begin() as db:
+        rename_draft(db, 7, "a1", "Rename cannot revive", expected=3, actor="test")
+    with factory() as db:
+        still_stale = read_choices(db, 7, "a1")["choices"][0]
+        assert still_stale["state"] == "BLOCKED_SOURCE_STALE"
+    with factory.begin() as db:
+        clone = duplicate_draft(db, 7, "a1", "Independent clone", actor="test")
+        clone_id = clone["scenario_id"]
+    with factory() as db:
+        assert read_choices(db, 7, clone_id)["choices"] == []
+    with factory.begin() as db:
+        archive_draft(db, 7, "a1", expected=4, actor="test")
+    with factory() as db:
+        archived = read_choices(db, 7, "a1")["choices"][0]
+        assert archived["state"] == "BLOCKED_SCENARIO_NOT_ACTIVE"
+        assert archived["execution_allowed"] is False
+
+
+def test_live_pg16_material_draft_change_requires_explicit_severance_resave(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": "80.00",
+        }], actor="test")
+    with factory() as db:
+        existing = read_draft(db, 7, "a1")["decisions"][0]
+    payload = DraftReplace(
+        name="Materially changed draft", expected_version=2,
+        decisions=[DraftDecisionWrite(
+            decision_id=existing["decision_id"],
+            source_product_id=existing["source_product_id"],
+            source_component_id=existing["source_component_id"],
+            component_code=existing["component_code"], amount=Decimal("50.00"),
+            action=existing["action"], effective_date=date.fromisoformat(
+                existing["effective_date"]),
+        )],
+    )
+    with factory.begin() as db:
+        replace_draft(db, 7, "a1", payload, actor="test")
+    with factory() as db:
+        stale = read_choices(db, 7, "a1")["choices"][0]
+        assert stale["saved_from_scenario_version"] == 2
+        assert stale["current_scenario_version"] == 3
+        assert stale["state"] == "BLOCKED_SCENARIO_VERSION_STALE"
+    with factory.begin() as db:
+        rename_draft(db, 7, "a1", "Still stale", expected=3, actor="test")
+    with factory() as db:
+        still_stale = read_choices(db, 7, "a1")["choices"][0]
+        assert still_stale["saved_from_scenario_version"] == 2
+        assert still_stale["current_scenario_version"] == 4
+        assert still_stale["state"] == "BLOCKED_SCENARIO_VERSION_STALE"
+
+
+def test_live_pg16_concurrent_severance_replacements_have_one_cas_winner(
+        pg16, monkeypatch):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(PensionProductComponent(
+            component_id="concurrent-severance-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי", balance=Decimal("100.00"),
+        ))
+    barrier = Barrier(2)
+    real_cas = severance_choices_service._cas
+
+    def synchronized_cas(*args, **kwargs):
+        barrier.wait(timeout=10)
+        return real_cas(*args, **kwargs)
+
+    monkeypatch.setattr(severance_choices_service, "_cas", synchronized_cas)
+
+    def attempt(amount: str):
+        try:
+            with factory.begin() as db:
+                replace_choices(db, 7, "a1", expected_version=1, choices=[{
+                    "source_kind": "pension_component",
+                    "source_id": "concurrent-severance-c7",
+                    "choice": "PLANNED_WITHDRAWAL",
+                    "planned_amount_ils": amount,
+                }], actor="concurrent-test")
+            return "ACCEPTED"
+        except DraftError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = sorted(executor.map(attempt, ("60.00", "70.00")))
+    assert outcomes == ["ACCEPTED", "SCENARIO_VERSION_CONFLICT"]
+    with factory() as db:
+        loaded = read_choices(db, 7, "a1")
+        assert loaded["scenario_version"] == 2
+        assert len(loaded["choices"]) == 1
+        assert loaded["choices"][0]["planned_amount_ils"] in {"60.00", "70.00"}
+        assert loaded["choices"][0]["state"] == "DRAFT_ONLY"
+        revisions = db.scalars(select(ScenarioDraftRevision).where(
+            ScenarioDraftRevision.scenario_id == "a1",
+            ScenarioDraftRevision.version == 2,
+        )).all()
+        assert len(revisions) == 1

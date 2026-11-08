@@ -41,11 +41,16 @@ def _source(db: Session, client_id: int, kind: str, source_id: str):
         row = db.get(Grant, source_id)
         if row is None or row.client_id != client_id:
             raise DraftError("SEVERANCE_SOURCE_CLIENT_MISMATCH", 422)
+        employment_evidence = None
         if row.employment_record_id:
             employer = db.get(EmploymentRecord, row.employment_record_id)
             if employer is None or employer.client_id != client_id:
                 raise DraftError("SEVERANCE_EMPLOYMENT_CLIENT_MISMATCH", 422)
-        return _fingerprint(serialize(record(row))), (
+            employment_evidence = serialize(record(employer))
+        return _fingerprint({
+            "grant": serialize(record(row)),
+            "employment": employment_evidence,
+        }), (
             Decimal(row.nominal_amount) if row.nominal_amount is not None else None
         )
     if kind == "pension_component":
@@ -60,13 +65,16 @@ def _source(db: Session, client_id: int, kind: str, source_id: str):
     raise DraftError("SEVERANCE_SOURCE_KIND_INVALID", 422)
 
 
-def _current_state(db: Session, client_id: int, scenario_id: str, entry: dict):
+def _current_state(db: Session, client_id: int, scenario_id: str,
+                   scenario_version: int, entry: dict):
     try:
         current, _ = _source(db, client_id, entry["source_kind"], entry["source_id"])
     except DraftError:
         return "BLOCKED_SOURCE_MISSING_OR_FOREIGN"
     if current != entry["source_fingerprint"]:
         return "BLOCKED_SOURCE_STALE"
+    if entry.get("saved_from_scenario_version") != scenario_version:
+        return "BLOCKED_SCENARIO_VERSION_STALE"
     # A saved selection can never mean an executed act or tax admission.
     return "DRAFT_ONLY"
 
@@ -106,7 +114,9 @@ def read_choices(db: Session, client_id: int, scenario_id: str) -> dict:
                 component_overallocated.add(source_id)
     output = []
     for item in saved:
-        state = _current_state(db, client_id, scenario_id, item)
+        state = _current_state(
+            db, client_id, scenario_id, scenario.version, item,
+        )
         if scenario.status != "draft":
             state = "BLOCKED_SCENARIO_NOT_ACTIVE"
         elif state == "DRAFT_ONLY" and (

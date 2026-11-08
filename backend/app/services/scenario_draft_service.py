@@ -450,11 +450,22 @@ def rename(db: Session, client_id: int, scenario_id: str, name: str,
         db.add(ScenarioDraftPensionElection(**values))
     db.flush()
     surviving_ids = {item["decision_id"] for item in preserved}
+    # A metadata-only rename may carry a currently version-bound severance
+    # intent forward.  An already stale choice stays bound to its older
+    # revision, so a later rename can never make it current again.
+    from app.services.scenario_severance_planning_service import _previous
+    severance_choices = []
+    for item in _previous(db, scenario_id):
+        copied = dict(item)
+        if copied.get("saved_from_scenario_version") == expected:
+            copied["saved_from_scenario_version"] = scenario.version
+        severance_choices.append(copied)
     return _revision(db, scenario, "rename", actor, audit_extra={
         "retained_pension_election_decision_ids": sorted(surviving_ids),
         "invalidated_pension_election_decision_ids": sorted(
             {item.decision_id for item in previous} - surviving_ids),
         "professional_admission_carryover": False,
+        "severance_planning_decisions": severance_choices,
     })
 
 

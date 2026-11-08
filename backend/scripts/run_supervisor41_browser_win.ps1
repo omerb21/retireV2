@@ -113,7 +113,8 @@ try {
         Wait-Http "http://127.0.0.1:5173/" $frontendProcess
         $env:PLAYWRIGHT_JSON_OUTPUT_FILE = Join-Path $report "playwright-report.json"
         $testArgs = @("test", "e2e/supervisor41.spec.ts", "--browser=chromium",
-            "--workers=1", "--reporter=line,json", "--output", (Join-Path $report "screenshots"))
+            "--workers=1", "--reporter=line,json", "--trace=on",
+            "--output", (Join-Path $report "screenshots"))
         & $playwright @testArgs *> (Join-Path $report "playwright-console.log")
         if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR41_PLAYWRIGHT_FAILED:$LASTEXITCODE" }
         $passed = $true
@@ -138,8 +139,10 @@ finally {
     }
     if ($containerId) {
         try {
-            $actualLabel = (& docker inspect --format '{{index .Config.Labels "retire-v2.supervisor41"}}' $containerId 2>$null)
-            if ($LASTEXITCODE -eq 0 -and $actualLabel.Trim() -eq $runId) {
+            $details = @((& docker inspect $containerId 2>$null | ConvertFrom-Json))
+            if ($LASTEXITCODE -eq 0 -and $details.Count -eq 1 -and
+                $details[0].Id -eq $containerId -and
+                $details[0].Config.Labels.'retire-v2.supervisor41' -eq $runId) {
                 & docker rm --force $containerId 2>$null | Out-Null
             } else { Write-Host "SUPERVISOR41_CONTAINER_IDENTITY_NOT_VERIFIED" }
         } catch { Write-Host ("SUPERVISOR41_DOCKER_CLEANUP_WARNING:" + $_.Exception.Message) }

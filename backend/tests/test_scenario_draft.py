@@ -750,3 +750,72 @@ def test_a1_a2_b1_api_isolation_on_read_mutation_clone_archive_and_reload(env):
     result = client.get("/api/clients/1/scenario-drafts").json()
     assert {row["name"] for row in result} == {"A1 updated", "A2"}
     assert client.get("/api/clients/2/scenario-drafts").json()[0]["name"] == "B1"
+
+
+def test_severance_api_authenticated_pattern_cas_and_client_isolation(env):
+    from app.models.employment_record import EmploymentRecord
+    from app.models.grant import Grant
+    from app.models.scenario_draft import ScenarioDraftRevision
+
+    client, factory = env
+    with factory.begin() as db:
+        db.add(EmploymentRecord(
+            employment_record_id="api-employment", client_id=1,
+            employer_name="Synthetic employer",
+            work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 1, 1), is_current=False,
+        ))
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="api-grant", client_id=1,
+            employment_record_id="api-employment",
+            nominal_amount=Decimal("200.00"),
+            grant_date=date(2025, 1, 1),
+            work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 1, 1),
+        ))
+    a = client.post("/api/clients/1/scenario-drafts", json={"name": "First"}).json()
+    b = client.post("/api/clients/1/scenario-drafts", json={"name": "Second"}).json()
+    url = f"/api/clients/1/scenario-drafts/{a['scenario_id']}/severance-planning"
+    other = f"/api/clients/1/scenario-drafts/{b['scenario_id']}/severance-planning"
+    row = {"source_kind": "grant", "source_id": "api-grant",
+           "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": "100.00"}
+    saved = client.put(url, json={"expected_version": 1, "choices": [row]})
+    assert saved.status_code == 200, saved.text
+    result = saved.json()
+    assert result["scenario_version"] == 2
+    assert result["choices"][0]["choice"] == "PLANNED_WITHDRAWAL"
+    assert result["choices"][0]["state"] == "DRAFT_ONLY"
+    assert result["choices"][0]["actual_paid_amount_ils"] is None
+    assert result["choices"][0]["exempt_amount_ils"] is None
+    assert client.get(url).json() == result
+    assert client.get(other).json()["choices"] == []
+    assert client.get(url.replace("/clients/1/", "/clients/2/")).status_code == 404
+    stale = client.put(url, json={"expected_version": 1, "choices": [row]})
+    assert (stale.status_code, stale.json()["code"]) == (409, "SCENARIO_VERSION_CONFLICT")
+    assert client.get(url).json() == result
+    invalid = client.put(url, json={"expected_version": 2, "choices": [row, row]})
+    assert invalid.status_code == 422
+    assert client.get(url).json()["scenario_version"] == 2
+    with factory() as db:
+        assert db.query(ScenarioDraftRevision).filter_by(scenario_id=a["scenario_id"]).count() == 2
+
+    renamed = client.post(f"/api/clients/1/scenario-drafts/{a['scenario_id']}/rename",
+                          json={"name": "Renamed", "expected_version": 2})
+    assert renamed.status_code == 200
+    assert client.get(url).json()["choices"][0]["state"] == "DRAFT_ONLY"
+    with factory.begin() as db:
+        db.get(EmploymentRecord, "api-employment").employer_name = "Changed employer"
+    blocked = client.get(url)
+    assert blocked.status_code == 200
+    assert blocked.json()["choices"][0]["state"] == "BLOCKED_SOURCE_STALE"
+
+    clone = client.post(f"/api/clients/1/scenario-drafts/{a['scenario_id']}/duplicate",
+                        json={"name": "Clone"}).json()
+    assert client.get(f"/api/clients/1/scenario-drafts/{clone['scenario_id']}/severance-planning").json()["choices"] == []
+    archived = client.post(f"/api/clients/1/scenario-drafts/{a['scenario_id']}/archive",
+                           json={"expected_version": 3})
+    assert archived.status_code == 200
+    assert client.get(url).json()["choices"][0]["state"] == "BLOCKED_SCENARIO_NOT_ACTIVE"
+    rejection = client.put(url, json={"expected_version": 4, "choices": [row]})
+    assert rejection.status_code == 409

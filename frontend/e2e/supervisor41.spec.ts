@@ -45,7 +45,10 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
       let body: unknown = null;
       try { body = await response.json(); } catch { /* may be empty */ }
       apiEvidence.push({ method, url: pathname, status: response.status(), body });
-      if (response.status() >= 400 && response.status() !== 422) {
+      const expectedOverAllocation = method === "PUT"
+        && pathname === API + "/scenario-drafts/" + B + "/severance-planning"
+        && response.status() === 422;
+      if (response.status() >= 400 && !expectedOverAllocation) {
         failures.push(method + " " + pathname + " HTTP " + response.status());
       }
     }
@@ -171,7 +174,13 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
     expect((await afterB.json()).choices).toEqual([]);
     await capture("05-overallocation-rejected");
 
-    expect(consoleErrors, "Browser console errors").toEqual([]);
+    // Chromium may log the single intentionally rejected HTTP 422 as a
+    // resource error. Record it, but never mask other failures.
+    const expected422Logs = consoleErrors.filter(message =>
+      /Failed to load resource/.test(message) && /422/.test(message));
+    expect(expected422Logs.length).toBeLessThanOrEqual(1);
+    expect(consoleErrors.filter(message => !expected422Logs.includes(message)),
+      "Unexpected browser console errors").toEqual([]);
     expect(failures, "Unexpected browser API failures").toEqual([]);
   } finally {
     writeFileSync(testInfo.outputPath("api-responses.json"), JSON.stringify(apiEvidence, null, 2), "utf8");

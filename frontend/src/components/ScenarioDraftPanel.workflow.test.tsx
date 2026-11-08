@@ -26,6 +26,9 @@ vi.mock("./ScenarioStage6Panel", () => ({
 vi.mock("./ScenarioMonthlyComparisonPanel", () => ({
   ScenarioMonthlyComparisonPanel: () => <section aria-label="Stage 6 comparison">Comparison enabled</section>,
 }));
+vi.mock("./ScenarioSeverancePlanningPanel", () => ({
+  ScenarioSeverancePlanningPanel: () => <section aria-label="Severance planning">Severance enabled</section>,
+}));
 mocks.capability.mockResolvedValue(false);
 afterEach(() => { cleanup(); vi.resetAllMocks(); mocks.capability.mockResolvedValue(false); });
 

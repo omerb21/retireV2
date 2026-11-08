@@ -29,7 +29,7 @@ from app.models.client_profile import ClientProfile
 from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.pension_product import PensionProduct, PensionProductComponent
 from app.models.retirement_facts import RecurringIncome
-from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
+from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services.scenario_unified_engine_binding_service import (
     build_unified_scenario_engine_bindings, CONTRACT, FINANCIAL_DOMAINS,
@@ -60,6 +60,9 @@ def pg16(pg16_base):
         schema = scoped.get_execution_options()["schema_translate_map"][None]
         connection.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
         Base.metadata.create_all(connection, tables=[
+            # The base pg16 fixture already creates scenario_drafts, but its
+            # minimal contract predates revision-backed severance choices.
+            ScenarioDraftRevision.__table__,
             ClientProfile.__table__,
             ScenarioPensionFactorAdmission.__table__,
             RecurringIncome.__table__,

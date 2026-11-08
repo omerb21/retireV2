@@ -104,3 +104,19 @@ it("never renders another client's grants and locks archived scenarios", async (
   expect(screen.queryByText(/מענק: Test employer/)).toBeNull();
   expect(mocks.save).not.toHaveBeenCalled();
 });
+
+it("shows unresolved overlap and disables edits for an archived scenario", async () => {
+  const current = snapshot([{
+    source_kind: "grant", source_id: "g7", choice: "PLANNED_WITHDRAWAL",
+    planned_amount_ils: null, state: "BLOCKED_GRANT_COMPONENT_OVERLAP_UNRECONCILED",
+    client_id: 7, scenario_id: "scenario-A",
+  }]);
+  current.source_evidence.blockers.push("SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED");
+  mocks.read.mockResolvedValue(current);
+  render(<ScenarioSeverancePlanningPanel clientId={7}
+    scenario={{ ...scenario, status: "archived" }} products={products} onSaved={vi.fn()}/>);
+  expect(await screen.findByText(/קיימת חפיפה אפשרית בין מענקים לבין רכיבי פיצויים/)).toBeTruthy();
+  expect(screen.getByText(/החלופה אינה פעילה לעריכה/)).toBeTruthy();
+  expect((screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(mocks.save).not.toHaveBeenCalled();
+});

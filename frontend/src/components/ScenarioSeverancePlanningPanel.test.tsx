@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { ScenarioSeverancePlanningPanel } from "./ScenarioSeverancePlanningPanel";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import type { PensionProduct } from "../api/pensionProductsApi";
+import type { SeveranceChoiceInput } from "../api/scenarioSeverancePlanningApi";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(), save: vi.fn(),
@@ -48,10 +49,10 @@ const snapshot = (choices: unknown[] = []) => ({
 });
 it("loads source facts, saves nonbinding choices with scenario CAS, and shows saved result", async () => {
   mocks.read.mockResolvedValue(snapshot());
-  mocks.save.mockImplementation(async (_client: number, _scenario: string, _version: number, choices: unknown[]) =>
+  mocks.save.mockImplementation(async (_client: number, _scenario: string, _version: number, choices: SeveranceChoiceInput[]) =>
     ({ ...snapshot(), scenario_version: 4,
       source_evidence: { ...snapshot().source_evidence, scenario_version: 4 },
-      choices: choices.map((choice: object) => ({
+      choices: choices.map(choice => ({
       ...choice, client_id: 7, scenario_id: "scenario-A",
       current_scenario_version: 4, saved_from_scenario_version: 4,
       source_fingerprint: "a".repeat(64), state: "DRAFT_ONLY",

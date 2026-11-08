@@ -6,8 +6,10 @@ from sqlalchemy import text
 
 from app.db.session import get_db
 from app.schemas.scenario_draft import DraftWrite, DraftRename, DraftReplace, DraftVersion
+from app.schemas.scenario_severance_planning import SeverancePlanningReplace
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
+from app.services import scenario_severance_planning_service as severance_service
 from app.services import scenario_calculation_admission_service as admission
 
 router = APIRouter(prefix="/api/clients/{client_id}/scenario-drafts", tags=["scenario-drafts"])
@@ -99,3 +101,39 @@ def rename_scenario(request: Request, payload: DraftRename, scenario_id: str, cl
 @router.post("/{scenario_id}/archive")
 def archive_scenario(request: Request, payload: DraftVersion, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
     return _run(request, db, lambda: service.archive(db, client_id, scenario_id, payload.expected_version, _actor(request)))
+
+
+@router.get("/{scenario_id}/severance-planning")
+def read_severance_planning(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Read current draft decisions only for the addressed client and scenario."""
+    try:
+        return JSONResponse(
+            content=severance_service.read_choices(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.put("/{scenario_id}/severance-planning")
+def save_severance_planning(
+    request: Request, payload: SeverancePlanningReplace, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Reuse the existing CAS/revision writer and caller-owned transaction."""
+    def save():
+        severance_service.replace_choices(
+            db, client_id, scenario_id,
+            expected_version=payload.expected_version,
+            choices=[item.model_dump() for item in payload.choices],
+            actor=_actor(request),
+        )
+        # After write/flush, return actual current validated choices rather
+        # than raw unverified client input or a financial calculation.
+        return severance_service.read_choices(db, client_id, scenario_id)
+    return _run(request, db, save)

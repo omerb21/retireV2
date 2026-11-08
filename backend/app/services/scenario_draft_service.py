@@ -186,6 +186,15 @@ def list_drafts(db: Session, client_id: int) -> list[dict]:
 def _revision(db: Session, scenario: ScenarioDraft, action: str, actor: str, *,
               audit_extra: dict | None = None) -> dict:
     snapshot = read(db, scenario.client_id, scenario.scenario_id)
+    # Persist non-authoritative severance planning choices in the existing
+    # versioned draft audit record. Regular rename/replace/archive revisions
+    # carry their last saved intent without refreshing source fingerprints.
+    # A new explicit severance write overrides this inherited list, including
+    # the empty list used to clear all choices.
+    from app.services.scenario_severance_planning_service import _previous
+    prior_severance = _previous(db, scenario.scenario_id)
+    if prior_severance:
+        snapshot["severance_planning_decisions"] = prior_severance
     if audit_extra is not None:
         snapshot = {**snapshot, **audit_extra}
     db.add(ScenarioDraftRevision(

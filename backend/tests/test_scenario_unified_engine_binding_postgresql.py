@@ -576,3 +576,97 @@ def test_live_pg16_package2_capital_archive_trigger_stays_enforced(pg16):
             schema, "pg_catalog",
         ]
         db.rollback()
+
+
+def test_live_pg16_package2_severance_lineage_and_unreconciled_overlap(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(EmploymentRecord(
+            employment_record_id="severance-work7", client_id=7,
+            employer_name="Employer A", work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 12, 31), is_current=False,
+            exempt_grant_status="requires_reconciliation",
+        ))
+        db.add(PensionProductComponent(
+            component_id="severance-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי",
+            balance=Decimal("300.00"),
+        ))
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="severance-g7", client_id=7,
+            employment_record_id="severance-work7",
+            employer_name="Employer A",
+            nominal_amount=Decimal("300.00"),
+            grant_date=date(2025, 12, 31),
+            work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 12, 31),
+        ))
+    before = build(factory)
+    domain = before["financial_evidence"]["severance"]
+    facts = domain["facts"]
+    assert domain["client_id"] == 7
+    assert domain["scenario_id"] == "a1"
+    assert domain["scenario_version"] == 1
+    assert len(facts["employment_records"][0]["source_fingerprint"]) == 64
+    assert len(facts["grants"][0]["source_fingerprint"]) == 64
+    assert facts["grants"][0]["payment_classification"] == "UNKNOWN_NOT_VERIFIED"
+    assert facts["grants"][0]["actual_payment_ils"] is None
+    assert facts["grants"][0]["future_payment_ils"] is None
+    assert facts["grants"][0]["continuity_election"] is None
+    assert facts["grants"][0]["tax_exemption_ils"] is None
+    assert facts["pension_severance_component_candidates"] == [{
+        "product_id": "p7",
+        "component_id": "severance-c7",
+        "component_code": "פיצויים_מעסיק_נוכחי",
+        "reported_balance_ils": "300.00",
+    }]
+    assert "SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in domain["blockers"]
+    assert before["domain_results"]["severance"]["state"] == "BLOCKED"
+    assert before["domain_results"]["severance"]["result"] is None
+    assert before["net_income"]["result"] is None
+
+    with factory.begin() as db:
+        db.get(EmploymentRecord, "severance-work7").notes = "Revised source"
+    after = build(factory)
+    assert after["result_fingerprint"] != before["result_fingerprint"]
+    assert (after["financial_evidence"]["severance"]["facts"][
+        "employment_records"][0]["source_fingerprint"]
+        != facts["employment_records"][0]["source_fingerprint"])
+    assert after["domain_results"]["severance"]["result"] is None
+    other_scenario = build(factory, client=7, scenario="a2")
+    assert other_scenario["financial_evidence"]["severance"]["scenario_id"] == "a2"
+    assert (other_scenario["financial_evidence"]["severance"]["evidence_fingerprint"]
+            != after["financial_evidence"]["severance"]["evidence_fingerprint"])
+    foreign = build(factory, client=8, scenario="b1")
+    assert foreign["financial_evidence"]["severance"]["facts"]["grants"] == []
+    assert foreign["financial_evidence"]["severance"]["facts"][
+        "pension_severance_component_candidates"] == []
+
+
+def test_live_pg16_package2_foreign_employment_reference_is_blocked(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(EmploymentRecord(
+            employment_record_id="other-employer8", client_id=8,
+            employer_name="Private other-client employer",
+            work_start_date=date(2011, 1, 1),
+            work_end_date=date(2024, 1, 1), is_current=False,
+        ))
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="cross-client-grant7", client_id=7,
+            employment_record_id="other-employer8",
+            employer_name="Unverified grant",
+            nominal_amount=Decimal("15.00"),
+            grant_date=date(2024, 1, 1),
+            work_start_date=date(2011, 1, 1),
+            work_end_date=date(2024, 1, 1),
+        ))
+    result = build(factory, client=7, scenario="a1")
+    domain = result["financial_evidence"]["severance"]
+    assert "SEVERANCE_EMPLOYMENT_CLIENT_MISMATCH" in domain["blockers"]
+    assert domain["facts"]["employment_records"] == []
+    assert domain["facts"]["grants"][0]["employment_record_id"] is None
+    assert domain["facts"]["grants"][0]["actual_payment_ils"] is None
+    assert result["domain_results"]["severance"]["result"] is None

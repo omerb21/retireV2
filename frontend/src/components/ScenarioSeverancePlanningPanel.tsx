@@ -31,7 +31,15 @@ interface Props {
 const key = (kind: string, id: string) => kind + ":" + id;
 function validAmount(text: string): boolean {
   return /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(text)
-    && Number(text) > 0;
+    && /[1-9]/.test(text);
+}
+// The existing API contract requires exactly two decimal places.
+// Normalize textual inputs without Number, parseFloat or rounding.
+function normalizeAmount(text: string | null): string | null {
+  if (text === null) return null;
+  if (!validAmount(text)) throw new Error("SEVERANCE_AMOUNT_INVALID");
+  const [whole, fractional = ""] = text.split(".");
+  return whole + "." + fractional.padEnd(2, "0");
 }
 function maxAllowed(text: string, capacity: string | null): boolean {
   if (!validAmount(text)) return false;
@@ -139,7 +147,10 @@ export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, o
     setError(null);
     try {
       const saved = await saveSeverancePlanning(
-        clientId, scenario.scenario_id, snapshot.scenario_version, choices,
+        clientId, scenario.scenario_id, snapshot.scenario_version,
+        choices.map(choice => ({
+          ...choice, planned_amount_ils: normalizeAmount(choice.planned_amount_ils),
+        })),
       );
       setSnapshot(saved);
       setNotice("בחירות התכנון נשמרו. אין בכך אישור מס או תשלום.");

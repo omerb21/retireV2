@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.models.canonical_manual_pension_source import CanonicalManualPensionSource
 from app.models.pension_product import COMPONENT_CODES
@@ -529,3 +530,41 @@ def test_live_pg16_package2_capital_unverified_value_not_projected(admitted_capi
     assert "CAPITAL_SOURCE_VERIFICATION_INCOMPLETE" in cell["blockers"]
     assert blocked["financial_evidence"]["capital"]["facts"][
         "canonical_assets"][0]["available_to_withdraw_ils"] is None
+
+
+def test_live_pg16_package2_capital_archive_trigger_stays_enforced(pg16):
+    """Real PG trigger allows a legal manual edit but rejects origin mutation."""
+    factory, scoped = pg16
+    schema = scoped.get_execution_options()["schema_translate_map"][None]
+    with factory.begin() as db:
+        asset = CapitalAsset(
+            client_id=7, asset_category="bank deposit",
+            asset_description="Archive guard synthetic",
+            known_value_amount=Decimal("100.00"),
+            value_as_of_date=date(2026, 10, 1),
+            origin_kind="manual", lifecycle_status="current",
+        )
+        db.add(asset)
+        db.flush()
+        asset_id = asset.id
+    with factory.begin() as db:
+        db.execute(CapitalAsset.__table__.update().where(
+            CapitalAsset.id == asset_id,
+        ).values(known_value_amount=Decimal("101.00")))
+    with pytest.raises(DBAPIError, match="CANONICAL_CONVERSION_HISTORY_IMMUTABLE"):
+        with factory.begin() as db:
+            db.execute(CapitalAsset.__table__.update().where(
+                CapitalAsset.id == asset_id,
+            ).values(origin_kind="canonical_component_conversion"))
+    with factory() as db:
+        asset = db.get(CapitalAsset, asset_id)
+        assert asset.origin_kind == "manual"
+        assert asset.known_value_amount == Decimal("101.00")
+        guard_config = db.execute(text(
+            "SELECT p.proconfig FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = :schema "
+            "AND p.proname = 'guard_capital_asset_canonical'"
+        ), {"schema": schema}).scalar_one()
+        assert f'search_path="{schema}", pg_catalog' in guard_config
+        db.rollback()

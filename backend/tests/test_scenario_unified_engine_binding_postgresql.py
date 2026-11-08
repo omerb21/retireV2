@@ -1138,3 +1138,30 @@ def test_live_pg16_unified_severance_foreign_client_and_archive_isolation(pg16):
     assert row["state"] == "BLOCKED_SCENARIO_NOT_ACTIVE"
     assert "BLOCKED_SCENARIO_NOT_ACTIVE" in row["blockers"]
     assert archived["domain_results"]["severance"]["result"] is None
+
+
+def test_live_pg16_unified_severance_changed_choice_updates_only_planning_authority(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": "50.00",
+        }], actor="unified-test")
+    first = build(factory)
+    first_plan = _bound_severance_projection(first)
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=2, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_SEVERANCE_CONTINUITY", "planned_amount_ils": "50.00",
+        }], actor="unified-test")
+    second = build(factory)
+    second_plan = _bound_severance_projection(second)
+    assert first_plan["choices"][0]["source_fingerprint"] == second_plan["choices"][0]["source_fingerprint"]
+    assert first_plan["choices"][0]["choice"] != second_plan["choices"][0]["choice"]
+    assert first_plan["planning_fingerprint"] != second_plan["planning_fingerprint"]
+    assert first["result_fingerprint"] != second["result_fingerprint"]
+    assert all(cell["result"] is None for cell in (
+        second["domain_results"]["severance"], second["net_income"],
+    ))
+    _all_unapproved(second)

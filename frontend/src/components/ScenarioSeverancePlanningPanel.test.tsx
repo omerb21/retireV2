@@ -5,14 +5,11 @@ import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import type { PensionProduct } from "../api/pensionProductsApi";
 
 const mocks = vi.hoisted(() => ({
-  read: vi.fn(), save: vi.fn(), grants: vi.fn(),
+  read: vi.fn(), save: vi.fn(),
 }));
 vi.mock("../api/scenarioSeverancePlanningApi", () => ({
   readSeverancePlanning: mocks.read,
   saveSeverancePlanning: mocks.save,
-}));
-vi.mock("../api/clientsApi", () => ({
-  getGrants: mocks.grants,
 }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -32,15 +29,29 @@ const products = [{
 const snapshot = (choices: unknown[] = []) => ({
   client_id: 7, scenario_id: "scenario-A", scenario_version: 3,
   choices, authority_state: "DRAFT_ONLY", execution_allowed: false,
+  source_evidence: {
+    client_id: 7, scenario_id: "scenario-A", scenario_version: 3,
+    authority_state: "FACTUAL_EVIDENCE_ONLY", blockers: [],
+    facts: {
+      grants: [{
+        grant_id: "g7", employer_name: "Test employer",
+        reported_nominal_amount_ils: "150.00",
+        payment_classification: "UNKNOWN_NOT_VERIFIED",
+      }],
+      pension_severance_component_candidates: [{
+        product_id: "p7", component_id: "severance-c7",
+        component_code: "פיצויים_מעסיק_נוכחי",
+        reported_balance_ils: "200.00",
+      }],
+    },
+  },
 });
-const grant = {
-  grant_id: "g7", client_id: 7, employer_name: "Test employer",
-};
 it("loads source facts, saves nonbinding choices with scenario CAS, and shows saved result", async () => {
   mocks.read.mockResolvedValue(snapshot());
-  mocks.grants.mockResolvedValue([grant]);
   mocks.save.mockImplementation(async (_client: number, _scenario: string, _version: number, choices: unknown[]) =>
-    ({ ...snapshot(), scenario_version: 4, choices: choices.map((choice: object) => ({
+    ({ ...snapshot(), scenario_version: 4,
+      source_evidence: { ...snapshot().source_evidence, scenario_version: 4 },
+      choices: choices.map((choice: object) => ({
       ...choice, client_id: 7, scenario_id: "scenario-A",
       current_scenario_version: 4, saved_from_scenario_version: 4,
       source_fingerprint: "a".repeat(64), state: "DRAFT_ONLY",
@@ -58,9 +69,7 @@ it("loads source facts, saves nonbinding choices with scenario CAS, and shows sa
   fireEvent.change(choices[0], { target: { value: "PLANNED_WITHDRAWAL" } });
   fireEvent.change(choices[1], { target: { value: "PLANNED_SEVERANCE_CONTINUITY" } });
   const amounts = screen.getAllByRole("textbox");
-  // Grant value cannot be derived from the exempt-grant DTO, so the first
-  // input is disabled; only the canonical pension component has a ceiling.
-  expect((amounts[0] as HTMLInputElement).disabled).toBe(true);
+  expect((amounts[0] as HTMLInputElement).disabled).toBe(false);
   fireEvent.change(amounts[1], { target: { value: "100.00" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(
@@ -87,8 +96,9 @@ it("shows stale-source blocker without turning it into financial authority", asy
 });
 
 it("never renders another client's grants and locks archived scenarios", async () => {
-  mocks.read.mockResolvedValue(snapshot());
-  mocks.grants.mockResolvedValue([{ ...grant, client_id: 8 }]);
+  mocks.read.mockResolvedValue({
+    ...snapshot(), source_evidence: { ...snapshot().source_evidence, client_id: 8 },
+  });
   render(<ScenarioSeverancePlanningPanel clientId={7}
     scenario={{ ...scenario, status: "archived" }} products={[]} onSaved={vi.fn()}/>);
   expect(await screen.findByRole("alert")).toBeTruthy();

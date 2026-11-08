@@ -15,6 +15,8 @@ from app.models.retirement_facts import CapitalAsset
 from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
+from app.models.pension_product import PensionProduct, PensionProductComponent, SEVERANCE_CODES
+from app.services.professional_source_snapshot_service import record, serialize
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.fixation_run import FixationRun
 from app.services.scenario_input_manifest_service import _fingerprint
@@ -184,14 +186,19 @@ def _severance(db, base):
         "is_current": r.is_current,
         "exempt_grant_status": r.exempt_grant_status,
         "updated_at": _date(r.updated_at),
+        "source_fingerprint": _fingerprint(serialize(record(r))),
     } for r in employment]
     items = []
     for grant in grants:
-        if grant.employment_record_id and grant.employment_record_id not in employer_ids:
-            blockers.add("SEVERANCE_EMPLOYMENT_REFERENCE_MISSING")
+        # DB's single-column FK can reference an employment record owned by
+        # another client. Do not disclose that foreign employer identifier.
+        belongs = (grant.employment_record_id is None
+                   or grant.employment_record_id in employer_ids)
+        if not belongs:
+            blockers.add("SEVERANCE_EMPLOYMENT_CLIENT_MISMATCH")
         items.append({
             "grant_id": grant.grant_id,
-            "employment_record_id": grant.employment_record_id,
+            "employment_record_id": grant.employment_record_id if belongs else None,
             "employer_name": grant.employer_name,
             "grant_date": _date(grant.grant_date),
             "work_start_date": _date(grant.work_start_date),
@@ -199,6 +206,7 @@ def _severance(db, base):
             "reported_nominal_amount_ils": _money(grant.nominal_amount),
             "reported_indexed_amount_ils": _money(grant.indexed_amount),
             "updated_at": _date(grant.updated_at),
+            "source_fingerprint": _fingerprint(serialize(record(grant))),
             # A dated record is NOT proof that it was paid.
             "payment_classification": "UNKNOWN_NOT_VERIFIED",
             "actual_payment_ils": None,
@@ -206,12 +214,37 @@ def _severance(db, base):
             "continuity_election": None,
             "tax_exemption_ils": None,
         })
+
+    # A grant and an existing severance component may describe the same
+    # economic right. There is no approved cross-system reconciliation key:
+    # record candidates without adding amounts or declaring them duplicates.
+    product_rows = db.execute(select(
+        PensionProductComponent.component_id,
+        PensionProductComponent.product_id,
+        PensionProductComponent.component_code,
+        PensionProductComponent.balance,
+    ).join(PensionProduct, PensionProduct.product_id ==
+           PensionProductComponent.product_id).where(
+        PensionProduct.client_id == client_id,
+        PensionProductComponent.component_code.in_(SEVERANCE_CODES),
+        PensionProductComponent.balance > 0,
+    ).order_by(PensionProductComponent.product_id,
+               PensionProductComponent.component_id)).all()
+    component_evidence = [{
+        "product_id": product_id,
+        "component_id": component_id,
+        "component_code": component_code,
+        "reported_balance_ils": _money(balance),
+    } for component_id, product_id, component_code, balance in product_rows]
+    if grants and component_evidence:
+        blockers.add("SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED")
     return _pack(identity, "severance", {
         "employment_records": records,
         "grants": items,
+        "pension_severance_component_candidates": component_evidence,
+        "cross_source_reconciliation": "NOT_ESTABLISHED",
         "scenario_severance_election": "NOT_DEFINED",
     }, blockers)
-
 
 def _fixation(db, base):
     identity = base["identity"]

@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { PensionProduct } from "../api/pensionProductsApi";
-import { getGrants, type GrantItem } from "../api/clientsApi";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import {
   readSeverancePlanning, saveSeverancePlanning,
@@ -8,13 +7,6 @@ import {
   type SeverancePlanningSnapshot,
 } from "../api/scenarioSeverancePlanningApi";
 
-const SEVERANCE_CODES = new Set([
-  "פיצויים_מעסיק_נוכחי",
-  "פיצויים_לאחר_התחשבנות",
-  "פיצויים_שלא_עברו_התחשבנות",
-  "פיצויים_ממעסיקים_קודמים_רצף_זכויות",
-  "פיצויים_ממעסיקים_קודמים_רצף_קצבה",
-]);
 const OPTIONS: Array<{ value: SeveranceChoiceKind; label: string }> = [
   { value: "UNDECIDED", label: "טרם הוכרע" },
   { value: "PLANNED_WITHDRAWAL", label: "משיכה מתוכננת" },
@@ -54,7 +46,6 @@ function maxAllowed(text: string, capacity: string | null): boolean {
 
 export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, onSaved }: Props) {
   const [snapshot, setSnapshot] = useState<SeverancePlanningSnapshot | null>(null);
-  const [grants, setGrants] = useState<GrantItem[]>([]);
   const [choices, setChoices] = useState<SeveranceChoiceInput[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -68,16 +59,9 @@ export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, o
     setChoices([]);
     setError(null);
     setNotice(null);
-    void Promise.all([
-      readSeverancePlanning(clientId, scenario.scenario_id),
-      getGrants(clientId),
-    ]).then(([fresh, sourceGrants]) => {
+    void readSeverancePlanning(clientId, scenario.scenario_id).then(fresh => {
       if (!alive) return;
-      if (sourceGrants.some(item => item.client_id !== clientId)) {
-        throw Error("התקבלו מענקים בהקשר לקוח שגוי.");
-      }
       setSnapshot(fresh);
-      setGrants(sourceGrants);
       setChoices(fresh.choices.map(({ source_kind, source_id, choice, planned_amount_ils }) =>
         ({ source_kind, source_id, choice, planned_amount_ils })));
     }).catch(cause => {
@@ -87,23 +71,22 @@ export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, o
   }, [clientId, scenario.scenario_id, scenario.version]);
 
   const sources: Source[] = [
-    ...grants.map(grant => ({
+    ...(snapshot?.source_evidence.facts.grants ?? []).map(grant => ({
       source_kind: "grant" as const,
       source_id: grant.grant_id,
       label: "מענק: " + (grant.employer_name ?? grant.grant_id),
-      // The existing client-grants DTO reports exempt grants, not a canonical
-      // gross nominal ceiling. Never infer a planning limit from that field.
-      capacity: null,
+      // Nominal reported amount is provenance, not a verified payout.
+      capacity: grant.reported_nominal_amount_ils,
     })),
-    ...products.filter(product => product.client_id === clientId).flatMap(product =>
-      (product.conversion_components ?? [])
-        .filter(component => SEVERANCE_CODES.has(component.component_code))
-        .map(component => ({
-          source_kind: "pension_component" as const,
-          source_id: component.component_id,
-          label: product.product_name + " - " + component.component_code,
-          capacity: component.balance,
-        }))),
+    ...(snapshot?.source_evidence.facts.pension_severance_component_candidates ?? [])
+      .map(component => ({
+        source_kind: "pension_component" as const,
+        source_id: component.component_id,
+        label: (products.find(product => product.client_id === clientId &&
+          product.product_id === component.product_id)?.product_name ?? component.product_id)
+          + " - " + component.component_code,
+        capacity: component.reported_balance_ils,
+      })),
   ];
   const uniqueSources = sources.filter((source, index) =>
     sources.findIndex(candidate => candidate.source_kind === source.source_kind &&
@@ -138,8 +121,8 @@ export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, o
       if (choice.planned_amount_ils === null) return false;
       const source = uniqueSources.find(item => key(item.source_kind, item.source_id) ===
         key(choice.source_kind, choice.source_id));
-      // A grant has no verified ceiling in the frontend DTO; its amount must
-      // remain unspecified until authoritative backend evidence is checked.
+      // Both grant and pension ceilings are supplied by the DB-derived
+      // factual evidence; the service revalidates them on every write.
       return !source || !maxAllowed(choice.planned_amount_ils, source.capacity);
     });
     if (invalid) {

@@ -88,7 +88,6 @@ it("shows stale-source blocker without turning it into financial authority", asy
     planned_amount_ils: null, state: "BLOCKED_SOURCE_STALE",
     client_id: 7, scenario_id: "scenario-A",
   }]));
-  mocks.grants.mockResolvedValue([grant]);
   render(<ScenarioSeverancePlanningPanel clientId={7} scenario={scenario}
     products={[]} onSaved={vi.fn()}/>);
   expect(await screen.findByText(/פרטי המקור או ההעסקה השתנו/)).toBeTruthy();

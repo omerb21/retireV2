@@ -31,7 +31,7 @@ const snapshot = (choices: unknown[] = []) => ({
   choices, authority_state: "DRAFT_ONLY", execution_allowed: false,
   source_evidence: {
     client_id: 7, scenario_id: "scenario-A", scenario_version: 3,
-    authority_state: "FACTUAL_EVIDENCE_ONLY", blockers: [],
+    authority_state: "FACTUAL_EVIDENCE_ONLY", blockers: [] as string[],
     facts: {
       grants: [{
         grant_id: "g7", employer_name: "Test employer",

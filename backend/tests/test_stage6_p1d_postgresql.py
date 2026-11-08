@@ -15,6 +15,11 @@ from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
 from app.models.fixation_run import FixationRun
+from app.models.official_parameter_set import OfficialParameterSet
+from app.models.m07_evidence import (
+    M07EvidenceRevision, M07PlannerAssertion, M07FactEvidence,
+    M07AssessmentFinding,
+)
 from app.models.retirement_facts import CapitalAsset
 from app.models.canonical_conversion import batches, conversions
 from app.models.client import Client
@@ -100,6 +105,15 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 Grant.__table__, ActualCapitalization.__table__,
                 CapitalProjectionBasisDecision.__table__,
                 FixationRun.__table__,
+                # Fixation readiness reads actual M07 evidence in the same
+                # snapshot. Include the complete existing M07 table family;
+                # _dependencies also collects all FK parents. SQLAlchemy
+                # metadata.create_all orders DDL by foreign-key dependency.
+                OfficialParameterSet.__table__,
+                M07EvidenceRevision.__table__,
+                M07PlannerAssertion.__table__,
+                M07FactEvidence.__table__,
+                M07AssessmentFinding.__table__,
             ))
             monkeypatch.setenv("CRTISBA_APPLICATION_DB_ROLE", role)
             original_operation = migration.op

@@ -32,6 +32,7 @@ from app.services.scenario_stage6_monthly_cashflow_service import (
 )
 
 CONTRACT = "UNIFIED_RETIREMENT_SCENARIO_ENGINE_BINDINGS_V1"
+SEVERANCE_PLANNING_CONTRACT = "SEVERANCE_SCENARIO_PLANNING_BINDING_V1"
 INERT_DOMAINS = {
     "capital": "CAPITAL_PROJECTION_IS_CLIENT_SCOPED_NOT_SCENARIO_ADMITTED",
     "severance": "SEVERANCE_SCENARIO_ADMISSION_NOT_DEFINED",
@@ -161,6 +162,108 @@ def _cashflow(db, pair, base, start_month, end_month):
     )
 
 
+def _severance_planning_domain(base, evidence):
+    """Non-monetary projection of saved severance choices from this snapshot.
+
+    The canonical severance evidence adapter has already called read_choices
+    inside the same database Session. Do not reopen a transaction or aggregate
+    these amounts with pension, capital or historical grant amounts.
+    """
+    identity = base["identity"]
+    expected = {key: identity[key] for key in (
+        "client_id", "scenario_id", "scenario_version",
+    )}
+    if (any(evidence.get(key) != val for key, val in expected.items())
+            or evidence.get("domain") != "severance"
+            or evidence.get("authority_state") != "FACTUAL_EVIDENCE_ONLY"):
+        raise ScenarioSnapshotError("SEVERANCE_EVIDENCE_IDENTITY_INVALID")
+    choices = evidence.get("facts", {}).get("scenario_planning_choices")
+    if (not isinstance(choices, dict)
+            or any(choices.get(key) != val for key, val in expected.items())
+            or choices.get("authority_state") != "DRAFT_ONLY"
+            or choices.get("execution_allowed") is not False
+            or not isinstance(choices.get("choices"), list)):
+        raise ScenarioSnapshotError("SEVERANCE_PLANNING_IDENTITY_INVALID")
+    rows = []
+    seen = set()
+    blockers = {"SEVERANCE_PLANNING_NOT_PROFESSIONALLY_ADMITTED",
+                *evidence["blockers"]}
+    allowed_states = {
+        "DRAFT_ONLY", "BLOCKED_SOURCE_STALE", "BLOCKED_SCENARIO_VERSION_STALE",
+        "BLOCKED_SOURCE_MISSING_OR_FOREIGN", "BLOCKED_COMPONENT_OVERALLOCATED",
+        "BLOCKED_GRANT_COMPONENT_OVERLAP_UNRECONCILED",
+        "BLOCKED_SCENARIO_NOT_ACTIVE",
+    }
+    for item in choices["choices"]:
+        if (not isinstance(item, dict)
+                or item.get("client_id") != expected["client_id"]
+                or item.get("scenario_id") != expected["scenario_id"]
+                or item.get("current_scenario_version") != expected["scenario_version"]
+                or item.get("source_kind") not in {"grant", "pension_component"}
+                or item.get("state") not in allowed_states
+                or item.get("execution_allowed") is not False
+                or item.get("professional_authority") is not False
+                or any(item.get(field) is not None for field in (
+                    "actual_paid_amount_ils", "future_payable_amount_ils",
+                    "exempt_amount_ils", "net_amount_ils",
+                ))):
+            raise ScenarioSnapshotError("SEVERANCE_PLANNING_CHOICE_INVALID")
+        key = (item["source_kind"], item.get("source_id"))
+        if not isinstance(key[1], str) or not key[1] or key in seen:
+            raise ScenarioSnapshotError("SEVERANCE_PLANNING_SOURCE_DUPLICATE")
+        seen.add(key)
+        choice_blockers = []
+        if item["state"] != "DRAFT_ONLY":
+            choice_blockers.append(item["state"])
+            blockers.add(item["state"])
+        if "SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in evidence["blockers"]:
+            choice_blockers.append("SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED")
+        rows.append({
+            "source_kind": item["source_kind"],
+            "source_id": item["source_id"],
+            "choice": item["choice"],
+            "planned_amount_ils": item["planned_amount_ils"],
+            "source_fingerprint": item["source_fingerprint"],
+            "saved_from_scenario_version": item["saved_from_scenario_version"],
+            "state": item["state"],
+            "blockers": sorted(set(choice_blockers)),
+            "execution_allowed": False,
+            "professional_authority": False,
+            "actual_payment_ils": None,
+            "tax_exemption_ils": None,
+            "tax_due_ils": None,
+            "net_cashflow_ils": None,
+            "withdrawable_capital_ils": None,
+        })
+    # Sorting also makes equivalent source selection ordering deterministic.
+    rows.sort(key=lambda item: (item["source_kind"], item["source_id"]))
+    planning = {
+        "contract": SEVERANCE_PLANNING_CONTRACT,
+        **expected,
+        "choices": rows,
+        "blockers": sorted(blockers),
+        "evidence_fingerprint": evidence["evidence_fingerprint"],
+        "execution_allowed": False,
+        "professional_authority": False,
+        "approved_withdrawal_ils": None,
+        "actual_grants_paid_ils": None,
+        "approved_continuity": None,
+        "exempt_amount_ils": None,
+        "tax_due_ils": None,
+        "net_cashflow_ils": None,
+        "withdrawable_capital_ils": None,
+    }
+    planning["planning_fingerprint"] = _fingerprint(planning)
+    domain = _bound_domain(
+        state="BLOCKED", blockers=blockers,
+        producer=SEVERANCE_PLANNING_CONTRACT,
+    )
+    # Contract extension: positive planning evidence is NOT a financial result.
+    # Preserve the approved blocked-domain shape and its null result fingerprint.
+    domain["planning"] = planning
+    return domain
+
+
 def _assemble_bound(db, pair, client_id, scenario_id, *, start_month, end_month):
     base = _assemble(db, pair, client_id, scenario_id)
     if (base["schema_version"] != BASE_CONTRACT or
@@ -179,6 +282,9 @@ def _assemble_bound(db, pair, client_id, scenario_id, *, start_month, end_month)
     financial_evidence = collect_scenario_financial_evidence(db, base)
     domains["capital"] = build_scenario_capital_projection(
         db, base, financial_evidence,
+    )
+    domains["severance"] = _severance_planning_domain(
+        base, financial_evidence["severance"],
     )
     domains["pension_gross"] = _pension(db, pair, base)
     if (start_month is None and end_month is None):

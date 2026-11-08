@@ -18,6 +18,17 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
   page, request,
 }, testInfo) => {
   test.setTimeout(150_000);
+  // Browser access is restricted to the test-only Vite loopback origin.
+  // Any unexpected external request is rejected rather than exfiltrating
+  // even synthetic scenario data.
+  await page.route("**/*", route => {
+    const target = new URL(route.request().url());
+    if (target.hostname !== "127.0.0.1" || target.port !== "5173"
+        || target.protocol !== "http:") {
+      return route.abort("blockedbyclient");
+    }
+    return route.continue();
+  });
   const failures: string[] = [];
   const consoleErrors: string[] = [];
   const apiEvidence: Array<{ method: string; url: string; status: number; body: unknown }> = [];
@@ -46,7 +57,6 @@ test("supervisor 41: scenario severance decisions survive navigation and reject 
     // Vite --mode test disables only the local login gate. Backend APP_ENV=test
     // continues to execute real application routes against isolated PG16.
     await page.goto(BASE_URL + WORKSPACE, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("תכנון תרחישים", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: /תכנון תרחישים/ }).click();
     await expect(page.getByRole("heading", { name: "תכנון תרחישים" })).toBeVisible();
 

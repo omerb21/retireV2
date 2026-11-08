@@ -10,6 +10,7 @@ from app.schemas.scenario_severance_planning import SeverancePlanningReplace
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
 from app.services import scenario_severance_planning_service as severance_service
+from app.services.scenario_financial_evidence_service import _severance as severance_evidence
 from app.services import scenario_calculation_admission_service as admission
 
 router = APIRouter(prefix="/api/clients/{client_id}/scenario-drafts", tags=["scenario-drafts"])
@@ -103,6 +104,17 @@ def archive_scenario(request: Request, payload: DraftVersion, scenario_id: str, 
     return _run(request, db, lambda: service.archive(db, client_id, scenario_id, payload.expected_version, _actor(request)))
 
 
+def _severance_response(db: Session, client_id: int, scenario_id: str) -> dict:
+    choices = severance_service.read_choices(db, client_id, scenario_id)
+    evidence = severance_evidence(db, {"identity": {
+        "client_id": client_id, "scenario_id": scenario_id,
+        "scenario_version": choices["scenario_version"],
+    }})
+    # Read-only, client-scoped, DB-derived facts. Historical grants are NOT
+    # paid cash, liquidity, tax exemptions or permission to execute.
+    return {**choices, "source_evidence": evidence}
+
+
 @router.get("/{scenario_id}/severance-planning")
 def read_severance_planning(
     request: Request, scenario_id: str,
@@ -111,7 +123,7 @@ def read_severance_planning(
     """Read current draft decisions only for the addressed client and scenario."""
     try:
         return JSONResponse(
-            content=severance_service.read_choices(db, client_id, scenario_id),
+            content=_severance_response(db, client_id, scenario_id),
             headers=NO_STORE,
         )
     except service.DraftError as exc:
@@ -138,5 +150,5 @@ def save_severance_planning(
         db.flush()
         # After write/flush, return actual current validated choices rather
         # than raw unverified client input or a financial calculation.
-        return severance_service.read_choices(db, client_id, scenario_id)
+        return _severance_response(db, client_id, scenario_id)
     return _run(request, db, save)

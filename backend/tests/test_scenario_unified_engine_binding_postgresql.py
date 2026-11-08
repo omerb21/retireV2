@@ -971,3 +971,170 @@ def test_live_pg16_concurrent_severance_replacements_have_one_cas_winner(
             ScenarioDraftRevision.version == 2,
         )).all()
         assert len(revisions) == 1
+
+
+def _bound_severance_projection(result):
+    cell = result["domain_results"]["severance"]
+    assert cell["state"] == "BLOCKED"
+    assert cell["result"] is None
+    assert cell["result_fingerprint"] is None
+    assert cell["professional_authority"] is False
+    planning_projection = cell["planning"]
+    assert planning_projection["contract"] == "SEVERANCE_SCENARIO_PLANNING_BINDING_V1"
+    assert planning_projection["execution_allowed"] is False
+    assert planning_projection["professional_authority"] is False
+    for key in (
+        "approved_withdrawal_ils", "actual_grants_paid_ils", "approved_continuity",
+        "exempt_amount_ils", "tax_due_ils", "net_cashflow_ils",
+        "withdrawable_capital_ils",
+    ):
+        assert planning_projection[key] is None
+    for row in planning_projection["choices"]:
+        assert row["execution_allowed"] is False
+        assert row["professional_authority"] is False
+        assert all(row[key] is None for key in (
+            "actual_payment_ils", "tax_exemption_ils", "tax_due_ils",
+            "net_cashflow_ils", "withdrawable_capital_ils",
+        ))
+    assert result["execution_allowed"] is False
+    assert result["professional_authority"] is False
+    assert result["net_income"]["state"] == "BLOCKED"
+    assert result["net_income"]["result"] is None
+    return planning_projection
+
+
+def test_live_pg16_unified_severance_choices_contract_and_fingerprint(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    before = build(factory, client=7, scenario="a1")
+    empty = _bound_severance_projection(before)
+    assert empty["choices"] == []
+    assert empty["client_id"] == 7 and empty["scenario_id"] == "a1"
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": "90.00",
+        }], actor="unified-test")
+    after = build(factory, client=7, scenario="a1")
+    planning_view = _bound_severance_projection(after)
+    assert planning_view["scenario_version"] == after["identity"]["scenario_version"] == 2
+    assert planning_view["evidence_fingerprint"] == after[
+        "financial_evidence"]["severance"]["evidence_fingerprint"]
+    assert len(planning_view["choices"]) == 1
+    row = planning_view["choices"][0]
+    assert row["source_kind"] == "grant" and row["source_id"] == "choice-grant7"
+    assert row["choice"] == "PLANNED_WITHDRAWAL"
+    assert row["planned_amount_ils"] == "90.00"
+    assert len(row["source_fingerprint"]) == 64
+    assert row["state"] == "DRAFT_ONLY"
+    assert row["saved_from_scenario_version"] == 2
+    assert planning_view["planning_fingerprint"] != empty["planning_fingerprint"]
+    assert after["result_fingerprint"] != before["result_fingerprint"]
+    assert after == build(factory, client=7, scenario="a1")
+    _all_unapproved(after)
+
+
+def test_live_pg16_unified_severance_stale_source_and_renamed_scenario(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_SEVERANCE_CONTINUITY", "planned_amount_ils": "80.00",
+        }], actor="unified-test")
+    original = build(factory)
+    original_view = _bound_severance_projection(original)
+    with factory.begin() as db:
+        rename_draft(db, 7, "a1", "Renamed only", expected=2, actor="unified-test")
+    renamed = build(factory)
+    assert _bound_severance_projection(renamed)["choices"][0]["state"] == "DRAFT_ONLY"
+    with factory.begin() as db:
+        db.get(EmploymentRecord, "choice-work7").notes = "Source change for fingerprint"
+    stale = build(factory)
+    stale_view = _bound_severance_projection(stale)
+    row = stale_view["choices"][0]
+    assert row["state"] == "BLOCKED_SOURCE_STALE"
+    assert "BLOCKED_SOURCE_STALE" in row["blockers"]
+    assert "BLOCKED_SOURCE_STALE" in stale["domain_results"]["severance"]["blockers"]
+    assert stale_view["planning_fingerprint"] != original_view["planning_fingerprint"]
+    assert stale["result_fingerprint"] != renamed["result_fingerprint"]
+    assert stale["net_income"]["result"] is None
+
+
+def test_live_pg16_unified_severance_overlap_and_overallocation_no_double_count(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        db.add(PensionProductComponent(
+            component_id="projection-severance-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי", balance=Decimal("100.00"),
+        ))
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[
+            {"source_kind": "grant", "source_id": "choice-grant7",
+             "choice": "PLANNED_PENSION_CONTINUITY", "planned_amount_ils": "50.00"},
+            {"source_kind": "pension_component", "source_id": "projection-severance-c7",
+             "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": "30.00"},
+        ], actor="unified-test")
+    overlap = build(factory)
+    projection = _bound_severance_projection(overlap)
+    assert len(projection["choices"]) == 2
+    assert "SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in projection["blockers"]
+    assert all(
+        "SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in row["blockers"]
+        for row in projection["choices"]
+    )
+    assert projection["choices"][0]["source_kind"] == "grant"
+    assert projection["choices"][1]["source_kind"] == "pension_component"
+    assert overlap["domain_results"]["capital"]["result"] is None
+    assert overlap["domain_results"]["pension_gross"]["result"] is None
+    assert overlap["net_income"]["result"] is None
+    with factory.begin() as db:
+        db.add(ScenarioDraftDecision(
+            decision_id="projection-later-alloc", scenario_id="a1",
+            source_product_id="p7", source_component_id="projection-severance-c7",
+            component_code="פיצויים_מעסיק_נוכחי", amount=Decimal("80.00"),
+            action="capital_asset", effective_date=date(2027, 1, 1),
+            validation_state="unverified", product_version_at_review=1,
+        ))
+    later = build(factory)
+    later_projection = _bound_severance_projection(later)
+    pension_component_row = next(row for row in later_projection["choices"]
+                                 if row["source_kind"] == "pension_component")
+    assert pension_component_row["state"] == "BLOCKED_COMPONENT_OVERALLOCATED"
+    assert "BLOCKED_COMPONENT_OVERALLOCATED" in pension_component_row["blockers"]
+    assert later["domain_results"]["severance"]["result"] is None
+    assert later["result_fingerprint"] != overlap["result_fingerprint"]
+    _all_unapproved(later)
+
+
+def test_live_pg16_unified_severance_foreign_client_and_archive_isolation(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": None,
+        }], actor="unified-test")
+    first = build(factory, client=7, scenario="a1")
+    other_scenario = build(factory, client=7, scenario="a2")
+    other_client = build(factory, client=8, scenario="b1")
+    assert _bound_severance_projection(other_scenario)["choices"] == []
+    assert _bound_severance_projection(other_client)["choices"] == []
+    assert len(_bound_severance_projection(first)["choices"]) == 1
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="unified-client8-grant", client_id=8,
+            nominal_amount=Decimal("500.00"), grant_date=date(2024, 1, 1),
+            work_start_date=date(2010, 1, 1), work_end_date=date(2024, 1, 1),
+        ))
+    assert build(factory, client=7, scenario="a1") == first
+    with pytest.raises(DraftError):
+        build(factory, client=8, scenario="a1")
+    with factory.begin() as db:
+        archive_draft(db, 7, "a1", expected=2, actor="unified-test")
+    archived = build(factory, client=7, scenario="a1")
+    row = _bound_severance_projection(archived)["choices"][0]
+    assert row["state"] == "BLOCKED_SCENARIO_NOT_ACTIVE"
+    assert "BLOCKED_SCENARIO_NOT_ACTIVE" in row["blockers"]
+    assert archived["domain_results"]["severance"]["result"] is None

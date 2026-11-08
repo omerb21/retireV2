@@ -21,7 +21,7 @@ from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
 from app.models.fixation_run import FixationRun
 from app.models.retirement_facts import CapitalAsset
-from app.models.canonical_conversion import batches, conversions, pensions, allocations
+from app.models.canonical_conversion import batches, conversions, pensions, allocations, reversals
 from app.models.client_profile import ClientProfile
 from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.pension_product import PensionProduct, PensionProductComponent
@@ -66,9 +66,18 @@ def pg16(pg16_base):
             Grant.__table__, ActualCapitalization.__table__,
             CapitalProjectionBasisDecision.__table__,
             FixationRun.__table__,
-            pensions, allocations, CanonicalManualPensionSource.__table__,
+            pensions, allocations, reversals, CanonicalManualPensionSource.__table__,
             RecurringExpense.__table__, RetirementTimingWorkIntention.__table__,
         ], checkfirst=True)
+        # The DDL listener creates the real canonical archive trigger under
+        # this disposable schema. A transaction-local search_path used during
+        # CREATE FUNCTION does not persist for later ORM UPDATE connections.
+        # Pin only this test-schema function's lookup scope; do not disable or
+        # replace the trigger or alter any production/database migration DDL.
+        connection.execute(text(
+            f'ALTER FUNCTION "{schema}".guard_capital_asset_canonical() '
+            f'SET search_path TO "{schema}", pg_catalog'
+        ))
     return factory, scoped
 
 

@@ -189,7 +189,14 @@ export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, o
       })}
       {unavailable.map(item => <p key={key(item.source_kind, item.source_id)} role="alert">
         מקור {item.source_id}: {BLOCKERS[item.state] ?? "המקור אינו זמין. הבחירה אינה מאושרת."}
+        {" "}<button type="button" disabled={!editable}
+          onClick={() => setChoices(current => current.filter(choice =>
+            key(choice.source_kind, choice.source_id) !== key(item.source_kind, item.source_id)))}>
+          הסר בחירה ישנה
+        </button>
       </p>)}
+      {snapshot.source_evidence.blockers.includes("SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED") &&
+        <p role="status">קיימת חפיפה אפשרית בין מענקים לבין רכיבי פיצויים. לא ניתן להסיק יתרה משותפת, תשלום או זכאות לפני התאמת מקורות מקצועית.</p>}
       <button type="submit" disabled={!editable || choices.some(item => item.planned_amount_ils !== null &&
         !maxAllowed(item.planned_amount_ils,
           uniqueSources.find(source => key(source.source_kind, source.source_id) ===

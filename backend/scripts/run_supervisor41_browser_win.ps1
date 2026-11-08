@@ -15,8 +15,9 @@ $containerId = $null
 $backendProcess = $null
 $frontendProcess = $null
 $passed = $false
+$cleanupOk = $true
 $saved = @{}
-$variables = @("DATABASE_URL", "SCENARIO_TEST_POSTGRES_URL", "APP_ENV", "STAGE6_PREVIEW_ENABLED", "RECOVERY_POSTGRES_TEST", "VITE_API_BASE_URL", "PLAYWRIGHT_JSON_OUTPUT_FILE")
+$variables = @("DATABASE_URL", "SCENARIO_TEST_POSTGRES_URL", "APP_ENV", "STAGE6_PREVIEW_ENABLED", "RECOVERY_POSTGRES_TEST", "VITE_API_BASE_URL", "PLAYWRIGHT_JSON_OUTPUT_FILE", "CRTISBA_APPLICATION_DB_ROLE")
 foreach ($name in $variables) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
 
 function Invoke-Checked([string]$program, [string[]]$arguments) {
@@ -72,6 +73,7 @@ try {
     $env:RECOVERY_POSTGRES_TEST = "0"
     Remove-Item Env:SCENARIO_TEST_POSTGRES_URL -ErrorAction SilentlyContinue
     Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:CRTISBA_APPLICATION_DB_ROLE -ErrorAction SilentlyContinue
     $env:DATABASE_URL = "postgresql+psycopg2://postgres:${secret}@127.0.0.1:${dbPort}/retire_v2_supervisor41_test"
     $dockerArgs = @("run", "--detach", "--rm", "--name", $containerName,
         "--label", "retire-v2.supervisor41=$runId",
@@ -134,7 +136,10 @@ finally {
                     Stop-Process -Id $proc.Id -Force -ErrorAction Stop
                     $proc.WaitForExit(10000) | Out-Null
                 }
-            } catch { Write-Host ("SUPERVISOR41_PROCESS_CLEANUP_WARNING:" + $_.Exception.Message) }
+            } catch {
+                $cleanupOk = $false
+                Write-Host ("SUPERVISOR41_PROCESS_CLEANUP_WARNING:" + $_.Exception.Message)
+            }
         }
     }
     if ($containerId) {
@@ -144,22 +149,33 @@ finally {
                 $details[0].Id -eq $containerId -and
                 $details[0].Config.Labels.'retire-v2.supervisor41' -eq $runId) {
                 & docker rm --force $containerId 2>$null | Out-Null
-            } else { Write-Host "SUPERVISOR41_CONTAINER_IDENTITY_NOT_VERIFIED" }
-        } catch { Write-Host ("SUPERVISOR41_DOCKER_CLEANUP_WARNING:" + $_.Exception.Message) }
+                if ($LASTEXITCODE -ne 0) {
+                    $cleanupOk = $false
+                    Write-Host "SUPERVISOR41_CONTAINER_REMOVE_FAILED"
+                }
+            } else {
+                $cleanupOk = $false
+                Write-Host "SUPERVISOR41_CONTAINER_IDENTITY_NOT_VERIFIED"
+            }
+        } catch {
+            $cleanupOk = $false
+            Write-Host ("SUPERVISOR41_DOCKER_CLEANUP_WARNING:" + $_.Exception.Message)
+        }
     }
     foreach ($name in $variables) {
         [Environment]::SetEnvironmentVariable($name, $saved[$name], "Process")
     }
-    $status = if ($passed) { "PASS" } else { "BLOCKED_OR_FAILED" }
+    $status = if ($passed -and $cleanupOk) { "PASS" } else { "BLOCKED_OR_FAILED" }
     Set-Content -Path (Join-Path $report "summary.txt") -Encoding UTF8 -Value @(
         "SUPERVISOR41_STATUS=$status",
         "HEAD=$head",
         "RESULTS=$report",
         "SYNTHETIC_ONLY=True",
+        "CLEANUP_CONFIRMED=$cleanupOk",
         "CONTAINER_ID=$containerId"
     )
     Write-Host "SUPERVISOR41_STATUS=$status"
     Write-Host "SUPERVISOR41_EVIDENCE_DIR=$report"
 }
-if (-not $passed) { exit 1 }
+if (-not $passed -or -not $cleanupOk) { exit 1 }
 exit 0

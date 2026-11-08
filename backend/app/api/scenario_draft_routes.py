@@ -133,6 +133,9 @@ def save_severance_planning(
             choices=[item.model_dump() for item in payload.choices],
             actor=_actor(request),
         )
+        # The draft Session may use autoflush=False. Make the new revision
+        # visible to read_choices inside the same uncommitted transaction.
+        db.flush()
         # After write/flush, return actual current validated choices rather
         # than raw unverified client input or a financial calculation.
         return severance_service.read_choices(db, client_id, scenario_id)

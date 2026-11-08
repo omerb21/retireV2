@@ -212,7 +212,7 @@ def _severance_planning_domain(base, evidence):
         if not isinstance(key[1], str) or not key[1] or key in seen:
             raise ScenarioSnapshotError("SEVERANCE_PLANNING_SOURCE_DUPLICATE")
         seen.add(key)
-        choice_blockers = []
+        choice_blockers = ["SEVERANCE_PLANNING_NOT_PROFESSIONALLY_ADMITTED"]
         if item["state"] != "DRAFT_ONLY":
             choice_blockers.append(item["state"])
             blockers.add(item["state"])

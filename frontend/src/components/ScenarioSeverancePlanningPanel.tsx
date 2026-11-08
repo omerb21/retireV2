@@ -61,6 +61,12 @@ export function ScenarioSeverancePlanningPanel({ clientId, scenario, products, o
     setNotice(null);
     void readSeverancePlanning(clientId, scenario.scenario_id).then(fresh => {
       if (!alive) return;
+      if (fresh.client_id !== clientId || fresh.scenario_id !== scenario.scenario_id
+          || fresh.source_evidence?.client_id !== clientId
+          || fresh.source_evidence?.scenario_id !== scenario.scenario_id
+          || fresh.source_evidence?.scenario_version !== fresh.scenario_version) {
+        throw Error("התקבלה תשובת פיצויים בהקשר לקוח או חלופה שגויים.");
+      }
       setSnapshot(fresh);
       setChoices(fresh.choices.map(({ source_kind, source_id, choice, planned_amount_ils }) =>
         ({ source_kind, source_id, choice, planned_amount_ils })));

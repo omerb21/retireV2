@@ -25,7 +25,7 @@ from app.models.pension_product import (
 from app.models.planning_input_decision import PensionIncomeResolution, PlanningInputDecision
 from app.models.retirement_facts import RecurringIncome, PlannerAssumption
 from app.models.retirement_monthly_income_target import RetirementMonthlyIncomeTargetElection
-from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
+from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services import scenario_stage6_single_pension_estimate_service as subject
@@ -89,7 +89,8 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             Base.metadata.create_all(connection, tables=_dependencies(
                 Client.__table__, ClientProfile.__table__, PensionProduct.__table__,
                 PensionProductComponent.__table__, ScenarioDraft.__table__,
-                ScenarioDraftDecision.__table__, ScenarioDraftPensionElection.__table__,
+                ScenarioDraftRevision.__table__, ScenarioDraftDecision.__table__,
+                ScenarioDraftPensionElection.__table__,
                 PlanningInputDecision.__table__,
                 PensionIncomeResolution.__table__,
                 RecurringIncome.__table__, PlannerAssumption.__table__,

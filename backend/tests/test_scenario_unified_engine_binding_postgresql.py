@@ -804,3 +804,38 @@ def test_live_pg16_severance_component_limit_and_foreign_grant_rejected(pg16):
         "financial_evidence"]["severance"]["blockers"]
     assert result["domain_results"]["severance"]["result"] is None
     assert result["execution_allowed"] is False
+
+
+def test_live_pg16_severance_choice_blocks_new_draft_overallocation(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(PensionProductComponent(
+            component_id="post-save-severance-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי",
+            balance=Decimal("100.00"),
+        ))
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=[{
+            "source_kind": "pension_component",
+            "source_id": "post-save-severance-c7",
+            "choice": "PLANNED_WITHDRAWAL",
+            "planned_amount_ils": "30.00",
+        }], actor="test")
+    with factory() as db:
+        assert read_choices(db, 7, "a1")["choices"][0]["state"] == "DRAFT_ONLY"
+    with factory.begin() as db:
+        db.add(ScenarioDraftDecision(
+            decision_id="late-pension-allocation", scenario_id="a1",
+            source_product_id="p7", source_component_id="post-save-severance-c7",
+            component_code="פיצויים_מעסיק_נוכחי",
+            amount=Decimal("80.00"), action="pension",
+            effective_date=date(2027, 1, 1),
+            validation_state="unverified", product_version_at_review=1,
+        ))
+    with factory() as db:
+        item = read_choices(db, 7, "a1")["choices"][0]
+        assert item["state"] == "BLOCKED_COMPONENT_OVERALLOCATED"
+        assert item["actual_paid_amount_ils"] is None
+    bound = build(factory, client=7, scenario="a1")
+    assert bound["domain_results"]["severance"]["result"] is None
+    assert bound["net_income"]["result"] is None

@@ -120,3 +120,72 @@ it("shows unresolved overlap and disables edits for an archived scenario", async
   expect((screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }) as HTMLButtonElement).disabled).toBe(true);
   expect(mocks.save).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["100", "100.00"],
+  ["100.5", "100.50"],
+  ["100.50", "100.50"],
+])("normalizes a valid severance amount %s to %s before the API request", async (typed, expected) => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.save.mockImplementation(async (_client: number, _scenario: string, _version: number, choices: unknown[]) => ({
+    ...snapshot(), scenario_version: 4,
+    source_evidence: { ...snapshot().source_evidence, scenario_version: 4 },
+    choices,
+  }));
+  render(<ScenarioSeverancePlanningPanel clientId={7} scenario={scenario}
+    products={products} onSaved={vi.fn().mockResolvedValue(undefined)} />);
+  expect(await screen.findByText(/Pension source/)).toBeTruthy();
+  const selectors = screen.getAllByRole("combobox");
+  fireEvent.change(selectors[1], { target: { value: "PLANNED_WITHDRAWAL" } });
+  const amount = screen.getByRole("textbox") as HTMLInputElement;
+  fireEvent.change(amount, { target: { value: typed } });
+  expect(amount.value).toBe(typed);
+  fireEvent.click(screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(
+    7, "scenario-A", 3, [expect.objectContaining({
+      source_kind: "pension_component",
+      source_id: "severance-c7",
+      planned_amount_ils: expected,
+    })],
+  ));
+});
+
+it("rejects sub-cent precision and a value above the exact source balance", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  render(<ScenarioSeverancePlanningPanel clientId={7} scenario={scenario}
+    products={products} onSaved={vi.fn().mockResolvedValue(undefined)} />);
+  expect(await screen.findByText(/Pension source/)).toBeTruthy();
+  fireEvent.change(screen.getAllByRole("combobox")[1], {
+    target: { value: "PLANNED_WITHDRAWAL" },
+  });
+  const amount = screen.getByRole("textbox") as HTMLInputElement;
+  const save = screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }) as HTMLButtonElement;
+  fireEvent.change(amount, { target: { value: "100.501" } });
+  expect(save.disabled).toBe(true);
+  fireEvent.click(save);
+  expect(mocks.save).not.toHaveBeenCalled();
+  fireEvent.change(amount, { target: { value: "200.01" } });
+  expect(save.disabled).toBe(true);
+  fireEvent.click(save);
+  expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it("preserves an empty planned amount as null in the API payload", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.save.mockImplementation(async () => ({
+    ...snapshot(), scenario_version: 4,
+    source_evidence: { ...snapshot().source_evidence, scenario_version: 4 },
+  }));
+  render(<ScenarioSeverancePlanningPanel clientId={7} scenario={scenario}
+    products={products} onSaved={vi.fn().mockResolvedValue(undefined)} />);
+  expect(await screen.findByText(/Pension source/)).toBeTruthy();
+  fireEvent.change(screen.getAllByRole("combobox")[1], {
+    target: { value: "PLANNED_WITHDRAWAL" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(
+    7, "scenario-A", 3, [expect.objectContaining({
+      source_kind: "pension_component", planned_amount_ils: null,
+    })],
+  ));
+});

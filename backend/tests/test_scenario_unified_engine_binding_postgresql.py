@@ -20,6 +20,8 @@ from app.models.capital_projection_basis import CapitalProjectionBasisDecision
 from app.models.actual_capitalization import ActualCapitalization
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
+from app.services.scenario_severance_planning_service import replace_choices, read_choices
+from app.services.scenario_draft_service import DraftError, rename as rename_draft
 from app.models.fixation_run import FixationRun
 from app.models.retirement_facts import CapitalAsset
 from app.models.canonical_conversion import batches, conversions, pensions, allocations, reversals
@@ -670,3 +672,135 @@ def test_live_pg16_package2_foreign_employment_reference_is_blocked(pg16):
     assert domain["facts"]["grants"][0]["employment_record_id"] is None
     assert domain["facts"]["grants"][0]["actual_payment_ils"] is None
     assert result["domain_results"]["severance"]["result"] is None
+
+
+def _severance_grant_source(factory):
+    with factory.begin() as db:
+        db.add(EmploymentRecord(
+            employment_record_id="choice-work7", client_id=7,
+            employer_name="Synthetic employer", work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 1, 1), is_current=False,
+        ))
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="choice-grant7", client_id=7,
+            employment_record_id="choice-work7", employer_name="Synthetic employer",
+            nominal_amount=Decimal("100.00"), grant_date=date(2025, 1, 1),
+            work_start_date=date(2010, 1, 1), work_end_date=date(2025, 1, 1),
+        ))
+
+
+def test_live_pg16_severance_choice_save_reload_two_scenarios_and_staleness(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    planned = [{
+        "source_kind": "grant", "source_id": "choice-grant7",
+        "choice": "PLANNED_SEVERANCE_CONTINUITY", "planned_amount_ils": "90.00",
+    }]
+    with factory.begin() as db:
+        response = replace_choices(
+            db, 7, "a1", expected_version=1, choices=planned, actor="test",
+        )
+        assert response["version"] == 2
+    with factory() as db:
+        loaded = read_choices(db, 7, "a1")
+        first = loaded["choices"][0]
+        assert first["state"] == "DRAFT_ONLY"
+        assert first["choice"] == "PLANNED_SEVERANCE_CONTINUITY"
+        assert first["professional_authority"] is False
+        assert first["actual_paid_amount_ils"] is None
+        assert first["exempt_amount_ils"] is None
+        assert loaded["scenario_version"] == 2
+    with factory.begin() as db:
+        replace_choices(db, 7, "a2", expected_version=1, choices=[{
+            "source_kind": "grant", "source_id": "choice-grant7",
+            "choice": "PLANNED_WITHDRAWAL", "planned_amount_ils": None,
+        }], actor="test")
+    with factory() as db:
+        assert read_choices(db, 7, "a2")["choices"][0]["choice"] == "PLANNED_WITHDRAWAL"
+        assert read_choices(db, 7, "a1")["choices"][0]["choice"] == "PLANNED_SEVERANCE_CONTINUITY"
+    before = build(factory, client=7, scenario="a1")
+    with factory.begin() as db:
+        db.get(Grant, "choice-grant7").nominal_amount = Decimal("110.00")
+    after = build(factory, client=7, scenario="a1")
+    assert after["result_fingerprint"] != before["result_fingerprint"]
+    item = after["financial_evidence"]["severance"]["facts"]["scenario_planning_choices"]["choices"][0]
+    assert item["state"] == "BLOCKED_SOURCE_STALE"
+    assert item["actual_paid_amount_ils"] is None
+    assert after["domain_results"]["severance"]["result"] is None
+    assert after["net_income"]["result"] is None
+    with factory() as db:
+        assert read_choices(db, 8, "b1")["choices"] == []
+
+
+def test_live_pg16_severance_choice_cas_revisions_and_duplicate_rejected(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    planned = [{
+        "source_kind": "grant", "source_id": "choice-grant7",
+        "choice": "UNDECIDED", "planned_amount_ils": None,
+    }]
+    with factory.begin() as db:
+        replace_choices(db, 7, "a1", expected_version=1, choices=planned, actor="test")
+    with pytest.raises(DraftError, match="SCENARIO_VERSION_CONFLICT"):
+        with factory.begin() as db:
+            replace_choices(db, 7, "a1", expected_version=1, choices=planned, actor="test")
+    with pytest.raises(DraftError, match="SEVERANCE_DUPLICATE_SOURCE_CHOICE"):
+        with factory.begin() as db:
+            replace_choices(db, 7, "a1", expected_version=2,
+                            choices=[planned[0], planned[0]], actor="test")
+    with factory.begin() as db:
+        rename_draft(db, 7, "a1", "Renamed choice", expected=2, actor="test")
+    with factory() as db:
+        loaded = read_choices(db, 7, "a1")
+        assert loaded["scenario_version"] == 3
+        assert loaded["choices"][0]["choice"] == "UNDECIDED"
+        assert loaded["choices"][0]["actual_paid_amount_ils"] is None
+
+
+def test_live_pg16_severance_component_limit_and_foreign_grant_rejected(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        db.add(PensionProductComponent(
+            component_id="choice-severance-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי",
+            balance=Decimal("100.00"),
+        ))
+        db.add(Grant(
+            grant_id="choice-foreign8", client_id=8,
+            nominal_amount=Decimal("100.00"),
+            grant_date=date(2025, 1, 1),
+            work_start_date=date(2010, 1, 1),
+            work_end_date=date(2025, 1, 1),
+        ))
+        db.add(ScenarioDraftDecision(
+            decision_id="prior-severance-a1", scenario_id="a1",
+            source_product_id="p7", source_component_id="choice-severance-c7",
+            component_code="פיצויים_מעסיק_נוכחי",
+            amount=Decimal("80.00"), action="capital_asset",
+            effective_date=date(2027, 1, 1),
+            validation_state="unverified", product_version_at_review=1,
+        ))
+    with pytest.raises(DraftError, match="SEVERANCE_COMPONENT_OVERALLOCATED"):
+        with factory.begin() as db:
+            replace_choices(db, 7, "a1", expected_version=1, choices=[{
+                "source_kind": "pension_component",
+                "source_id": "choice-severance-c7",
+                "choice": "PLANNED_PENSION_CONTINUITY",
+                "planned_amount_ils": "30.00",
+            }], actor="test")
+    with pytest.raises(DraftError, match="SEVERANCE_SOURCE_CLIENT_MISMATCH"):
+        with factory.begin() as db:
+            replace_choices(db, 7, "a1", expected_version=1, choices=[{
+                "source_kind": "grant", "source_id": "choice-foreign8",
+                "choice": "PLANNED_WITHDRAWAL",
+                "planned_amount_ils": "10.00",
+            }], actor="test")
+    with factory() as db:
+        assert read_choices(db, 7, "a1")["choices"] == []
+    result = build(factory, client=7, scenario="a1")
+    assert "SEVERANCE_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in result[
+        "financial_evidence"]["severance"]["blockers"]
+    assert result["domain_results"]["severance"]["result"] is None
+    assert result["execution_allowed"] is False

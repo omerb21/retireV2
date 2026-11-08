@@ -33,6 +33,27 @@ export interface SeverancePlanningSnapshot {
   choices: SavedSeveranceChoice[];
   authority_state: "DRAFT_ONLY";
   execution_allowed: false;
+  source_evidence: {
+    client_id: number;
+    scenario_id: string;
+    scenario_version: number;
+    authority_state: "FACTUAL_EVIDENCE_ONLY";
+    blockers: string[];
+    facts: {
+      grants: Array<{
+        grant_id: string;
+        employer_name: string | null;
+        reported_nominal_amount_ils: string | null;
+        payment_classification: "UNKNOWN_NOT_VERIFIED";
+      }>;
+      pension_severance_component_candidates: Array<{
+        component_id: string;
+        product_id: string;
+        component_code: string;
+        reported_balance_ils: string;
+      }>;
+    };
+  };
 }
 
 async function request(
@@ -54,7 +75,10 @@ async function request(
       : `לא ניתן לטעון או לשמור החלטות פיצויים (${code}).`);
   }
   const result = await response.json() as SeverancePlanningSnapshot;
-  if (result.client_id !== clientId || result.scenario_id !== scenarioId) {
+  if (result.client_id !== clientId || result.scenario_id !== scenarioId
+      || result.source_evidence?.client_id !== clientId
+      || result.source_evidence?.scenario_id !== scenarioId
+      || result.source_evidence?.scenario_version !== result.scenario_version) {
     throw new Error("השרת החזיר החלטות פיצויים מחלופה או מלקוח אחרים.");
   }
   return result;

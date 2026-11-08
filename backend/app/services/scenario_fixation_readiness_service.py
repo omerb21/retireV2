@@ -119,6 +119,7 @@ def build_fixation_readiness(db, base, evidence, domains):
             "capitalization_id": c["capitalization_id"],
             "reported_amount_ils": c["reported_amount_ils"],
             "capitalization_date": c["capitalization_date"],
+            "source_label": c["source_label"],
             "source_basis": c["source_basis"],
         } for c in cap],
         "pension_gross_result_fingerprint": pension["result_fingerprint"],

@@ -566,5 +566,13 @@ def test_live_pg16_package2_capital_archive_trigger_stays_enforced(pg16):
             "WHERE n.nspname = :schema "
             "AND p.proname = 'guard_capital_asset_canonical'"
         ), {"schema": schema}).scalar_one()
-        assert f'search_path="{schema}", pg_catalog' in guard_config
+        search_paths = [
+            setting.partition("=")[2]
+            for setting in guard_config
+            if setting.partition("=")[0] == "search_path"
+        ]
+        assert len(search_paths) == 1
+        assert [name.strip().strip('"') for name in search_paths[0].split(",")] == [
+            schema, "pg_catalog",
+        ]
         db.rollback()

@@ -57,8 +57,11 @@ it("loads source facts, saves nonbinding choices with scenario CAS, and shows sa
   const choices = screen.getAllByRole("combobox");
   fireEvent.change(choices[0], { target: { value: "PLANNED_WITHDRAWAL" } });
   fireEvent.change(choices[1], { target: { value: "PLANNED_SEVERANCE_CONTINUITY" } });
-  const amount = screen.getByRole("textbox");
-  fireEvent.change(amount, { target: { value: "100.00" } });
+  const amounts = screen.getAllByRole("textbox");
+  // Grant value cannot be derived from the exempt-grant DTO, so the first
+  // input is disabled; only the canonical pension component has a ceiling.
+  expect((amounts[0] as HTMLInputElement).disabled).toBe(true);
+  fireEvent.change(amounts[1], { target: { value: "100.00" } });
   fireEvent.click(screen.getByRole("button", { name: "שמור החלטות פיצויים בחלופה" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(
     7, "scenario-A", 3, expect.arrayContaining([

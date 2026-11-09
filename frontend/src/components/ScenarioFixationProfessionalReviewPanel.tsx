@@ -335,8 +335,19 @@ export function ScenarioFixationProfessionalReviewPanel({ clientId, scenario }: 
         <h5>היסטוריית גרסאות</h5>
         {history.length === 0 && <p>אין עדיין גרסאות שמורות.</p>}
         <ul>{history.map(row => <li key={row.revision_id}>
-          גרסה {row.approval_version}, {row.actor_id}, {new Date(row.occurred_at).toLocaleString("he-IL")},
-          {" "}{row.decisions.length} הכרעות, {row.action}. טיוטה בלבד.
+          <details>
+            <summary>
+              גרסה {row.approval_version}, {row.actor_id}, {new Date(row.occurred_at).toLocaleString("he-IL")},
+              {" "}{row.decisions.length} הכרעות, טיוטה בלבד.
+            </summary>
+            <ul>{row.decisions.map(decision => <li key={decision.group + ":" + decision.source_id}>
+              <strong>{groupName(decision.group)}</strong>: {decision.source_id}.
+              {" "}{decision.reason}
+              {decision.evidence_references.length > 0 &&
+                <p>הפניות לאסמכתאות: {decision.evidence_references.join(", ")}</p>}
+            </li>)}</ul>
+            {row.blockers.length > 0 && <p>חסמים בעת השמירה: {row.blockers.map(label).join("; ")}</p>}
+          </details>
         </li>)}</ul>
       </div>}
       <p className="professional-workspace__boundary" role="status">

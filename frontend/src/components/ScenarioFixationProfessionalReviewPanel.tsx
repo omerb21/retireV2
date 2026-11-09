@@ -7,7 +7,7 @@ import {
   type FixationAdmissionControls, type FixationPreparation,
   readFixationAdmissionPreparation,
 } from "../api/scenarioFixationProfessionalReviewApi";
-import { ScenarioFixationAdmissionControls, controlsValidation } from "./ScenarioFixationAdmissionControls";
+import { ScenarioFixationAdmissionControls, ReferenceListInput, controlsValidation } from "./ScenarioFixationAdmissionControls";
 
 interface Props {
   clientId: number;
@@ -491,12 +491,9 @@ export function ScenarioFixationProfessionalReviewPanel({
               <option value="DISTINCT_RIGHTS">זכויות נפרדות, בכפוף לראיות</option>
             </select>
           </label>
-          <label>מזהי מקורות תואמים לחפיפה, אחד בכל שורה
-            <textarea disabled={!editable} value={item.matched_source_ids.join("\n")}
-              onChange={event => setItem(current => ({ ...current,
-                matched_source_ids: event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
-              }))}/>
-          </label>
+          <ReferenceListInput label="מזהי מקורות תואמים לחפיפה, אחד בכל שורה"
+            disabled={!editable} refs={item.matched_source_ids}
+            onChange={refs => setItem(current => ({ ...current, matched_source_ids: refs }))}/>
         </>}
         <label>הנמקה מקצועית{" "}
           <textarea value={item.reason} disabled={!editable} maxLength={2048}

@@ -7,6 +7,10 @@ from sqlalchemy import text
 from app.db.session import get_db
 from app.schemas.scenario_draft import DraftWrite, DraftRename, DraftReplace, DraftVersion
 from app.schemas.scenario_severance_planning import SeverancePlanningReplace
+from app.schemas.scenario_fixation_approval import (
+    FixationProfessionalDraftReplace, FixationProfessionalApprovalRequest,
+)
+from app.services import scenario_fixation_approval_service as fixation_review_service
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
 from app.services import scenario_severance_planning_service as severance_service
@@ -152,3 +156,66 @@ def save_severance_planning(
         # than raw unverified client input or a financial calculation.
         return _severance_response(db, client_id, scenario_id)
     return _run(request, db, save)
+
+
+
+@router.get("/{scenario_id}/fixation-professional-review")
+def get_fixation_professional_review(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Real database read with current dependency validation, no tax execution."""
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return JSONResponse(
+            content=fixation_review_service.read(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/fixation-professional-review/history")
+def get_fixation_professional_review_history(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        return JSONResponse(
+            content=fixation_review_service.history(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.put("/{scenario_id}/fixation-professional-review")
+def save_fixation_professional_review(
+    request: Request, payload: FixationProfessionalDraftReplace,
+    scenario_id: str, client_id: int = Path(gt=0),
+    db: Session = Depends(get_db),
+):
+    return _run(request, db, lambda: fixation_review_service.save_draft(
+        db, client_id, scenario_id, payload, _actor(request),
+    ))
+
+
+@router.post("/{scenario_id}/fixation-professional-review/approve")
+def approve_fixation_professional_review(
+    request: Request, payload: FixationProfessionalApprovalRequest,
+    scenario_id: str, client_id: int = Path(gt=0),
+    db: Session = Depends(get_db),
+):
+    """Explicit request; never grants approval until admission is implemented."""
+    return _run(request, db, lambda: fixation_review_service.request_internal_approval(
+        db, client_id, scenario_id, payload.expected_approval_version,
+        payload.expected_approval_fingerprint, _actor(request),
+    ))

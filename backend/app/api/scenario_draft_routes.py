@@ -214,8 +214,14 @@ def approve_fixation_professional_review(
     scenario_id: str, client_id: int = Path(gt=0),
     db: Session = Depends(get_db),
 ):
-    """Explicit request; never grants approval until admission is implemented."""
-    return _run(request, db, lambda: fixation_review_service.request_internal_approval(
-        db, client_id, scenario_id, payload.expected_approval_version,
-        payload.expected_approval_fingerprint, _actor(request),
-    ))
+    """Explicit request; 422 returns blockers, never an internal approval."""
+    try:
+        blocked = fixation_review_service.request_internal_approval(
+            db, client_id, scenario_id, payload.expected_approval_version,
+            payload.expected_approval_fingerprint, _actor(request),
+        )
+        return JSONResponse(content=blocked, status_code=422, headers=NO_STORE)
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()

@@ -366,6 +366,14 @@ def request_internal_approval(db, client_id: int, scenario_id: str,
         raise DraftError("FIXATION_APPROVAL_VERSION_CONFLICT", 409)
     if item["validity_state"] == "STALE":
         raise DraftError("FIXATION_PROFESSIONAL_APPROVAL_STALE", 409)
-    # The readiness contract is explicitly BLOCKED. There is no sanctioned
-    # evidence-to-admission transition yet; no synthetic happy path allowed.
-    raise DraftError("FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED", 422)
+    # The readiness contract is explicitly BLOCKED. Return a complete,
+    # structured denial, not a synthetic approval or a tax calculation.
+    return {
+        "approval_attempt_state": "BLOCKED",
+        "approval_id": item["approval_id"],
+        "approval_version": item["approval_version"],
+        "blockers": item["blockers"],
+        "professional_authority": False,
+        "execution_allowed": False,
+        "tax_authority_approval": None,
+    }

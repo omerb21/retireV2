@@ -1,11 +1,11 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import { ScenarioFixationProfessionalReviewPanel } from "./ScenarioFixationProfessionalReviewPanel";
 import { ReviewApiError, type ProfessionalReview } from "../api/scenarioFixationProfessionalReviewApi";
 
 const mocks = vi.hoisted(() => ({
-  read: vi.fn(), save: vi.fn(), history: vi.fn(), approve: vi.fn(),
+  read: vi.fn(), save: vi.fn(), history: vi.fn(), approve: vi.fn(), preparation: vi.fn(),
 }));
 vi.mock("../api/scenarioFixationProfessionalReviewApi", async importOriginal => {
   const original = await importOriginal<typeof import("../api/scenarioFixationProfessionalReviewApi")>();
@@ -15,9 +15,19 @@ vi.mock("../api/scenarioFixationProfessionalReviewApi", async importOriginal => 
     saveProfessionalReview: mocks.save,
     readProfessionalReviewHistory: mocks.history,
     requestProfessionalApproval: mocks.approve,
+    readFixationAdmissionPreparation: mocks.preparation,
   };
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+beforeEach(() => {
+  mocks.preparation.mockImplementation(async (_client: number, scenario: string) => ({
+    contract: "SCENARIO_FIXATION_ADMISSION_PREPARATION_V1",
+    client_id: 7, scenario_id: scenario, state: "INCOMPLETE",
+    candidate: null, incomplete_reasons: ["FIXATION_PREPARATION_CONTROLS_MISSING"],
+    blockers: [], preparation_fingerprint: "f".repeat(64),
+    professional_authority: false, execution_allowed: false, tax_authority_approval: null,
+  }));
+});
 
 const draft: ScenarioDraft = {
   scenario_id: "A", client_id: 7, name: "חלופה א", status: "draft",

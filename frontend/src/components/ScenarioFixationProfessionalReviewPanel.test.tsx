@@ -148,7 +148,9 @@ it("on 409 reloads CAS tokens without overwriting user draft and requires delibe
     },
   });
   mocks.save.mockRejectedValue(new ReviewApiError(409, "FIXATION_APPROVAL_SOURCE_CONFLICT"));
-  display();
+  const refreshParent = vi.fn().mockResolvedValue(undefined);
+  render(<ScenarioFixationProfessionalReviewPanel clientId={7} scenario={draft}
+    onScenarioRefresh={refreshParent} />);
   await screen.findByText(/טרם נשמרו הכרעות/);
   fireEvent.change(screen.getByLabelText(/קבוצת הכרעה/), { target: { value: "historical_grant" } });
   fireEvent.change(screen.getByLabelText(/מקור ההכרעה/), { target: { value: "grant-a" } });
@@ -159,6 +161,7 @@ it("on 409 reloads CAS tokens without overwriting user draft and requires delibe
   expect(screen.getByText(/אל תמחק את ההכרעה/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(true);
   expect(mocks.read).toHaveBeenCalledTimes(2);
+  expect(refreshParent).toHaveBeenCalledTimes(1);
   expect(mocks.save).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: /בדקתי את הנתונים העדכניים/ }));
   expect(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(false);

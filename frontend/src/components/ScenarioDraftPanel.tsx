@@ -250,7 +250,8 @@ export function ScenarioDraftPanel({
         onSaved={async id => { await reload(id); }} />}
       {view === "planning" && <ScenarioFixationProfessionalReviewPanel
         key={`fixation-review:${clientId}:${active.scenario_id}`}
-        clientId={clientId} scenario={active} />}
+        clientId={clientId} scenario={active}
+        onScenarioRefresh={async () => { await reload(active.scenario_id); }} />}
       {view === "results" && stage6Enabled && active.decisions.length > 0 &&
         <ScenarioStage6Panel key={`${clientId}:${active.scenario_id}:${active.version}:${active.status}`}
           clientId={clientId} scenario={active} onSaved={reload} autoInspectAllocations/>}

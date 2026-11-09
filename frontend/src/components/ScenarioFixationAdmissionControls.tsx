@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { FixationAdmissionControls, CollectionState } from "../api/scenarioFixationProfessionalReviewApi";
 
 interface Props {
@@ -18,6 +19,19 @@ export const defaultControls = (): FixationAdmissionControls => ({
   idf: { applicability: "NOT_REVIEWED", evidence_references: [], input: null },
 });
 const parseRefs = (text: string) => text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+export function ReferenceListInput({ label, refs, onChange, disabled }: {
+  label: string; refs: string[]; onChange: (next: string[]) => void; disabled: boolean;
+}) {
+  const signature = refs.join("\\n");
+  const [text, setText] = useState(signature);
+  useEffect(() => { setText(signature); }, [signature]);
+  return <label>{label}
+    <textarea disabled={disabled} value={text} onChange={event => {
+      setText(event.target.value);
+      onChange(parseRefs(event.target.value));
+    }}/>
+  </label>;
+}
 export function controlsValidation(value: FixationAdmissionControls | null): string | null {
   if (!value) return null; // Legacy records remain without controls.
   if (value.calculation_version !== "pkg-012-m08d-v1") return "גרסת החישוב אינה נתמכת.";
@@ -78,12 +92,11 @@ export function ScenarioFixationAdmissionControls({ value, onChange, disabled }:
             {STATES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </label>
-        <label>אסמכתאות {title}, שורה לכל אסמכתה
-          <textarea value={value[key].evidence_references.join("\n")}
-            onChange={event => set({
-              ...value, [key]: { ...value[key], evidence_references: parseRefs(event.target.value) },
-            })}/>
-        </label>
+        <ReferenceListInput label={`אסמכתאות ${title}, שורה לכל אסמכתה`}
+          refs={value[key].evidence_references} disabled={disabled}
+          onChange={refs => set({
+            ...value, [key]: { ...value[key], evidence_references: refs },
+          })}/>
       </div>)}
       <label>תחולת היוון IDF
         <select value={value.idf.applicability} onChange={event => {
@@ -101,12 +114,11 @@ export function ScenarioFixationAdmissionControls({ value, onChange, disabled }:
           <option value="APPLICABLE">חל, נדרש קלט מלא</option>
         </select>
       </label>
-      {value.idf.applicability !== "NOT_REVIEWED" && <label>אסמכתאות לתחולת IDF
-        <textarea value={value.idf.evidence_references.join("\n")}
-          onChange={event => set({ ...value, idf: {
-            ...value.idf, evidence_references: parseRefs(event.target.value),
-          } })}/>
-      </label>}
+      {value.idf.applicability !== "NOT_REVIEWED" && <ReferenceListInput
+        label="אסמכתאות לתחולת IDF" refs={value.idf.evidence_references}
+        disabled={disabled} onChange={refs => set({ ...value, idf: {
+          ...value.idf, evidence_references: refs,
+        } })}/>} 
       {value.idf.applicability === "APPLICABLE" && value.idf.input && <div>
         {([
           ["idf_id", "מזהה נתון IDF"],

@@ -283,3 +283,13 @@ it("never displays a negative available balance for overallocated source decisio
   expect((cell as HTMLButtonElement).disabled).toBe(true);
   expect(cell.textContent).not.toContain("-0.01");
 });
+
+
+it("embeds fixation professional review in the existing planning view, not a separate results page", async () => {
+  mocks.list.mockResolvedValue([draft("alternative-a")]);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} view="planning" />);
+  expect(await screen.findByRole("region", { name: "Fixation professional review" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Severance planning" })).toBeTruthy();
+  view.rerender(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  expect(screen.queryByRole("region", { name: "Fixation professional review" })).toBeNull();
+});

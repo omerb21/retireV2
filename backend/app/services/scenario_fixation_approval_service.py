@@ -204,6 +204,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
             "approval_version": 0, "record_status": "MISSING",
             "validity_state": "BLOCKED",
             "decisions": [], "actor_id": None,
+            "admission_controls": None, "occurred_at": None,
             "approval_fingerprint": None, "dependency_fingerprint": None,
             "readiness_fingerprint_at_save": None,
             "current_readiness": current_snapshot,
@@ -221,6 +222,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
         "manifest_fingerprint": readiness["manifest_fingerprint"],
         "readiness_fingerprint": readiness["readiness_fingerprint"],
         "decisions": row.decisions_json["decisions"],
+        "admission_controls": row.decisions_json.get("admission_controls"),
         "selected_sources": selected_sources,
     })
     blockers.update(review_blockers)
@@ -243,7 +245,8 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
         "approval_fingerprint": row.approval_fingerprint,
         "record_status": row.status, "validity_state": "STALE" if stale else "BLOCKED",
         "decisions": row.decisions_json["decisions"],
-        "actor_id": row.actor_id,
+        "admission_controls": row.decisions_json.get("admission_controls"),
+        "actor_id": row.actor_id, "occurred_at": row.occurred_at.isoformat(),
         "selected_source_evidence": selected_sources,
         "current_readiness": current_snapshot,
         "blockers": sorted(blockers),
@@ -273,6 +276,7 @@ def history(db, client_id: int, scenario_id: str) -> list[dict]:
         "dependency_fingerprint": r.dependency_fingerprint,
         "approval_fingerprint": r.approval_fingerprint,
         "decisions": r.decisions_json["decisions"],
+        "admission_controls": r.decisions_json.get("admission_controls"),
         "selected_source_evidence_at_save": r.decisions_json.get(
             "selected_source_evidence_at_save", [],
         ),
@@ -307,6 +311,10 @@ def save_draft(db, client_id: int, scenario_id: str,
         raise DraftError("FIXATION_APPROVAL_SOURCE_CONFLICT", 409)
     records = [r.model_dump(mode="json") for r in request.decisions]
     content = {"decisions": sorted(records, key=lambda r: (r["group"], r["source_id"]))}
+    content["admission_controls"] = (
+        request.admission_controls.model_dump(mode="json")
+        if request.admission_controls is not None else None
+    )
     # Asserted source IDs and evidence references are recorded, not promoted to
     # admission. Unknown sources remain explicitly blocked in this phase.
     head = _head(db, client_id, scenario_id)
@@ -346,6 +354,7 @@ def save_draft(db, client_id: int, scenario_id: str,
         "manifest_fingerprint": readiness["manifest_fingerprint"],
         "readiness_fingerprint": readiness["readiness_fingerprint"],
         "decisions": content["decisions"],
+        "admission_controls": content["admission_controls"],
         "selected_sources": selected_sources,
     })
     approval_fp = _fingerprint({

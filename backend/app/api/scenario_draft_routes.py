@@ -1,5 +1,6 @@
 """Client-scoped scenario drafts; every write is non-authoritative."""
 from fastapi import APIRouter, Depends, Path, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -11,6 +12,7 @@ from app.schemas.scenario_fixation_approval import (
     FixationProfessionalDraftReplace, FixationProfessionalApprovalRequest,
 )
 from app.services import scenario_fixation_approval_service as fixation_review_service
+from app.services import scenario_fixation_admission_preparation_service as fixation_preparation_service
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
 from app.services import scenario_severance_planning_service as severance_service
@@ -189,6 +191,28 @@ def get_fixation_professional_review_history(
             return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
         return JSONResponse(
             content=fixation_review_service.history(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/fixation-admission-preparation")
+def get_fixation_admission_preparation(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Prepare a validated candidate; never invoke fixation calculation."""
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return JSONResponse(
+            content=jsonable_encoder(
+                fixation_preparation_service.prepare(db, client_id, scenario_id)
+            ),
             headers=NO_STORE,
         )
     except service.DraftError as exc:

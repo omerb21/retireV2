@@ -42,12 +42,24 @@ from app.models.scenario_fixation_approval import (
 )
 from app.schemas.scenario_fixation_approval import (
     FixationProfessionalDraftReplace, FixationProfessionalDecision,
+    FixationAdmissionControls,
 )
 from app.services import scenario_fixation_approval_service as fixation_review
+from app.services import scenario_fixation_admission_preparation_service as fixation_preparation
 from app.models.m07_evidence import (
     M07EvidenceRevision, M07FactEvidence, M07PlannerAssertion, M07AssessmentFinding,
 )
+from app.schemas.m07_evidence import AssessmentRun
+from app.services.m07_evidence_service import finalize_revision as finalize_m07_revision
 from app.models.official_parameter_set import OfficialParameterSet
+from app.schemas.official_parameter_sets import (
+    OfficialParameterSetCreate, OfficialParameterValues,
+    OfficialParameterVerificationRequest, OfficialParameterActivationRequest,
+)
+from app.services.official_parameter_service import (
+    create_official_parameter_set_draft, verify_official_parameter_set,
+    activate_official_parameter_set,
+)
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services.scenario_unified_engine_binding_service import (
     build_unified_scenario_engine_bindings, CONTRACT, FINANCIAL_DOMAINS,
@@ -1610,3 +1622,151 @@ def test_pg16_fixation_professional_review_get_exposes_server_current_readiness_
     assert fresh["current_readiness"]["manifest_fingerprint"] == current["manifest_fingerprint"]
     assert fresh["current_readiness"]["readiness_fingerprint"] == current["readiness_fingerprint"]
     assert fresh["tax_authority_approval"] is None
+
+
+def _prepared_fixation_sources(factory):
+    now = datetime(2026, 1, 2, 8, 0, tzinfo=timezone.utc)
+    with factory.begin() as db:
+        row = create_official_parameter_set_draft(
+            db_session=db,
+            request=OfficialParameterSetCreate(
+                parameter_set_id="scenario-fixation-2026", tax_year=2026,
+                effective_from=date(2026, 1, 1), effective_to=date(2026, 12, 31),
+                parameter_set_version="2026-r1",
+                values=OfficialParameterValues(
+                    monthly_cap="1000", exemption_percentage="0.5",
+                    capital_multiplier="180", grant_impact_multiplier="1.35"),
+                source_type="official_publication", source_title="Synthetic official source",
+                official_source_reference="official://synthetic/2026",
+                source_publication_date=date(2025, 12, 15),
+                source_recorded_at=now, source_evidence_metadata={"document": "test-only"},
+                created_by="test-admin"), timestamp=now)
+        verify_official_parameter_set(
+            db_session=db, parameter_set_id=row.parameter_set_id,
+            request=OfficialParameterVerificationRequest(
+                verified_by="test-verifier", verification_note="synthetic verified source"),
+            timestamp=now)
+        activate_official_parameter_set(
+            db_session=db, parameter_set_id=row.parameter_set_id,
+            request=OfficialParameterActivationRequest(activated_by="test-activator"),
+            timestamp=now)
+        revision = M07EvidenceRevision(
+            m07_evidence_revision_id="scenario-fixation-m07", profile_id="fixation-profile-7",
+            client_id=7, revision_number=1, tax_year=2026, event_year=2026,
+            event_type="fixation", schema_version="pkg004b1.m07-evidence.v1",
+            rule_version="pkg004b1.technical-assessment.v1",
+            status="draft", authority_classification="EVIDENCE_ONLY_NOT_PROFESSIONAL_AUTHORITY",
+            technical_outcomes=[], canonical_payload={"eligibility_date": "2026-10-01"},
+            evidence_fingerprint="1" * 64, source_snapshot_fingerprint="2" * 64,
+            fingerprint_algorithm_version="sha256-v1", created_at=now,
+            created_by="test", finalized_at=None, finalized_by=None)
+        db.add(revision)
+        db.flush()
+        db.add(M07FactEvidence(
+            fact_evidence_id="scenario-fixation-eligibility", m07_evidence_revision_id="scenario-fixation-m07",
+            client_id=7, field_code="eligibility_date", fact_identity_key="3" * 64,
+            structured_value="2026-10-01", collection_state="recorded", collection_basis=None,
+            verification_state="verified", authority_classification="EVIDENCE_ONLY_NOT_PROFESSIONAL_AUTHORITY",
+            source_type="official_document", source_record_type="document", source_record_id="eligibility-7",
+            source_document_reference="document://eligibility-7", source_date=date(2026, 10, 1),
+            source_excerpt=None, source_metadata={}, recorded_at=now, recorded_by="test",
+            verified_at=now, verified_by="test", verification_basis="synthetic verified document",
+            assertion_id=None, content_fingerprint="4" * 64))
+        db.flush()
+        finalize_m07_revision(
+            db_session=db, client_id=7, revision_id="scenario-fixation-m07",
+            actor="test", assessment=AssessmentRun(), timestamp=now,
+        )
+
+
+def _prepared_review(factory):
+    ready = build(factory)["domain_results"]["fixation_tax"]["readiness"]
+    request = FixationProfessionalDraftReplace(
+        expected_approval_version=0, expected_scenario_version=ready["scenario_version"],
+        expected_manifest_fingerprint=ready["manifest_fingerprint"],
+        expected_readiness_fingerprint=ready["readiness_fingerprint"],
+        decisions=[
+            FixationProfessionalDecision(
+                group="eligibility", source_id="scenario-fixation-m07",
+                determination="PLANNER_ASSERTED", reason="Verified eligibility evidence selected",
+                evidence_references=["document://eligibility-7"], eligibility_date=date(2026, 10, 1)),
+            FixationProfessionalDecision(
+                group="tax_year_and_parameters", source_id="scenario-fixation-2026",
+                determination="PLANNER_ASSERTED", reason="Active official parameters selected",
+                evidence_references=["official://synthetic/2026"], tax_year=2026,
+                parameter_set_id="scenario-fixation-2026"),
+            FixationProfessionalDecision(
+                group="pension_classification", source_id="d_a1",
+                determination="PLANNER_ASSERTED", reason="Professional pension classification",
+                evidence_references=["document://pension-classification-7"],
+                tax_classification="QUALIFYING_PENSION_FOR_FIXATION"),
+        ],
+        admission_controls=FixationAdmissionControls(
+            calculation_version="pkg-012-m08d-v1",
+            grants_collection={"state": "confirmed_none", "evidence_references": ["review://grants-7"]},
+            actual_capitalizations_collection={
+                "state": "confirmed_none", "evidence_references": ["review://capitalizations-7"]},
+            idf={"applicability": "NOT_APPLICABLE",
+                 "evidence_references": ["review://idf-7"], "input": None},
+        ),
+    )
+    with factory.begin() as db:
+        fixation_review.save_draft(db, 7, "a1", request, "trusted-planner")
+
+
+def test_pg16_fixation_admission_preparation_positive_and_no_tax_execution(pg16, monkeypatch):
+    factory, _ = pg16
+    _prepared_fixation_sources(factory)
+    _prepared_review(factory)
+    from app.services import fixation_service
+    from app.engines import fixation_engine
+    def forbidden(*args, **kwargs):
+        raise AssertionError("FIXATION_ENGINE_MUST_NOT_RUN")
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    with factory() as db:
+        first = fixation_preparation.prepare(db, 7, "a1")
+        second = fixation_preparation.prepare(db, 7, "a1")
+    assert first == second
+    assert first["state"] == "PREPARED"
+    assert first["candidate"]["calculation_version"] == "pkg-012-m08d-v1"
+    assert first["candidate"]["grants_collection_state"] == "confirmed_none"
+    assert first["candidate"]["actual_capitalizations_collection_state"] == "confirmed_none"
+    assert first["candidate"]["idf"] is None
+    assert first["professional_authority"] is False
+    assert first["execution_allowed"] is False
+    assert first["tax_authority_approval"] is None
+
+
+def test_pg16_fixation_admission_preparation_fail_closed_and_isolated(pg16):
+    factory, _ = pg16
+    with pytest.raises(ValueError):
+        FixationProfessionalDecision(
+            group="pension_classification", source_id="d_a1",
+            determination="PLANNER_ASSERTED", reason="free text must not become admission",
+            tax_classification="free-form-tax-opinion")
+    with factory() as db:
+        old = fixation_preparation.prepare(db, 7, "a1")
+        foreign = fixation_preparation.prepare(db, 8, "b1")
+    assert old["state"] == "INCOMPLETE"
+    assert "FIXATION_PREPARATION_CONTROLS_MISSING" in old["incomplete_reasons"]
+    assert foreign["client_id"] == 8 and foreign["scenario_id"] == "b1"
+    _prepared_fixation_sources(factory)
+    _prepared_review(factory)
+    with factory() as db:
+        prepared = fixation_preparation.prepare(db, 7, "a1")
+    with factory.begin() as db:
+        db.add(PensionProductComponent(
+            component_id="fixation-overlap-c7", product_id="p7",
+            component_code="פיצויים_מעסיק_נוכחי", balance=Decimal("100.00")))
+        db.add(Grant(
+            grant_id="fixation-overlap-grant7", client_id=7,
+            nominal_amount=Decimal("100.00"), grant_date=date(2025, 12, 31),
+            work_start_date=date(2020, 1, 1), work_end_date=date(2025, 12, 31)))
+    with factory() as db:
+        changed = fixation_preparation.prepare(db, 7, "a1")
+    assert changed["state"] == "BLOCKED"
+    assert "FIXATION_PREPARATION_SOURCE_OVERLAP_UNRESOLVED" in changed["blockers"]
+    assert "FIXATION_PREPARATION_GRANTS_CONFIRMED_NONE_CONTRADICTS_SOURCE" in changed["blockers"]
+    assert changed["preparation_fingerprint"] != prepared["preparation_fingerprint"]
+    assert changed["candidate"] is None

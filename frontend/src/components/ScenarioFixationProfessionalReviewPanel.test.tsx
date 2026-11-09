@@ -84,7 +84,7 @@ it("loads the selected scenario, factual sources, blocked readiness and no appro
   expect(mocks.approve).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText("נתוני מקור ומוכנות לחישוב"));
   expect(screen.getByText(/מענקים: 1/)).toBeTruthy();
-  expect(screen.getByText(/מועד זכאות/)).toBeTruthy();
+  expect(screen.getByText(/ראיות זכאות M07: 0/)).toBeTruthy();
 });
 
 it("adds a structured grant decision and sends exact server CAS tokens", async () => {
@@ -120,6 +120,9 @@ it("reloads persisted decisions and displays immutable version history", async (
   display();
   expect(await screen.findByText(/טיוטה שמורה, ללא אישור/)).toBeTruthy();
   expect(screen.getByText(/מעמד התשלום טרם אומת/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "ערוך" }));
+  expect((screen.getByLabelText(/הנמקה מקצועית/) as HTMLTextAreaElement).value).toBe(decision.reason);
+  expect((screen.getByLabelText(/הפניות לאסמכתאות/) as HTMLTextAreaElement).value).toBe("document-A");
   fireEvent.click(screen.getByRole("button", { name: "הצג היסטוריית גרסאות" }));
   expect(await screen.findByText(/גרסה 1, planner/)).toBeTruthy();
   expect(mocks.approve).not.toHaveBeenCalled();

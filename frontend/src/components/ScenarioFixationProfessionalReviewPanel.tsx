@@ -4,7 +4,10 @@ import {
   readProfessionalReview, saveProfessionalReview, readProfessionalReviewHistory,
   ReviewApiError, type ProfessionalDecision, type ProfessionalReview,
   type ReviewGroup, type ReviewDetermination, type ReviewHistoryItem,
+  type FixationAdmissionControls, type FixationPreparation,
+  readFixationAdmissionPreparation,
 } from "../api/scenarioFixationProfessionalReviewApi";
+import { ScenarioFixationAdmissionControls, controlsValidation } from "./ScenarioFixationAdmissionControls";
 
 interface Props {
   clientId: number;
@@ -57,6 +60,8 @@ function emptyDecision(): ProfessionalDecision {
     group: "eligibility", source_id: "", determination: "REQUIRES_REVIEW",
     reason: "", evidence_references: [], eligibility_date: null, tax_year: null,
     parameter_set_id: null, tax_classification: null,
+    inclusion_decision: null, support_status: null, accepted_for_use: null,
+    payment_status: null, overlap_resolution: null, matched_source_ids: [],
   };
 }
 function message(error: unknown): string {
@@ -110,20 +115,28 @@ export function ScenarioFixationProfessionalReviewPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [serverBlockers, setServerBlockers] = useState<string[]>([]);
+  const [controls, setControls] = useState<FixationAdmissionControls | null>(null);
+  const [preparation, setPreparation] = useState<FixationPreparation | null>(null);
+  const [preparationError, setPreparationError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
     setReview(null); setDraft([]); setItem(emptyDecision()); setRefsText("");
     setHistory(null); setError(null); setNotice(null); setConflict(false);
-    setServerBlockers([]); setLoading(true);
+    setServerBlockers([]); setControls(null); setPreparation(null);
+    setPreparationError(null); setLoading(true);
     void readProfessionalReview(clientId, scenario.scenario_id)
       .then(result => {
         if (!mounted) return;
         setReview(result);
+        setControls(result.admission_controls ?? null);
         setDraft(result.decisions.map(row => ({ ...row, evidence_references: [...row.evidence_references] })));
       })
       .catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
+    void readFixationAdmissionPreparation(clientId, scenario.scenario_id)
+      .then(result => { if (mounted) setPreparation(result); })
+      .catch(cause => { if (mounted) setPreparationError(message(cause)); });
     return () => { mounted = false; };
   }, [clientId, scenario.scenario_id]);
 
@@ -131,7 +144,8 @@ export function ScenarioFixationProfessionalReviewPanel({
   const editable = scenario.status === "draft" && !loading && !busy && review !== null
     && review.current_readiness.scenario_version === scenario.version;
   function edit(row: ProfessionalDecision) {
-    setItem({ ...row, evidence_references: [...row.evidence_references] });
+    setItem({ ...row, evidence_references: [...row.evidence_references],
+      matched_source_ids: [...(row.matched_source_ids ?? [])] });
     setRefsText(row.evidence_references.join("\n"));
     setNotice(null);
   }
@@ -141,6 +155,30 @@ export function ScenarioFixationProfessionalReviewPanel({
     if (!item.source_id.trim() || !item.reason.trim() ||
         parsed.some(value => value.length > 256) || new Set(parsed).size !== parsed.length) {
       setError("יש למלא מקור, הנמקה ואסמכתאות ללא כפילויות.");
+      return;
+    }
+    if (item.group === "historical_grant" || item.group === "historical_capitalization"
+        || item.group === "planned_withdrawal_or_commutation") {
+      if (item.determination === "PLANNER_ASSERTED"
+          && (item.inclusion_decision === null || item.support_status === null
+              || item.accepted_for_use === null)) {
+        setError("נדרשת הכרעת הכללה, מצב תמיכה והחלטת שימוש מפורשים.");
+        return;
+      }
+    }
+    if (item.group === "historical_grant" && item.determination === "PLANNER_ASSERTED"
+        && item.payment_status === null) {
+      setError("יש להגדיר מעמד תשלום מענק, גם אם אינו ידוע.");
+      return;
+    }
+    if (item.group === "pension_classification" && item.determination === "PLANNER_ASSERTED"
+        && !item.tax_classification) {
+      setError("יש לבחור סיווג קצבה מתוך הערכים המאושרים בחוזה.");
+      return;
+    }
+    if ((item.overlap_resolution !== null || item.matched_source_ids.length > 0)
+        && !parsed.length) {
+      setError("הכרעת חפיפה מחייבת אסמכתה ואינה מבטלת חסמי מקור בלתי פתורים.");
       return;
     }
     const next: ProfessionalDecision = {
@@ -156,6 +194,7 @@ export function ScenarioFixationProfessionalReviewPanel({
     setReview(fresh);
     if (!preserve) {
       setDraft(fresh.decisions.map(row => ({ ...row, evidence_references: [...row.evidence_references] })));
+      setControls(fresh.admission_controls ?? null);
       setItem(emptyDecision()); setRefsText(""); setConflict(false);
     }
     return fresh;
@@ -163,6 +202,8 @@ export function ScenarioFixationProfessionalReviewPanel({
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!editable || conflict || !review) return;
+    const validation = controlsValidation(controls);
+    if (validation) { setError(validation); return; }
     setBusy(true); setError(null); setNotice(null); setServerBlockers([]);
     const token = review.current_readiness;
     try {
@@ -172,9 +213,18 @@ export function ScenarioFixationProfessionalReviewPanel({
         expected_manifest_fingerprint: token.manifest_fingerprint,
         expected_readiness_fingerprint: token.readiness_fingerprint,
         decisions: draft,
+        admission_controls: controls,
       });
       setReview(saved);
+      setControls(saved.admission_controls ?? null);
       setDraft(saved.decisions.map(row => ({ ...row, evidence_references: [...row.evidence_references] })));
+      try {
+        const freshPreparation = await readFixationAdmissionPreparation(clientId, scenario.scenario_id);
+        setPreparation(freshPreparation);
+        setPreparationError(null);
+      } catch (prepareError) {
+        setPreparation(null); setPreparationError(message(prepareError));
+      }
       setHistory(null);
       setNotice("טיוטת ההכרעות נשמרה. אין בכך אישור קיבוע זכויות או זכאות למס.");
     } catch (cause) {
@@ -217,6 +267,28 @@ export function ScenarioFixationProfessionalReviewPanel({
             : review.record_status === "DRAFT" ? "טיוטה שמורה, ללא אישור"
               : "חסום"}</strong>. גרסת הכרעות: {review.approval_version}.
       </p>
+      <section aria-label="מצב הכנת קלט Admission">
+        <h5>מצב הכנת קלט Admission</h5>
+        {preparation ? <>
+          <p role="status">
+            {preparation.state === "PREPARED"
+              ? "PREPARED: הקלט הוכן לבדיקה. טרם ניתן אישור מקצועי לחישוב קיבוע זכויות."
+              : preparation.state === "INCOMPLETE"
+                ? "INCOMPLETE: חסרים נתונים או הכרעות להכנת הקלט."
+                : "BLOCKED: נמצאו חסמים שמונעים הכנת קלט תקין."}
+          </p>
+          <ul>
+            {preparation.incomplete_reasons.map(code => <li key={"missing:" + code}>{label(code)}</li>)}
+            {preparation.blockers.map(code => <li key={"blocked:" + code}>{label(code)}</li>)}
+          </ul>
+        </> : <p role="status">מצב Admission Preparation טרם נטען.</p>}
+        {preparationError && <p role="alert">{preparationError}</p>}
+        <button type="button" disabled={busy} onClick={() => {
+          void readFixationAdmissionPreparation(clientId, scenario.scenario_id)
+            .then(value => { setPreparation(value); setPreparationError(null); })
+            .catch(cause => setPreparationError(message(cause)));
+        }}>רענן מצב הכנת קלט</button>
+      </section>
       {review.validity_state === "STALE" && <p role="alert">
         ראיות המקור או החלופה השתנו מאז השמירה. ההכרעות הישנות אינן תקפות.
         בדוק את ההכרעות ושמור גרסה חדשה לאחר בדיקה.
@@ -358,6 +430,8 @@ export function ScenarioFixationProfessionalReviewPanel({
             setDraft(current => current.filter(candidate => !sameKey(candidate, row)))}>הסר</button>
         </li>)}</ul>
       </div>
+      <ScenarioFixationAdmissionControls value={controls}
+        onChange={setControls} disabled={!editable}/>
       <form onSubmit={event => void save(event)}>
         <button type="submit" disabled={!editable || conflict}>
           {busy ? "שומר טיוטת הכרעות..." : "שמור טיוטת הכרעות מקצועיות"}

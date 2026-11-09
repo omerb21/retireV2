@@ -37,6 +37,9 @@ from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.pension_product import PensionProduct, PensionProductComponent
 from app.models.retirement_facts import RecurringIncome
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
+from app.models.scenario_fixation_approval import (
+    ScenarioFixationApprovalHead, ScenarioFixationApprovalRevision,
+)
 from app.models.m07_evidence import (
     M07EvidenceRevision, M07FactEvidence, M07PlannerAssertion, M07AssessmentFinding,
 )
@@ -74,6 +77,8 @@ def pg16(pg16_base):
             # The base pg16 fixture already creates scenario_drafts, but its
             # minimal contract predates revision-backed severance choices.
             ScenarioDraftRevision.__table__,
+            ScenarioFixationApprovalHead.__table__,
+            ScenarioFixationApprovalRevision.__table__,
             OfficialParameterSet.__table__,
             M07EvidenceRevision.__table__,
             M07PlannerAssertion.__table__,

@@ -221,6 +221,18 @@ export function ScenarioFixationProfessionalReviewPanel({
         ראיות המקור או החלופה השתנו מאז השמירה. ההכרעות הישנות אינן תקפות.
         בדוק את ההכרעות ושמור גרסה חדשה לאחר בדיקה.
       </p>}
+      {review.current_readiness.scenario_version !== scenario.version && <div role="alert">
+        גרסת החלופה השתנתה. שמירת ההכרעות נעולה עד לרענון נתוני השרת.
+        <button type="button" disabled={busy} onClick={() => {
+          setBusy(true); setError(null);
+          void reload({ preserve: true }).then(() => {
+            setConflict(true);
+            setNotice("טיוטת העריכה נשמרה על המסך. בדוק את הגרסה העדכנית לפני ניסיון שמירה.");
+          }).catch(cause => setError(message(cause))).finally(() => setBusy(false));
+        }}>
+          טען נתוני חלופה עדכניים בלי למחוק את הטיוטה
+        </button>
+      </div>}
       {conflict && <div role="alert">
         יש התנגשות עם גרסת השרת. הטיוטה שהזנת נשמרה על המסך ואינה נדרסת.
         עיין במקורות ובגרסה העדכניים לפני אישור ניסיון שמירה חדש.

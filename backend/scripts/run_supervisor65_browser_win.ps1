@@ -94,7 +94,7 @@ try {
         Invoke-Checked $python @("-m", "alembic", "-c", "alembic.ini", "upgrade", "head")
         Invoke-Checked $python @("scripts/seed_supervisor41_local.py")
     } finally { Pop-Location }
-    $backendArgs = @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
+    $backendArgs = @("-m", "uvicorn", "scripts.supervisor65_test_app:app", "--host", "127.0.0.1",
         "--port", "8001", "--no-access-log")
     $backendProcess = Start-Process -FilePath $python -WorkingDirectory $backend -ArgumentList $backendArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $report "backend.stdout.log") -RedirectStandardError (Join-Path $report "backend.stderr.log")
     Wait-Http "http://127.0.0.1:8001/health" $backendProcess

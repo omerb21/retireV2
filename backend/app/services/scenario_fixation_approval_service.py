@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
@@ -317,7 +317,7 @@ def save_draft(db, client_id: int, scenario_id: str,
             ScenarioFixationApprovalHead.client_id == client_id,
             ScenarioFixationApprovalHead.scenario_id == scenario_id,
             ScenarioFixationApprovalHead.current_version == expected,
-        ).values(current_version=version, updated_by=actor))
+        ).values(current_version=version, updated_by=actor, updated_at=func.now()))
         if result.rowcount != 1:
             raise DraftError("FIXATION_APPROVAL_VERSION_CONFLICT", 409)
     selected_sources, selection_blockers = _selected_sources(

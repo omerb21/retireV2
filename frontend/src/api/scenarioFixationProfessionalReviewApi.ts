@@ -6,6 +6,45 @@ export type ReviewGroup =
   | "historical_capitalization" | "planned_withdrawal_or_commutation";
 export type ReviewDetermination = "REQUIRES_REVIEW" | "PLANNER_ASSERTED" | "EXCLUDE_PROPOSED";
 
+export type Inclusion = "include" | "exclude";
+export type Support = "supported" | "unsupported" | "requires_special_handling";
+export type CollectionState = "unknown" | "not_collected" | "confirmed_none" | "items_recorded";
+export interface CollectionControl {
+  state: CollectionState;
+  evidence_references: string[];
+}
+export interface IDFControl {
+  applicability: "NOT_REVIEWED" | "NOT_APPLICABLE" | "APPLICABLE";
+  evidence_references: string[];
+  input: {
+    idf_id: string;
+    reduction_amount: number;
+    original_commutation_percent: number;
+    current_commutation_percent: number;
+    commutation_date: string;
+    promoter_age_date: string;
+    source_label: string | null;
+  } | null;
+}
+export interface FixationAdmissionControls {
+  calculation_version: "pkg-012-m08d-v1";
+  grants_collection: CollectionControl;
+  actual_capitalizations_collection: CollectionControl;
+  idf: IDFControl;
+}
+export interface FixationPreparation {
+  contract: "SCENARIO_FIXATION_ADMISSION_PREPARATION_V1";
+  client_id: number;
+  scenario_id: string;
+  state: "INCOMPLETE" | "BLOCKED" | "PREPARED";
+  candidate: unknown | null;
+  incomplete_reasons: string[];
+  blockers: string[];
+  preparation_fingerprint: string;
+  professional_authority: false;
+  execution_allowed: false;
+  tax_authority_approval: null;
+}
 export interface ProfessionalDecision {
   group: ReviewGroup;
   source_id: string;
@@ -15,7 +54,13 @@ export interface ProfessionalDecision {
   eligibility_date: string | null;
   tax_year: number | null;
   parameter_set_id: string | null;
-  tax_classification: string | null;
+  tax_classification: "QUALIFYING_PENSION_FOR_FIXATION" | "NON_QUALIFYING_PENSION_FOR_FIXATION" | null;
+  inclusion_decision: Inclusion | null;
+  support_status: Support | null;
+  accepted_for_use: boolean | null;
+  payment_status: "PAID" | "NOT_PAID" | "UNKNOWN" | null;
+  overlap_resolution: "NO_OVERLAP" | "SAME_RIGHT_USE_GRANT" | "SAME_RIGHT_USE_COMPONENT" | "DISTINCT_RIGHTS" | null;
+  matched_source_ids: string[];
 }
 
 export interface ReadinessSourceEvidence {
@@ -56,6 +101,7 @@ export interface ProfessionalReview {
   record_status: "MISSING" | "DRAFT" | "BLOCKED";
   validity_state: "BLOCKED" | "STALE";
   decisions: ProfessionalDecision[];
+  admission_controls: FixationAdmissionControls | null;
   actor_id: string | null;
   approval_fingerprint: string | null;
   dependency_fingerprint: string | null;
@@ -71,6 +117,7 @@ export interface ReviewHistoryItem {
   approval_version: number;
   scenario_version: number;
   decisions: ProfessionalDecision[];
+  admission_controls: FixationAdmissionControls | null;
   blockers: string[];
   action: string;
   actor_id: string;
@@ -84,6 +131,7 @@ export interface ReviewSaveInput {
   expected_manifest_fingerprint: string;
   expected_readiness_fingerprint: string;
   decisions: ProfessionalDecision[];
+  admission_controls: FixationAdmissionControls | null;
 }
 export interface ApprovalDenial {
   approval_attempt_state: "BLOCKED";
@@ -152,3 +200,23 @@ export const requestProfessionalApproval = (clientId: number, scenarioId: string
   call<ApprovalDenial>(clientId, scenarioId, "/approve", "POST", {
     expected_approval_version: version, expected_approval_fingerprint: fingerprint,
   });
+
+export async function readFixationAdmissionPreparation(clientId: number, scenarioId: string) {
+  const url = buildApiUrl(
+    `/clients/${clientId}/scenario-drafts/${encodeURIComponent(scenarioId)}/fixation-admission-preparation`,
+  );
+  const response = await apiFetch(url, { method: "GET" });
+  const data: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const obj = data && typeof data === "object" ? data as Record<string, unknown> : {};
+    throw new ReviewApiError(response.status,
+      typeof obj.code === "string" ? obj.code : `HTTP_${response.status}`);
+  }
+  const result = data as FixationPreparation;
+  if (result?.contract !== "SCENARIO_FIXATION_ADMISSION_PREPARATION_V1"
+      || result.client_id !== clientId || result.scenario_id !== scenarioId
+      || result.professional_authority !== false || result.execution_allowed !== false) {
+    throw new ReviewApiError(409, "FIXATION_PREPARATION_IDENTITY_INVALID");
+  }
+  return result;
+}

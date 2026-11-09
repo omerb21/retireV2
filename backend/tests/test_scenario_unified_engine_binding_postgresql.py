@@ -1912,3 +1912,61 @@ def test_pg16_fixation_preparation_missing_item_evidence_is_controlled(pg16):
     assert "FIXATION_PREPARATION_GRANT_DECISION_OR_EVIDENCE_INCOMPLETE" in result["incomplete_reasons"]
     assert "FIXATION_PREPARATION_CAPITALIZATION_DECISION_OR_EVIDENCE_INCOMPLETE" in result["incomplete_reasons"]
     assert result["candidate"] is None
+
+
+def test_pg16_fixation_preparation_no_false_stale_on_nonmaterial_note(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(factory)
+    with factory() as db:
+        before = fixation_preparation.prepare(db, 7, "a1")
+    assert before["state"] == "PREPARED", before
+    with factory.begin() as db:
+        db.get(ActualCapitalization, "preparation-cap7").notes = "Presentation note only"
+    with factory() as db:
+        after = fixation_preparation.prepare(db, 7, "a1")
+    assert after["state"] == "PREPARED", (after["blockers"], after["incomplete_reasons"])
+    assert after["preparation_fingerprint"] == before["preparation_fingerprint"]
+
+
+def test_pg16_fixation_preparation_collection_source_mismatch_blocked(pg16):
+    factory, _ = pg16
+    _prepared_fixation_sources(factory)
+    _prepared_review(factory)  # Both collections are explicitly confirmed_none.
+    with factory.begin() as db:
+        db.add(ActualCapitalization(
+            capitalization_id="unrecorded-preparation-cap7", client_id=7,
+            amount=Decimal("90.00"), capitalization_date=date(2025, 2, 1),
+            source_label="Unreviewed capitalization", source_basis="synthetic_record",
+        ))
+    with factory() as db:
+        result = fixation_preparation.prepare(db, 7, "a1")
+    assert result["state"] == "BLOCKED"
+    assert result["candidate"] is None
+    assert "FIXATION_PREPARATION_CAPITALIZATIONS_CONFIRMED_NONE_CONTRADICTS_SOURCE" in result["blockers"]
+
+
+def test_pg16_fixation_preparation_applicable_idf_requires_complete_input(pg16):
+    factory, _ = pg16
+    _prepared_fixation_sources(factory)
+    with pytest.raises(ValueError):
+        FixationAdmissionControls(
+            calculation_version="pkg-012-m08d-v1",
+            grants_collection={"state": "confirmed_none", "evidence_references": ["review://grants"]},
+            actual_capitalizations_collection={"state": "confirmed_none", "evidence_references": ["review://caps"]},
+            idf={"applicability": "APPLICABLE", "input": None,
+                 "evidence_references": ["document://idf"]},
+        )
+    with pytest.raises(ValueError):
+        FixationAdmissionControls(
+            calculation_version="pkg-012-m08d-v1",
+            grants_collection={"state": "confirmed_none", "evidence_references": ["review://grants"]},
+            actual_capitalizations_collection={"state": "confirmed_none", "evidence_references": ["review://caps"]},
+            idf={"applicability": "APPLICABLE", "evidence_references": ["document://idf"],
+                 "input": {"idf_id": "invalid", "reduction_amount": -1,
+                           "original_commutation_percent": 25, "current_commutation_percent": 20,
+                           "commutation_date": "2025-01-01", "promoter_age_date": "2026-10-01"}},
+        )
+    with factory() as db:
+        result = fixation_preparation.prepare(db, 7, "a1")
+    assert result["state"] == "INCOMPLETE"
+    assert result["candidate"] is None

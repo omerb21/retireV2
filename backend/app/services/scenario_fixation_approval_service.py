@@ -11,7 +11,9 @@ from uuid import uuid4
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.models.scenario_draft import ScenarioDraft
+from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
+from app.models.official_parameter_set import OfficialParameterSet
+from app.services.official_parameter_service import resolve_official_parameter_set
 from app.models.scenario_fixation_approval import (
     ScenarioFixationApprovalHead, ScenarioFixationApprovalRevision,
 )
@@ -49,6 +51,126 @@ def _revision(db, head):
     ))
 
 
+def _selected_sources(db, client_id: int, scenario_id: str,
+                      readiness: dict, decisions: list[dict]) -> tuple[list[dict], list[str]]:
+    """Resolve declared source IDs against this client/scenario, never trust IDs.
+
+    Resolution here proves only that a record exists and its content is
+    current. It intentionally does NOT convert planner assertions into
+    professional eligibility, a qualified pension, paid grant or tax approval.
+    """
+    sources = readiness["source_evidence"]
+    by_m07 = {r["revision_id"]: r for r in sources["m07"]}
+    by_grant = {r["grant_id"]: r for r in sources["grants"]}
+    by_cap = {r["capitalization_id"]: r for r in sources["historical_capitalizations"]}
+    by_choice = {r["source_id"]: r for r in sources["severance_choice_source_ids"]}
+    by_pension = {
+        r.decision_id: r for r in db.scalars(select(ScenarioDraftDecision).where(
+            ScenarioDraftDecision.scenario_id == scenario_id
+        )).all()
+    }
+    records = []
+    blockers = set()
+    eligibilities = [r for r in decisions if r["group"] == "eligibility"]
+    eligibility_date = next(
+        (r["eligibility_date"] for r in eligibilities if r["eligibility_date"] is not None),
+        None,
+    )
+    for decision in decisions:
+        group, source_id = decision["group"], decision["source_id"]
+        evidence = None
+        reason = None
+        if group == "eligibility":
+            row = by_m07.get(source_id)
+            if row is not None:
+                evidence = {"revision_id": row["revision_id"],
+                            "evidence_fingerprint": row["evidence_fingerprint"],
+                            "source_snapshot_fingerprint": row["source_snapshot_fingerprint"],
+                            "status": row["status"]}
+            else:
+                reason = "FIXATION_REVIEW_M07_SOURCE_NOT_FINALIZED_OR_FOREIGN"
+        elif group == "historical_grant":
+            row = by_grant.get(source_id)
+            if row is not None:
+                evidence = {"grant_id": row["grant_id"],
+                            "source_fingerprint": row["source_fingerprint"],
+                            "payment_classification": row["payment_classification"]}
+            else:
+                reason = "FIXATION_REVIEW_GRANT_SOURCE_NOT_FOUND"
+        elif group == "historical_capitalization":
+            row = by_cap.get(source_id)
+            if row is not None:
+                evidence = {k: row[k] for k in (
+                    "capitalization_id", "reported_amount_ils",
+                    "capitalization_date", "source_label", "source_basis",
+                )}
+            else:
+                reason = "FIXATION_REVIEW_CAPITALIZATION_SOURCE_NOT_FOUND"
+        elif group == "severance_continuity":
+            row = by_choice.get(source_id)
+            if row is not None:
+                evidence = {k: row[k] for k in (
+                    "source_kind", "source_id", "state", "source_fingerprint",
+                )}
+                if row["state"] != "DRAFT_ONLY":
+                    reason = "FIXATION_REVIEW_SEVERANCE_SOURCE_BLOCKED"
+            else:
+                reason = "FIXATION_REVIEW_SEVERANCE_SOURCE_NOT_FOUND"
+        elif group == "pension_classification":
+            row = by_pension.get(source_id)
+            if row is not None and row.action == "pension":
+                evidence = {"decision_id": row.decision_id,
+                            "source_component_id": row.source_component_id,
+                            "source_fingerprint_at_review": row.source_fingerprint_at_review,
+                            "amount_ils": format(row.amount, ".2f")}
+            else:
+                reason = "FIXATION_REVIEW_PENSION_SOURCE_NOT_FOUND"
+        elif group == "planned_withdrawal_or_commutation":
+            row = by_pension.get(source_id)
+            if row is not None and row.action == "capital_asset":
+                evidence = {"decision_id": row.decision_id,
+                            "source_component_id": row.source_component_id,
+                            "source_fingerprint_at_review": row.source_fingerprint_at_review,
+                            "amount_ils": format(row.amount, ".2f")}
+            else:
+                reason = "FIXATION_REVIEW_CAPITAL_SOURCE_NOT_FOUND"
+        elif group == "tax_year_and_parameters":
+            row = db.get(OfficialParameterSet, source_id)
+            tax_year = decision["tax_year"]
+            if row is None:
+                reason = "FIXATION_REVIEW_PARAMETER_SET_NOT_FOUND"
+            else:
+                evidence = {
+                    "parameter_set_id": row.parameter_set_id,
+                    "tax_year": row.tax_year, "effective_from": row.effective_from.isoformat(),
+                    "effective_to": row.effective_to.isoformat() if row.effective_to else None,
+                    "status": row.status, "content_fingerprint": row.content_fingerprint,
+                    "parameter_set_version": row.parameter_set_version,
+                }
+                if (tax_year is None or tax_year != row.tax_year
+                        or decision["parameter_set_id"] != source_id
+                        or eligibility_date is None):
+                    reason = "FIXATION_REVIEW_PARAMETER_SCOPE_NOT_ESTABLISHED"
+                else:
+                    from datetime import date
+                    selected_date = date.fromisoformat(eligibility_date)
+                    resolved = resolve_official_parameter_set(
+                        db_session=db, tax_year=tax_year, effective_date=selected_date,
+                    )
+                    if (resolved.result != "resolved"
+                            or resolved.selected_parameter_set_id != source_id):
+                        reason = "FIXATION_REVIEW_PARAMETER_SET_NOT_APPLICABLE"
+        else:
+            reason = "FIXATION_REVIEW_UNSUPPORTED_GROUP"
+        if reason:
+            blockers.add(reason)
+        records.append({
+            "group": group, "source_id": source_id,
+            "source_evidence": evidence, "blocker": reason,
+        })
+    return records, sorted(blockers)
+
+
 def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> dict:
     """For unified result: reuse its already-derived readiness, no recursion."""
     if any(readiness[k] != val for k, val in (
@@ -74,11 +196,16 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
     row = _revision(db, head)
     if row is None or row.client_id != client_id or row.scenario_id != scenario_id:
         raise DraftError("FIXATION_APPROVAL_REVISION_IDENTITY_INVALID", 409)
+    selected_sources, review_blockers = _selected_sources(
+        db, client_id, scenario_id, readiness, row.decisions_json["decisions"],
+    )
     current_dependency = _fingerprint({
         "manifest_fingerprint": readiness["manifest_fingerprint"],
         "readiness_fingerprint": readiness["readiness_fingerprint"],
-        "decisions": row.decisions_json,
+        "decisions": row.decisions_json["decisions"],
+        "selected_sources": selected_sources,
     })
+    blockers.update(review_blockers)
     stale = (
         row.scenario_version != readiness["scenario_version"]
         or row.manifest_fingerprint != readiness["manifest_fingerprint"]
@@ -99,6 +226,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
         "record_status": row.status, "validity_state": "STALE" if stale else "BLOCKED",
         "decisions": row.decisions_json["decisions"],
         "actor_id": row.actor_id,
+        "selected_source_evidence": selected_sources,
         "blockers": sorted(blockers),
         "professional_authority": False, "execution_allowed": False,
         "tax_authority_approval": None,
@@ -186,10 +314,14 @@ def save_draft(db, client_id: int, scenario_id: str,
         ).values(current_version=version, updated_by=actor))
         if result.rowcount != 1:
             raise DraftError("FIXATION_APPROVAL_VERSION_CONFLICT", 409)
+    selected_sources, selection_blockers = _selected_sources(
+        db, client_id, scenario_id, readiness, content["decisions"],
+    )
     dependency = _fingerprint({
         "manifest_fingerprint": readiness["manifest_fingerprint"],
         "readiness_fingerprint": readiness["readiness_fingerprint"],
-        "decisions": content,
+        "decisions": content["decisions"],
+        "selected_sources": selected_sources,
     })
     approval_fp = _fingerprint({
         "contract": CONTRACT, "client_id": client_id, "scenario_id": scenario_id,
@@ -203,7 +335,9 @@ def save_draft(db, client_id: int, scenario_id: str,
         manifest_fingerprint=readiness["manifest_fingerprint"],
         readiness_fingerprint=readiness["readiness_fingerprint"],
         dependency_fingerprint=dependency, approval_fingerprint=approval_fp,
-        decisions_json=content, blockers_json=readiness["blockers"],
+        decisions_json=content, blockers_json=sorted(set(
+            readiness["blockers"] + selection_blockers + [UNRESOLVED_AUTHORITY]
+        )),
         status="DRAFT", action="SAVE_DRAFT", actor_id=actor,
         occurred_at=datetime.now(timezone.utc),
     ))

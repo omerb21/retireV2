@@ -1397,9 +1397,12 @@ def test_pg16_fixation_professional_review_save_reload_history_and_blocked_gate(
         assert len(versions) == 1
         assert versions[0]["action"] == "SAVE_DRAFT"
         assert versions[0]["actor_id"] == "planner-test"
-        with pytest.raises(DraftError, match="FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED"):
-            fixation_review.request_internal_approval(
-                db, 7, "a1", 1, first["approval_fingerprint"], "planner-test")
+        denied = fixation_review.request_internal_approval(
+            db, 7, "a1", 1, first["approval_fingerprint"], "planner-test")
+        assert denied["approval_attempt_state"] == "BLOCKED"
+        assert "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED" in denied["blockers"]
+        assert denied["professional_authority"] is False
+        assert denied["tax_authority_approval"] is None
     updated = _review_replace(factory, version=1, decisions=[
         FixationProfessionalDecision(
             group="eligibility", source_id="revision-pending",

@@ -1525,3 +1525,59 @@ def test_pg16_fixation_professional_review_selected_foreign_grant_remains_blocke
     assert saved["tax_authority_approval"] is None
     with factory() as db:
         assert fixation_review.read(db, 7, "a1") == saved
+
+
+def test_pg16_fixation_professional_review_migration_round_trip(pg16):
+    """Run the actual new Alembic migration in another disposable PG16 schema."""
+    from importlib.util import module_from_spec, spec_from_file_location
+    from pathlib import Path
+    from uuid import uuid4
+    from sqlalchemy import create_engine, inspect
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+    from app.models.client import Client
+    from tests.test_scenario_unified_result_real_postgresql import _url
+
+    module_path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / (
+        "e53f1c0a7d23_scenario_fixation_professional_approval.py"
+    )
+    spec = spec_from_file_location("test_s53_approval_migration", module_path)
+    assert spec is not None and spec.loader is not None
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine(_url())
+    schema = "fixation_approval_" + uuid4().hex[:12]
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        scoped = engine.execution_options(schema_translate_map={None: schema})
+        with scoped.begin() as connection:
+            connection.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
+            Base.metadata.create_all(
+                connection, tables=[Client.__table__, ScenarioDraft.__table__],
+            )
+            previous_op = migration.op
+            try:
+                migration.op = Operations(MigrationContext.configure(connection))
+                migration.upgrade()
+                inspector = inspect(connection)
+                assert inspector.has_table("scenario_fixation_approval_heads")
+                assert inspector.has_table("scenario_fixation_approval_revisions")
+                triggers = connection.scalars(text("""
+                    SELECT t.tgname FROM pg_trigger AS t
+                    JOIN pg_class AS c ON c.oid = t.tgrelid
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = :schema
+                      AND c.relname = 'scenario_fixation_approval_revisions'
+                      AND NOT t.tgisinternal
+                """), {"schema": schema}).all()
+                assert "trg_scenario_fixation_approval_revision_immutable" in triggers
+                migration.downgrade()
+                assert not inspect(connection).has_table("scenario_fixation_approval_heads")
+                assert not inspect(connection).has_table("scenario_fixation_approval_revisions")
+            finally:
+                migration.op = previous_op
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        engine.dispose()

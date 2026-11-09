@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from sqlalchemy import select
+from pydantic import ValidationError
 
 from app.engines.fixation_engine import PKG012_GRANT_FORMULA_VERSION
 from app.models.actual_capitalization import ActualCapitalization
@@ -52,6 +53,7 @@ def prepare(db, client_id: int, scenario_id: str) -> dict:
         blocked.add("FIXATION_PREPARATION_PROFESSIONAL_REVIEW_STALE")
     if "FIXATION_GRANT_COMPONENT_OVERLAP_UNRECONCILED" in review[
             "current_readiness"]["blockers"]:
+        # Review declarations cannot erase unresolved factual overlaps.
         blocked.add("FIXATION_PREPARATION_SOURCE_OVERLAP_UNRESOLVED")
     if controls is not None and controls["calculation_version"] not in SUPPORTED_VERSIONS:
         blocked.add("FIXATION_PREPARATION_CALCULATION_VERSION_UNSUPPORTED")
@@ -137,16 +139,47 @@ def prepare(db, client_id: int, scenario_id: str) -> dict:
         idf = controls["idf"]
         if idf["applicability"] == "NOT_REVIEWED":
             incomplete.add("FIXATION_PREPARATION_IDF_NOT_REVIEWED")
+        elif idf["applicability"] == "APPLICABLE" and (
+                not idf.get("input") or not idf.get("evidence_references")):
+            blocked.add("FIXATION_PREPARATION_IDF_INPUT_OR_EVIDENCE_MISSING")
+        elif idf["applicability"] == "NOT_APPLICABLE" and (
+                idf.get("input") is not None or not idf.get("evidence_references")):
+            blocked.add("FIXATION_PREPARATION_IDF_APPLICABILITY_CONTRADICTION")
 
     by_key = {(row["group"], row["source_id"]): row for row in decisions
               if row["determination"] == "PLANNER_ASSERTED"}
+    grant_ids = {row.grant_id for row in grants}
+    cap_ids = {row.capitalization_id for row in caps}
+    for decision in decisions:
+        if decision["determination"] != "PLANNER_ASSERTED":
+            continue
+        if (decision["group"] == "historical_grant"
+                and decision["source_id"] not in grant_ids):
+            blocked.add("FIXATION_PREPARATION_GRANT_FOREIGN_OR_MISSING_SOURCE")
+        if (decision["group"] == "historical_capitalization"
+                and decision["source_id"] not in cap_ids):
+            blocked.add("FIXATION_PREPARATION_CAPITALIZATION_FOREIGN_OR_MISSING_SOURCE")
+
     for row in grants:
         decision = by_key.get(("historical_grant", row.grant_id))
         if decision is None:
             incomplete.add("FIXATION_PREPARATION_GRANT_DECISION_MISSING")
             continue
-        if decision.get("payment_status") == "UNKNOWN":
+        if (decision.get("inclusion_decision") is None
+                or decision.get("support_status") is None
+                or decision.get("accepted_for_use") is None
+                or not decision.get("evidence_references")):
+            incomplete.add("FIXATION_PREPARATION_GRANT_DECISION_OR_EVIDENCE_INCOMPLETE")
+            continue
+        if decision.get("payment_status") in {None, "UNKNOWN"}:
             blocked.add("FIXATION_PREPARATION_GRANT_PAYMENT_UNKNOWN")
+            continue
+        if row.nominal_amount is None and row.indexed_amount is None:
+            incomplete.add("FIXATION_PREPARATION_GRANT_AMOUNT_MISSING")
+            continue
+        if row.work_start_date >= row.work_end_date:
+            blocked.add("FIXATION_PREPARATION_GRANT_DATES_INVALID")
+            continue
         grant_items.append({
             "grant_id": row.grant_id, "client_id": client_id,
             "item_type": "exempt_grant", "employer_name": row.employer_name,
@@ -169,6 +202,12 @@ def prepare(db, client_id: int, scenario_id: str) -> dict:
         if decision is None:
             incomplete.add("FIXATION_PREPARATION_CAPITALIZATION_DECISION_MISSING")
             continue
+        if (decision.get("inclusion_decision") is None
+                or decision.get("support_status") is None
+                or decision.get("accepted_for_use") is None
+                or not decision.get("evidence_references")):
+            incomplete.add("FIXATION_PREPARATION_CAPITALIZATION_DECISION_OR_EVIDENCE_INCOMPLETE")
+            continue
         cap_items.append({
             "capitalization_id": row.capitalization_id, "item_type": "historical_capitalization",
             "amount": float(row.amount), "capitalization_date": row.capitalization_date,
@@ -179,6 +218,13 @@ def prepare(db, client_id: int, scenario_id: str) -> dict:
             "status": "recorded", "accepted_for_use": decision["accepted_for_use"],
             "actor": review["actor_id"], "decision_timestamp": review["occurred_at"],
         })
+    if controls is not None:
+        if (controls["grants_collection"]["state"] == "items_recorded"
+                and len(grant_items) != len(grants)):
+            incomplete.add("FIXATION_PREPARATION_GRANTS_COLLECTION_INCOMPLETE")
+        if (controls["actual_capitalizations_collection"]["state"] == "items_recorded"
+                and len(cap_items) != len(caps)):
+            incomplete.add("FIXATION_PREPARATION_CAPITALIZATIONS_COLLECTION_INCOMPLETE")
 
     if not incomplete and not blocked and controls is not None and parameter_row is not None:
         candidate = {
@@ -207,8 +253,15 @@ def prepare(db, client_id: int, scenario_id: str) -> dict:
             "metadata": {"scenario_contract": CONTRACT,
                          "professional_controls_fingerprint": _fingerprint(controls)},
         }
-        candidate = FixationAdmissionRequest.model_validate(candidate).model_dump(mode="json")
-        preimage["candidate"] = candidate
+        try:
+            candidate = FixationAdmissionRequest.model_validate(candidate).model_dump(mode="json")
+        except (ValidationError, ValueError, TypeError):
+            # Invalid professional source data is a controlled preparation
+            # failure, not an HTTP 500 and never an admitted calculation.
+            candidate = None
+            blocked.add("FIXATION_PREPARATION_ADMISSION_CONTRACT_INVALID")
+        if candidate is not None:
+            preimage["candidate"] = candidate
 
     state = "BLOCKED" if blocked else "INCOMPLETE" if incomplete else "PREPARED"
     fingerprint = _fingerprint(preimage)

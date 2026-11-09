@@ -36,6 +36,8 @@ const decision = {
   determination: "REQUIRES_REVIEW" as const, reason: "מעמד התשלום טרם אומת",
   evidence_references: ["document-A"], eligibility_date: null, tax_year: null,
   parameter_set_id: null, tax_classification: null,
+  inclusion_decision: null, support_status: null, accepted_for_use: null,
+  payment_status: null, overlap_resolution: null, matched_source_ids: [],
 };
 function snapshot(scenario = "A", version = 0, choices: ProfessionalReview["decisions"] = []): ProfessionalReview {
   return {
@@ -43,6 +45,7 @@ function snapshot(scenario = "A", version = 0, choices: ProfessionalReview["deci
     client_id: 7, scenario_id: scenario, approval_id: version ? "approval-a" : null,
     approval_version: version, record_status: version ? "DRAFT" : "MISSING",
     validity_state: "BLOCKED", decisions: choices,
+    admission_controls: null,
     actor_id: version ? "planner" : null, approval_fingerprint: version ? "a".repeat(64) : null,
     dependency_fingerprint: version ? "b".repeat(64) : null,
     readiness_fingerprint_at_save: version ? "c".repeat(64) : null,
@@ -103,7 +106,7 @@ it("adds a structured grant decision and sends exact server CAS tokens", async (
     expected_scenario_version: 3,
     expected_manifest_fingerprint: "d".repeat(64),
     expected_readiness_fingerprint: "e".repeat(64),
-    decisions: [decision],
+    decisions: [decision], admission_controls: null,
   }));
   expect(await screen.findByText(/טיוטת ההכרעות נשמרה/)).toBeTruthy();
   expect(screen.getByText(/טיוטה שמורה, ללא אישור/)).toBeTruthy();

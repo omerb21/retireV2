@@ -1770,3 +1770,145 @@ def test_pg16_fixation_admission_preparation_fail_closed_and_isolated(pg16):
     assert "FIXATION_PREPARATION_GRANTS_CONFIRMED_NONE_CONTRADICTS_SOURCE" in changed["blockers"]
     assert changed["preparation_fingerprint"] != prepared["preparation_fingerprint"]
     assert changed["candidate"] is None
+
+
+def _prepared_fixation_items(factory, *, grant=True, capitalization=True, idf=True,
+                             grant_nominal=True, include_evidence=True):
+    """Actual PostgreSQL source rows and versioned reviewer decisions."""
+    _prepared_fixation_sources(factory)
+    if grant or capitalization:
+        with factory.begin() as db:
+            if grant:
+                db.add(Grant(
+                    grant_id="preparation-grant7", client_id=7,
+                    employment_record_id=None, employer_name="Synthetic employer",
+                    employer_withholding_file_number="synthetic-withholding",
+                    nominal_amount=Decimal("125.00") if grant_nominal else None,
+                    indexed_amount=Decimal("130.00") if grant_nominal else None,
+                    grant_date=date(2025, 12, 31),
+                    work_start_date=date(2011, 1, 1), work_end_date=date(2025, 12, 31),
+                ))
+            if capitalization:
+                db.add(ActualCapitalization(
+                    capitalization_id="preparation-cap7", client_id=7,
+                    amount=Decimal("72.00"), capitalization_date=date(2024, 1, 1),
+                    source_label="Synthetic historical commutation",
+                    source_basis="official_statement",
+                ))
+    _prepared_review(factory)
+    with factory() as db:
+        previous = fixation_review.read(db, 7, "a1")
+    current = previous["current_readiness"]
+    assertions = [FixationProfessionalDecision.model_validate(item)
+                  for item in previous["decisions"]]
+    if grant:
+        assertions.append(FixationProfessionalDecision(
+            group="historical_grant", source_id="preparation-grant7",
+            determination="PLANNER_ASSERTED", reason="Reviewed payment and grant origin",
+            inclusion_decision="include", support_status="supported",
+            accepted_for_use=True, payment_status="PAID",
+            evidence_references=["document://synthetic-grant-7"] if include_evidence else [],
+        ))
+    if capitalization:
+        assertions.append(FixationProfessionalDecision(
+            group="historical_capitalization", source_id="preparation-cap7",
+            determination="PLANNER_ASSERTED", reason="Reviewed actual historical commutation",
+            inclusion_decision="include", support_status="supported",
+            accepted_for_use=True,
+            evidence_references=["document://synthetic-cap-7"] if include_evidence else [],
+        ))
+    controls = FixationAdmissionControls(
+        calculation_version="pkg-012-m08d-v1",
+        grants_collection={"state": "items_recorded" if grant else "confirmed_none",
+                           "evidence_references": ["document://synthetic-grant-collection"]},
+        actual_capitalizations_collection={
+            "state": "items_recorded" if capitalization else "confirmed_none",
+            "evidence_references": ["document://synthetic-cap-collection"]},
+        idf=({
+            "applicability": "APPLICABLE",
+            "evidence_references": ["document://synthetic-idf"],
+            "input": {
+                "idf_id": "synthetic-idf-7", "reduction_amount": 50.0,
+                "original_commutation_percent": 25.0, "current_commutation_percent": 20.0,
+                "commutation_date": date(2024, 1, 1),
+                "promoter_age_date": date(2026, 10, 1),
+                "source_label": "Synthetic military pension statement",
+            },
+        } if idf else {
+            "applicability": "NOT_APPLICABLE",
+            "evidence_references": ["document://synthetic-idf-none"], "input": None,
+        }),
+    )
+    request = FixationProfessionalDraftReplace(
+        expected_approval_version=previous["approval_version"],
+        expected_scenario_version=current["scenario_version"],
+        expected_manifest_fingerprint=current["manifest_fingerprint"],
+        expected_readiness_fingerprint=current["readiness_fingerprint"],
+        decisions=assertions, admission_controls=controls,
+    )
+    with factory.begin() as db:
+        fixation_review.save_draft(db, 7, "a1", request, "trusted-planner")
+
+
+def test_pg16_fixation_preparation_recorded_grants_caps_idf_real_positive(pg16, monkeypatch):
+    factory, _ = pg16
+    _prepared_fixation_items(factory)
+    from app.services import fixation_service, fixation_admission_service
+    from app.engines import fixation_engine
+    def forbidden(*args, **kwargs):
+        raise AssertionError("TAX_OR_ADMISSION_ENGINE_MUST_NOT_RUN")
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    monkeypatch.setattr(fixation_admission_service, "parse_and_admit_fixation_payload", forbidden)
+    with factory() as db:
+        a = fixation_preparation.prepare(db, 7, "a1")
+        b = fixation_preparation.prepare(db, 7, "a1")
+    assert a == b
+    assert a["state"] == "PREPARED", (a["blockers"], a["incomplete_reasons"])
+    assert len(a["preparation_fingerprint"]) == 64
+    candidate = a["candidate"]
+    assert candidate["grants_collection_state"] == "items_recorded"
+    assert len(candidate["grants"]) == 1
+    assert candidate["grants"][0]["grant_id"] == "preparation-grant7"
+    assert candidate["grants"][0]["inclusion_decision"] == "include"
+    assert candidate["grants"][0]["status"] == "PAID"
+    assert candidate["grants"][0]["indexed_amount"] == "130.00"
+    assert candidate["actual_capitalizations_collection_state"] == "items_recorded"
+    assert len(candidate["actual_capitalizations"]) == 1
+    assert candidate["actual_capitalizations"][0]["capitalization_id"] == "preparation-cap7"
+    assert candidate["actual_capitalizations"][0]["inclusion_decision"] == "include"
+    assert candidate["idf"]["idf_id"] == "synthetic-idf-7"
+    assert candidate["m07_input_reference"]["b1_evidence_revision_id"] == "scenario-fixation-m07"
+    assert candidate["parameter_set"]["parameter_set_id"] == "scenario-fixation-2026"
+    assert a["professional_authority"] is False
+    assert a["execution_allowed"] is False
+    assert a["tax_authority_approval"] is None
+    with factory.begin() as db:
+        db.get(Grant, "preparation-grant7").indexed_amount = Decimal("135.00")
+    with factory() as db:
+        changed = fixation_preparation.prepare(db, 7, "a1")
+    assert changed["state"] == "BLOCKED"
+    assert "FIXATION_PREPARATION_PROFESSIONAL_REVIEW_STALE" in changed["blockers"]
+    assert changed["preparation_fingerprint"] != a["preparation_fingerprint"]
+    assert changed["candidate"] is None
+
+
+def test_pg16_fixation_preparation_missing_grant_amount_is_controlled(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(factory, capitalization=False, idf=False, grant_nominal=False)
+    with factory() as db:
+        result = fixation_preparation.prepare(db, 7, "a1")
+    assert result["state"] == "INCOMPLETE"
+    assert "FIXATION_PREPARATION_GRANT_AMOUNT_MISSING" in result["incomplete_reasons"]
+    assert result["candidate"] is None
+
+
+def test_pg16_fixation_preparation_missing_item_evidence_is_controlled(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(factory, idf=False, include_evidence=False)
+    with factory() as db:
+        result = fixation_preparation.prepare(db, 7, "a1")
+    assert result["state"] == "INCOMPLETE"
+    assert "FIXATION_PREPARATION_GRANT_DECISION_OR_EVIDENCE_INCOMPLETE" in result["incomplete_reasons"]
+    assert "FIXATION_PREPARATION_CAPITALIZATION_DECISION_OR_EVIDENCE_INCOMPLETE" in result["incomplete_reasons"]
+    assert result["candidate"] is None

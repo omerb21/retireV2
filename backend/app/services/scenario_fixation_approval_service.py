@@ -71,11 +71,14 @@ def _selected_sources(db, client_id: int, scenario_id: str,
     }
     records = []
     blockers = set()
-    eligibilities = [r for r in decisions if r["group"] == "eligibility"]
-    eligibility_date = next(
-        (r["eligibility_date"] for r in eligibilities if r["eligibility_date"] is not None),
-        None,
-    )
+    eligibility_dates = {
+        r["eligibility_date"] for r in decisions
+        if r["group"] == "eligibility" and r["eligibility_date"] is not None
+    }
+    # No implicit selection of one of several professional determinations.
+    eligibility_date = next(iter(eligibility_dates)) if len(eligibility_dates) == 1 else None
+    if len(eligibility_dates) > 1:
+        blockers.add("FIXATION_REVIEW_ELIGIBILITY_DATES_CONFLICT")
     for decision in decisions:
         group, source_id = decision["group"], decision["source_id"]
         evidence = None

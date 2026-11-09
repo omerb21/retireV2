@@ -29,6 +29,11 @@ vi.mock("./ScenarioMonthlyComparisonPanel", () => ({
 vi.mock("./ScenarioSeverancePlanningPanel", () => ({
   ScenarioSeverancePlanningPanel: () => <section aria-label="Severance planning">Severance enabled</section>,
 }));
+vi.mock("./ScenarioFixationProfessionalReviewPanel", () => ({
+  ScenarioFixationProfessionalReviewPanel: () => (
+    <section aria-label="Fixation professional review">הכרעות מקצועיות לקיבוע זכויות</section>
+  ),
+}));
 mocks.capability.mockResolvedValue(false);
 afterEach(() => { cleanup(); vi.resetAllMocks(); mocks.capability.mockResolvedValue(false); });
 

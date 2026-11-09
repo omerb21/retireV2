@@ -402,12 +402,89 @@ export function ScenarioFixationProfessionalReviewPanel({
               ...current, tax_year: event.target.value ? Number(event.target.value) : null,
             }))}/>
         </label>}
-        {item.group === "pension_classification" && <label>סיווג מס לתיעוד, אינו מאושר{" "}
-          <input value={item.tax_classification ?? ""} maxLength={128} disabled={!editable}
-            onChange={event => setItem(current => ({
-              ...current, tax_classification: event.target.value || null,
-            }))}/>
+
+        {item.group === "pension_classification" && <label>סיווג קצבה לפי חוזה סגור
+          <select disabled={!editable} value={item.tax_classification ?? ""}
+            onChange={event => setItem(current => ({ ...current,
+              tax_classification: event.target.value === "" ? null
+                : event.target.value as NonNullable<ProfessionalDecision["tax_classification"]>,
+            }))}>
+            <option value="">טרם הוכרע</option>
+            <option value="QUALIFYING_PENSION_FOR_FIXATION">קצבה מזכה לצורך קיבוע, הכרעת מתכנן</option>
+            <option value="NON_QUALIFYING_PENSION_FOR_FIXATION">קצבה שאינה מזכה לצורך קיבוע, הכרעת מתכנן</option>
+          </select>
         </label>}
+        {(["historical_grant", "historical_capitalization", "planned_withdrawal_or_commutation"] as ReviewGroup[])
+          .includes(item.group) && <>
+          <label>הכרעת הכללה
+            <select disabled={!editable} value={item.inclusion_decision ?? ""}
+              onChange={event => setItem(current => ({ ...current,
+                inclusion_decision: event.target.value === "" ? null
+                  : event.target.value as NonNullable<ProfessionalDecision["inclusion_decision"]>,
+              }))}>
+              <option value="">טרם הוכרע</option>
+              <option value="include">לכלול בקלט המתוכנן</option>
+              <option value="exclude">להחריג מהקלט המתוכנן</option>
+            </select>
+          </label>
+          <label>מצב תמיכה מקצועית
+            <select disabled={!editable} value={item.support_status ?? ""}
+              onChange={event => setItem(current => ({ ...current,
+                support_status: event.target.value === "" ? null
+                  : event.target.value as NonNullable<ProfessionalDecision["support_status"]>,
+              }))}>
+              <option value="">טרם הוכרע</option>
+              <option value="supported">נתמך בראיות, כפוף לאימות שרת</option>
+              <option value="unsupported">אינו נתמך</option>
+              <option value="requires_special_handling">דורש טיפול מיוחד</option>
+            </select>
+          </label>
+          <label>הכרעת שימוש בקלט
+            <select disabled={!editable} value={item.accepted_for_use === null ? ""
+              : item.accepted_for_use ? "true" : "false"}
+              onChange={event => setItem(current => ({ ...current,
+                accepted_for_use: event.target.value === "" ? null : event.target.value === "true",
+              }))}>
+              <option value="">טרם הוכרע</option>
+              <option value="true">מוצע לשימוש, לא אושר לחישוב</option>
+              <option value="false">לא לשימוש</option>
+            </select>
+          </label>
+        </>}
+        {item.group === "historical_grant" && <label>מעמד תשלום המענק
+          <select disabled={!editable} value={item.payment_status ?? ""}
+            onChange={event => setItem(current => ({ ...current,
+              payment_status: event.target.value === "" ? null
+                : event.target.value as NonNullable<ProfessionalDecision["payment_status"]>,
+            }))}>
+            <option value="">טרם הוכרע</option>
+            <option value="PAID">שולם לפי הכרעה מתועדת, טעון אימות</option>
+            <option value="NOT_PAID">לא שולם לפי הכרעה מתועדת</option>
+            <option value="UNKNOWN">לא ידוע</option>
+          </select>
+        </label>}
+        {(["historical_grant", "severance_continuity"] as ReviewGroup[])
+          .includes(item.group) && <>
+          <label>הכרעת חפיפה מוצעת, אינה מסירה חסם מקור
+            <select disabled={!editable} value={item.overlap_resolution ?? ""}
+              onChange={event => setItem(current => ({ ...current,
+                overlap_resolution: event.target.value === "" ? null
+                  : event.target.value as NonNullable<ProfessionalDecision["overlap_resolution"]>,
+              }))}>
+              <option value="">חפיפה טרם הוכרעה</option>
+              <option value="NO_OVERLAP">אין חפיפה, בכפוף לראיות</option>
+              <option value="SAME_RIGHT_USE_GRANT">אותה זכות, שימוש במענק</option>
+              <option value="SAME_RIGHT_USE_COMPONENT">אותה זכות, שימוש ברכיב הפיצויים</option>
+              <option value="DISTINCT_RIGHTS">זכויות נפרדות, בכפוף לראיות</option>
+            </select>
+          </label>
+          <label>מזהי מקורות תואמים לחפיפה, אחד בכל שורה
+            <textarea disabled={!editable} value={item.matched_source_ids.join("\n")}
+              onChange={event => setItem(current => ({ ...current,
+                matched_source_ids: event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+              }))}/>
+          </label>
+        </>}
         <label>הנמקה מקצועית{" "}
           <textarea value={item.reason} disabled={!editable} maxLength={2048}
             onChange={event => setItem(current => ({ ...current, reason: event.target.value }))}/>

@@ -101,7 +101,7 @@ export interface ProfessionalReview {
   record_status: "MISSING" | "DRAFT" | "BLOCKED";
   validity_state: "BLOCKED" | "STALE";
   decisions: ProfessionalDecision[];
-  admission_controls: FixationAdmissionControls | null;
+  admission_controls?: FixationAdmissionControls | null;
   actor_id: string | null;
   approval_fingerprint: string | null;
   dependency_fingerprint: string | null;
@@ -117,7 +117,7 @@ export interface ReviewHistoryItem {
   approval_version: number;
   scenario_version: number;
   decisions: ProfessionalDecision[];
-  admission_controls: FixationAdmissionControls | null;
+  admission_controls?: FixationAdmissionControls | null;
   blockers: string[];
   action: string;
   actor_id: string;

@@ -183,6 +183,20 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
     head = _head(db, client_id, scenario_id)
     blockers = set(readiness["blockers"])
     blockers.add(UNRESOLVED_AUTHORITY)
+    # Existing GET contract supplies server-derived CAS tokens and factual
+    # readiness evidence. Never accept these tokens without revalidating them
+    # inside the save transaction.
+    current_snapshot = {
+        "scenario_version": readiness["scenario_version"],
+        "manifest_fingerprint": readiness["manifest_fingerprint"],
+        "readiness_fingerprint": readiness["readiness_fingerprint"],
+        "readiness_state": readiness["readiness_state"],
+        "mapping": readiness["mapping"],
+        "source_evidence": readiness["source_evidence"],
+        "blockers": readiness["blockers"],
+        "professional_authority": False,
+        "execution_allowed": False,
+    }
     if head is None:
         return {
             "contract": CONTRACT, "client_id": client_id,
@@ -192,6 +206,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
             "decisions": [], "actor_id": None,
             "approval_fingerprint": None, "dependency_fingerprint": None,
             "readiness_fingerprint_at_save": None,
+            "current_readiness": current_snapshot,
             "blockers": sorted(blockers),
             "professional_authority": False, "execution_allowed": False,
             "tax_authority_approval": None,
@@ -230,6 +245,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
         "decisions": row.decisions_json["decisions"],
         "actor_id": row.actor_id,
         "selected_source_evidence": selected_sources,
+        "current_readiness": current_snapshot,
         "blockers": sorted(blockers),
         "professional_authority": False, "execution_allowed": False,
         "tax_authority_approval": None,

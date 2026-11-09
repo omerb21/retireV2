@@ -25,6 +25,8 @@ from app.services.scenario_capital_projection_service import (
 from app.services.scenario_fixation_readiness_service import (
     build_fixation_readiness, CONTRACT as FIXATION_READINESS_CONTRACT,
 )
+from app.services.scenario_fixation_approval_service import project_approval
+
 from app.services.scenario_stage6_single_pension_estimate_service import (
     _aggregate_extension, _valid_sealed_result,
     AGGREGATE_CONTRACT,
@@ -293,6 +295,9 @@ def _assemble_bound(db, pair, client_id, scenario_id, *, start_month, end_month)
     readiness = build_fixation_readiness(db, base, financial_evidence, domains)
     # Readiness is a non-authoritative explanation, never a tax result.
     domains["fixation_tax"]["readiness"] = readiness
+    domains["fixation_tax"]["professional_review"] = project_approval(
+        db, client_id, scenario_id, readiness,
+    )
     domains["fixation_tax"]["producer_contract"] = FIXATION_READINESS_CONTRACT
     domains["fixation_tax"]["blockers"] = sorted(set(
         domains["fixation_tax"]["blockers"] + readiness["blockers"]

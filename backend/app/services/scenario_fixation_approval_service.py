@@ -19,7 +19,6 @@ from app.schemas.scenario_fixation_approval import FixationProfessionalDraftRepl
 from app.services.scenario_draft_service import DraftError, _scenario
 from app.services.scenario_input_manifest_service import _fingerprint
 from app.services.scenario_snapshot_candidate_service import _build_pair_in_snapshot
-from app.services.scenario_unified_engine_binding_service import _assemble_bound
 
 CONTRACT = "SCENARIO_FIXATION_PROFESSIONAL_APPROVAL_V1"
 # No positive gate exists. This is intentional until a separate, admitted
@@ -28,6 +27,8 @@ UNRESOLVED_AUTHORITY = "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED"
 
 
 def _current(db, client_id: int, scenario_id: str) -> dict:
+    # Late import prevents a circular dependency with unified projection.
+    from app.services.scenario_unified_engine_binding_service import _assemble_bound
     pair = _build_pair_in_snapshot(db, client_id, scenario_id, None)
     bound = _assemble_bound(db, pair, client_id, scenario_id,
                             start_month=None, end_month=None)

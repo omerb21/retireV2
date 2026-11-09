@@ -55,6 +55,20 @@ function label(code: string) { return LABELS[code] ?? `חסם מקצועי: ${co
 function groupName(group: ReviewGroup): string {
   return GROUPS.find(item => item.value === group)?.label ?? group;
 }
+function normalizeDecision(row: ProfessionalDecision): ProfessionalDecision {
+  // Existing revisions may predate the closed admission-decision extension.
+  // Missing fields remain undecided, never inferred as accepted.
+  return {
+    ...row,
+    inclusion_decision: row.inclusion_decision ?? null,
+    support_status: row.support_status ?? null,
+    accepted_for_use: row.accepted_for_use ?? null,
+    payment_status: row.payment_status ?? null,
+    overlap_resolution: row.overlap_resolution ?? null,
+    matched_source_ids: [...(row.matched_source_ids ?? [])],
+    evidence_references: [...(row.evidence_references ?? [])],
+  };
+}
 function emptyDecision(): ProfessionalDecision {
   return {
     group: "eligibility", source_id: "", determination: "REQUIRES_REVIEW",
@@ -130,7 +144,7 @@ export function ScenarioFixationProfessionalReviewPanel({
         if (!mounted) return;
         setReview(result);
         setControls(result.admission_controls ?? null);
-        setDraft(result.decisions.map(row => ({ ...row, evidence_references: [...row.evidence_references] })));
+        setDraft(result.decisions.map(normalizeDecision));
       })
       .catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
@@ -144,8 +158,7 @@ export function ScenarioFixationProfessionalReviewPanel({
   const editable = scenario.status === "draft" && !loading && !busy && review !== null
     && review.current_readiness.scenario_version === scenario.version;
   function edit(row: ProfessionalDecision) {
-    setItem({ ...row, evidence_references: [...row.evidence_references],
-      matched_source_ids: [...(row.matched_source_ids ?? [])] });
+    setItem(normalizeDecision(row));
     setRefsText(row.evidence_references.join("\n"));
     setNotice(null);
   }
@@ -193,7 +206,7 @@ export function ScenarioFixationProfessionalReviewPanel({
     const fresh = await readProfessionalReview(clientId, scenario.scenario_id);
     setReview(fresh);
     if (!preserve) {
-      setDraft(fresh.decisions.map(row => ({ ...row, evidence_references: [...row.evidence_references] })));
+      setDraft(fresh.decisions.map(normalizeDecision));
       setControls(fresh.admission_controls ?? null);
       setItem(emptyDecision()); setRefsText(""); setConflict(false);
     }
@@ -217,7 +230,7 @@ export function ScenarioFixationProfessionalReviewPanel({
       });
       setReview(saved);
       setControls(saved.admission_controls ?? null);
-      setDraft(saved.decisions.map(row => ({ ...row, evidence_references: [...row.evidence_references] })));
+      setDraft(saved.decisions.map(normalizeDecision));
       try {
         const freshPreparation = await readFixationAdmissionPreparation(clientId, scenario.scenario_id);
         setPreparation(freshPreparation);

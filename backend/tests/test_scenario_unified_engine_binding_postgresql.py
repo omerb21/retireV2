@@ -1474,3 +1474,54 @@ def test_pg16_fixation_professional_review_material_stale_and_no_false_stale(pg1
     assert replacement["approval_version"] == 2
     assert replacement["validity_state"] == "BLOCKED"
     assert replacement["approval_fingerprint"] != initial["approval_fingerprint"]
+
+
+def test_pg16_fixation_professional_review_concurrent_cas_one_winner(pg16):
+    factory, _ = pg16
+    initial = _review_replace(factory)
+    readiness = build(factory)["domain_results"]["fixation_tax"]["readiness"]
+    request = FixationProfessionalDraftReplace(
+        expected_approval_version=1,
+        expected_scenario_version=readiness["scenario_version"],
+        expected_manifest_fingerprint=readiness["manifest_fingerprint"],
+        expected_readiness_fingerprint=readiness["readiness_fingerprint"],
+        decisions=[],
+    )
+
+    def writer():
+        try:
+            with factory.begin() as db:
+                fixation_review.save_draft(db, 7, "a1", request, "planner-test")
+            return "COMMITTED"
+        except DraftError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = sorted(executor.map(lambda _: writer(), range(2)))
+    assert outcomes == ["COMMITTED", "FIXATION_APPROVAL_VERSION_CONFLICT"]
+    with factory() as db:
+        rows = fixation_review.history(db, 7, "a1")
+        assert len(rows) == 2
+        assert [r["approval_version"] for r in rows] == [1, 2]
+        assert fixation_review.read(db, 7, "a1")["approval_version"] == 2
+
+
+def test_pg16_fixation_professional_review_selected_foreign_grant_remains_blocked(pg16):
+    factory, _ = pg16
+    with factory.begin() as db:
+        db.add(Grant(
+            grant_id="other-client-only-grant", client_id=8,
+            nominal_amount=Decimal("175.00"), grant_date=date(2024, 1, 1),
+            work_start_date=date(2011, 1, 1), work_end_date=date(2024, 1, 1),
+        ))
+    record = FixationProfessionalDecision(
+        group="historical_grant", source_id="other-client-only-grant",
+        determination="PLANNER_ASSERTED", reason="Unverified candidate",
+    )
+    saved = _review_replace(factory, decisions=[record])
+    assert saved["validity_state"] == "BLOCKED"
+    assert "FIXATION_REVIEW_GRANT_SOURCE_NOT_FOUND" in saved["blockers"]
+    assert saved["selected_source_evidence"][0]["source_evidence"] is None
+    assert saved["tax_authority_approval"] is None
+    with factory() as db:
+        assert fixation_review.read(db, 7, "a1") == saved

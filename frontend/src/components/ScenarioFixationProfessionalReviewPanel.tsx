@@ -248,6 +248,23 @@ export function ScenarioFixationProfessionalReviewPanel({
             {" "}{mapping.verified ? "מאומת" : "לא מאומת"}
           </li>)}</ul>
       </details>
+      <details>
+        <summary>החלטות תכנון בחלופה, ללא אישור מקצועי</summary>
+        <p>החלטות אלה מתארות כוונת תכנון ולא אישור רצף, מענק ששולם או משיכה מותרת.</p>
+        <ul>
+          {review.current_readiness.source_evidence.severance_choice_source_ids.map(row =>
+            <li key={row.source_kind + ":" + row.source_id}>
+              פיצויים: {row.source_kind === "grant" ? "מענק" : "רכיב בקופה"},
+              {" "}{row.source_id}, מצב: {row.state === "DRAFT_ONLY" ? "טיוטה בלבד" : "חסום"}
+            </li>)}
+          {scenario.decisions.map(row => <li key={row.decision_id}>
+            {row.action === "pension" ? "קצבה מתוכננת" : "הון מתוכנן"}:
+            {" "}{row.component_code}, {row.amount} ₪
+          </li>)}
+        </ul>
+        {review.current_readiness.source_evidence.severance_choice_source_ids.length === 0 &&
+          scenario.decisions.length === 0 && <p>לא נרשמו החלטות תכנון בחלופה.</p>}
+      </details>
       <details open={review.validity_state === "STALE"}>
         <summary>חסמים מקצועיים ({blockers.length})</summary>
         <ul>{blockers.map(code => <li key={code}>{label(code)}</li>)}</ul>

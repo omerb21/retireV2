@@ -40,6 +40,10 @@ from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, Scen
 from app.models.scenario_fixation_approval import (
     ScenarioFixationApprovalHead, ScenarioFixationApprovalRevision,
 )
+from app.schemas.scenario_fixation_approval import (
+    FixationProfessionalDraftReplace, FixationProfessionalDecision,
+)
+from app.services import scenario_fixation_approval_service as fixation_review
 from app.models.m07_evidence import (
     M07EvidenceRevision, M07FactEvidence, M07PlannerAssertion, M07AssessmentFinding,
 )
@@ -1345,3 +1349,128 @@ def test_live_pg16_fixation_readiness_finalized_m07_evidence_is_not_admission(pg
     assert second["net_income"]["result"] is None
     assert _fixation_readiness(build(factory, client=8, scenario="b1"))[
         "source_evidence"]["m07"] == []
+
+
+def _review_replace(factory, *, client=7, scenario="a1", version=0,
+                    decisions=None, expected_readiness=None, actor="planner-test"):
+    latest = build(factory, client=client, scenario=scenario)["domain_results"][
+        "fixation_tax"]["readiness"]
+    data = FixationProfessionalDraftReplace(
+        expected_approval_version=version,
+        expected_scenario_version=latest["scenario_version"],
+        expected_manifest_fingerprint=latest["manifest_fingerprint"],
+        expected_readiness_fingerprint=(
+            expected_readiness if expected_readiness is not None else latest["readiness_fingerprint"]
+        ),
+        decisions=decisions or [],
+    )
+    with factory.begin() as db:
+        return fixation_review.save_draft(db, client, scenario, data, actor)
+
+
+def test_pg16_fixation_professional_review_save_reload_history_and_blocked_gate(pg16, monkeypatch):
+    factory, _ = pg16
+    from app.services import fixation_service
+    from app.engines import fixation_engine
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("FIXATION_ENGINE_MUST_NOT_RUN")
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    original = build(factory)
+    assert original["domain_results"]["fixation_tax"]["professional_review"]["record_status"] == "MISSING"
+    selected = [FixationProfessionalDecision(
+        group="eligibility", source_id="revision-pending",
+        determination="PLANNER_ASSERTED", reason="Reviewer-recorded assertion only",
+        eligibility_date=date(2026, 10, 1), evidence_references=["document-ref-1"],
+    )]
+    first = _review_replace(factory, decisions=selected)
+    assert first["approval_version"] == 1
+    assert first["record_status"] == "DRAFT"
+    assert first["validity_state"] == "BLOCKED"
+    assert first["professional_authority"] is False
+    assert first["tax_authority_approval"] is None
+    assert "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED" in first["blockers"]
+    with factory() as db:
+        assert fixation_review.read(db, 7, "a1") == first
+        versions = fixation_review.history(db, 7, "a1")
+        assert len(versions) == 1
+        assert versions[0]["action"] == "SAVE_DRAFT"
+        assert versions[0]["actor_id"] == "planner-test"
+        with pytest.raises(DraftError, match="FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED"):
+            fixation_review.request_internal_approval(
+                db, 7, "a1", 1, first["approval_fingerprint"], "planner-test")
+    updated = _review_replace(factory, version=1, decisions=[
+        FixationProfessionalDecision(
+            group="eligibility", source_id="revision-pending",
+            determination="REQUIRES_REVIEW", reason="Not yet verified",
+        )
+    ])
+    assert updated["approval_version"] == 2
+    assert updated["approval_fingerprint"] != first["approval_fingerprint"]
+    with factory() as db:
+        assert len(fixation_review.history(db, 7, "a1")) == 2
+    bound = build(factory)
+    assert bound["domain_results"]["fixation_tax"]["result"] is None
+    assert bound["domain_results"]["fixation_tax"]["professional_review"]["approval_version"] == 2
+    assert bound["net_income"]["result"] is None
+    assert bound["professional_authority"] is False
+    assert bound["execution_allowed"] is False
+
+
+def test_pg16_fixation_professional_review_cas_atomic_and_foreign_isolation(pg16):
+    factory, _ = pg16
+    first = _review_replace(factory)
+    with pytest.raises(DraftError, match="FIXATION_APPROVAL_VERSION_CONFLICT"):
+        _review_replace(factory, version=0)
+    with factory() as db:
+        assert len(fixation_review.history(db, 7, "a1")) == 1
+        other_scenario = fixation_review.read(db, 7, "a2")
+        other_client = fixation_review.read(db, 8, "b1")
+        assert other_scenario["record_status"] == "MISSING"
+        assert other_client["record_status"] == "MISSING"
+        with pytest.raises(DraftError, match="SCENARIO_NOT_FOUND"):
+            fixation_review.read(db, 8, "a1")
+    own = _review_replace(factory, client=8, scenario="b1")
+    assert own["approval_version"] == 1
+    assert own["approval_id"] != first["approval_id"]
+    with factory() as db:
+        assert fixation_review.read(db, 7, "a1")["approval_version"] == 1
+        assert len(fixation_review.history(db, 8, "b1")) == 1
+
+
+def test_pg16_fixation_professional_review_material_stale_and_no_false_stale(pg16):
+    factory, _ = pg16
+    _severance_grant_source(factory)
+    with factory.begin() as db:
+        db.add(ActualCapitalization(
+            capitalization_id="approval-cap7", client_id=7,
+            amount=Decimal("50.00"), capitalization_date=date(2022, 1, 1),
+            source_label="Synthetic", source_basis="recorded",
+        ))
+    initial = _review_replace(factory)
+    with factory.begin() as db:
+        db.get(ActualCapitalization, "approval-cap7").notes = "Cosmetic display note"
+    with factory() as db:
+        stable = fixation_review.read(db, 7, "a1")
+    assert stable["validity_state"] == "BLOCKED"
+    assert stable["readiness_fingerprint_at_save"] == initial["readiness_fingerprint_at_save"]
+    with factory.begin() as db:
+        db.get(Grant, "choice-grant7").nominal_amount = Decimal("125.00")
+    with factory() as db:
+        stale = fixation_review.read(db, 7, "a1")
+        assert stale["validity_state"] == "STALE"
+        assert "FIXATION_PROFESSIONAL_APPROVAL_STALE" in stale["blockers"]
+        with pytest.raises(DraftError, match="FIXATION_PROFESSIONAL_APPROVAL_STALE"):
+            fixation_review.request_internal_approval(
+                db, 7, "a1", 1, initial["approval_fingerprint"], "planner-test")
+    with pytest.raises(DraftError, match="FIXATION_APPROVAL_SOURCE_CONFLICT"):
+        _review_replace(
+            factory, version=1,
+            expected_readiness=initial["readiness_fingerprint_at_save"])
+    with factory() as db:
+        assert len(fixation_review.history(db, 7, "a1")) == 1
+    replacement = _review_replace(factory, version=1)
+    assert replacement["approval_version"] == 2
+    assert replacement["validity_state"] == "BLOCKED"
+    assert replacement["approval_fingerprint"] != initial["approval_fingerprint"]

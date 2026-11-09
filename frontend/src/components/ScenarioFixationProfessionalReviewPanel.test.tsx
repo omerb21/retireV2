@@ -208,3 +208,116 @@ it("shows stale source and blocks writes to archived scenarios", async () => {
   expect(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(true);
   expect(mocks.approve).not.toHaveBeenCalled();
 });
+
+
+const admittedControls = {
+  calculation_version: "pkg-012-m08d-v1" as const,
+  grants_collection: { state: "confirmed_none" as const, evidence_references: ["grant-none-proof"] },
+  actual_capitalizations_collection: {
+    state: "items_recorded" as const, evidence_references: ["capitalization-record"],
+  },
+  idf: {
+    applicability: "APPLICABLE" as const, evidence_references: ["idf-evidence"],
+    input: {
+      idf_id: "idf-1", reduction_amount: 100,
+      original_commutation_percent: 25, current_commutation_percent: 20,
+      commutation_date: "2025-01-01", promoter_age_date: "2026-10-01",
+      source_label: "אישור היוון",
+    },
+  },
+};
+
+it("keeps previously saved admission controls when a different decision is edited and saved", async () => {
+  mocks.read.mockResolvedValue({ ...snapshot("A", 2, [decision]), admission_controls: admittedControls });
+  mocks.save.mockImplementation(async (_client: number, _scenario: string, payload: {
+    admission_controls: unknown; decisions: unknown[];
+  }) => ({ ...snapshot("A", 3, [decision]), admission_controls: payload.admission_controls }));
+  display();
+  expect(await screen.findByText(/טיוטה שמורה, ללא אישור/)).toBeTruthy();
+  expect((screen.getByLabelText(/מצב איסוף מענקים היסטוריים/) as HTMLSelectElement).value).toBe("confirmed_none");
+  expect((screen.getByLabelText(/תחולת היוון IDF/) as HTMLSelectElement).value).toBe("APPLICABLE");
+  expect((screen.getByLabelText(/סכום הפחתה/) as HTMLInputElement).value).toBe("100");
+  fireEvent.click(screen.getByRole("button", { name: "ערוך" }));
+  fireEvent.change(screen.getByLabelText(/הנמקה מקצועית/), {
+    target: { value: "הכרעה מעודכנת ללא מחיקת בקרות" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+  const payload = mocks.save.mock.calls[0][2];
+  expect(payload.admission_controls).toEqual(admittedControls);
+  expect(payload.decisions[0].reason).toBe("הכרעה מעודכנת ללא מחיקת בקרות");
+  expect(screen.getByText(/טיוטת ההכרעות נשמרה/)).toBeTruthy();
+});
+
+it("leaves legacy records without admission controls until explicitly started", async () => {
+  const old = snapshot("A", 1, [decision]);
+  delete (old as { admission_controls?: unknown }).admission_controls;
+  mocks.read.mockResolvedValue(old);
+  mocks.save.mockResolvedValue({ ...snapshot("A", 2, [decision]), admission_controls: null });
+  display();
+  expect(await screen.findByText(/לרשומה זו טרם הוגדרו בקרות Admission/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  expect(mocks.save.mock.calls[0][2].admission_controls).toBeNull();
+  expect(screen.queryByLabelText(/מצב איסוף מענקים היסטוריים/)).toBeNull();
+});
+
+it("does not submit invalid confirmed-none evidence and keeps form data", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  display();
+  await screen.findByText(/טרם נשמרו הכרעות/);
+  fireEvent.click(screen.getByRole("button", { name: "התחל הזנת בקרות חדשה" }));
+  fireEvent.change(screen.getByLabelText(/מצב איסוף מענקים היסטוריים/), {
+    target: { value: "confirmed_none" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(screen.getByText(/יש לצרף אסמכתאות להצהרה שאין מענקים/)).toBeTruthy();
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect((screen.getByLabelText(/מצב איסוף מענקים היסטוריים/) as HTMLSelectElement).value)
+    .toBe("confirmed_none");
+});
+
+it("shows all three admission preparation statuses without claiming approval", async () => {
+  for (const state of ["INCOMPLETE", "BLOCKED", "PREPARED"] as const) {
+    cleanup();
+    mocks.read.mockResolvedValue(snapshot());
+    mocks.preparation.mockResolvedValue({
+      contract: "SCENARIO_FIXATION_ADMISSION_PREPARATION_V1",
+      client_id: 7, scenario_id: "A", state,
+      candidate: state === "PREPARED" ? { metadata: { synthetic: true } } : null,
+      incomplete_reasons: state === "INCOMPLETE" ? ["FIXATION_PREPARATION_CONTROLS_MISSING"] : [],
+      blockers: state === "BLOCKED" ? ["FIXATION_PREPARATION_SOURCE_OVERLAP_UNRESOLVED"] : [],
+      preparation_fingerprint: "f".repeat(64),
+      professional_authority: false, execution_allowed: false, tax_authority_approval: null,
+    });
+    display();
+    expect(await screen.findByText(new RegExp(state + ":"))).toBeTruthy();
+    if (state === "PREPARED") {
+      expect(screen.getByText(/טרם ניתן אישור מקצועי לחישוב קיבוע זכויות/)).toBeTruthy();
+    }
+    expect(screen.queryByRole("button", { name: /אשר קיבוע/ })).toBeNull();
+  }
+});
+
+it("retains unsaved admission controls on 409 and isolates them across scenarios", async () => {
+  mocks.read.mockImplementation(async (_client: number, id: string) => snapshot(id));
+  mocks.save.mockRejectedValue(new ReviewApiError(409, "FIXATION_APPROVAL_SOURCE_CONFLICT"));
+  const view = display();
+  await screen.findByText(/טרם נשמרו הכרעות/);
+  fireEvent.click(screen.getByRole("button", { name: "התחל הזנת בקרות חדשה" }));
+  fireEvent.change(screen.getByLabelText(/מצב איסוף מענקים היסטוריים/), {
+    target: { value: "items_recorded" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  expect(await screen.findByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy();
+  expect((screen.getByLabelText(/מצב איסוף מענקים היסטוריים/) as HTMLSelectElement).value)
+    .toBe("items_recorded");
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  view.rerender(<ScenarioFixationProfessionalReviewPanel key="B-admission" clientId={7}
+    scenario={{ ...draft, scenario_id: "B", name: "חלופה ב" }}/>);
+  await waitFor(() => expect(mocks.read).toHaveBeenCalledWith(7, "B"));
+  await waitFor(() => expect(screen.queryByLabelText(/מצב איסוף מענקים היסטוריים/)).toBeNull());
+  expect(screen.getByText(/לרשומה זו טרם הוגדרו בקרות Admission/)).toBeTruthy();
+});

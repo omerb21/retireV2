@@ -321,3 +321,83 @@ it("retains unsaved admission controls on 409 and isolates them across scenarios
   await waitFor(() => expect(screen.queryByLabelText(/מצב איסוף מענקים היסטוריים/)).toBeNull());
   expect(screen.getByText(/לרשומה זו טרם הוגדרו בקרות Admission/)).toBeTruthy();
 });
+
+
+it("edits closed grant fields, payment status and overlap source IDs without granting authority", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.save.mockImplementation(async (_client: number, _scenario: string, body: {
+    decisions: typeof decision[];
+  }) => ({ ...snapshot("A", 1), decisions: body.decisions }));
+  display();
+  await screen.findByText(/טרם נשמרו הכרעות/);
+  fireEvent.change(screen.getByLabelText(/קבוצת הכרעה/), { target: { value: "historical_grant" } });
+  fireEvent.change(screen.getByLabelText(/מקור ההכרעה/), { target: { value: "grant-a" } });
+  fireEvent.change(screen.getByLabelText(/מצב ההכרעה/), { target: { value: "PLANNER_ASSERTED" } });
+  fireEvent.change(screen.getByLabelText(/הכרעת הכללה/), { target: { value: "include" } });
+  fireEvent.change(screen.getByLabelText(/מצב תמיכה מקצועית/), { target: { value: "supported" } });
+  fireEvent.change(screen.getByLabelText(/הכרעת שימוש בקלט/), { target: { value: "true" } });
+  fireEvent.change(screen.getByLabelText(/מעמד תשלום המענק/), { target: { value: "PAID" } });
+  fireEvent.change(screen.getByLabelText(/הכרעת חפיפה מוצעת/), {
+    target: { value: "SAME_RIGHT_USE_GRANT" },
+  });
+  fireEvent.change(screen.getByLabelText(/מזהי מקורות תואמים לחפיפה/), {
+    target: { value: "component-a\ncomponent-b" },
+  });
+  fireEvent.change(screen.getByLabelText(/הנמקה מקצועית/), {
+    target: { value: "בדיקת התאמה מקצועית עם אסמכתאות" },
+  });
+  fireEvent.change(screen.getByLabelText(/הפניות לאסמכתאות/), {
+    target: { value: "document://grant-proof" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+  const submitted = mocks.save.mock.calls[0][2].decisions[0];
+  expect(submitted).toMatchObject({
+    group: "historical_grant", source_id: "grant-a",
+    inclusion_decision: "include", support_status: "supported",
+    accepted_for_use: true, payment_status: "PAID",
+    overlap_resolution: "SAME_RIGHT_USE_GRANT",
+    matched_source_ids: ["component-a", "component-b"],
+  });
+  expect(mocks.approve).not.toHaveBeenCalled();
+});
+
+it("rejects a planner-asserted pension without a closed tax classification", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  display();
+  await screen.findByText(/טרם נשמרו הכרעות/);
+  fireEvent.change(screen.getByLabelText(/קבוצת הכרעה/), { target: { value: "pension_classification" } });
+  fireEvent.change(screen.getByLabelText(/מקור ההכרעה/), { target: { value: "pension-a" } });
+  fireEvent.change(screen.getByLabelText(/מצב ההכרעה/), { target: { value: "PLANNER_ASSERTED" } });
+  fireEvent.change(screen.getByLabelText(/הנמקה מקצועית/), { target: { value: "סיווג נדרש" } });
+  fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
+  expect(await screen.findByText(/יש לבחור סיווג קצבה/)).toBeTruthy();
+  expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it("saves full applicable IDF values from the structured editor", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.save.mockImplementation(async (_client: number, _scenario: string, body: {
+    admission_controls: unknown;
+  }) => ({ ...snapshot("A", 1), admission_controls: body.admission_controls }));
+  display();
+  await screen.findByText(/טרם נשמרו הכרעות/);
+  fireEvent.click(screen.getByRole("button", { name: "התחל הזנת בקרות חדשה" }));
+  fireEvent.change(screen.getByLabelText(/תחולת היוון IDF/), { target: { value: "APPLICABLE" } });
+  fireEvent.change(screen.getByLabelText(/אסמכתאות לתחולת IDF/), { target: { value: "document://idf-7" } });
+  fireEvent.change(screen.getByLabelText(/מזהה נתון IDF/), { target: { value: "idf-7" } });
+  fireEvent.change(screen.getByLabelText(/סכום הפחתה/), { target: { value: "120" } });
+  fireEvent.change(screen.getByLabelText(/שיעור היוון מקורי/), { target: { value: "25" } });
+  fireEvent.change(screen.getByLabelText(/שיעור היוון נוכחי/), { target: { value: "20" } });
+  fireEvent.change(screen.getByLabelText(/מועד היוון/), { target: { value: "2024-01-01" } });
+  fireEvent.change(screen.getByLabelText(/מועד בסיס גיל/), { target: { value: "2026-10-01" } });
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+  expect(mocks.save.mock.calls[0][2].admission_controls.idf).toMatchObject({
+    applicability: "APPLICABLE", evidence_references: ["document://idf-7"],
+    input: { idf_id: "idf-7", reduction_amount: 120,
+      original_commutation_percent: 25, current_commutation_percent: 20,
+      commutation_date: "2024-01-01", promoter_age_date: "2026-10-01" },
+  });
+});

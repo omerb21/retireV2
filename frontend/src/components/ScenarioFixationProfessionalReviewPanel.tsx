@@ -6,7 +6,11 @@ import {
   type ReviewGroup, type ReviewDetermination, type ReviewHistoryItem,
 } from "../api/scenarioFixationProfessionalReviewApi";
 
-interface Props { clientId: number; scenario: ScenarioDraft }
+interface Props {
+  clientId: number;
+  scenario: ScenarioDraft;
+  onScenarioRefresh?: () => Promise<void>;
+}
 const GROUPS: Array<{ value: ReviewGroup; label: string }> = [
   { value: "eligibility", label: "מועד זכאות לקיבוע" },
   { value: "tax_year_and_parameters", label: "שנת מס ופרמטרים רשמיים" },
@@ -92,7 +96,9 @@ function sourcesFor(group: ReviewGroup, review: ProfessionalReview, scenario: Sc
 const sameKey = (a: ProfessionalDecision, b: ProfessionalDecision) =>
   a.group === b.group && a.source_id === b.source_id;
 
-export function ScenarioFixationProfessionalReviewPanel({ clientId, scenario }: Props) {
+export function ScenarioFixationProfessionalReviewPanel({
+  clientId, scenario, onScenarioRefresh,
+}: Props) {
   const [review, setReview] = useState<ProfessionalReview | null>(null);
   const [draft, setDraft] = useState<ProfessionalDecision[]>([]);
   const [item, setItem] = useState<ProfessionalDecision>(emptyDecision);
@@ -175,8 +181,12 @@ export function ScenarioFixationProfessionalReviewPanel({ clientId, scenario }: 
       if (cause instanceof ReviewApiError) setServerBlockers(cause.blockers);
       if (cause instanceof ReviewApiError && cause.status === 409) {
         setConflict(true);
-        try { await reload({ preserve: true }); }
-        catch (reloadError) { setError(message(reloadError)); }
+        try {
+          await reload({ preserve: true });
+          await onScenarioRefresh?.();
+        } catch (reloadError) {
+          setError(message(reloadError));
+        }
       }
       setError(message(cause));
     } finally { setBusy(false); }

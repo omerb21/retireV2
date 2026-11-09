@@ -254,6 +254,9 @@ def history(db, client_id: int, scenario_id: str) -> list[dict]:
         "dependency_fingerprint": r.dependency_fingerprint,
         "approval_fingerprint": r.approval_fingerprint,
         "decisions": r.decisions_json["decisions"],
+        "selected_source_evidence_at_save": r.decisions_json.get(
+            "selected_source_evidence_at_save", [],
+        ),
         "blockers": r.blockers_json, "status": r.status,
         "action": r.action, "actor_id": r.actor_id,
         "occurred_at": r.occurred_at.isoformat(),
@@ -317,6 +320,9 @@ def save_draft(db, client_id: int, scenario_id: str,
     selected_sources, selection_blockers = _selected_sources(
         db, client_id, scenario_id, readiness, content["decisions"],
     )
+    # Preserve the exact server-derived source preimages used at save time.
+    # Live reads independently resolve these again to determine staleness.
+    content["selected_source_evidence_at_save"] = selected_sources
     dependency = _fingerprint({
         "manifest_fingerprint": readiness["manifest_fingerprint"],
         "readiness_fingerprint": readiness["readiness_fingerprint"],

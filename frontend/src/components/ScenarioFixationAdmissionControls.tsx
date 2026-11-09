@@ -22,7 +22,7 @@ const parseRefs = (text: string) => text.split(/\r?\n/).map(s => s.trim()).filte
 export function ReferenceListInput({ label, refs, onChange, disabled }: {
   label: string; refs: string[]; onChange: (next: string[]) => void; disabled: boolean;
 }) {
-  const signature = refs.join("\\n");
+  const signature = refs.join("\n");
   const [text, setText] = useState(signature);
   useEffect(() => { setText(signature); }, [signature]);
   return <label>{label}

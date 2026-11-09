@@ -1584,3 +1584,29 @@ def test_pg16_fixation_professional_review_migration_round_trip(pg16):
         with engine.begin() as connection:
             connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         engine.dispose()
+
+
+def test_pg16_fixation_professional_review_get_exposes_server_current_readiness_cas(pg16):
+    factory, _ = pg16
+    with factory() as db:
+        missing = fixation_review.read(db, 7, "a1")
+        assert missing["record_status"] == "MISSING"
+        current = missing["current_readiness"]
+        assert current["scenario_version"] == 1
+        assert current["readiness_state"] == "BLOCKED"
+        assert len(current["manifest_fingerprint"]) == 64
+        assert len(current["readiness_fingerprint"]) == 64
+        assert current["professional_authority"] is False
+        assert current["execution_allowed"] is False
+    # The UI must use this identical server-derived CAS tuple.
+    updated = _review_replace(factory)
+    assert updated["approval_version"] == 1
+    assert updated["current_readiness"]["readiness_fingerprint"] == current["readiness_fingerprint"]
+    with factory.begin() as db:
+        db.get(ScenarioDraft, "a1").name = "Nonfinancial display title"
+    # Re-derive rather than trust client-supplied fingerprints.
+    with factory() as db:
+        fresh = fixation_review.read(db, 7, "a1")
+    assert fresh["current_readiness"]["manifest_fingerprint"] == current["manifest_fingerprint"]
+    assert fresh["current_readiness"]["readiness_fingerprint"] == current["readiness_fingerprint"]
+    assert fresh["tax_authority_approval"] is None

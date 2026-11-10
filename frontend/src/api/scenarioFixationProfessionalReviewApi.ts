@@ -220,3 +220,54 @@ export async function readFixationAdmissionPreparation(clientId: number, scenari
   }
   return result;
 }
+
+export interface FixationAdmissionEligibilityReason {
+  code: string;
+  source_ids: string[];
+}
+export interface FixationAdmissionEligibility {
+  contract: "SCENARIO_FIXATION_ADMISSION_ELIGIBILITY_V1";
+  client_id: number;
+  scenario_id: string;
+  preparation_fingerprint: string;
+  eligibility_fingerprint: string;
+  state: "INCOMPLETE" | "BLOCKED" | "REQUIRES_EXTERNAL_VALIDATION" | "ELIGIBLE_FOR_ADMISSION_REVIEW";
+  reasons: FixationAdmissionEligibilityReason[];
+  professional_authority: false;
+  execution_allowed: false;
+  admission_review_required: boolean;
+  tax_authority_approval: null;
+}
+export async function readFixationAdmissionEligibility(clientId: number, scenarioId: string): Promise<FixationAdmissionEligibility> {
+  const url = buildApiUrl(
+    `/clients/${clientId}/scenario-drafts/${encodeURIComponent(scenarioId)}/fixation-admission-eligibility`,
+  );
+  const response = await apiFetch(url, { method: "GET" });
+  const raw: unknown = await response.json().catch(() => null);
+  const record = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown> : {};
+  if (!response.ok) {
+    throw new ReviewApiError(response.status,
+      typeof record.code === "string" ? record.code : `HTTP_${response.status}`);
+  }
+  const permitted = ["INCOMPLETE", "BLOCKED", "REQUIRES_EXTERNAL_VALIDATION", "ELIGIBLE_FOR_ADMISSION_REVIEW"];
+  const reasons = record.reasons;
+  const safe = record.contract === "SCENARIO_FIXATION_ADMISSION_ELIGIBILITY_V1"
+    && record.client_id === clientId && record.scenario_id === scenarioId
+    && permitted.includes(String(record.state))
+    && typeof record.preparation_fingerprint === "string"
+    && /^[0-9a-f]{64}$/.test(record.preparation_fingerprint)
+    && typeof record.eligibility_fingerprint === "string"
+    && /^[0-9a-f]{64}$/.test(record.eligibility_fingerprint)
+    && Array.isArray(reasons)
+    && reasons.every(item => item !== null && typeof item === "object"
+      && typeof item.code === "string" && item.code.length > 0
+      && Array.isArray(item.source_ids)
+      && item.source_ids.every((id: unknown) => typeof id === "string"))
+    && record.professional_authority === false && record.execution_allowed === false
+    && record.tax_authority_approval === null
+    && record.admission_review_required === (record.state === "ELIGIBLE_FOR_ADMISSION_REVIEW")
+    && (record.state !== "ELIGIBLE_FOR_ADMISSION_REVIEW" || reasons.length === 0);
+  if (!safe) throw new ReviewApiError(409, "FIXATION_ELIGIBILITY_RESPONSE_INVALID");
+  return raw as FixationAdmissionEligibility;
+}

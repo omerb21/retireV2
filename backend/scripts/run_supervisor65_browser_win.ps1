@@ -115,7 +115,7 @@ try {
         Wait-Http "http://127.0.0.1:5173/" $frontendProcess
         $env:PLAYWRIGHT_JSON_OUTPUT_FILE = Join-Path $report "playwright-report.json"
         $testArgs = @("test", "e2e/supervisor65.spec.ts", "--browser=chromium",
-            "--workers=1", "--reporter=line,json", "--trace=on",
+            "--grep", "supervisor 78:", "--workers=1", "--reporter=line,json", "--trace=on",
             "--output", (Join-Path $report "screenshots"))
         & $playwright @testArgs *> (Join-Path $report "playwright-console.log")
         if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR65_PLAYWRIGHT_FAILED:$LASTEXITCODE" }

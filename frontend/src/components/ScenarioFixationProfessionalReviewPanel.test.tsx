@@ -518,7 +518,7 @@ it("does not show eligibility from a different preparation fingerprint or a fail
   display();
   const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
   await waitFor(() => expect(region.textContent).toContain("הכשירות אינה מאומתת"));
-  await waitFor(() => expect(region.parentElement?.textContent).toContain("אינן מאותה גרסת מקור"));
+  await waitFor(() => expect(region.parentElement?.textContent).toContain("אינן תואמות לאותם נתוני מקור"));
   expect(region.textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
 });
 

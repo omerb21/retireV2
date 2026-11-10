@@ -167,7 +167,8 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
     if not config.production:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://127.0.0.1:5173"],
+            allow_origins=["http://127.0.0.1:5174"] if os.getenv("APP_ENV") == "test"
+                          else ["http://127.0.0.1:5173"],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

@@ -47,6 +47,7 @@ from app.schemas.scenario_fixation_approval import (
 from app.services import scenario_fixation_approval_service as fixation_review
 from app.services import scenario_fixation_admission_preparation_service as fixation_preparation
 from app.services import scenario_fixation_admission_eligibility_service as fixation_eligibility
+from app.services import scenario_fixation_admission_review_service as fixation_admission_review
 from app.models.m07_evidence import (
     M07EvidenceRevision, M07FactEvidence, M07PlannerAssertion, M07AssessmentFinding,
 )
@@ -2090,3 +2091,118 @@ def test_pg16_fixation_admission_eligibility_isolated_and_fingerprint_tracks_sou
     assert changed["state"] == "BLOCKED"
     assert changed["eligibility_fingerprint"] != initial["eligibility_fingerprint"]
     assert changed["client_id"] == 7 and changed["scenario_id"] == "a1"
+
+
+def test_pg16_fixation_admission_review_real_basic_path_without_calculation_or_writes(
+        pg16, monkeypatch):
+    factory, engine = pg16
+    _prepared_fixation_sources(factory)
+    _prepared_review(factory)
+    from app.engines import fixation_engine
+    from app.services import fixation_service, cbs_indexation_adapter
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("ADMISSION_REVIEW_MUST_NOT_CALCULATE_OR_CALL_CBS")
+
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    monkeypatch.setattr(cbs_indexation_adapter, "calculate_cbs_indexation", forbidden)
+    statements = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement.strip().split(None, 1)[0].upper())
+
+    from sqlalchemy import event
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        before = _source_state(factory)
+        with factory() as db:
+            eligible = fixation_eligibility.assess(db, 7, "a1")
+            result = fixation_admission_review.review(
+                db, 7, "a1",
+                expected_preparation_fingerprint=eligible["preparation_fingerprint"],
+                expected_eligibility_fingerprint=eligible["eligibility_fingerprint"],
+            )
+            assert not db.new and not db.dirty and not db.deleted
+        after = _source_state(factory)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert eligible["state"] == "ELIGIBLE_FOR_ADMISSION_REVIEW"
+    assert result["state"] == "ADMITTED_FOR_REVIEW"
+    assert result["admission_contract_validated"] is True
+    assert result["reasons"] == []
+    assert result["professional_authority"] is False
+    assert result["execution_allowed"] is False
+    assert result["tax_calculation_performed"] is False
+    assert before == after
+    assert not ({"INSERT", "UPDATE", "DELETE", "MERGE"} & set(statements))
+
+
+def test_pg16_fixation_admission_review_preserves_real_contract_rejection(pg16):
+    factory, _ = pg16
+    _prepared_fixation_sources(factory)
+    _prepared_review(factory)
+    with factory() as db:
+        prepared = fixation_preparation.prepare(db, 7, "a1")
+        candidate = prepared["candidate"]
+        candidate["parameter_set"]["values"]["grant_impact_multiplier"] = 1.34
+        admitted, reasons = fixation_admission_review._run_existing_admission(
+            db, 7, candidate,
+        )
+    assert admitted is None
+    assert reasons == [{
+        "code": "UNSUPPORTED_OR_UNAPPROVED_VALUE",
+        "path": "parameter_set.values.grant_impact_multiplier",
+        "message": "PKG-012 requires accepted grant_impact_multiplier 1.35",
+        "source_ids": [],
+    }]
+
+
+def test_pg16_fixation_admission_review_rejects_stale_source_fingerprints(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(factory, capitalization=False, idf=False)
+    with factory() as db:
+        old = fixation_eligibility.assess(db, 7, "a1")
+    assert old["state"] == "ELIGIBLE_FOR_ADMISSION_REVIEW"
+    with factory.begin() as db:
+        db.get(Grant, "preparation-grant7").indexed_amount = Decimal("131.00")
+    with factory() as db:
+        result = fixation_admission_review.review(
+            db, 7, "a1",
+            expected_preparation_fingerprint=old["preparation_fingerprint"],
+            expected_eligibility_fingerprint=old["eligibility_fingerprint"],
+        )
+    assert result["state"] == "REJECTED"
+    assert result["admission_contract_validated"] is False
+    assert result["reasons"] == [{
+        "code": "FIXATION_ADMISSION_REVIEW_STALE",
+        "path": None,
+        "message": None,
+        "source_ids": [],
+    }]
+    assert result["preparation_fingerprint"] != old["preparation_fingerprint"]
+
+
+def test_pg16_fixation_admission_review_blocks_external_path_and_isolates_client(
+        pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(
+        factory, capitalization=False, idf=False, grant_indexed=False,
+    )
+    with factory() as db:
+        eligibility_result = fixation_eligibility.assess(db, 7, "a1")
+        result = fixation_admission_review.review(
+            db, 7, "a1",
+            expected_preparation_fingerprint=eligibility_result["preparation_fingerprint"],
+            expected_eligibility_fingerprint=eligibility_result["eligibility_fingerprint"],
+        )
+        with pytest.raises(DraftError):
+            fixation_admission_review.review(
+                db, 8, "a1",
+                expected_preparation_fingerprint=eligibility_result["preparation_fingerprint"],
+                expected_eligibility_fingerprint=eligibility_result["eligibility_fingerprint"],
+            )
+    assert eligibility_result["state"] == "REQUIRES_EXTERNAL_VALIDATION"
+    assert result["state"] == "REJECTED"
+    assert result["reasons"][0]["code"] == "FIXATION_ELIGIBILITY_CBS_INDEXATION_REQUIRED"
+    assert result["reasons"][0]["source_ids"] == ["preparation-grant7"]

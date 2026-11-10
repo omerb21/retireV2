@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import { ScenarioFixationProfessionalReviewPanel } from "./ScenarioFixationProfessionalReviewPanel";
 import { ReviewApiError, type ProfessionalReview } from "../api/scenarioFixationProfessionalReviewApi";
@@ -96,6 +96,11 @@ function snapshot(scenario = "A", version = 0, choices: ProfessionalReview["deci
 }
 function display(scenario = draft) {
   return render(<ScenarioFixationProfessionalReviewPanel clientId={7} scenario={scenario} />);
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
 }
 
 it("loads the selected scenario, factual sources, blocked readiness and no approve button", async () => {
@@ -303,7 +308,10 @@ it("shows all three admission preparation statuses without claiming approval", a
       professional_authority: false, execution_allowed: false, tax_authority_approval: null,
     });
     display();
-    expect(await screen.findByText(new RegExp(state + ":"))).toBeTruthy();
+    const preparationRegion = await screen.findByRole("region", {
+      name: "מצב הכנת קלט Admission",
+    });
+    expect(await within(preparationRegion).findByText(new RegExp(state + ":"))).toBeTruthy();
     if (state === "PREPARED") {
       expect(screen.getByText(/טרם ניתן אישור מקצועי לחישוב קיבוע זכויות/)).toBeTruthy();
     }
@@ -536,6 +544,29 @@ it("isolates eligibility when switching between scenarios", async () => {
   await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledWith(7, "B"));
   await waitFor(() => expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
     .textContent).toContain("BLOCKED"));
+  expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
+});
+
+it("rejects late positive eligibility from the previously selected scenario", async () => {
+  const latePreparation = deferred<ReturnType<typeof prepareState>>();
+  const lateEligibility = deferred<ReturnType<typeof eligibilityState>>();
+  mocks.read.mockImplementation(async (_client: number, id: string) => snapshot(id));
+  mocks.preparation.mockImplementation(async (_client: number, id: string) =>
+    id === "A" ? latePreparation.promise : prepareState("BLOCKED", id));
+  mocks.eligibility.mockImplementation(async (_client: number, id: string) =>
+    id === "A" ? lateEligibility.promise : eligibilityState("BLOCKED", id));
+  const view = display();
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledWith(7, "A"));
+  view.rerender(<ScenarioFixationProfessionalReviewPanel clientId={7}
+    scenario={{ ...draft, scenario_id: "B", name: "חלופה ב" }} />);
+  await waitFor(() => expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).toContain("BLOCKED"));
+  latePreparation.resolve(prepareState("PREPARED", "A"));
+  lateEligibility.resolve(eligibilityState("ELIGIBLE_FOR_ADMISSION_REVIEW", "A"));
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledWith(7, "B"));
+  expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).toContain("BLOCKED");
   expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
     .textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
 });

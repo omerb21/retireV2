@@ -348,10 +348,19 @@ export function ScenarioFixationProfessionalReviewPanel({
     } catch (cause) { setError(message(cause)); }
     finally { setBusy(false); }
   }
-  const blockers = [...new Set([...(review?.blockers ?? []), ...serverBlockers])];
-  const eligibilityIsCurrent = !conflict && review?.validity_state !== "STALE"
-    && review?.current_readiness.scenario_version === scenario.version;
+  // Even before useEffect cleanup runs, never render a previous client's or
+  // scenario's state during a React parent transition.
+  const activeReview = review?.client_id === clientId
+    && review.scenario_id === scenario.scenario_id ? review : null;
+  const blockers = [...new Set([...(activeReview?.blockers ?? []), ...serverBlockers])];
+  const eligibilityIsCurrent = !conflict && activeReview?.validity_state !== "STALE"
+    && activeReview?.current_readiness.scenario_version === scenario.version;
   const visibleEligibility = eligibilityIsCurrent ? eligibility : null;
+  if (review && !activeReview) {
+    return <section dir="rtl" aria-label="קיבוע זכויות - הכרעות מקצועיות">
+      <p role="status">טוען נתוני קיבוע זכויות עבור החלופה שנבחרה...</p>
+    </section>;
+  }
   return <section dir="rtl" aria-label="קיבוע זכויות - הכרעות מקצועיות" className="scenario-workflow">
     <h4>קיבוע זכויות - הכרעות מקצועיות</h4>
     <p className="professional-workspace__boundary">

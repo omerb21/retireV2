@@ -46,6 +46,7 @@ from app.schemas.scenario_fixation_approval import (
 )
 from app.services import scenario_fixation_approval_service as fixation_review
 from app.services import scenario_fixation_admission_preparation_service as fixation_preparation
+from app.services import scenario_fixation_admission_eligibility_service as fixation_eligibility
 from app.models.m07_evidence import (
     M07EvidenceRevision, M07FactEvidence, M07PlannerAssertion, M07AssessmentFinding,
 )
@@ -1773,7 +1774,9 @@ def test_pg16_fixation_admission_preparation_fail_closed_and_isolated(pg16):
 
 
 def _prepared_fixation_items(factory, *, grant=True, capitalization=True, idf=True,
-                             grant_nominal=True, include_evidence=True):
+                             grant_nominal=True, grant_indexed=True,
+                             grant_employer=True, capitalization_accepted=True,
+                             include_evidence=True):
     """Actual PostgreSQL source rows and versioned reviewer decisions."""
     _prepared_fixation_sources(factory)
     if grant or capitalization:
@@ -1781,10 +1784,13 @@ def _prepared_fixation_items(factory, *, grant=True, capitalization=True, idf=Tr
             if grant:
                 db.add(Grant(
                     grant_id="preparation-grant7", client_id=7,
-                    employment_record_id=None, employer_name="Synthetic employer",
-                    employer_withholding_file_number="synthetic-withholding",
+                    employment_record_id=None,
+                    employer_name="Synthetic employer" if grant_employer else None,
+                    employer_withholding_file_number=(
+                        "synthetic-withholding" if grant_employer else None),
                     nominal_amount=Decimal("125.00") if grant_nominal else None,
-                    indexed_amount=Decimal("130.00") if grant_nominal else None,
+                    indexed_amount=(
+                        Decimal("130.00") if grant_nominal and grant_indexed else None),
                     grant_date=date(2025, 12, 31),
                     work_start_date=date(2011, 1, 1), work_end_date=date(2025, 12, 31),
                 ))
@@ -1814,7 +1820,7 @@ def _prepared_fixation_items(factory, *, grant=True, capitalization=True, idf=Tr
             group="historical_capitalization", source_id="preparation-cap7",
             determination="PLANNER_ASSERTED", reason="Reviewed actual historical commutation",
             inclusion_decision="include", support_status="supported",
-            accepted_for_use=True,
+            accepted_for_use=capitalization_accepted,
             evidence_references=["document://synthetic-cap-7"] if include_evidence else [],
         ))
     controls = FixationAdmissionControls(
@@ -1970,3 +1976,117 @@ def test_pg16_fixation_preparation_applicable_idf_requires_complete_input(pg16):
         result = fixation_preparation.prepare(db, 7, "a1")
     assert result["state"] == "INCOMPLETE"
     assert result["candidate"] is None
+
+
+def test_pg16_fixation_admission_eligibility_static_positive_and_no_side_effects(
+        pg16, monkeypatch):
+    factory, _ = pg16
+    _prepared_fixation_sources(factory)
+    _prepared_review(factory)
+    from app.services import fixation_admission_service, cbs_indexation_adapter, fixation_service
+    from app.engines import fixation_engine
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("ELIGIBILITY_MUST_NOT_EXECUTE_ADMISSION_CBS_OR_TAX")
+
+    monkeypatch.setattr(fixation_admission_service, "parse_and_admit_fixation_payload", forbidden)
+    monkeypatch.setattr(cbs_indexation_adapter, "calculate_cbs_indexation", forbidden)
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    before = _source_state(factory)
+    with factory() as db:
+        first = fixation_eligibility.assess(db, 7, "a1")
+        second = fixation_eligibility.assess(db, 7, "a1")
+        assert not db.new and not db.dirty and not db.deleted
+    after = _source_state(factory)
+    assert first == second
+    assert before == after
+    assert first["contract"] == "SCENARIO_FIXATION_ADMISSION_ELIGIBILITY_V1"
+    assert first["state"] == "ELIGIBLE_FOR_ADMISSION_REVIEW"
+    assert first["reasons"] == []
+    assert len(first["eligibility_fingerprint"]) == 64
+    assert first["admission_review_required"] is True
+    assert first["professional_authority"] is False
+    assert first["execution_allowed"] is False
+
+
+def test_pg16_fixation_admission_eligibility_idf_and_incomplete_preparation(pg16):
+    factory, _ = pg16
+    with factory() as db:
+        incomplete = fixation_eligibility.assess(db, 7, "a1")
+    assert incomplete["state"] == "INCOMPLETE"
+    assert any(reason["code"] == "FIXATION_PREPARATION_CONTROLS_MISSING"
+               for reason in incomplete["reasons"])
+
+    _prepared_fixation_items(factory, grant=False, capitalization=False, idf=True)
+    with factory() as db:
+        blocked = fixation_eligibility.assess(db, 7, "a1")
+    assert blocked["state"] == "BLOCKED"
+    assert blocked["reasons"] == [{
+        "code": "FIXATION_ELIGIBILITY_IDF_UNSUPPORTED",
+        "source_ids": ["synthetic-idf-7"],
+    }]
+    assert blocked["execution_allowed"] is False
+
+
+def test_pg16_fixation_admission_eligibility_cbs_requires_external_validation(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(
+        factory, capitalization=False, idf=False, grant_indexed=False,
+    )
+    with factory() as db:
+        external = fixation_eligibility.assess(db, 7, "a1")
+    assert external["state"] == "REQUIRES_EXTERNAL_VALIDATION"
+    assert external["reasons"] == [{
+        "code": "FIXATION_ELIGIBILITY_CBS_INDEXATION_REQUIRED",
+        "source_ids": ["preparation-grant7"],
+    }]
+    assert external["execution_allowed"] is False
+
+
+
+def test_pg16_fixation_admission_eligibility_blocks_missing_grant_identity(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(
+        factory, capitalization=False, idf=False, grant_employer=False,
+    )
+    with factory() as db:
+        result = fixation_eligibility.assess(db, 7, "a1")
+    assert result["state"] == "BLOCKED"
+    assert {reason["code"] for reason in result["reasons"]} == {
+        "FIXATION_ELIGIBILITY_GRANT_EMPLOYER_MISSING",
+        "FIXATION_ELIGIBILITY_GRANT_WITHHOLDING_FILE_MISSING",
+    }
+    assert all(reason["source_ids"] == ["preparation-grant7"]
+               for reason in result["reasons"])
+
+
+def test_pg16_fixation_admission_eligibility_blocks_unaccepted_capitalization(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(
+        factory, grant=False, idf=False, capitalization_accepted=False,
+    )
+    with factory() as db:
+        result = fixation_eligibility.assess(db, 7, "a1")
+    assert result["state"] == "BLOCKED"
+    assert result["reasons"] == [{
+        "code": "FIXATION_ELIGIBILITY_CAPITALIZATION_NOT_ACCEPTED",
+        "source_ids": ["preparation-cap7"],
+    }]
+
+
+def test_pg16_fixation_admission_eligibility_isolated_and_fingerprint_tracks_source(pg16):
+    factory, _ = pg16
+    _prepared_fixation_items(factory, capitalization=False, idf=False)
+    with factory() as db:
+        initial = fixation_eligibility.assess(db, 7, "a1")
+        with pytest.raises(DraftError):
+            fixation_eligibility.assess(db, 8, "a1")
+    assert initial["state"] == "ELIGIBLE_FOR_ADMISSION_REVIEW"
+    with factory.begin() as db:
+        db.get(Grant, "preparation-grant7").indexed_amount = Decimal("131.00")
+    with factory() as db:
+        changed = fixation_eligibility.assess(db, 7, "a1")
+    assert changed["state"] == "BLOCKED"
+    assert changed["eligibility_fingerprint"] != initial["eligibility_fingerprint"]
+    assert changed["client_id"] == 7 and changed["scenario_id"] == "a1"

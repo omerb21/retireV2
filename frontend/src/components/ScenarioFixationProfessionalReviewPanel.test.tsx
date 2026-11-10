@@ -5,7 +5,7 @@ import { ScenarioFixationProfessionalReviewPanel } from "./ScenarioFixationProfe
 import { ReviewApiError, type ProfessionalReview } from "../api/scenarioFixationProfessionalReviewApi";
 
 const mocks = vi.hoisted(() => ({
-  read: vi.fn(), save: vi.fn(), history: vi.fn(), approve: vi.fn(), preparation: vi.fn(), eligibility: vi.fn(),
+  read: vi.fn(), save: vi.fn(), history: vi.fn(), approve: vi.fn(), preparation: vi.fn(), eligibility: vi.fn(), admissionReview: vi.fn(),
 }));
 vi.mock("../api/scenarioFixationProfessionalReviewApi", async importOriginal => {
   const original = await importOriginal<typeof import("../api/scenarioFixationProfessionalReviewApi")>();
@@ -17,6 +17,7 @@ vi.mock("../api/scenarioFixationProfessionalReviewApi", async importOriginal => 
     requestProfessionalApproval: mocks.approve,
     readFixationAdmissionPreparation: mocks.preparation,
     readFixationAdmissionEligibility: mocks.eligibility,
+    readFixationAdmissionReview: mocks.admissionReview,
   };
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -607,4 +608,158 @@ it("does not retain positive eligibility after an invalid eligibility GET", asyn
   await waitFor(() => expect(region.textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
   await waitFor(() => expect(region.textContent).toContain("הכשירות אינה מאומתת"));
   expect(mocks.eligibility).toHaveBeenCalledTimes(2);
+});
+
+
+const reviewReady = (scenario = "A") => ({
+  ...eligibilityState("ELIGIBLE_FOR_ADMISSION_REVIEW", scenario),
+});
+const admitted = (scenario = "A") => ({
+  contract: "SCENARIO_FIXATION_ADMISSION_REVIEW_V1",
+  client_id: 7, scenario_id: scenario,
+  state: "ADMITTED_FOR_REVIEW",
+  preparation_fingerprint: "f".repeat(64),
+  eligibility_fingerprint: "e".repeat(64),
+  admission_review_fingerprint: "a".repeat(64),
+  reasons: [], admission_contract_validated: true,
+  professional_authority: false, execution_allowed: false,
+  tax_calculation_performed: false, tax_authority_approval: null,
+});
+function readyMocks() {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.preparation.mockResolvedValue(prepareState("PREPARED"));
+  mocks.eligibility.mockResolvedValue(reviewReady());
+}
+
+it("does not start Admission Review automatically and gates the button on eligibility", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(mocks.admissionReview).not.toHaveBeenCalled();
+});
+
+it("submits both exact live fingerprints only on click and shows non-authoritative admitted result", async () => {
+  readyMocks();
+  mocks.admissionReview.mockResolvedValue(admitted());
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  expect(mocks.admissionReview).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await waitFor(() => expect(mocks.admissionReview).toHaveBeenCalledWith(
+    7, "A", "f".repeat(64), "e".repeat(64),
+  ));
+  expect(await within(section).findByText(/הקלט עבר את בדיקת הקבילות/)).toBeTruthy();
+  expect(section.textContent).toContain("עדיין נדרש אישור מקצועי נפרד");
+  expect(mocks.approve).not.toHaveBeenCalled();
+});
+
+it("renders rejected Admission Review errors, paths and source IDs", async () => {
+  readyMocks();
+  mocks.admissionReview.mockResolvedValue({
+    ...admitted(),
+    state: "REJECTED", admission_contract_validated: false,
+    reasons: [{
+      code: "FIXATION_ADMISSION_REVIEW_TEST_FAILURE",
+      path: "grants[0].employer_name", message: "missing employer",
+      source_ids: ["grant-77", "employment-9"],
+    }],
+  });
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await waitFor(() => expect(section.textContent).toContain("הקלט נדחה בבדיקת הקבילות"));
+  expect(section.textContent).toContain("FIXATION_ADMISSION_REVIEW_TEST_FAILURE");
+  expect(section.textContent).toContain("grants[0].employer_name");
+  expect(section.textContent).toContain("grant-77");
+  expect(section.textContent).toContain("employment-9");
+});
+
+it("clears a previously admitted result on save and re-enables only after refreshed eligibility", async () => {
+  readyMocks();
+  mocks.save.mockResolvedValue(snapshot("A", 1));
+  mocks.admissionReview.mockResolvedValue(admitted());
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await within(section).findByText(/הקלט עבר את בדיקת הקבילות/);
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות"));
+  await waitFor(() => expect(mocks.preparation).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledTimes(2));
+  expect(mocks.admissionReview).toHaveBeenCalledTimes(1);
+});
+
+it("drops late Admission Review response after refresh and after an asynchronous source change", async () => {
+  readyMocks();
+  let complete!: (value: ReturnType<typeof admitted>) => void;
+  mocks.admissionReview.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await waitFor(() => expect(mocks.admissionReview).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: "רענן מצב הכנת קלט וכשירות" }));
+  complete(admitted());
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledTimes(2));
+  expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
+});
+
+it("never displays a late admitted result from another scenario", async () => {
+  mocks.read.mockImplementation(async (_client: number, id: string) => snapshot(id));
+  mocks.preparation.mockImplementation(async (_client: number, id: string) => prepareState("PREPARED", id));
+  mocks.eligibility.mockImplementation(async (_client: number, id: string) => reviewReady(id));
+  let complete!: (value: ReturnType<typeof admitted>) => void;
+  mocks.admissionReview.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  const view = display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await waitFor(() => expect(mocks.admissionReview).toHaveBeenCalledTimes(1));
+  view.rerender(<ScenarioFixationProfessionalReviewPanel key="admission-B"
+    clientId={7} scenario={{ ...draft, scenario_id: "B" }}/>);
+  complete(admitted());
+  const sectionB = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledWith(7, "B"));
+  expect(sectionB.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
+});
+
+it("does not admit mismatching response fingerprints or expose an approval action", async () => {
+  readyMocks();
+  mocks.admissionReview.mockResolvedValue({
+    ...admitted(), eligibility_fingerprint: "b".repeat(64),
+  });
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await waitFor(() => expect(section.textContent).toContain("המקורות השתנו במהלך בדיקת הקבילות"));
+  expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
+  expect(mocks.approve).not.toHaveBeenCalled();
 });

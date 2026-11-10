@@ -5,6 +5,7 @@ import {
   ReviewApiError, type ProfessionalDecision, type ProfessionalReview,
   type ReviewGroup, type ReviewDetermination, type ReviewHistoryItem,
   type FixationAdmissionControls, type FixationPreparation, type FixationAdmissionEligibility,
+  type FixationAdmissionReview, readFixationAdmissionReview,
   readFixationAdmissionPreparation, readFixationAdmissionEligibility,
 } from "../api/scenarioFixationProfessionalReviewApi";
 import { ScenarioFixationAdmissionControls, ReferenceListInput, controlsValidation } from "./ScenarioFixationAdmissionControls";
@@ -190,11 +191,23 @@ export function ScenarioFixationProfessionalReviewPanel({
   const [preparationError, setPreparationError] = useState<string | null>(null);
   const [eligibility, setEligibility] = useState<FixationAdmissionEligibility | null>(null);
   const [eligibilityError, setEligibilityError] = useState<string | null>(null);
+  const [admissionReview, setAdmissionReview] = useState<FixationAdmissionReview | null>(null);
+  const [admissionReviewError, setAdmissionReviewError] = useState<string | null>(null);
+  const [admissionReviewBusy, setAdmissionReviewBusy] = useState(false);
+  const reviewRequest = useRef(0);
   const statusRequest = useRef(0);
+
+  function invalidateAdmissionReview() {
+    reviewRequest.current += 1;
+    setAdmissionReview(null);
+    setAdmissionReviewError(null);
+    setAdmissionReviewBusy(false);
+  }
   const scenarioIdentity = useRef(`${clientId}:${scenario.scenario_id}`);
   scenarioIdentity.current = `${clientId}:${scenario.scenario_id}`;
 
   async function refreshStatuses() {
+    invalidateAdmissionReview();
     const sequence = ++statusRequest.current;
     const identity = `${clientId}:${scenario.scenario_id}`;
     // Never display a previous positive state while current evidence is in flight.
@@ -232,6 +245,7 @@ export function ScenarioFixationProfessionalReviewPanel({
     setHistory(null); setError(null); setNotice(null); setConflict(false);
     setServerBlockers([]); setControls(null); setPreparation(null);
     setPreparationError(null); setEligibility(null); setEligibilityError(null);
+    invalidateAdmissionReview();
     setLoading(true);
     void readProfessionalReview(clientId, scenario.scenario_id)
       .then(result => {
@@ -243,8 +257,42 @@ export function ScenarioFixationProfessionalReviewPanel({
       .catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
     void refreshStatuses();
-    return () => { mounted = false; statusRequest.current += 1; };
+    return () => {
+      mounted = false;
+      statusRequest.current += 1;
+      reviewRequest.current += 1;
+    };
   }, [clientId, scenario.scenario_id]);
+
+  async function checkAdmissionReview(
+    expectedPreparation: string, expectedEligibility: string,
+  ) {
+    const sequence = ++reviewRequest.current;
+    const currentStatusRequest = statusRequest.current;
+    const identity = `${clientId}:${scenario.scenario_id}`;
+    setAdmissionReview(null); setAdmissionReviewError(null);
+    setAdmissionReviewBusy(true);
+    try {
+      const result = await readFixationAdmissionReview(
+        clientId, scenario.scenario_id, expectedPreparation, expectedEligibility,
+      );
+      if (reviewRequest.current !== sequence || statusRequest.current !== currentStatusRequest
+          || scenarioIdentity.current !== identity) return;
+      if (result.preparation_fingerprint !== expectedPreparation
+          || result.eligibility_fingerprint !== expectedEligibility) {
+        setAdmissionReviewError("המקורות השתנו במהלך בדיקת הקבילות. יש לרענן את המוכנות והכשירות.");
+        return;
+      }
+      setAdmissionReview(result);
+    } catch (cause) {
+      if (reviewRequest.current !== sequence || statusRequest.current !== currentStatusRequest
+          || scenarioIdentity.current !== identity) return;
+      setAdmissionReviewError(message(cause));
+    } finally {
+      if (reviewRequest.current === sequence && statusRequest.current === currentStatusRequest
+          && scenarioIdentity.current === identity) setAdmissionReviewBusy(false);
+    }
+  }
 
   const sources = review ? sourcesFor(item.group, review, scenario) : [];
   const editable = scenario.status === "draft" && !loading && !busy && review !== null
@@ -310,7 +358,8 @@ export function ScenarioFixationProfessionalReviewPanel({
     const validation = controlsValidation(controls);
     if (validation) { setError(validation); return; }
     setBusy(true); setError(null); setNotice(null); setServerBlockers([]);
-    // Save invalidates any previously displayed eligibility or preparation.
+    // Save invalidates any previous admission-review result immediately.
+    invalidateAdmissionReview();
     statusRequest.current += 1;
     setPreparation(null); setEligibility(null);
     setEligibilityError(null); setPreparationError(null);
@@ -334,6 +383,7 @@ export function ScenarioFixationProfessionalReviewPanel({
       if (cause instanceof ReviewApiError) setServerBlockers(cause.blockers);
       if (cause instanceof ReviewApiError && cause.status === 409) {
         setConflict(true);
+        invalidateAdmissionReview();
         statusRequest.current += 1;
         setPreparation(null); setEligibility(null);
         setEligibilityError("נתוני המקור השתנו. יש לבדוק מחדש לפני הצגת כשירות.");
@@ -364,6 +414,17 @@ export function ScenarioFixationProfessionalReviewPanel({
   const eligibilityIsCurrent = !conflict && activeReview?.validity_state !== "STALE"
     && activeReview?.current_readiness.scenario_version === scenario.version;
   const visibleEligibility = eligibilityIsCurrent ? eligibility : null;
+  const canCheckAdmission = !!activeReview && !busy && !loading && !conflict
+    && !admissionReviewBusy && activeReview.validity_state !== "STALE"
+    && preparation?.state === "PREPARED"
+    && visibleEligibility?.state === "ELIGIBLE_FOR_ADMISSION_REVIEW"
+    && preparation.preparation_fingerprint === visibleEligibility.preparation_fingerprint
+    && activeReview.client_id === clientId && activeReview.scenario_id === scenario.scenario_id
+    && scenario.status === "draft";
+  const visibleAdmissionReview = canCheckAdmission && admissionReview
+    && admissionReview.preparation_fingerprint === preparation?.preparation_fingerprint
+    && admissionReview.eligibility_fingerprint === visibleEligibility?.eligibility_fingerprint
+      ? admissionReview : null;
   if (review && !activeReview) {
     return <section dir="rtl" aria-label="קיבוע זכויות - הכרעות מקצועיות">
       <p role="status">טוען נתוני קיבוע זכויות עבור החלופה שנבחרה...</p>
@@ -427,6 +488,40 @@ export function ScenarioFixationProfessionalReviewPanel({
         </p>}
         {eligibilityError && <p role="alert">{eligibilityError}</p>}
         <p>הכשירות אינה אישור מקצועי, אינה אישור רשות המסים ואינה מאפשרת חישוב מס.</p>
+      </section>
+      <section aria-label="Admission Review - בדיקת קבילות הקלט" dir="rtl">
+        <h5>Admission Review - בדיקת קבילות הקלט</h5>
+        <p>בדיקה מפורשת של קבילות הנתונים בלבד, ללא אישור מקצועי או הרשאה לחישוב.</p>
+        <button type="button" disabled={!canCheckAdmission}
+          onClick={() => {
+            if (!canCheckAdmission || !preparation || !visibleEligibility) return;
+            void checkAdmissionReview(
+              preparation.preparation_fingerprint,
+              visibleEligibility.eligibility_fingerprint,
+            );
+          }}>
+          {admissionReviewBusy ? "בודק קבילות קלט..." : "בדוק קבילות קלט"}
+        </button>
+        {visibleAdmissionReview?.state === "ADMITTED_FOR_REVIEW" && <p role="status">
+          הקלט עבר את בדיקת הקבילות. עדיין נדרש אישור מקצועי נפרד לפני כל חישוב.
+        </p>}
+        {visibleAdmissionReview?.state === "REJECTED" && <>
+          <p role="status">הקלט נדחה בבדיקת הקבילות.</p>
+          <ul>{visibleAdmissionReview.reasons.map((reason, index) => <li key={reason.code + ":" + index}>
+            {label(reason.code)} <code dir="ltr">{reason.code}</code>
+            {reason.path && <span> | נתיב: <code dir="ltr">{reason.path}</code></span>}
+            {reason.message && <span> | פירוט: {reason.message}</span>}
+            {reason.source_ids.length > 0 && <span> | מזהי מקורות:
+              {" "}{reason.source_ids.map(id => <code key={id} dir="ltr">{id} </code>)}
+            </span>}
+          </li>)}</ul>
+        </>}
+        {admissionReviewError && <p role="alert">{admissionReviewError}</p>}
+        {!canCheckAdmission && <p role="status">
+          בדיקת הקבילות חסומה עד לקבלת Preparation במצב PREPARED ו-Eligibility מתאים
+          מאותה גרסת מקור, ללא התיישנות או שמירה פעילה.
+        </p>}
+        <p>תוצאת Admission Review אינה אישור קיבוע זכויות או אישור רשות המסים.</p>
       </section>
       {review.validity_state === "STALE" && <p role="alert">
         ראיות המקור או החלופה השתנו מאז השמירה. ההכרעות הישנות אינן תקפות.

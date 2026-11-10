@@ -108,7 +108,7 @@ try {
     Push-Location $backend
     try {
         Invoke-Checked $python @("-m", "alembic", "-c", "alembic.ini", "upgrade", "head")
-        Invoke-Checked $python @("scripts/seed_supervisor41_local.py")
+        Invoke-Checked $python @("-m", "scripts.seed_supervisor41_local")
     } finally { Pop-Location }
     $backendArgs = @("-m", "uvicorn", "scripts.supervisor65_test_app:app", "--host", "127.0.0.1",
         "--port", "8001", "--no-access-log")

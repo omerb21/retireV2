@@ -413,6 +413,20 @@ it("saves full applicable IDF values from the structured editor", async () => {
 });
 
 
+function prepareState(state: "INCOMPLETE" | "BLOCKED" | "PREPARED", scenario = "A") {
+  return {
+    contract: "SCENARIO_FIXATION_ADMISSION_PREPARATION_V1",
+    client_id: 7, scenario_id: scenario, state,
+    candidate: state === "PREPARED" ? { synthetic: true } : null,
+    incomplete_reasons: state === "INCOMPLETE" ? ["FIXATION_PREPARATION_CONTROLS_MISSING"] : [],
+    blockers: state === "BLOCKED" ? ["FIXATION_PREPARATION_SOURCE_OVERLAP_UNRESOLVED"] : [],
+    preparation_fingerprint: "f".repeat(64),
+    professional_authority: false, execution_allowed: false, tax_authority_approval: null,
+  };
+}
+function prepForEligibility(state: string): "INCOMPLETE" | "BLOCKED" | "PREPARED" {
+  return state === "INCOMPLETE" ? "INCOMPLETE" : state === "BLOCKED" ? "BLOCKED" : "PREPARED";
+}
 function eligibilityState(state: "INCOMPLETE" | "BLOCKED" | "REQUIRES_EXTERNAL_VALIDATION" | "ELIGIBLE_FOR_ADMISSION_REVIEW",
   scenario = "A", reasons: Array<{ code: string; source_ids: string[] }> = []) {
   return {
@@ -433,6 +447,7 @@ it.each([
   ["ELIGIBLE_FOR_ADMISSION_REVIEW", "לא נמצאו חסמים סטטיים ידועים"],
 ] as const)("shows eligibility %s separately from admission preparation", async (state, description) => {
   mocks.read.mockResolvedValue(snapshot());
+  mocks.preparation.mockResolvedValue(prepareState(prepForEligibility(state)));
   mocks.eligibility.mockResolvedValue(eligibilityState(state));
   display();
   const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
@@ -444,6 +459,7 @@ it.each([
 
 it("translates known eligibility reasons with exact source ids and keeps unknown codes visible", async () => {
   mocks.read.mockResolvedValue(snapshot());
+  mocks.preparation.mockResolvedValue(prepareState("PREPARED"));
   mocks.eligibility.mockResolvedValue(eligibilityState("BLOCKED", "A", [
     { code: "FIXATION_ELIGIBILITY_IDF_UNSUPPORTED", source_ids: ["idf-synthetic-9"] },
     { code: "FIXATION_ELIGIBILITY_GRANT_WITHHOLDING_FILE_MISSING", source_ids: ["grant-15"] },
@@ -461,6 +477,8 @@ it("translates known eligibility reasons with exact source ids and keeps unknown
 it("refreshes both preparation and eligibility after saving a review", async () => {
   mocks.read.mockResolvedValue(snapshot());
   mocks.save.mockResolvedValue(snapshot("A", 1));
+  mocks.preparation.mockResolvedValueOnce(prepareState("INCOMPLETE"))
+    .mockResolvedValueOnce(prepareState("PREPARED"));
   mocks.eligibility.mockResolvedValueOnce(eligibilityState("INCOMPLETE"))
     .mockResolvedValueOnce(eligibilityState("REQUIRES_EXTERNAL_VALIDATION", "A", [
       { code: "FIXATION_ELIGIBILITY_CBS_INDEXATION_REQUIRED", source_ids: ["grant-7"] },
@@ -479,6 +497,7 @@ it("refreshes both preparation and eligibility after saving a review", async () 
 it("clears previous eligibility and preserves unsaved user input after a 409 conflict", async () => {
   mocks.read.mockResolvedValue(snapshot());
   mocks.save.mockRejectedValue(new ReviewApiError(409, "FIXATION_APPROVAL_SOURCE_CONFLICT"));
+  mocks.preparation.mockResolvedValue(prepareState("PREPARED"));
   mocks.eligibility.mockResolvedValue(eligibilityState("ELIGIBLE_FOR_ADMISSION_REVIEW"));
   display();
   const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
@@ -505,6 +524,8 @@ it("does not show eligibility from a different preparation fingerprint or a fail
 
 it("isolates eligibility when switching between scenarios", async () => {
   mocks.read.mockImplementation(async (_client: number, id: string) => snapshot(id));
+  mocks.preparation.mockImplementation(async (_client: number, id: string) =>
+    prepareState(id === "A" ? "PREPARED" : "BLOCKED", id));
   mocks.eligibility.mockImplementation(async (_client: number, id: string) =>
     eligibilityState(id === "A" ? "ELIGIBLE_FOR_ADMISSION_REVIEW" : "BLOCKED", id));
   const view = display();

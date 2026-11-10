@@ -210,9 +210,17 @@ export function ScenarioFixationProfessionalReviewPanel({
     if (elig.status === "rejected") {
       setEligibilityError(message(elig.reason));
     } else if (prep.status !== "fulfilled"
-        || elig.value.preparation_fingerprint !== prep.value.preparation_fingerprint) {
-      // A source may change between the two GET transactions.
-      setEligibilityError("תוצאות הכשירות וההכנה אינן מאותה גרסת מקור. יש לרענן.");
+        || elig.value.preparation_fingerprint !== prep.value.preparation_fingerprint
+        || (prep.value.state === "INCOMPLETE" && elig.value.state !== "INCOMPLETE")
+        || (prep.value.state === "BLOCKED" && elig.value.state !== "BLOCKED")
+        || (prep.value.state === "PREPARED" && elig.value.state === "INCOMPLETE")
+        || (prep.value.state !== "PREPARED" && (
+          elig.value.state === "REQUIRES_EXTERNAL_VALIDATION"
+          || elig.value.state === "ELIGIBLE_FOR_ADMISSION_REVIEW"
+        ))) {
+      // A source may change between the two GET transactions, or the
+      // responses may be semantically inconsistent even with matching tokens.
+      setEligibilityError("תוצאות הכשירות וההכנה אינן תואמות לאותם נתוני מקור. יש לרענן.");
     } else {
       setEligibility(elig.value);
     }

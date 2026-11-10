@@ -15,7 +15,8 @@ from app.db.session import get_session_factory
 from app.models.client import Client
 from app.models.employment_record import EmploymentRecord
 from app.models.grant import Grant
-from app.models.pension_product import PensionProduct, PensionProductComponent
+from app.models.pension_product import COMPONENT_CODES, PensionProduct, PensionProductComponent
+from app.services.pension_product_service import component_balances, product_response
 from app.models.scenario_draft import ScenarioDraft
 from app.services import scenario_draft_service as drafts
 from app.models.scenario_draft import ScenarioDraftDecision
@@ -95,10 +96,31 @@ def seed_admission_review() -> None:
             reported_severance_total=Decimal("0.00"),
         ))
         db.flush()
-        db.add(PensionProductComponent(
-            component_id=REVIEW_COMPONENT, product_id=REVIEW_PRODUCT,
-            component_code="תגמולי_עובד_עד_2000", balance=Decimal("200.00"),
-        ))
+        # Canonical product reads require all 11 component codes, including
+        # explicit zero balances. Only the single pension component carries value.
+        pension_code = "תגמולי_עובד_עד_2000"
+        for code in COMPONENT_CODES:
+            db.add(PensionProductComponent(
+                component_id=REVIEW_COMPONENT if code == pension_code
+                    else f"supervisor78-zero-{COMPONENT_CODES.index(code):02d}",
+                product_id=REVIEW_PRODUCT, component_code=code,
+                balance=Decimal("200.00") if code == pension_code else Decimal("0.00"),
+            ))
+        db.flush()
+        # Focused seed acceptance at the exact canonical API serialization
+        # boundary. A missing, repeated or unsupported component fails here.
+        balances = component_balances(db, REVIEW_PRODUCT)
+        api_product = product_response(db, db.get(PensionProduct, REVIEW_PRODUCT))
+        if (len(balances) != len(COMPONENT_CODES)
+                or set(balances) != set(COMPONENT_CODES)
+                or balances[pension_code] != Decimal("200.00")
+                or any(value != Decimal("0.00") for code, value in balances.items()
+                       if code != pension_code)
+                or api_product["client_id"] != REVIEW_CLIENT
+                or api_product["product_id"] != REVIEW_PRODUCT
+                or len(api_product["conversion_components"]) != len(COMPONENT_CODES)
+                or set(api_product["components"]) != set(COMPONENT_CODES)):
+            raise RuntimeError("SUPERVISOR78_CANONICAL_COMPONENTS_INVALID")
         db.add(PlanningInputDecision(
             client_id=REVIEW_CLIENT, version=1, planning_base_date=date(2026, 11, 1),
             retirement_target_date=date(2032, 1, 1), actor="supervisor78-test",

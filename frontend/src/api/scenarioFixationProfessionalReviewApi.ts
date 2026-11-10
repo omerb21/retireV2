@@ -271,3 +271,85 @@ export async function readFixationAdmissionEligibility(clientId: number, scenari
   if (!safe) throw new ReviewApiError(409, "FIXATION_ELIGIBILITY_RESPONSE_INVALID");
   return raw as FixationAdmissionEligibility;
 }
+
+export interface FixationAdmissionReviewReason {
+  code: string;
+  path: string | null;
+  message: string | null;
+  source_ids: string[];
+}
+export interface FixationAdmissionReview {
+  contract: "SCENARIO_FIXATION_ADMISSION_REVIEW_V1";
+  client_id: number;
+  scenario_id: string;
+  state: "ADMITTED_FOR_REVIEW" | "REJECTED";
+  preparation_fingerprint: string;
+  eligibility_fingerprint: string;
+  admission_review_fingerprint: string;
+  reasons: FixationAdmissionReviewReason[];
+  admission_contract_validated: boolean;
+  professional_authority: false;
+  execution_allowed: false;
+  tax_calculation_performed: false;
+  tax_authority_approval: null;
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export async function readFixationAdmissionReview(
+  clientId: number,
+  scenarioId: string,
+  expectedPreparationFingerprint: string,
+  expectedEligibilityFingerprint: string,
+): Promise<FixationAdmissionReview> {
+  if (!SHA256_HEX.test(expectedPreparationFingerprint)
+      || !SHA256_HEX.test(expectedEligibilityFingerprint)) {
+    throw new ReviewApiError(400, "FIXATION_ADMISSION_REVIEW_FINGERPRINT_INVALID");
+  }
+  const query = new URLSearchParams({
+    expected_preparation_fingerprint: expectedPreparationFingerprint,
+    expected_eligibility_fingerprint: expectedEligibilityFingerprint,
+  });
+  const url = buildApiUrl(
+    `/clients/${clientId}/scenario-drafts/${encodeURIComponent(scenarioId)}/fixation-admission-review?${query}`,
+  );
+  const response = await apiFetch(url, { method: "GET" });
+  const raw: unknown = await response.json().catch(() => null);
+  const record = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown> : {};
+  if (!response.ok) {
+    throw new ReviewApiError(response.status,
+      typeof record.code === "string" ? record.code : `HTTP_${response.status}`);
+  }
+  const reasons = record.reasons;
+  const admitted = record.state === "ADMITTED_FOR_REVIEW";
+  const rejected = record.state === "REJECTED";
+  const safe = record.contract === "SCENARIO_FIXATION_ADMISSION_REVIEW_V1"
+    && record.client_id === clientId && record.scenario_id === scenarioId
+    && (admitted || rejected)
+    && typeof record.preparation_fingerprint === "string"
+    && SHA256_HEX.test(record.preparation_fingerprint)
+    && typeof record.eligibility_fingerprint === "string"
+    && SHA256_HEX.test(record.eligibility_fingerprint)
+    && (!admitted || (
+      record.preparation_fingerprint === expectedPreparationFingerprint
+      && record.eligibility_fingerprint === expectedEligibilityFingerprint
+    ))
+    && typeof record.admission_review_fingerprint === "string"
+    && SHA256_HEX.test(record.admission_review_fingerprint)
+    && Array.isArray(reasons)
+    && reasons.every(item => item !== null && typeof item === "object" && !Array.isArray(item)
+      && typeof item.code === "string" && item.code.length > 0
+      && (item.path === null || (typeof item.path === "string" && item.path.length > 0))
+      && (item.message === null || (typeof item.message === "string" && item.message.length > 0))
+      && Array.isArray(item.source_ids)
+      && item.source_ids.every((id: unknown) => typeof id === "string" && id.length > 0))
+    && record.admission_contract_validated === admitted
+    && (admitted ? reasons.length === 0 : reasons.length > 0)
+    && record.professional_authority === false
+    && record.execution_allowed === false
+    && record.tax_calculation_performed === false
+    && record.tax_authority_approval === null;
+  if (!safe) throw new ReviewApiError(409, "FIXATION_ADMISSION_REVIEW_RESPONSE_INVALID");
+  return raw as FixationAdmissionReview;
+}

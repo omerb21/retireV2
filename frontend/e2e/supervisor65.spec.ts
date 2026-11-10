@@ -8,7 +8,7 @@ import { writeFileSync } from "node:fs";
 const CLIENT = 410041;
 const A = "supervisor41-scenario-a";
 const B = "supervisor41-scenario-b";
-const ROOT = "http://127.0.0.1:5173";
+const ROOT = "http://127.0.0.1:5174";
 const API = "/api/clients/" + CLIENT + "/scenario-drafts/";
 const PATH = "/clients/" + CLIENT + "/workspace";
 
@@ -20,7 +20,7 @@ test("supervisor 65: persist and reload scenario admission controls without tax 
   const failures: string[] = [];
   await page.route("**/*", route => {
     const url = new URL(route.request().url());
-    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port !== "5173") {
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port !== "5174") {
       return route.abort("blockedbyclient");
     }
     return route.continue();
@@ -130,7 +130,7 @@ test("supervisor 78: explicit Admission Review admitted and invalidated on scena
   page.on("pageerror", error => pageErrors.push(error.message));
   await page.route("**/*", route => {
     const url = new URL(route.request().url());
-    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port !== "5173") {
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port !== "5174") {
       return route.abort("blockedbyclient");
     }
     return route.continue();

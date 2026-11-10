@@ -539,3 +539,41 @@ it("isolates eligibility when switching between scenarios", async () => {
   expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
     .textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
 });
+
+
+it("does not leak a positive eligibility state when changing clients", async () => {
+  mocks.read.mockImplementation(async (client: number, id: string) => ({
+    ...snapshot(id), client_id: client,
+  }));
+  mocks.preparation.mockImplementation(async (client: number, id: string) => ({
+    ...prepareState(client === 7 ? "PREPARED" : "BLOCKED", id), client_id: client,
+  }));
+  mocks.eligibility.mockImplementation(async (client: number, id: string) => ({
+    ...eligibilityState(client === 7 ? "ELIGIBLE_FOR_ADMISSION_REVIEW" : "BLOCKED", id),
+    client_id: client,
+  }));
+  const view = display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
+  view.rerender(<ScenarioFixationProfessionalReviewPanel key="client-8" clientId={8}
+    scenario={{ ...draft, client_id: 8 }}/>);
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledWith(8, "A"));
+  await waitFor(() => expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).toContain("BLOCKED"));
+  expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
+});
+
+it("does not retain positive eligibility after an invalid eligibility GET", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.preparation.mockResolvedValue(prepareState("PREPARED"));
+  mocks.eligibility.mockResolvedValueOnce(eligibilityState("ELIGIBLE_FOR_ADMISSION_REVIEW"))
+    .mockRejectedValueOnce(new ReviewApiError(409, "FIXATION_ELIGIBILITY_RESPONSE_INVALID"));
+  display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
+  fireEvent.click(screen.getByRole("button", { name: "רענן מצב הכנת קלט וכשירות" }));
+  await waitFor(() => expect(region.textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
+  await waitFor(() => expect(region.textContent).toContain("הכשירות אינה מאומתת"));
+  expect(mocks.eligibility).toHaveBeenCalledTimes(2);
+});

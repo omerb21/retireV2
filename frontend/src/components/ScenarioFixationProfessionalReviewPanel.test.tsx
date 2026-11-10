@@ -411,3 +411,110 @@ it("saves full applicable IDF values from the structured editor", async () => {
       commutation_date: "2024-01-01", promoter_age_date: "2026-10-01" },
   });
 });
+
+
+function eligibilityState(state: "INCOMPLETE" | "BLOCKED" | "REQUIRES_EXTERNAL_VALIDATION" | "ELIGIBLE_FOR_ADMISSION_REVIEW",
+  scenario = "A", reasons: Array<{ code: string; source_ids: string[] }> = []) {
+  return {
+    contract: "SCENARIO_FIXATION_ADMISSION_ELIGIBILITY_V1",
+    client_id: 7, scenario_id: scenario, state,
+    preparation_fingerprint: "f".repeat(64),
+    eligibility_fingerprint: "e".repeat(64),
+    reasons, professional_authority: false, execution_allowed: false,
+    admission_review_required: state === "ELIGIBLE_FOR_ADMISSION_REVIEW",
+    tax_authority_approval: null,
+  };
+}
+
+it.each([
+  ["INCOMPLETE", "חסרים נתונים להכנת הקלט"],
+  ["BLOCKED", "קיימים חסמים המונעים מעבר"],
+  ["REQUIRES_EXTERNAL_VALIDATION", "נדרש אימות חיצוני"],
+  ["ELIGIBLE_FOR_ADMISSION_REVIEW", "לא נמצאו חסמים סטטיים ידועים"],
+] as const)("shows eligibility %s separately from admission preparation", async (state, description) => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.eligibility.mockResolvedValue(eligibilityState(state));
+  display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain(description));
+  expect(region.textContent).toContain(state);
+  expect(region.textContent).toContain("אינה אישור מקצועי");
+  expect(mocks.approve).not.toHaveBeenCalled();
+});
+
+it("translates known eligibility reasons with exact source ids and keeps unknown codes visible", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.eligibility.mockResolvedValue(eligibilityState("BLOCKED", "A", [
+    { code: "FIXATION_ELIGIBILITY_IDF_UNSUPPORTED", source_ids: ["idf-synthetic-9"] },
+    { code: "FIXATION_ELIGIBILITY_GRANT_WITHHOLDING_FILE_MISSING", source_ids: ["grant-15"] },
+    { code: "FIXATION_ELIGIBILITY_FUTURE_UNKNOWN_CODE", source_ids: ["future-1"] },
+  ]));
+  display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("idf-synthetic-9"));
+  expect(region.textContent).toContain("נתוני IDF עדיין אינם נתמכים");
+  expect(region.textContent).toContain("חסר תיק ניכויים");
+  expect(region.textContent).toContain("FIXATION_ELIGIBILITY_FUTURE_UNKNOWN_CODE");
+  expect(region.textContent).toContain("future-1");
+});
+
+it("refreshes both preparation and eligibility after saving a review", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.save.mockResolvedValue(snapshot("A", 1));
+  mocks.eligibility.mockResolvedValueOnce(eligibilityState("INCOMPLETE"))
+    .mockResolvedValueOnce(eligibilityState("REQUIRES_EXTERNAL_VALIDATION", "A", [
+      { code: "FIXATION_ELIGIBILITY_CBS_INDEXATION_REQUIRED", source_ids: ["grant-7"] },
+    ]));
+  display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("INCOMPLETE"));
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(region.textContent).toContain("REQUIRES_EXTERNAL_VALIDATION"));
+  expect(region.textContent).toContain("grant-7");
+  expect(mocks.preparation).toHaveBeenCalledTimes(2);
+  expect(mocks.eligibility).toHaveBeenCalledTimes(2);
+});
+
+it("clears previous eligibility and preserves unsaved user input after a 409 conflict", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.save.mockRejectedValue(new ReviewApiError(409, "FIXATION_APPROVAL_SOURCE_CONFLICT"));
+  mocks.eligibility.mockResolvedValue(eligibilityState("ELIGIBLE_FOR_ADMISSION_REVIEW"));
+  display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(screen.getByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy());
+  expect(region.textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
+  expect(region.textContent).toContain("הכשירות אינה מאומתת");
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+});
+
+it("does not show eligibility from a different preparation fingerprint or a failed GET", async () => {
+  mocks.read.mockResolvedValue(snapshot());
+  mocks.eligibility.mockResolvedValue({
+    ...eligibilityState("ELIGIBLE_FOR_ADMISSION_REVIEW"),
+    preparation_fingerprint: "1".repeat(64),
+  });
+  display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("הכשירות אינה מאומתת"));
+  await waitFor(() => expect(region.parentElement?.textContent).toContain("אינן מאותה גרסת מקור"));
+  expect(region.textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
+});
+
+it("isolates eligibility when switching between scenarios", async () => {
+  mocks.read.mockImplementation(async (_client: number, id: string) => snapshot(id));
+  mocks.eligibility.mockImplementation(async (_client: number, id: string) =>
+    eligibilityState(id === "A" ? "ELIGIBLE_FOR_ADMISSION_REVIEW" : "BLOCKED", id));
+  const view = display();
+  const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
+  await waitFor(() => expect(region.textContent).toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
+  view.rerender(<ScenarioFixationProfessionalReviewPanel key="eligible-B" clientId={7}
+    scenario={{ ...draft, scenario_id: "B" }} />);
+  await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledWith(7, "B"));
+  await waitFor(() => expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).toContain("BLOCKED"));
+  expect(screen.getByRole("region", { name: "כשירות לבדיקת Admission" })
+    .textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
+});

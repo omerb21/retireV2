@@ -763,3 +763,46 @@ it("does not admit mismatching response fingerprints or expose an approval actio
   expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
   expect(mocks.approve).not.toHaveBeenCalled();
 });
+
+
+it("clears admitted result after a CAS 409 and never automatically retries Admission Review", async () => {
+  readyMocks();
+  mocks.admissionReview.mockResolvedValue(admitted());
+  mocks.save.mockRejectedValue(new ReviewApiError(409, "FIXATION_APPROVAL_SOURCE_CONFLICT"));
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await within(section).findByText(/הקלט עבר את בדיקת הקבילות/);
+  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  await waitFor(() => expect(screen.getByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy());
+  expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(mocks.admissionReview).toHaveBeenCalledTimes(1);
+});
+
+it("hides an earlier admitted result when reloaded professional evidence is STALE", async () => {
+  readyMocks();
+  mocks.read.mockResolvedValueOnce(snapshot()).mockResolvedValueOnce({
+    ...snapshot("A", 1), validity_state: "STALE",
+  });
+  mocks.admissionReview.mockResolvedValue(admitted());
+  display();
+  const section = await screen.findByRole("region", {
+    name: "Admission Review - בדיקת קבילות הקלט",
+  });
+  const button = within(section).getByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+  await within(section).findByText(/הקלט עבר את בדיקת הקבילות/);
+  fireEvent.click(screen.getByRole("button", {
+    name: /טען מחדש מהשרת/,
+  }));
+  await waitFor(() => expect(screen.getByText(/ראיות המקור או החלופה השתנו מאז השמירה/)).toBeTruthy());
+  expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(mocks.admissionReview).toHaveBeenCalledTimes(1);
+});

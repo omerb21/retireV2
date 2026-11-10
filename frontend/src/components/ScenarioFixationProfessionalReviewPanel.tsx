@@ -343,6 +343,8 @@ export function ScenarioFixationProfessionalReviewPanel({
     setNotice("ההכרעה נוספה לטיוטת המסך. לשמירה בשרת יש ללחוץ על שמור טיוטה.");
   }
   async function reload({ preserve = false }: { preserve?: boolean } = {}) {
+    // Refreshing review evidence also invalidates any earlier admission result.
+    invalidateAdmissionReview();
     const fresh = await readProfessionalReview(clientId, scenario.scenario_id);
     setReview(fresh);
     if (!preserve) {

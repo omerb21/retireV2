@@ -52,7 +52,7 @@ try {
         $head = (& git rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR65_NOT_GIT_WORKTREE" }
     } finally { Pop-Location }
-    foreach ($port in @(8001, 5173)) { Assert-FreeLocalPort $port }
+    foreach ($port in @(8001, 5174)) { Assert-FreeLocalPort $port }
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "Docker Desktop missing" }
     Invoke-Checked "docker" @("info", "--format", "{{.ServerVersion}}")
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js missing" }
@@ -114,6 +114,14 @@ try {
         "--port", "8001", "--no-access-log")
     $backendProcess = Start-Process -FilePath $python -WorkingDirectory $backend -ArgumentList $backendArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $report "backend.stdout.log") -RedirectStandardError (Join-Path $report "backend.stderr.log")
     Wait-Http "http://127.0.0.1:8001/health" $backendProcess
+    # Reject a foreign service on 8001 even when its /health returns HTTP 200.
+    $backendIdentity = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8001/__retire_v2_test_identity" -TimeoutSec 5
+    if ($backendIdentity.service -cne "RETIRE_V2_BACKEND" -or
+        $backendIdentity.environment -cne "test" -or
+        $backendIdentity.database -cne "retire_v2_supervisor41_test" -or
+        $backendIdentity.port -ne 8001) {
+        throw "SUPERVISOR65_BACKEND_IDENTITY_MISMATCH"
+    }
     Push-Location $frontend
     try {
         if (-not (Test-Path "node_modules/vite/bin/vite.js")) {
@@ -126,9 +134,26 @@ try {
         $playwright = Join-Path $frontend "node_modules\.bin\playwright.cmd"
         Invoke-Checked $playwright @("install", "chromium")
         $viteArgs = @("node_modules/vite/bin/vite.js", "--mode", "test", "--host",
-            "127.0.0.1", "--port", "5173", "--strictPort")
+            "127.0.0.1", "--port", "5174", "--strictPort")
         $frontendProcess = Start-Process -FilePath (Get-Command node).Source -WorkingDirectory $frontend -ArgumentList $viteArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $report "frontend.stdout.log") -RedirectStandardError (Join-Path $report "frontend.stderr.log")
-        Wait-Http "http://127.0.0.1:5173/" $frontendProcess
+        Wait-Http "http://127.0.0.1:5174/" $frontendProcess
+        # Vite identity is only served in --mode test and on localhost:5174.
+        $frontendIdentity = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:5174/__retire_v2_test_identity" -TimeoutSec 5
+        if ($frontendIdentity.service -cne "RETIRE_V2_FRONTEND" -or
+            $frontendIdentity.mode -cne "test" -or $frontendIdentity.port -ne 5174) {
+            throw "SUPERVISOR65_FRONTEND_IDENTITY_MISMATCH"
+        }
+        # Confirm Vite's /api proxy reaches the seeded RETIRE V2 backend, not
+        # a CRM listener. A 401/404 is a preflight failure, not a test pass.
+        $prepared = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:5174/api/clients/410078/scenario-drafts/supervisor78-scenario-a/fixation-admission-preparation" -TimeoutSec 15
+        if ($prepared.contract -cne "SCENARIO_FIXATION_ADMISSION_PREPARATION_V1" -or
+            $prepared.client_id -ne 410078 -or
+            $prepared.scenario_id -cne "supervisor78-scenario-a" -or
+            $prepared.state -cne "PREPARED" -or
+            $prepared.professional_authority -cne $false -or
+            $prepared.execution_allowed -cne $false) {
+            throw "SUPERVISOR65_API_PROXY_IDENTITY_MISMATCH"
+        }
         $env:PLAYWRIGHT_JSON_OUTPUT_FILE = Join-Path $report "playwright-report.json"
         $testArgs = @("test", "e2e/supervisor65.spec.ts", "--browser=chromium",
             "--grep", "supervisor 78:", "--workers=1", "--reporter=line,json", "--trace=on",

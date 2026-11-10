@@ -34,3 +34,14 @@ async def synthetic_professional_identity(request: Request, call_next):
         return JSONResponse({"code": "SUPERVISOR65_LOOPBACK_ONLY"}, status_code=403)
     request.state.trusted_professional_actor = "supervisor65-synthetic-planner"
     return await call_next(request)
+
+
+@app.get("/__retire_v2_test_identity", include_in_schema=False)
+def local_test_server_identity():
+    # Available only from this guarded, synthetic-only test entrypoint.
+    return {
+        "service": "RETIRE_V2_BACKEND",
+        "environment": "test",
+        "database": "retire_v2_supervisor41_test",
+        "port": 8001,
+    }

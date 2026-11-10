@@ -519,7 +519,8 @@ export function ScenarioFixationProfessionalReviewPanel({
           </li>)}</ul>
         </>}
         {admissionReviewError && <p role="alert">{admissionReviewError}</p>}
-        {!canCheckAdmission && <p role="status">
+        {admissionReviewBusy && <p role="status">בדיקת הקבילות מתבצעת מול השרת.</p>}
+        {!canCheckAdmission && !admissionReviewBusy && <p role="status">
           בדיקת הקבילות חסומה עד לקבלת Preparation במצב PREPARED ו-Eligibility מתאים
           מאותה גרסת מקור, ללא התיישנות או שמירה פעילה.
         </p>}

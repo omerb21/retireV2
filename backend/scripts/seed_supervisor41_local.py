@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
+from app.db.base import load_all_models
 from app.db.session import get_session_factory
 from app.models.client import Client
 from app.models.employment_record import EmploymentRecord
@@ -276,6 +277,7 @@ def seed_admission_review() -> None:
 
 def main() -> None:
     _assert_local_database()
+    load_all_models()
     with get_session_factory().begin() as db:
         if db.scalar(select(Client.client_id).where(Client.client_id == CLIENT_ID)):
             raise RuntimeError("SUPERVISOR41_DATABASE_NOT_EMPTY")

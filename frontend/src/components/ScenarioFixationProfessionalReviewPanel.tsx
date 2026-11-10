@@ -1,11 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import {
   readProfessionalReview, saveProfessionalReview, readProfessionalReviewHistory,
   ReviewApiError, type ProfessionalDecision, type ProfessionalReview,
   type ReviewGroup, type ReviewDetermination, type ReviewHistoryItem,
-  type FixationAdmissionControls, type FixationPreparation,
-  readFixationAdmissionPreparation,
+  type FixationAdmissionControls, type FixationPreparation, type FixationAdmissionEligibility,
+  readFixationAdmissionPreparation, readFixationAdmissionEligibility,
 } from "../api/scenarioFixationProfessionalReviewApi";
 import { ScenarioFixationAdmissionControls, ReferenceListInput, controlsValidation } from "./ScenarioFixationAdmissionControls";
 
@@ -83,6 +83,29 @@ const LABELS: Record<string, string> = {
   FIXATION_PREPARATION_GRANT_FOREIGN_OR_MISSING_SOURCE: "הכרעת המענק מתייחסת למקור חסר או ללקוח אחר.",
   FIXATION_PREPARATION_CAPITALIZATION_FOREIGN_OR_MISSING_SOURCE: "הכרעת ההיוון מתייחסת למקור חסר או ללקוח אחר.",
   FIXATION_PREPARATION_ADMISSION_CONTRACT_INVALID: "הקלט אינו עומד בחוזה Admission. נדרשת השלמת נתונים או תיקון סתירה.",
+  FIXATION_ELIGIBILITY_PREPARED_CANDIDATE_INVALID: "מועמד הקלט אינו תואם לחוזה Admission.",
+  FIXATION_ELIGIBILITY_IDF_UNSUPPORTED: "נתוני IDF עדיין אינם נתמכים במעבר לבדיקת Admission.",
+  FIXATION_ELIGIBILITY_CBS_INDEXATION_REQUIRED: "נדרשת הצמדה חיצונית מאומתת של המענק לפני Admission.",
+  FIXATION_ELIGIBILITY_CALCULATION_VERSION_UNSUPPORTED: "גרסת החישוב אינה נתמכת.",
+  FIXATION_ELIGIBILITY_PARAMETER_CLIENT_MISMATCH: "סט הפרמטרים אינו שייך ללקוח.",
+  FIXATION_ELIGIBILITY_PARAMETER_SET_NOT_ACCEPTED: "סט הפרמטרים טרם התקבל לשימוש.",
+  FIXATION_ELIGIBILITY_DATE_NOT_BOUND: "תאריך הזכאות אינו משויך לראיות החלופה.",
+  FIXATION_ELIGIBILITY_PARAMETER_TAX_YEAR_MISMATCH: "שנת המס אינה תואמת למועד הזכאות.",
+  FIXATION_ELIGIBILITY_PARAMETER_NOT_YET_EFFECTIVE: "סט הפרמטרים עדיין אינו בתוקף במועד הזכאות.",
+  FIXATION_ELIGIBILITY_PARAMETER_EXPIRED: "תוקף סט הפרמטרים הסתיים לפני מועד הזכאות.",
+  FIXATION_ELIGIBILITY_GRANT_MULTIPLIER_UNSUPPORTED: "מקדם השפעת המענקים אינו נתמך.",
+  FIXATION_ELIGIBILITY_GRANT_CLIENT_MISMATCH: "המענק אינו משויך ללקוח.",
+  FIXATION_ELIGIBILITY_GRANT_EMPLOYER_MISSING: "חסר שם המעסיק של המענק.",
+  FIXATION_ELIGIBILITY_GRANT_WITHHOLDING_FILE_MISSING: "חסר תיק ניכויים של המעסיק במענק.",
+  FIXATION_ELIGIBILITY_GRANT_AFTER_ELIGIBILITY_DATE: "תאריך המענק מאוחר למועד הזכאות.",
+  FIXATION_ELIGIBILITY_GRANT_NOT_ACCEPTED: "המענק לא התקבל לשימוש בקלט.",
+  FIXATION_ELIGIBILITY_GRANT_SUPPORT_UNRESOLVED: "תמיכת הראיות למענק לא הוכרעה.",
+  FIXATION_ELIGIBILITY_GRANT_AMOUNT_MISSING: "חסר סכום מענק שניתן להשתמש בו.",
+  FIXATION_ELIGIBILITY_CAPITALIZATION_NOT_ACCEPTED: "ההיוון ההיסטורי לא התקבל לשימוש.",
+  FIXATION_ELIGIBILITY_CAPITALIZATION_SUPPORT_UNRESOLVED: "תמיכת הראיות להיוון ההיסטורי אינה מספקת.",
+  FIXATION_ELIGIBILITY_FUTURE_GRANT_NOT_REPRESENTED_BY_PREPARATION: "מענק עתידי אינו מיוצג בחוזה הכנת הקלט.",
+  FIXATION_ELIGIBILITY_CONTINUITY_NOT_REPRESENTED_BY_ADMISSION: "הכרעת רצף אינה מיוצגת בקלט Admission.",
+  FIXATION_ELIGIBILITY_PLANNED_WITHDRAWAL_NOT_REPRESENTED_BY_ADMISSION: "משיכה מתוכננת אינה מיוצגת בקלט Admission.",
 };
 function label(code: string) { return LABELS[code] ?? `חסם מקצועי: ${code}`; }
 function groupName(group: ReviewGroup): string {
@@ -165,13 +188,43 @@ export function ScenarioFixationProfessionalReviewPanel({
   const [controls, setControls] = useState<FixationAdmissionControls | null>(null);
   const [preparation, setPreparation] = useState<FixationPreparation | null>(null);
   const [preparationError, setPreparationError] = useState<string | null>(null);
+  const [eligibility, setEligibility] = useState<FixationAdmissionEligibility | null>(null);
+  const [eligibilityError, setEligibilityError] = useState<string | null>(null);
+  const statusRequest = useRef(0);
+  const scenarioIdentity = useRef(`${clientId}:${scenario.scenario_id}`);
+  scenarioIdentity.current = `${clientId}:${scenario.scenario_id}`;
+
+  async function refreshStatuses() {
+    const sequence = ++statusRequest.current;
+    const identity = `${clientId}:${scenario.scenario_id}`;
+    // Never display a previous positive state while current evidence is in flight.
+    setPreparation(null); setEligibility(null);
+    setPreparationError(null); setEligibilityError(null);
+    const [prep, elig] = await Promise.allSettled([
+      readFixationAdmissionPreparation(clientId, scenario.scenario_id),
+      readFixationAdmissionEligibility(clientId, scenario.scenario_id),
+    ]);
+    if (sequence !== statusRequest.current || scenarioIdentity.current !== identity) return;
+    if (prep.status === "fulfilled") setPreparation(prep.value);
+    else setPreparationError(message(prep.reason));
+    if (elig.status === "rejected") {
+      setEligibilityError(message(elig.reason));
+    } else if (prep.status !== "fulfilled"
+        || elig.value.preparation_fingerprint !== prep.value.preparation_fingerprint) {
+      // A source may change between the two GET transactions.
+      setEligibilityError("תוצאות הכשירות וההכנה אינן מאותה גרסת מקור. יש לרענן.");
+    } else {
+      setEligibility(elig.value);
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
     setReview(null); setDraft([]); setItem(emptyDecision()); setRefsText("");
     setHistory(null); setError(null); setNotice(null); setConflict(false);
     setServerBlockers([]); setControls(null); setPreparation(null);
-    setPreparationError(null); setLoading(true);
+    setPreparationError(null); setEligibility(null); setEligibilityError(null);
+    setLoading(true);
     void readProfessionalReview(clientId, scenario.scenario_id)
       .then(result => {
         if (!mounted) return;
@@ -181,10 +234,8 @@ export function ScenarioFixationProfessionalReviewPanel({
       })
       .catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
-    void readFixationAdmissionPreparation(clientId, scenario.scenario_id)
-      .then(result => { if (mounted) setPreparation(result); })
-      .catch(cause => { if (mounted) setPreparationError(message(cause)); });
-    return () => { mounted = false; };
+    void refreshStatuses();
+    return () => { mounted = false; statusRequest.current += 1; };
   }, [clientId, scenario.scenario_id]);
 
   const sources = review ? sourcesFor(item.group, review, scenario) : [];
@@ -251,6 +302,10 @@ export function ScenarioFixationProfessionalReviewPanel({
     const validation = controlsValidation(controls);
     if (validation) { setError(validation); return; }
     setBusy(true); setError(null); setNotice(null); setServerBlockers([]);
+    // Save invalidates any previously displayed eligibility or preparation.
+    statusRequest.current += 1;
+    setPreparation(null); setEligibility(null);
+    setEligibilityError(null); setPreparationError(null);
     const token = review.current_readiness;
     try {
       const saved = await saveProfessionalReview(clientId, scenario.scenario_id, {
@@ -264,19 +319,16 @@ export function ScenarioFixationProfessionalReviewPanel({
       setReview(saved);
       setControls(saved.admission_controls ?? null);
       setDraft(saved.decisions.map(normalizeDecision));
-      try {
-        const freshPreparation = await readFixationAdmissionPreparation(clientId, scenario.scenario_id);
-        setPreparation(freshPreparation);
-        setPreparationError(null);
-      } catch (prepareError) {
-        setPreparation(null); setPreparationError(message(prepareError));
-      }
+      await refreshStatuses();
       setHistory(null);
       setNotice("טיוטת ההכרעות נשמרה. אין בכך אישור קיבוע זכויות או זכאות למס.");
     } catch (cause) {
       if (cause instanceof ReviewApiError) setServerBlockers(cause.blockers);
       if (cause instanceof ReviewApiError && cause.status === 409) {
         setConflict(true);
+        statusRequest.current += 1;
+        setPreparation(null); setEligibility(null);
+        setEligibilityError("נתוני המקור השתנו. יש לבדוק מחדש לפני הצגת כשירות.");
         try {
           await reload({ preserve: true });
           await onScenarioRefresh?.();
@@ -297,6 +349,9 @@ export function ScenarioFixationProfessionalReviewPanel({
     finally { setBusy(false); }
   }
   const blockers = [...new Set([...(review?.blockers ?? []), ...serverBlockers])];
+  const eligibilityIsCurrent = !conflict && review?.validity_state !== "STALE"
+    && review?.current_readiness.scenario_version === scenario.version;
+  const visibleEligibility = eligibilityIsCurrent ? eligibility : null;
   return <section dir="rtl" aria-label="קיבוע זכויות - הכרעות מקצועיות" className="scenario-workflow">
     <h4>קיבוע זכויות - הכרעות מקצועיות</h4>
     <p className="professional-workspace__boundary">
@@ -329,11 +384,32 @@ export function ScenarioFixationProfessionalReviewPanel({
           </ul>
         </> : <p role="status">מצב Admission Preparation טרם נטען.</p>}
         {preparationError && <p role="alert">{preparationError}</p>}
-        <button type="button" disabled={busy} onClick={() => {
-          void readFixationAdmissionPreparation(clientId, scenario.scenario_id)
-            .then(value => { setPreparation(value); setPreparationError(null); })
-            .catch(cause => setPreparationError(message(cause)));
-        }}>רענן מצב הכנת קלט</button>
+        <button type="button" disabled={busy}
+          onClick={() => { void refreshStatuses(); }}>רענן מצב הכנת קלט וכשירות</button>
+      </section>
+      <section aria-label="כשירות לבדיקת Admission" dir="rtl">
+        <h5>כשירות לבדיקת Admission (בדיקה סטטית בלבד)</h5>
+        {visibleEligibility ? <>
+          <p role="status">
+            {visibleEligibility.state === "INCOMPLETE"
+              ? "INCOMPLETE: חסרים נתונים להכנת הקלט."
+              : visibleEligibility.state === "BLOCKED"
+                ? "BLOCKED: קיימים חסמים המונעים מעבר לבדיקת Admission."
+                : visibleEligibility.state === "REQUIRES_EXTERNAL_VALIDATION"
+                  ? "REQUIRES_EXTERNAL_VALIDATION: נדרש אימות חיצוני לפני בדיקת Admission."
+                  : "ELIGIBLE_FOR_ADMISSION_REVIEW: לא נמצאו חסמים סטטיים ידועים. נדרשת בדיקת Admission מלאה, ללא אישור מקצועי לחישוב."}
+          </p>
+          <ul>{visibleEligibility.reasons.map((reason, i) => <li key={reason.code + ":" + i}>
+            {label(reason.code)} <code dir="ltr">{reason.code}</code>
+            {reason.source_ids.length > 0 && <span> | מזהי מקורות:
+              {" "}{reason.source_ids.map(id => <code key={id} dir="ltr">{id} </code>)}
+            </span>}
+          </li>)}</ul>
+        </> : <p role="status">
+          הכשירות אינה מאומתת כעת. יש לטעון תוצאות תואמות למקורות העדכניים.
+        </p>}
+        {eligibilityError && <p role="alert">{eligibilityError}</p>}
+        <p>הכשירות אינה אישור מקצועי, אינה אישור רשות המסים ואינה מאפשרת חישוב מס.</p>
       </section>
       {review.validity_state === "STALE" && <p role="alert">
         ראיות המקור או החלופה השתנו מאז השמירה. ההכרעות הישנות אינן תקפות.

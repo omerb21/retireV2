@@ -73,8 +73,7 @@ try {
     $env:RECOVERY_POSTGRES_TEST = "0"
     Remove-Item Env:SCENARIO_TEST_POSTGRES_URL -ErrorAction SilentlyContinue
     Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
-    # Dedicated role exists only in this disposable, localhost-bound PG16 container.
-    # The migration itself remains responsible for GRANT/REVOKE checks.
+    # A unique role for this one disposable localhost PG16 container.
     $env:CRTISBA_APPLICATION_DB_ROLE = "supervisor65_app_$runId"
     $env:DATABASE_URL = "postgresql+psycopg2://postgres:${secret}@127.0.0.1:${dbPort}/retire_v2_supervisor41_test"
     $dockerArgs = @("run", "--detach", "--rm", "--name", $containerName,
@@ -91,100 +90,10 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw "SUPERVISOR65_PG16_NOT_READY" }
-    # CREATE ROLE is restricted to the disposable container. Never run SQL
-    # against DATABASE_URL, another container, or an external PostgreSQL.
+    # This role is created only inside the uniquely identified disposable
+    # container. Alembic still performs its original privilege checks.
     $role = $env:CRTISBA_APPLICATION_DB_ROLE
-    if ($role -cnotmatch '^supervisor65_app_[0-9a-f]{14}
-    try {
-        Invoke-Checked $python @("-m", "alembic", "-c", "alembic.ini", "upgrade", "head")
-        Invoke-Checked $python @("scripts/seed_supervisor41_local.py")
-    } finally { Pop-Location }
-    $backendArgs = @("-m", "uvicorn", "scripts.supervisor65_test_app:app", "--host", "127.0.0.1",
-        "--port", "8001", "--no-access-log")
-    $backendProcess = Start-Process -FilePath $python -WorkingDirectory $backend -ArgumentList $backendArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $report "backend.stdout.log") -RedirectStandardError (Join-Path $report "backend.stderr.log")
-    Wait-Http "http://127.0.0.1:8001/health" $backendProcess
-    Push-Location $frontend
-    try {
-        if (-not (Test-Path "node_modules/vite/bin/vite.js")) {
-            Invoke-Checked "npm.cmd" @("ci", "--ignore-scripts", "--no-audit", "--no-fund")
-        }
-        if (-not (Test-Path "node_modules/@playwright/test/package.json")) {
-            Invoke-Checked "npm.cmd" @("install", "--no-save", "--package-lock=false", "--ignore-scripts",
-                "--no-audit", "--no-fund", "@playwright/test@1.56.1")
-        }
-        $playwright = Join-Path $frontend "node_modules\.bin\playwright.cmd"
-        Invoke-Checked $playwright @("install", "chromium")
-        $viteArgs = @("node_modules/vite/bin/vite.js", "--mode", "test", "--host",
-            "127.0.0.1", "--port", "5173", "--strictPort")
-        $frontendProcess = Start-Process -FilePath (Get-Command node).Source -WorkingDirectory $frontend -ArgumentList $viteArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $report "frontend.stdout.log") -RedirectStandardError (Join-Path $report "frontend.stderr.log")
-        Wait-Http "http://127.0.0.1:5173/" $frontendProcess
-        $env:PLAYWRIGHT_JSON_OUTPUT_FILE = Join-Path $report "playwright-report.json"
-        $testArgs = @("test", "e2e/supervisor65.spec.ts", "--browser=chromium",
-            "--grep", "supervisor 78:", "--workers=1", "--reporter=line,json", "--trace=on",
-            "--output", (Join-Path $report "screenshots"))
-        & $playwright @testArgs *> (Join-Path $report "playwright-console.log")
-        if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR65_PLAYWRIGHT_FAILED:$LASTEXITCODE" }
-        $passed = $true
-    } finally { Pop-Location }
-}
-catch {
-    $reason = $_.Exception.Message
-    Write-Host ("SUPERVISOR65_BLOCKED: " + $reason)
-    Set-Content -Path (Join-Path $report "failure.txt") -Value $reason -Encoding UTF8
-}
-finally {
-    foreach ($proc in @($frontendProcess, $backendProcess)) {
-        if ($null -ne $proc) {
-            try {
-                $proc.Refresh()
-                if (-not $proc.HasExited) {
-                    Stop-Process -Id $proc.Id -Force -ErrorAction Stop
-                    $proc.WaitForExit(10000) | Out-Null
-                }
-            } catch {
-                $cleanupOk = $false
-                Write-Host ("SUPERVISOR65_PROCESS_CLEANUP_WARNING:" + $_.Exception.Message)
-            }
-        }
-    }
-    if ($containerId) {
-        try {
-            $details = @((& docker inspect $containerId 2>$null | ConvertFrom-Json))
-            if ($LASTEXITCODE -eq 0 -and $details.Count -eq 1 -and
-                $details[0].Id -eq $containerId -and
-                $details[0].Config.Labels.'retire-v2.supervisor65' -eq $runId) {
-                & docker rm --force $containerId 2>$null | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    $cleanupOk = $false
-                    Write-Host "SUPERVISOR65_CONTAINER_REMOVE_FAILED"
-                }
-            } else {
-                $cleanupOk = $false
-                Write-Host "SUPERVISOR65_CONTAINER_IDENTITY_NOT_VERIFIED"
-            }
-        } catch {
-            $cleanupOk = $false
-            Write-Host ("SUPERVISOR65_DOCKER_CLEANUP_WARNING:" + $_.Exception.Message)
-        }
-    }
-    foreach ($name in $variables) {
-        [Environment]::SetEnvironmentVariable($name, $saved[$name], "Process")
-    }
-    $status = if ($passed -and $cleanupOk) { "PASS" } else { "BLOCKED_OR_FAILED" }
-    Set-Content -Path (Join-Path $report "summary.txt") -Encoding UTF8 -Value @(
-        "SUPERVISOR65_STATUS=$status",
-        "HEAD=$head",
-        "RESULTS=$report",
-        "SYNTHETIC_ONLY=True",
-        "CLEANUP_CONFIRMED=$cleanupOk",
-        "CONTAINER_ID=$containerId"
-    )
-    Write-Host "SUPERVISOR65_STATUS=$status"
-    Write-Host "SUPERVISOR65_EVIDENCE_DIR=$report"
-}
-if (-not $passed -or -not $cleanupOk) { exit 1 }
-exit 0
-) {
+    if ($role -cnotmatch '^supervisor65_app_[0-9a-f]{14}$') {
         throw "SUPERVISOR65_APPLICATION_ROLE_NAME_INVALID"
     }
     Invoke-Checked "docker" @(

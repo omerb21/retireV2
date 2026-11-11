@@ -83,25 +83,73 @@ try {
         "--env", "POSTGRES_DB=retire_v2_supervisor41_test", "postgres:16-alpine")
     $containerId = (& docker @dockerArgs).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $containerId) { throw "SUPERVISOR65_DOCKER_START_FAILED" }
+    # The official postgres image may start a bootstrap server on its Unix
+    # socket, stop it, and only then start the permanent TCP listener.
+    # Docker-internal pg_isready without -h can report the bootstrap server.
+    # Require two successful TCP SQL probes to the *final* listener.
+    $deadline = [DateTime]::UtcNow.AddSeconds(120)
+    $consecutive = 0
     $ready = $false
-    for ($i = 0; $i -lt 75; $i++) {
-        & docker exec $containerId pg_isready -U postgres -d retire_v2_supervisor41_test 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    while ([DateTime]::UtcNow -lt $deadline) {
+        # A stopped container is never an acceptable readiness outcome.
+        $running = (& docker inspect --format "{{.State.Running}}" $containerId 2>$null)
+        if ($LASTEXITCODE -ne 0 -or "$running".Trim() -ne "true") {
+            throw "SUPERVISOR65_PG16_CONTAINER_STOPPED"
+        }
+        & docker exec $containerId pg_isready -h 127.0.0.1 -p 5432 -U postgres -d retire_v2_supervisor41_test -t 2 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $consecutive = 0
+            Start-Sleep -Seconds 1
+            continue
+        }
+        # SQL proves that the TCP endpoint accepts actual authenticated
+        # connections, rather than just advertising readiness.
+        $probe = & docker exec $containerId psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d retire_v2_supervisor41_test -t -A -v ON_ERROR_STOP=1 -c "SELECT CASE WHEN pg_is_in_recovery() THEN 'recovery' ELSE 'primary' END" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $detail = ($probe | Out-String).Trim()
+            if ($detail -match '(?i)database system is (starting up|shutting down)|connection refused|server closed the connection unexpectedly|the database system is in recovery mode') {
+                $consecutive = 0
+                Start-Sleep -Seconds 1
+                continue
+            }
+            throw "SUPERVISOR65_PG16_SQL_PROBE_FAILED:$detail"
+        }
+        if (($probe | Out-String).Trim() -ne "primary") {
+            throw "SUPERVISOR65_PG16_UNEXPECTED_SERVER_STATE"
+        }
+        $consecutive += 1
+        if ($consecutive -ge 2) { $ready = $true; break }
         Start-Sleep -Seconds 1
     }
-    if (-not $ready) { throw "SUPERVISOR65_PG16_NOT_READY" }
+    if (-not $ready) { throw "SUPERVISOR65_PG16_TCP_STARTUP_TIMEOUT" }
+
     # This role is created only inside the uniquely identified disposable
     # container. Alembic still performs its original privilege checks.
     $role = $env:CRTISBA_APPLICATION_DB_ROLE
     if ($role -cnotmatch '^supervisor65_app_[0-9a-f]{14}$') {
         throw "SUPERVISOR65_APPLICATION_ROLE_NAME_INVALID"
     }
-    Invoke-Checked "docker" @(
-        "exec", $containerId, "psql", "-X", "-v", "ON_ERROR_STOP=1",
-        "-U", "postgres", "-d", "retire_v2_supervisor41_test",
-        "-c", "CREATE ROLE $role NOLOGIN"
-    )
-    $roleExists = (& docker exec $containerId psql -X -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -t -A -c "SELECT count(*) FROM pg_roles WHERE rolname = '$role'").Trim()
+    # A short bounded retry covers an exceptional shutdown/startup transition
+    # after readiness. Any other SQL error is surfaced immediately.
+    $roleCreated = $false
+    for ($attempt = 0; $attempt -lt 5; $attempt++) {
+        $createOutput = & docker exec $containerId psql -X -w -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -c "CREATE ROLE $role NOLOGIN" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            if (($createOutput | Out-String) -notmatch 'CREATE ROLE') {
+                throw "SUPERVISOR65_APPLICATION_ROLE_CREATE_UNEXPECTED_OUTPUT"
+            }
+            $roleCreated = $true
+            break
+        }
+        $createError = ($createOutput | Out-String).Trim()
+        if ($createError -notmatch '(?i)database system is (starting up|shutting down)|connection refused|server closed the connection unexpectedly|the database system is in recovery mode') {
+            throw "SUPERVISOR65_APPLICATION_ROLE_CREATE_FAILED:$createError"
+        }
+        if ($attempt -eq 4 -or [DateTime]::UtcNow -ge $deadline) { break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $roleCreated) { throw "SUPERVISOR65_APPLICATION_ROLE_STARTUP_TIMEOUT" }
+    $roleExists = (& docker exec $containerId psql -X -w -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -t -A -c "SELECT count(*) FROM pg_roles WHERE rolname = '$role'").Trim()
     if ($LASTEXITCODE -ne 0 -or $roleExists -ne "1") {
         throw "SUPERVISOR65_APPLICATION_ROLE_NOT_VERIFIED"
     }

@@ -63,6 +63,7 @@ function SwitchClient() {
   return <>
     <button type="button" onClick={() => navigate("/clients/1/workspace")}>עבור ללקוח א</button>
     <button type="button" onClick={() => navigate("/clients/2/workspace")}>עבור ללקוח ב</button>
+    <button type="button" onClick={() => navigate("/clients/1/workspace?step=supplement")}>חזור לנתונים משלימים</button>
   </>;
 }
 
@@ -135,7 +136,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
     // A specialist return link uses the same workspace URL with a step query.
     // Navigation remains client-scoped and read-only.
-    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    fireEvent.click(screen.getByRole("button", { name: "חזור לנתונים משלימים" }));
     await screen.findByRole("heading", { name: "נתונים משלימים" });
     expect(updateClientCase).not.toHaveBeenCalled();
     expect(savePensionProduct).not.toHaveBeenCalled();

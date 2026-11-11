@@ -29,6 +29,15 @@
   padding: 9px 13px; border: 1px solid transparent; border-radius: 7px;
   color: #49647e; background: transparent; font-weight: 700;
 }
+.professional-workspace__steps a {
+  padding: 9px 13px; border: 1px solid transparent; border-radius: 7px;
+  color: #49647e; background: transparent; font-weight: 700;
+  text-decoration: none;
+}
+.professional-workspace__steps a:hover,
+.professional-workspace__steps a:focus-visible {
+  background: white; border-color: #d2e0f2;
+}
 .professional-workspace__steps button.is-active {
   background: white; color: #1654a0; border-color: #d2e0f2;
   box-shadow: 0 1px 4px #1a3b6118;

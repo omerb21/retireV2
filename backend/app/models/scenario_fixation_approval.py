@@ -17,7 +17,7 @@ class ScenarioFixationApprovalHead(Base):
     __table_args__ = (
         UniqueConstraint("client_id", "scenario_id", name="uq_fixation_approval_client_scenario"),
         CheckConstraint("current_version > 0", name="ck_fixation_approval_head_version"),
-        CheckConstraint("status IN ('DRAFT','BLOCKED')", name="ck_fixation_approval_head_status"),
+        CheckConstraint("status IN ('DRAFT','BLOCKED','APPROVED_INTERNAL')", name="ck_fixation_approval_head_status"),
     )
 
     approval_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -39,7 +39,7 @@ class ScenarioFixationApprovalRevision(Base):
         UniqueConstraint("approval_id", "approval_version", name="uq_fixation_approval_revision"),
         CheckConstraint("approval_version > 0", name="ck_fixation_approval_revision_version"),
         CheckConstraint("scenario_version > 0", name="ck_fixation_approval_revision_scenario_version"),
-        CheckConstraint("status IN ('DRAFT','BLOCKED')", name="ck_fixation_approval_revision_status"),
+        CheckConstraint("status IN ('DRAFT','BLOCKED','APPROVED_INTERNAL')", name="ck_fixation_approval_revision_status"),
     )
 
     revision_id: Mapped[str] = mapped_column(String(64), primary_key=True)

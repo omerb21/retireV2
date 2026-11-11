@@ -98,8 +98,12 @@ export interface ProfessionalReview {
   scenario_id: string;
   approval_id: string | null;
   approval_version: number;
-  record_status: "MISSING" | "DRAFT" | "BLOCKED";
-  validity_state: "BLOCKED" | "STALE";
+  record_status: "MISSING" | "DRAFT" | "BLOCKED" | "APPROVED_INTERNAL";
+  decision_state?: "MISSING" | "DRAFT" | "APPROVED_INTERNAL";
+  validity_state: "BLOCKED" | "STALE" | "CURRENT";
+  authority_scope?: "FIXATION_INTERNAL_REVIEW_ONLY";
+  internal_professional_authority?: boolean;
+  internal_decision?: InternalDecision | null;
   decisions: ProfessionalDecision[];
   admission_controls?: FixationAdmissionControls | null;
   actor_id: string | null;
@@ -112,7 +116,18 @@ export interface ProfessionalReview {
   execution_allowed: false;
   tax_authority_approval: null;
 }
+export interface InternalDecision {
+  authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY";
+  decision_reason: string;
+  review_reference: string;
+  attestations: string[];
+  preparation_fingerprint: string;
+  eligibility_fingerprint: string;
+  admission_review_fingerprint: string;
+}
 export interface ReviewHistoryItem {
+  decision_state?: "DRAFT" | "BLOCKED" | "APPROVED_INTERNAL";
+  internal_decision?: InternalDecision | null;
   revision_id: string;
   approval_version: number;
   scenario_version: number;
@@ -133,12 +148,48 @@ export interface ReviewSaveInput {
   decisions: ProfessionalDecision[];
   admission_controls: FixationAdmissionControls | null;
 }
+export type InternalAttestation =
+  | "ELIGIBILITY_EVIDENCE_EXAMINED"
+  | "OFFICIAL_PARAMETERS_EXAMINED"
+  | "PENSION_CLASSIFICATION_EXAMINED"
+  | "HISTORICAL_GRANTS_AND_CAPITALIZATIONS_EXAMINED"
+  | "ABSENCE_OF_OVERLAP_CONFIRMED"
+  | "LIMITED_INTERNAL_SCOPE_ACKNOWLEDGED";
+export interface ApprovalRequest {
+  expected_approval_version: number;
+  expected_approval_fingerprint: string;
+  expected_scenario_version: number;
+  expected_manifest_fingerprint: string;
+  expected_readiness_fingerprint: string;
+  expected_preparation_fingerprint: string;
+  expected_eligibility_fingerprint: string;
+  expected_admission_review_fingerprint: string;
+  decision: "APPROVE_INTERNAL";
+  decision_reason: string;
+  review_reference: string;
+  attestations: InternalAttestation[];
+}
 export interface ApprovalDenial {
   approval_attempt_state: "BLOCKED";
   blockers: string[];
   professional_authority: false;
   execution_allowed: false;
   tax_authority_approval: null;
+}
+export interface InternalApprovalSuccess {
+  approval_attempt_state: "APPROVED_INTERNAL";
+  decision_state: "APPROVED_INTERNAL";
+  validity_state: "CURRENT";
+  authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY";
+  client_id: number;
+  scenario_id: string;
+  approval_version: number;
+  decision_fingerprint: string;
+  internal_professional_authority: true;
+  professional_authority: false;
+  execution_allowed: false;
+  tax_authority_approval: null;
+  blockers: [];
 }
 
 export class ReviewApiError extends Error {
@@ -196,10 +247,9 @@ export const saveProfessionalReview = async (
 export const readProfessionalReviewHistory = (clientId: number, scenarioId: string) =>
   call<ReviewHistoryItem[]>(clientId, scenarioId, "/history");
 export const requestProfessionalApproval = (clientId: number, scenarioId: string,
-                                            version: number, fingerprint: string) =>
-  call<ApprovalDenial>(clientId, scenarioId, "/approve", "POST", {
-    expected_approval_version: version, expected_approval_fingerprint: fingerprint,
-  });
+                                            request: ApprovalRequest) =>
+  call<ApprovalDenial | InternalApprovalSuccess>(clientId, scenarioId,
+    "/approve", "POST", request);
 
 export async function readFixationAdmissionPreparation(clientId: number, scenarioId: string) {
   const url = buildApiUrl(

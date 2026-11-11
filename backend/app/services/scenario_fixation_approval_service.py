@@ -208,6 +208,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
             "validity_state": "BLOCKED",
             "decisions": [], "actor_id": None,
             "admission_controls": None, "occurred_at": None,
+            "verifiable_review_references": [],
             "approval_fingerprint": None, "dependency_fingerprint": None,
             "readiness_fingerprint_at_save": None,
             "current_readiness": current_snapshot,
@@ -221,6 +222,23 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
     selected_sources, review_blockers = _selected_sources(
         db, client_id, scenario_id, readiness, row.decisions_json["decisions"],
     )
+    # Only server-verified documentary references may be offered as a
+    # professional decision's review reference. Unverified free-text URIs
+    # cannot be submitted as evidence for a positive decision.
+    from app.models.m07_evidence import M07FactEvidence
+    eligibility_ids = [
+        d["source_id"] for d in row.decisions_json["decisions"]
+        if d["group"] == "eligibility" and d["determination"] == "PLANNER_ASSERTED"
+    ]
+    verified_references = []
+    if len(eligibility_ids) == 1:
+        verified_references = sorted({
+            ref for ref in db.scalars(select(M07FactEvidence.source_document_reference).where(
+                M07FactEvidence.client_id == client_id,
+                M07FactEvidence.m07_evidence_revision_id == eligibility_ids[0],
+                M07FactEvidence.verification_state == "verified",
+            )).all() if isinstance(ref, str) and ref.startswith("document://")
+        })
     current_dependency = _fingerprint({
         "manifest_fingerprint": readiness["manifest_fingerprint"],
         "readiness_fingerprint": readiness["readiness_fingerprint"],
@@ -272,6 +290,7 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
         "admission_controls": row.decisions_json.get("admission_controls"),
         "actor_id": row.actor_id, "occurred_at": row.occurred_at.isoformat(),
         "selected_source_evidence": selected_sources,
+        "verifiable_review_references": verified_references,
         "current_readiness": current_snapshot,
         "blockers": sorted(blockers),
         "professional_authority": False, "execution_allowed": False,

@@ -219,6 +219,16 @@ it("keeps the selected alternative when moving from planning to results", async 
   expect(await screen.findByRole("heading", { name: "alternative-b" })).toBeInTheDocument();
 });
 
+it("uses one workspace-selected scenario when the parent changes A to B", async () => {
+  mocks.list.mockResolvedValue([draft("alternative-a"), draft("alternative-b")]);
+  const props = { clientId: 1, products, view: "results" as const };
+  const view = render(<ScenarioDraftPanel {...props} preferredScenarioId="alternative-a" />);
+  expect(await screen.findByRole("heading", { name: "alternative-a" })).toBeInTheDocument();
+  view.rerender(<ScenarioDraftPanel {...props} preferredScenarioId="alternative-b" />);
+  expect(await screen.findByRole("heading", { name: "alternative-b" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "alternative-a" })).toBeNull();
+});
+
 it("never selects a stale alternative ID when the client changes", async () => {
   mocks.list.mockResolvedValue([{ ...draft("client-b-alternative"), client_id: 2 }]);
   render(<ScenarioDraftPanel clientId={2} products={products}

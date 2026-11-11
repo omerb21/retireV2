@@ -59,7 +59,7 @@ export function CreateClientScreen() {
         birth_date: null
       });
 
-      navigate(`/clients/${createdClient.client_id}`, {
+      navigate(`/clients/${createdClient.client_id}/workspace?step=client`, {
         state: { clientName: createdClient.full_name }
       });
     } catch (error) {

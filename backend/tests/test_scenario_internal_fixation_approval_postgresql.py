@@ -267,6 +267,23 @@ def test_14_immutable_revision_trigger_in_postgresql(pg16):
     seeded(factory)
     approve(factory, request(factory))
     schema = scoped.get_execution_options()["schema_translate_map"][None]
+    # The isolated pg16 fixture uses metadata.create_all, not Alembic.
+    # Install the immutable trigger with the same DDL as e53f1c0a7d23
+    # before asserting PostgreSQL-level rejection. The migration itself
+    # is validated separately from this focused behavioral test.
+    with scoped.begin() as conn:
+        conn.execute(text(f"""
+            CREATE FUNCTION "{schema}".prevent_scenario_fixation_approval_revision_mutation()
+            RETURNS trigger LANGUAGE plpgsql AS $
+            BEGIN
+                RAISE EXCEPTION 'fixation approval revisions are append-only';
+            END; $;
+        """))
+        conn.execute(text(f"""
+            CREATE TRIGGER trg_scenario_fixation_approval_revision_immutable
+            BEFORE UPDATE OR DELETE ON "{schema}".scenario_fixation_approval_revisions
+            FOR EACH ROW EXECUTE FUNCTION "{schema}".prevent_scenario_fixation_approval_revision_mutation()
+        """))
     with factory() as db:
         item = db.scalar(select(ScenarioFixationApprovalRevision).where(
             ScenarioFixationApprovalRevision.scenario_id == "a1",

@@ -206,6 +206,17 @@ def test_09_missing_attestation_or_untracked_reference_rejected(pg16):
         assert len(ledger.history(db, 7, "a1")) == 1
 
 
+def test_09b_unverified_document_reference_is_blocked_by_real_database(pg16):
+    factory, _ = pg16
+    seeded(factory)
+    result = approve(factory, request(factory,
+                                     review_reference="document://not-in-client-evidence"))
+    assert result["approval_attempt_state"] == "BLOCKED"
+    assert "FIXATION_INTERNAL_REVIEW_REFERENCE_NOT_VERIFIED" in result["blockers"]
+    with factory() as db:
+        assert len(ledger.history(db, 7, "a1")) == 1
+
+
 def test_10_undocumented_decision_fails_professional_gate(pg16):
     factory, _ = pg16
     seeded(factory)

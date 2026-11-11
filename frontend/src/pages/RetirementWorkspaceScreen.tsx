@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
+import { UnifiedClientIntake } from "../components/UnifiedClientIntake";
+import { WorkspaceClearinghouseImport } from "../components/WorkspaceClearinghouseImport";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
 import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
@@ -45,6 +47,7 @@ function uniqueProductSelection(items: Selection[]): string | null {
 
 export function RetirementWorkspaceScreen() {
   const { clientId: rawClientId } = useParams();
+  const location = useLocation();
   const clientId = rawClientId && /^[1-9][0-9]*$/.test(rawClientId) ? Number(rawClientId) : NaN;
   const validClient = Number.isSafeInteger(clientId);
   const activeClient = useRef(clientId);
@@ -52,7 +55,7 @@ export function RetirementWorkspaceScreen() {
   const grantSaveGeneration = useRef(0);
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
-  const [step, setStep] = useState<Step>("portfolio");
+  const [step, setStep] = useState<Step>(location.search === "?step=client" ? "client" : "portfolio");
   const [chosenComponent, setChosenComponent] = useState<{ productId: string; componentCode: string } | null>(null);
   const [scenarioChoice, setScenarioChoice] = useState<{ clientId: number; scenarioId: string } | null>(null);
   // Never reuse another client's scenario, including during A -> B async transitions.
@@ -90,7 +93,7 @@ export function RetirementWorkspaceScreen() {
     employmentSaveGeneration.current += 1;
     grantSaveGeneration.current += 1;
     setRead({ state: "loading" });
-    setStep("portfolio");
+    setStep(location.search === "?step=client" ? "client" : "portfolio");
     setChosenComponent(null);
     setScenarioChoice(null);
     setSupplement(null);
@@ -418,6 +421,29 @@ export function RetirementWorkspaceScreen() {
     }
   }
 
+  async function refreshCase() {
+    const captured = clientId;
+    const updated = await getClient(captured);
+    if (activeClient.current !== captured || updated.client_id !== captured) {
+      throw new Error("תשובת תיק הלקוח אינה תואמת ללקוח הנוכחי");
+    }
+    setRead(previous => previous.state === "ready" && previous.client.client_id === captured
+      ? { ...previous, client: updated } : previous);
+  }
+
+  async function refreshImportedProducts(_imported: PensionProduct[]) {
+    const captured = clientId;
+    const updated = await listPensionProducts(captured);
+    if (activeClient.current !== captured || updated.some(product => product.client_id !== captured)) {
+      throw new Error("תשובת מוצרי המסלקה אינה תואמת ללקוח הנוכחי");
+    }
+    setRead(previous => previous.state === "ready" && previous.client.client_id === captured
+      ? { ...previous, products: updated } : previous);
+    setSelection([]);
+    setDraft(null);
+    setChosenComponent(null);
+  }
+
   function switchStep(next: Step) {
     if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
@@ -544,8 +570,14 @@ export function RetirementWorkspaceScreen() {
         </dl>
         <div className="professional-workspace__actions">
           <button type="button" onClick={() => switchStep("portfolio")}>פתח את התיק הפנסיוני</button>
-          <Link to={"/clients/" + clientId}>פרטי תיק נוספים</Link>
+          <button type="button" onClick={() => switchStep("portfolio")}>המשך לנתוני המסלקה</button>
         </div>
+        <UnifiedClientIntake client={client} onUpdated={refreshCase}/>
+        <details className="professional-workspace__advanced">
+          <summary>מסמכים, אימות מקורות וניהול נתונים מתקדם</summary>
+          <p>פעולות מקצועיות נוספות שלא שולבו עדיין במסך המרכזי.</p>
+          <Link to={"/clients/" + clientId}>ניהול מסמכי לקוח וראיות</Link>
+        </details>
       </section>}
       {step === "portfolio" && <section aria-label="טבלת התיק הפנסיוני">
         <h1>התיק הפנסיוני</h1>
@@ -554,6 +586,7 @@ export function RetirementWorkspaceScreen() {
           <strong>מצב נתוני אמת.</strong> תיקון יתרה או סיווג משנה את הנתון העובד לאחר שמירה מפורשת.
           זו אינה המרה לקצבה או לנכס הון. בחירות תרחיש אינן מבוצעות כאן.
         </p>
+        <WorkspaceClearinghouseImport clientId={clientId} onImported={refreshImportedProducts}/>
         <div className="professional-workspace__toolbar">
           <label>חיפוש <input type="search" value={search} onChange={event => {
             setSearch(event.target.value); setSelection([]);
@@ -600,9 +633,14 @@ export function RetirementWorkspaceScreen() {
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={startCorrection}>תיקון יתרות נבחרות</button>
             <button type="button" disabled={selection.length !== 1 || draft !== null || saveState === "saving"} onClick={openSavedScenarioFromSelection}>העבר רכיב לחלופה שמורה</button>
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={() => setSelection([])}>בטל בחירה</button>
-            <Link to={"/clients/" + clientId + "/pension-products"}>ייבוא מסלקה ופרטי מוצר מורחבים</Link>
+
           </div>
         </section>
+        <details className="professional-workspace__advanced">
+          <summary>פרטי מוצר מתקדמים ונתוני מקור</summary>
+          <p>עריכת שדות מקור, היסטוריית המרות ואבחון חריגות. לא נדרש לעבודה השוטפת בטבלת צבעי הכסף.</p>
+          <Link to={"/clients/" + clientId + "/pension-products"}>פתיחת כלי אבחון ועריכה מתקדמים</Link>
+        </details>
         {draft && <form className="professional-workspace__editor" onSubmit={event => void saveCorrection(event)}>
           <h2>תיקון נתוני אמת — {products.find(p => p.product_id === draft.productId)?.product_name}</h2>
           <p>רק רכיבים שנבחרו פתוחים לעריכה. רכיבים אחרים יישמרו ללא שינוי.</p>

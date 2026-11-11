@@ -4,10 +4,7 @@ import { AppRoutes } from "./routes/AppRoutes";
 import { AuthenticationGate } from "./components/AuthenticationGate";
 
 const navLinks = [
-  { path: "/clients", label: "לקוחות" },
-  { path: "/fixation/input", label: "נתוני קיבוע זכויות" },
-  { path: "/fixation/result", label: "תוצאת חישוב" },
-  { path: "/fixation/history", label: "היסטוריית חישובים" }
+  { path: "/clients", label: "לקוחות" }
 ];
 
 function AppFrame() {

@@ -459,6 +459,12 @@ _INTERNAL_READINESS_NOT_EXECUTION = frozenset({
     "FIXATION_QUALIFYING_PENSION_CLASSIFICATION_MISSING",
     "FIXATION_PLANNED_CAPITAL_TAX_TREATMENT_MISSING",
     "FIXATION_TAX_AUTHORITY_APPROVAL_NOT_ESTABLISHED",
+    # Factual readiness remains non-authoritative by design. Fresh successful
+    # Preparation, Eligibility and Admission Review are required separately
+    # before this limited internal-only decision can be recorded.
+    "FIXATION_SCENARIO_ADMISSION_MISSING",
+    # No internal decision confers tax-authority approval or execution access.
+    "FIXATION_OFFICIAL_APPROVAL_NOT_ESTABLISHED",
 })
 _REQUIRED_INTERNAL_ATTESTATIONS = frozenset({
     "ELIGIBILITY_EVIDENCE_EXAMINED",

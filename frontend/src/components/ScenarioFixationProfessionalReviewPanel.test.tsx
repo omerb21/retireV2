@@ -67,6 +67,7 @@ function snapshot(scenario = "A", version = 0, choices: ProfessionalReview["deci
     approval_version: version, record_status: version ? "DRAFT" : "MISSING",
     validity_state: "BLOCKED", decisions: choices,
     admission_controls: null,
+    verifiable_review_references: ["document://eligibility-7"],
     actor_id: version ? "planner" : null, approval_fingerprint: version ? "a".repeat(64) : null,
     dependency_fingerprint: version ? "b".repeat(64) : null,
     readiness_fingerprint_at_save: version ? "c".repeat(64) : null,
@@ -850,7 +851,7 @@ it("records explicit human attestation with full CAS and scope without authorizi
     target: { value: "I checked the eligibility evidence, scope and supporting documentation." },
   });
   fireEvent.change(within(section).getByLabelText(/אסמכתת בדיקה מקצועית/), {
-    target: { value: "document://professional/review-A" },
+    target: { value: "document://eligibility-7" },
   });
   within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
   const approveButton = within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ });
@@ -869,7 +870,7 @@ it("records explicit human attestation with full CAS and scope without authorizi
     expected_preparation_fingerprint: "f".repeat(64),
     expected_eligibility_fingerprint: "e".repeat(64),
     expected_admission_review_fingerprint: "a".repeat(64),
-    review_reference: "document://professional/review-A",
+    review_reference: "document://eligibility-7",
   });
   expect(payload.attestations).toHaveLength(6);
   await waitFor(() => expect(section.textContent).toContain("CURRENT"));
@@ -899,7 +900,7 @@ it("never shows a late internal approval of scenario A after switching to B", as
     target: { value: "This is a documented professional analysis of the current scenario." },
   });
   fireEvent.change(within(section).getByLabelText(/אסמכתת בדיקה מקצועית/), {
-    target: { value: "document://professional/review-A" },
+    target: { value: "document://eligibility-7" },
   });
   within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
   fireEvent.click(within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ }));

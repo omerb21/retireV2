@@ -91,9 +91,16 @@ def test_01_admission_alone_is_not_professional_authority(pg16):
     assert state["execution_allowed"] is False
 
 
-def test_02_explicit_authenticated_approval_and_audit(pg16):
+def test_02_explicit_authenticated_approval_and_audit(pg16, monkeypatch):
     factory, _ = pg16
     seeded(factory)
+    from app.engines import fixation_engine
+    from app.services import fixation_service, cbs_indexation_adapter
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("INTERNAL_APPROVAL_MUST_NOT_EXECUTE_TAX_OR_CBS")
+    monkeypatch.setattr(fixation_engine, "calculate_fixation", forbidden)
+    monkeypatch.setattr(fixation_service, "calculate_fixation_payload", forbidden)
+    monkeypatch.setattr(cbs_indexation_adapter, "calculate_cbs_indexation", forbidden)
     result = approve(factory, request(factory))
     assert result["approval_attempt_state"] == "APPROVED_INTERNAL"
     assert result["authority_scope"] == "FIXATION_INTERNAL_REVIEW_ONLY"

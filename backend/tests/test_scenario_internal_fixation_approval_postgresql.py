@@ -22,6 +22,8 @@ from app.services import scenario_fixation_approval_service as ledger
 from app.services import scenario_fixation_admission_eligibility_service as eligibility
 from app.services import scenario_fixation_admission_review_service as admission
 from app.services.scenario_draft_service import DraftError
+# Re-export the original base fixture for this narrowly collected pytest module.
+from tests.test_scenario_unified_result_real_postgresql import pg16 as pg16_base
 from tests.test_scenario_unified_engine_binding_postgresql import (
     pg16, _prepared_fixation_sources, _prepared_review,
 )

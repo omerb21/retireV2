@@ -8,6 +8,8 @@ from sqlalchemy.exc import DBAPIError
 
 from app.models.pension_product import PensionProductComponent
 from app.services import scenario_fixation_approval_service as ledger
+# Re-export the original base fixture for this narrowly collected pytest module.
+from tests.test_scenario_unified_result_real_postgresql import pg16 as pg16_base
 from tests.test_scenario_internal_fixation_approval_postgresql import pg16, seeded, request
 
 

@@ -24,12 +24,16 @@ function caseDraft(client: ClientDetailItem): M01CaseUpdatePayload {
 
 export function UnifiedClientIntake({ client, onUpdated }: Props) {
   const [draft, setDraft] = useState(() => caseDraft(client));
+  const [retirementMode, setRetirementMode] = useState<"" | "age" | "date">(() => client.m01_case?.planned_retirement_date ? "date" : client.m01_case?.planned_retirement_age != null ? "age" : "");
   const [contact, setContact] = useState<ClientProfileUpdatePayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [contactError, setContactError] = useState("");
 
-  useEffect(() => { setDraft(caseDraft(client)); }, [client.client_id, client.m01_case?.updated_at]);
+  useEffect(() => {
+    setDraft(caseDraft(client));
+    setRetirementMode(client.m01_case?.planned_retirement_date ? "date" : client.m01_case?.planned_retirement_age != null ? "age" : "");
+  }, [client.client_id, client.m01_case?.updated_at]);
   useEffect(() => {
     let active = true;
     setContact(null);
@@ -84,17 +88,19 @@ export function UnifiedClientIntake({ client, onUpdated }: Props) {
         <label>שם מלא<input required value={draft.display_name} onChange={e => setDraft({ ...draft, display_name: e.target.value })}/></label>
         <label>מספר זהות<input required value={draft.id_number} onChange={e => setDraft({ ...draft, id_number: e.target.value })}/></label>
         <label>תאריך לידה<input type="date" value={draft.birth_date || ""} onChange={e => setDraft({ ...draft, birth_date: e.target.value || null })}/></label>
-        <label>מגדר<select value={draft.gender || ""} onChange={e => setDraft({ ...draft, gender: e.target.value || null })}>
-          <option value="">לא תועד</option><option value="male">זכר</option><option value="female">נקבה</option><option value="other">אחר</option>
-        </select></label>
+        <label>מגדר<input value={draft.gender || ""} onChange={e => setDraft({ ...draft, gender: e.target.value || null })} placeholder="זכר / נקבה"/></label>
         <label>מצב תעסוקה<select value={draft.employment_status || ""} onChange={e => setDraft({ ...draft, employment_status: (e.target.value || null) as M01EmploymentStatus | null })}>
           <option value="">לא תועד</option>{employmentOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
-        <label>תכנון מועד הפרישה<select value={draft.planned_retirement_date ? "date" : draft.planned_retirement_age != null ? "age" : ""} onChange={e => setDraft({ ...draft, planned_retirement_age: e.target.value === "age" ? 67 : null, planned_retirement_date: e.target.value === "date" ? new Date().toISOString().slice(0, 10) : null })}>
+        <label>תכנון מועד הפרישה<select value={retirementMode} onChange={e => {
+          const mode = e.target.value as "" | "age" | "date";
+          setRetirementMode(mode);
+          setDraft({ ...draft, planned_retirement_age: mode === "age" ? draft.planned_retirement_age : null, planned_retirement_date: mode === "date" ? draft.planned_retirement_date : null });
+        }}>
           <option value="">טרם נקבע</option><option value="age">לפי גיל</option><option value="date">לפי תאריך</option>
         </select></label>
-        {draft.planned_retirement_age != null && <label>גיל פרישה מתוכנן<input type="number" min={18} max={120} value={draft.planned_retirement_age} onChange={e => setDraft({ ...draft, planned_retirement_age: e.target.value ? Number(e.target.value) : null })}/></label>}
-        {draft.planned_retirement_date && <label>תאריך פרישה מתוכנן<input type="date" value={draft.planned_retirement_date} onChange={e => setDraft({ ...draft, planned_retirement_date: e.target.value || null })}/></label>}
+        {retirementMode === "age" && <label>גיל פרישה מתוכנן<input type="number" min={18} max={120} value={draft.planned_retirement_age ?? ""} onChange={e => setDraft({ ...draft, planned_retirement_age: e.target.value ? Number(e.target.value) : null })}/></label>}
+        {retirementMode === "date" && <label>תאריך פרישה מתוכנן<input type="date" value={draft.planned_retirement_date ?? ""} onChange={e => setDraft({ ...draft, planned_retirement_date: e.target.value || null })}/></label>}
       </div>
       <div className="professional-workspace__actions"><button type="submit" disabled={busy}>{busy ? "שומר..." : "שמירת פרטי תיק"}</button></div>
     </form>

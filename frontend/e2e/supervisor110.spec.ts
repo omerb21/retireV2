@@ -87,7 +87,7 @@ test("supervisor 110: explicit A approval, immutable history, B isolation, reloa
     await expect(decision.getByText(/APPROVED_INTERNAL/)).toBeVisible();
     await expect(decision.getByText(/CURRENT/)).toBeVisible();
     await expect(decision.getByText(REASON, { exact: false })).toBeVisible();
-    await expect(decision.getByText(REFERENCE, { exact: false })).toBeVisible();
+    await expect(decision.getByText(`אסמכתת בדיקה: ${REFERENCE}`, { exact: true })).toBeVisible();
     await page.screenshot({ path: info.outputPath("01-approved-a.png"), fullPage: true });
 
     await panel.getByRole("button", { name: "הצג היסטוריית גרסאות" }).click();

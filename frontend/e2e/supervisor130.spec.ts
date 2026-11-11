@@ -72,11 +72,23 @@ test("supervisor 130: create client, import synthetic source, five steps, return
 
     await page.getByRole("button", { name: /4\. תכנון תרחישים/ }).click();
     await expect(page.getByRole("heading", { name: "תכנון תרחישים" })).toBeVisible();
+    const scenarioName = "חלופה סינתטית 130";
+    await page.getByRole("textbox", { name: "שם חלופה חדשה" }).fill(scenarioName);
+    const savedScenario = page.waitForResponse(r => r.request().method() === "POST"
+      && new URL(r.url()).pathname === `/api/clients/${id}/scenario-drafts`);
+    await page.getByRole("button", { name: "צור ושמור חלופה" }).click();
+    const scenarioResponse = await savedScenario;
+    expect(scenarioResponse.status(), await scenarioResponse.text()).toBe(200);
+    await expect(page.getByRole("group", { name: "בחירת חלופה" }).getByRole("button", { name: scenarioName })).toBeVisible();
     await screenshot(4, "scenario");
 
     await page.getByRole("button", { name: /5\. תוצאות והשוואה/ }).click();
     await expect(page.getByRole("heading", { name: "תוצאות והשוואה" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: scenarioName })).toBeVisible();
     await screenshot(5, "results");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /5\. תוצאות והשוואה/ }).click();
+    await expect(page.getByRole("heading", { name: scenarioName })).toBeVisible();
 
     // Specialist page is still inside the same client's workspace frame.
     await page.goto(ROOT + `/clients/${id}/pension-products`, { waitUntil: "domcontentloaded" });

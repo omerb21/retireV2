@@ -29,7 +29,7 @@ export function ScenarioDraftPanel({
   preferredScenarioId = null, onScenarioSelected,
 }: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [localSelected, setLocalSelected] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [rename, setRename] = useState("");
   const [editingDecisionId, setEditingDecisionId] = useState<string | null>(null);
@@ -50,9 +50,13 @@ export function ScenarioDraftPanel({
   const stage6CapabilityEpoch = useRef(0);
   // Client-scoped drafts remain isolated during an A/B transition.
   const visibleDrafts = drafts.filter(item => item.client_id === clientId);
+  // When a workspace owner supplies a selected scenario, both planning and
+  // results render that same identity. Standalone legacy usage still works.
+  const selected = preferredScenarioId && visibleDrafts.some(item => item.scenario_id === preferredScenarioId)
+    ? preferredScenarioId : localSelected;
   const active = visibleDrafts.find(item => item.scenario_id === selected) ?? null;
   function selectScenario(id: string) {
-    setSelected(id);
+    setLocalSelected(id);
     onScenarioSelected?.(id);
     setEditingDecisionId(null);
     setAmount("");
@@ -62,7 +66,7 @@ export function ScenarioDraftPanel({
     const list = await listScenarioDrafts(clientId);
     if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
     setDrafts(list);
-    setSelected(current => prefer ?? (list.some(item => item.scenario_id === current) ? current : list[0]?.scenario_id ?? null));
+    setLocalSelected(current => prefer ?? (list.some(item => item.scenario_id === current) ? current : list[0]?.scenario_id ?? null));
     if (prefer && list.some(item => item.scenario_id === prefer)) onScenarioSelected?.(prefer);
   }
   useEffect(() => {
@@ -75,7 +79,7 @@ export function ScenarioDraftPanel({
       if (!mounted) return;
       if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
       setDrafts(list);
-      setSelected(list.some(item => item.scenario_id === preferredScenarioId)
+      setLocalSelected(list.some(item => item.scenario_id === preferredScenarioId)
         ? preferredScenarioId : list[0]?.scenario_id ?? null);
     }).catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });

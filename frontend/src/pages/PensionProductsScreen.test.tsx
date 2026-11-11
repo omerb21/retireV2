@@ -164,9 +164,8 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     expect(screen.getByRole("region", { name: "עריכת תכנית א" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "עריכת תכנית ב" })).toBeNull();
     finish({ batch_identity: "batch", file_count: 2, product_count: 1, products: [{ ...product(), product_name: "תכנית ב" }], diagnostics: [] });
-    expect(await screen.findByRole("button", { name: "פרטי מוצר: תכנית ב" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "עריכת תכנית ב" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "עריכת תכנית א" })).toBeNull();
-    expect(await openEditor("תכנית ב")).toBeInTheDocument();
     expect(api.listPensionProducts).toHaveBeenCalledTimes(1);
   });
 

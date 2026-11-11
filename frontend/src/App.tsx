@@ -2,6 +2,7 @@ import { NavLink, useLocation } from "react-router-dom";
 
 import { AppRoutes } from "./routes/AppRoutes";
 import { AuthenticationGate } from "./components/AuthenticationGate";
+import "./pages/RetirementWorkspaceScreen.css";
 
 const navLinks = [
   { path: "/clients", label: "לקוחות" }

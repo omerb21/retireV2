@@ -45,6 +45,12 @@ function uniqueProductSelection(items: Selection[]): string | null {
     ? items[0].productId : null;
 }
 
+const WORKSPACE_STEPS: readonly Step[] = ["client", "portfolio", "supplement", "scenario", "results"];
+function workspaceStep(search: string): Step {
+  const requested = new URLSearchParams(search).get("step");
+  return WORKSPACE_STEPS.find(step => step === requested) ?? "portfolio";
+}
+
 export function RetirementWorkspaceScreen() {
   const { clientId: rawClientId } = useParams();
   const location = useLocation();
@@ -55,7 +61,7 @@ export function RetirementWorkspaceScreen() {
   const grantSaveGeneration = useRef(0);
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
-  const [step, setStep] = useState<Step>(location.search === "?step=client" ? "client" : "portfolio");
+  const [step, setStep] = useState<Step>(() => workspaceStep(location.search));
   const [chosenComponent, setChosenComponent] = useState<{ productId: string; componentCode: string } | null>(null);
   const [scenarioChoice, setScenarioChoice] = useState<{ clientId: number; scenarioId: string } | null>(null);
   // Never reuse another client's scenario, including during A -> B async transitions.
@@ -93,7 +99,7 @@ export function RetirementWorkspaceScreen() {
     employmentSaveGeneration.current += 1;
     grantSaveGeneration.current += 1;
     setRead({ state: "loading" });
-    setStep(location.search === "?step=client" ? "client" : "portfolio");
+    setStep(workspaceStep(location.search));
     setChosenComponent(null);
     setScenarioChoice(null);
     setSupplement(null);
@@ -443,6 +449,19 @@ export function RetirementWorkspaceScreen() {
     setDraft(null);
     setChosenComponent(null);
   }
+
+  // Handles return links from specialist tools without remounting the client.
+  // Never discard an unsaved draft on a query-only navigation.
+  useEffect(() => {
+    const next = new URLSearchParams(location.search).get("step");
+    if (!next || !WORKSPACE_STEPS.some(item => item === next)) return;
+    if (draft !== null || saveState === "saving" || employmentEdit !== null
+        || employmentSaving || grantEdit !== null || grantSaving) {
+      setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
+      return;
+    }
+    setStep(next as Step);
+  }, [location.search, clientId]);
 
   function switchStep(next: Step) {
     if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving) {

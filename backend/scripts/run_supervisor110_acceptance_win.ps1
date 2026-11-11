@@ -1,8 +1,13 @@
 # RETIRE V2 Supervisor 110 - Windows localhost fixation admission controls acceptance.
 # One command from the existing worktree:
-# powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\scripts\run_supervisor110_acceptance_win.ps1
+# powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\scripts\run_supervisor110_acceptance_win.ps1 -ExpectedHead <40-character-commit-SHA>
 # Docker Desktop Linux engine, existing backend venv, Node/npm required.
 # Reuses the previously accepted Supervisor 41 synthetic seed; no remote app or database access.
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern("^[0-9a-fA-F]{40}$")]
+    [string]$ExpectedHead
+)
 $ErrorActionPreference = "Stop"
 $backend = Split-Path -Parent $PSScriptRoot
 $root = Split-Path -Parent $backend
@@ -17,7 +22,6 @@ $frontendProcess = $null
 $passed = $false
 $stages = [ordered]@{ PostgreSQL='NOT_RUN'; Frontend='NOT_RUN'; TypeScript='NOT_RUN'; Chromium='NOT_RUN' }
 $counts = [ordered]@{}
-$expectedBranch = 'feature/neon-stage6-db-reconnect-20261105'
 $cleanupOk = $true
 $saved = @{}
 $variables = @("DATABASE_URL", "SCENARIO_TEST_POSTGRES_URL", "APP_ENV", "STAGE6_PREVIEW_ENABLED", "RECOVERY_POSTGRES_TEST", "VITE_API_BASE_URL", "PLAYWRIGHT_JSON_OUTPUT_FILE", "CRTISBA_APPLICATION_DB_ROLE")
@@ -55,9 +59,15 @@ try {
         $head = (& git rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR110_NOT_GIT_WORKTREE" }
     } finally { Pop-Location }
-    if ((& git branch --show-current).Trim() -cne $expectedBranch) { throw "SUPERVISOR110_WRONG_BRANCH" }
-    if ((& git status --porcelain)) { throw "SUPERVISOR110_WORKTREE_NOT_CLEAN" }
-    Set-Content (Join-Path $report "head.txt") "HEAD=$head"
+    # Commit identity is authoritative. Detached HEAD is deliberately supported.
+    # Use explicit -C so invocation does not depend on the caller's directory.
+    if ($head -cne $ExpectedHead.ToLowerInvariant()) {
+        throw "SUPERVISOR110_HEAD_MISMATCH:expected=$ExpectedHead;actual=$head"
+    }
+    $dirty = & git -C $root status --porcelain --untracked-files=all
+    if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR110_GIT_STATUS_FAILED" }
+    if ($dirty) { throw "SUPERVISOR110_WORKTREE_NOT_CLEAN" }
+    Set-Content (Join-Path $report "head.txt") @("HEAD=$head", "EXPECTED_HEAD=$ExpectedHead")
     foreach ($port in @(8001, 5174)) { Assert-FreeLocalPort $port }
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "Docker Desktop missing" }
     Invoke-Checked "docker" @("info", "--format", "{{.ServerVersion}}")

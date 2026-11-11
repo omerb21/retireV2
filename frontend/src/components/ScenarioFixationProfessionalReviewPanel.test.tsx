@@ -109,8 +109,9 @@ it("loads the selected scenario, factual sources, blocked readiness and no appro
   mocks.read.mockResolvedValue(snapshot());
   display();
   expect(await screen.findByText(/טרם נשמרו הכרעות/)).toBeTruthy();
-  expect(screen.getByText(/אישור מקצועי פנימי חסום/)).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /אשר קיבוע/ })).toBeNull();
+  expect(screen.getByText(/מוכנות לחישוב:/).textContent).toContain("חסומה");
+  const internalApproval = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
+  expect(within(internalApproval).getByRole("button", { name: /אשר מקצועית את החלופה/ }).hasAttribute("disabled")).toBe(true);
   expect(mocks.approve).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText("נתוני מקור ומוכנות לחישוב"));
   expect(screen.getByText(/מענקים: 1/)).toBeTruthy();
@@ -214,8 +215,10 @@ it("preserves form inputs and displays backend 422 blockers", async () => {
   fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.getByText(/לא אושר/)).toBeTruthy();
-  fireEvent.click(screen.getByText(/חסמים מקצועיים/));
-  expect(screen.getByText(/לא אומתה זכאות לקיבוע/)).toBeTruthy();
+  const blockerDetails = screen.getByText(/חסמים מקצועיים \(/).closest("details");
+  expect(blockerDetails).not.toBeNull();
+  fireEvent.click(within(blockerDetails!).getByText(/חסמים מקצועיים/));
+  expect(within(blockerDetails!).getByText(/לא אומתה זכאות לקיבוע/)).toBeTruthy();
 });
 
 it("shows stale source and blocks writes to archived scenarios", async () => {
@@ -850,7 +853,7 @@ it("records explicit human attestation with full CAS and scope without authorizi
   fireEvent.change(within(section).getByLabelText(/נימוק החלטה מקצועית/), {
     target: { value: "I checked the eligibility evidence, scope and supporting documentation." },
   });
-  fireEvent.change(within(section).getByLabelText(/אסמכתת בדיקה מקצועית/), {
+  fireEvent.change(within(section).getByLabelText(/אסמכתת מקור מאומתת שנבדקה/), {
     target: { value: "document://eligibility-7" },
   });
   within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
@@ -899,7 +902,7 @@ it("never shows a late internal approval of scenario A after switching to B", as
   fireEvent.change(within(section).getByLabelText(/נימוק החלטה מקצועית/), {
     target: { value: "This is a documented professional analysis of the current scenario." },
   });
-  fireEvent.change(within(section).getByLabelText(/אסמכתת בדיקה מקצועית/), {
+  fireEvent.change(within(section).getByLabelText(/אסמכתת מקור מאומתת שנבדקה/), {
     target: { value: "document://eligibility-7" },
   });
   within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));

@@ -552,3 +552,45 @@
   box-sizing: border-box; width: 100%; min-width: 118px;
   padding: 6px; min-height: 38px; max-width: unset !important;
 }
+
+
+/* Unified case intake and clearinghouse import share the canonical workspace design. */
+.professional-workspace__intake,
+.professional-workspace__import {
+  border: 1px solid #d6e4f3; border-radius: 11px;
+  background: #f8fbff; padding: 17px; margin: 18px 0;
+}
+.professional-workspace__import form {
+  display: flex; flex-wrap: wrap; align-items: end;
+  gap: 12px; padding-top: 6px;
+}
+.professional-workspace__import form label { display: flex; flex-direction: column; gap: 8px; font-weight: 700; }
+.professional-workspace__import input[type="file"] {
+  max-width: min(100%, 450px); border: 1px solid #c7d8eb;
+  padding: 8px; border-radius: 7px; background: white;
+}
+.professional-workspace__import form button,
+.professional-workspace__intake button,
+.professional-workspace__advanced button {
+  background: #1660b8; border: 1px solid #1660b8; color: white;
+  border-radius: 7px; padding: 9px 14px; font-weight: 700;
+}
+.professional-workspace__import form button:disabled { opacity: .45; }
+.professional-workspace__intake select,
+.professional-workspace__intake textarea,
+.professional-workspace__advanced select,
+.professional-workspace__advanced textarea,
+.professional-workspace__advanced input {
+  min-height: 39px; border: 1px solid #aac8e7;
+  border-radius: 7px; background: white; padding: 8px;
+}
+.professional-workspace__advanced {
+  border: 1px solid #d7e4f0; border-radius: 9px;
+  background: #fbfdff; padding: 12px 15px; margin-top: 20px;
+  font-size: 13px;
+}
+.professional-workspace__advanced summary {
+  cursor: pointer; color: #275a8c; font-weight: 700;
+}
+.professional-workspace__advanced a { color: #19549b; }
+.professional-workspace__advanced form { padding-top: 15px; }

@@ -27,6 +27,15 @@ def _constraint(conn, schema, table, name):
     """), {"schema": schema, "table": table, "name": name}).scalar_one()
 
 
+def _status_length(conn, schema, table):
+    return conn.execute(text("""
+        SELECT character_maximum_length
+        FROM information_schema.columns
+        WHERE table_schema = :schema AND table_name = :table
+          AND column_name = 'status'
+    """), {"schema": schema, "table": table}).scalar_one()
+
+
 def test_existing_draft_preserved_by_internal_approval_status_migration(pg16):
     factory, scoped = pg16
     _prepared_fixation_sources(factory)
@@ -46,9 +55,14 @@ def test_existing_draft_preserved_by_internal_approval_status_migration(pg16):
     with scoped.begin() as conn:
         conn.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
         # Simulate the existing DRAFT/BLOCKED constraint before running the
-        # new migration against preexisting revision rows.
+        # new migration against preexisting revision rows, including the
+        # original VARCHAR(16) status columns.
         for table, name in names:
             conn.execute(text(f'ALTER TABLE "{schema}".{table} DROP CONSTRAINT {name}'))
+            conn.execute(text(
+                f'ALTER TABLE "{schema}".{table} '
+                'ALTER COLUMN status TYPE VARCHAR(16)'
+            ))
             conn.execute(text(
                 f'ALTER TABLE "{schema}".{table} ADD CONSTRAINT {name} '
                 "CHECK (status IN ('DRAFT','BLOCKED'))"
@@ -63,6 +77,7 @@ def test_existing_draft_preserved_by_internal_approval_status_migration(pg16):
             definition = _constraint(conn, schema, table, name)
             assert "APPROVED_INTERNAL" in definition
             assert "DRAFT" in definition
+            assert _status_length(conn, schema, table) == 32
         row = conn.execute(text(
             f'SELECT status, approval_version FROM "{schema}".scenario_fixation_approval_revisions '
             "WHERE scenario_id = 'a1'"

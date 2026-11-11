@@ -465,6 +465,10 @@ _INTERNAL_READINESS_NOT_EXECUTION = frozenset({
     "FIXATION_SCENARIO_ADMISSION_MISSING",
     # No internal decision confers tax-authority approval or execution access.
     "FIXATION_OFFICIAL_APPROVAL_NOT_ESTABLISHED",
+    # The factual-evidence projection deliberately has no complete tax base.
+    # Internal review records a bounded professional decision only; it never
+    # authorizes or executes the downstream tax calculation that needs it.
+    "SCENARIO_TAX_BASE_NOT_COMPLETE",
 })
 _REQUIRED_INTERNAL_ATTESTATIONS = frozenset({
     "ELIGIBILITY_EVIDENCE_EXAMINED",

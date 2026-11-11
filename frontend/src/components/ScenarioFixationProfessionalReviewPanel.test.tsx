@@ -806,3 +806,113 @@ it("hides an earlier admitted result when reloaded professional evidence is STAL
   expect(button.hasAttribute("disabled")).toBe(true);
   expect(mocks.admissionReview).toHaveBeenCalledTimes(1);
 });
+
+
+it("keeps internal approval disabled until explicit Admission and professional attestations", async () => {
+  readyMocks();
+  mocks.read.mockResolvedValue(snapshot("A", 1));
+  display();
+  const section = await screen.findByRole("region", { name: "החלטת אישור מקצועית פנימית" });
+  const button = within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ });
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(mocks.approve).not.toHaveBeenCalled();
+  mocks.admissionReview.mockResolvedValue(admitted());
+  fireEvent.click(screen.getByRole("button", { name: "בדוק קבילות קלט" }));
+  await waitFor(() => expect(screen.getByText(/הקלט עבר את בדיקת הקבילות/)).toBeTruthy());
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(mocks.approve).not.toHaveBeenCalled();
+});
+
+it("records explicit human attestation with full CAS and scope without authorizing execution", async () => {
+  readyMocks();
+  mocks.read.mockResolvedValueOnce(snapshot("A", 1)).mockResolvedValueOnce({
+    ...snapshot("A", 2), record_status: "APPROVED_INTERNAL",
+    decision_state: "APPROVED_INTERNAL", validity_state: "CURRENT",
+    internal_professional_authority: true,
+  });
+  mocks.admissionReview.mockResolvedValue(admitted());
+  mocks.approve.mockResolvedValue({
+    approval_attempt_state: "APPROVED_INTERNAL",
+    client_id: 7, scenario_id: "A", approval_version: 2,
+    decision_fingerprint: "b".repeat(64),
+    authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY",
+    internal_professional_authority: true,
+    professional_authority: false, execution_allowed: false,
+    tax_authority_approval: null, blockers: [],
+  });
+  display();
+  const admissionButton = await screen.findByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(admissionButton.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(admissionButton);
+  await screen.findByText(/הקלט עבר את בדיקת הקבילות/);
+  const section = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
+  fireEvent.change(within(section).getByLabelText(/נימוק החלטה מקצועית/), {
+    target: { value: "I checked the eligibility evidence, scope and supporting documentation." },
+  });
+  fireEvent.change(within(section).getByLabelText(/אסמכתת בדיקה מקצועית/), {
+    target: { value: "document://professional/review-A" },
+  });
+  within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
+  const approveButton = within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ });
+  await waitFor(() => expect(approveButton.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(approveButton);
+  await waitFor(() => expect(mocks.approve).toHaveBeenCalledTimes(1));
+  const [client, scenario, payload] = mocks.approve.mock.calls[0];
+  expect([client, scenario]).toEqual([7, "A"]);
+  expect(payload).toMatchObject({
+    decision: "APPROVE_INTERNAL",
+    expected_approval_version: 1,
+    expected_approval_fingerprint: "a".repeat(64),
+    expected_scenario_version: 3,
+    expected_manifest_fingerprint: "d".repeat(64),
+    expected_readiness_fingerprint: "e".repeat(64),
+    expected_preparation_fingerprint: "f".repeat(64),
+    expected_eligibility_fingerprint: "e".repeat(64),
+    expected_admission_review_fingerprint: "a".repeat(64),
+    review_reference: "document://professional/review-A",
+  });
+  expect(payload.attestations).toHaveLength(6);
+  await waitFor(() => expect(section.textContent).toContain("CURRENT"));
+  expect(section.textContent).toContain("אין הרשאת חישוב");
+});
+
+it("never shows a late internal approval of scenario A after switching to B", async () => {
+  mocks.read.mockImplementation(async (_client: number, id: string) =>
+    snapshot(id, id === "A" ? 1 : 0));
+  mocks.preparation.mockImplementation(async (_client: number, id: string) =>
+    prepareState("PREPARED", id));
+  mocks.eligibility.mockImplementation(async (_client: number, id: string) =>
+    reviewReady(id));
+  mocks.admissionReview.mockResolvedValue(admitted());
+  const late = deferred<{
+    approval_attempt_state: string; client_id: number; scenario_id: string;
+    execution_allowed: boolean; tax_authority_approval: null; authority_scope: string;
+  }>();
+  mocks.approve.mockReturnValue(late.promise);
+  const view = display();
+  const admissionButton = await screen.findByRole("button", { name: "בדוק קבילות קלט" });
+  await waitFor(() => expect(admissionButton.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(admissionButton);
+  await screen.findByText(/הקלט עבר את בדיקת הקבילות/);
+  const section = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
+  fireEvent.change(within(section).getByLabelText(/נימוק החלטה מקצועית/), {
+    target: { value: "This is a documented professional analysis of the current scenario." },
+  });
+  fireEvent.change(within(section).getByLabelText(/אסמכתת בדיקה מקצועית/), {
+    target: { value: "document://professional/review-A" },
+  });
+  within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
+  fireEvent.click(within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ }));
+  await waitFor(() => expect(mocks.approve).toHaveBeenCalledTimes(1));
+  view.rerender(<ScenarioFixationProfessionalReviewPanel key="internal-B"
+    clientId={7} scenario={{ ...draft, scenario_id: "B" }}/>);
+  late.resolve({
+    approval_attempt_state: "APPROVED_INTERNAL", client_id: 7, scenario_id: "A",
+    execution_allowed: false, tax_authority_approval: null,
+    authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY",
+  });
+  await waitFor(() => expect(mocks.read).toHaveBeenCalledWith(7, "B"));
+  const other = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
+  expect(other.textContent).not.toContain("CURRENT");
+  expect(other.textContent).not.toContain("אישור מקצועי פנימי בתוקף");
+});

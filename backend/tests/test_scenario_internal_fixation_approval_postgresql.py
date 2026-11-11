@@ -82,6 +82,36 @@ def approve(factory, payload, actor="trusted-planner"):
         return result
 
 
+
+def test_supervisor116_diagnostic_baseline_professional_blockers(pg16, capsys):
+    """Focused real-PG16 gate regression with exact blockers on failure.
+
+    This checks existing professional gates, not downstream execution authority.
+    It does not add synthetic evidence or change the approval expectation.
+    """
+    from app.services import scenario_fixation_admission_preparation_service as preparation
+    factory, _ = pg16
+    seeded(factory)
+    payload = request(factory)
+    with factory() as db:
+        item = ledger.read(db, 7, "a1")
+        prepared = preparation.prepare(db, 7, "a1")
+        eligible = eligibility.assess(db, 7, "a1")
+        admitted = admission.review(
+            db, 7, "a1",
+            expected_preparation_fingerprint=prepared["preparation_fingerprint"],
+            expected_eligibility_fingerprint=eligible["eligibility_fingerprint"],
+        )
+        blockers = ledger._internal_professional_blockers(item, prepared, eligible, admitted)
+    # Keep the exact server-side codes visible in a failing pytest assertion.
+    assert blockers == [], "SUPERVISOR116_EXACT_PROFESSIONAL_BLOCKERS=" + repr(blockers)
+    result = approve(factory, payload)
+    assert result["approval_attempt_state"] == "APPROVED_INTERNAL", (
+        "SUPERVISOR116_EXACT_APPROVAL_BLOCKERS=" + repr(result.get("blockers", []))
+    )
+
+
+
 def test_01_admission_alone_is_not_professional_authority(pg16):
     factory, _ = pg16
     seeded(factory)

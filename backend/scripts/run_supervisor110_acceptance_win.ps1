@@ -176,7 +176,7 @@ try {
     Push-Location $backend
     try {
         $pgOutput = Join-Path $report "postgresql.log"
-        & $python -m pytest -q -ra --junitxml (Join-Path $report "postgresql-junit.xml") tests/test_scenario_internal_fixation_approval_postgresql.py tests/test_internal_fixation_approval_migration_postgresql.py tests/test_supervisor110_source_race_postgresql.py *> $pgOutput
+        & $python -m pytest -q -ra --junitxml (Join-Path $report "postgresql-junit.xml") tests/test_scenario_internal_fixation_approval_postgresql.py tests/test_internal_fixation_approval_migration_postgresql.py tests/test_supervisor110_source_race_postgresql.py tests/test_recovery_batch_import.py *> $pgOutput
         $pgExit = $LASTEXITCODE
         Add-Content $pgOutput "EXIT_CODE=$pgExit"
         if ($pgExit -ne 0) { throw "SUPERVISOR110_POSTGRESQL_FAILED:$pgExit" }
@@ -196,7 +196,7 @@ try {
         $vitest = Join-Path $frontend "node_modules\.bin\vitest.cmd"
         $ftOutput = Join-Path $report "frontend.log"
         $frontendJunit = Join-Path $report "frontend-junit.xml"
-        & $vitest run src/components/ScenarioFixationProfessionalReviewPanel.test.tsx --reporter=verbose --reporter=junit "--outputFile.junit=$frontendJunit" *> $ftOutput
+        & $vitest run src/components/ScenarioFixationProfessionalReviewPanel.test.tsx src/pages/RetirementWorkspaceScreen.test.tsx src/components/ScenarioDraftPanel.workflow.test.tsx src/App.test.tsx --reporter=verbose --reporter=junit "--outputFile.junit=$frontendJunit" *> $ftOutput
         $ftExit = $LASTEXITCODE
         Add-Content $ftOutput "EXIT_CODE=$ftExit"
         if ($ftExit -ne 0) { throw "SUPERVISOR110_FRONTEND_FAILED:$ftExit" }
@@ -267,7 +267,7 @@ try {
             throw "SUPERVISOR110_API_PROXY_IDENTITY_MISMATCH"
         }
         $env:PLAYWRIGHT_JSON_OUTPUT_FILE = Join-Path $report "playwright-report.json"
-        $testArgs = @("test", "e2e/supervisor110.spec.ts", "--browser=chromium", "--workers=1", "--reporter=line,json", "--trace=on",
+        $testArgs = @("test", "e2e/supervisor110.spec.ts", "e2e/supervisor130.spec.ts", "--browser=chromium", "--workers=1", "--reporter=line,json", "--trace=on",
             "--output", (Join-Path $report "screenshots"))
         & $playwright @testArgs *> (Join-Path $report "playwright-console.log")
         $browserExit = $LASTEXITCODE

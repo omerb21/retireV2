@@ -104,6 +104,7 @@ export interface ProfessionalReview {
   authority_scope?: "FIXATION_INTERNAL_REVIEW_ONLY";
   internal_professional_authority?: boolean;
   internal_decision?: InternalDecision | null;
+  verifiable_review_references?: string[];
   selected_source_evidence?: Array<{
     group: ReviewGroup; source_id: string; blocker: string | null;
     source_evidence: Record<string, unknown> | null;

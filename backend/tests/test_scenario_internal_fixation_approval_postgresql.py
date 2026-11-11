@@ -314,6 +314,13 @@ def test_14_immutable_revision_trigger_in_postgresql(pg16):
             ), {"id": item.revision_id})
         db.rollback()
     with factory() as db:
+        with pytest.raises(DBAPIError):
+            db.execute(text(
+                f'DELETE FROM "{schema}".scenario_fixation_approval_revisions '
+                "WHERE revision_id = :id"
+            ), {"id": item.revision_id})
+        db.rollback()
+    with factory() as db:
         assert ledger.history(db, 7, "a1")[-1]["status"] == "APPROVED_INTERNAL"
 
 

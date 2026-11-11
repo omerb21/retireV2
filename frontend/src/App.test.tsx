@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
@@ -36,6 +36,16 @@ afterEach(() => {
 
 
 describe("App", () => {
+  it("keeps the same client-scoped workspace navigation on a specialist route", async () => {
+    render(<MemoryRouter initialEntries={["/clients/1/pension-products"]}><App /></MemoryRouter>);
+    const nav = await screen.findByRole("navigation", { name: "שלבי תיק הלקוח" });
+    expect(nav).toBeInTheDocument();
+    expect(nav.querySelectorAll("a")).toHaveLength(5);
+    expect(nav.querySelector('a[href="/clients/1/workspace?step=portfolio"]')).not.toBeNull();
+    expect(screen.getByText(/כלי מקצועי משני בתיק הלקוח הפעיל/)).toBeInTheDocument();
+    expect(screen.getByText(/מזהה תיק 1/)).toBeInTheDocument();
+  });
+
   it("renders frontend shell heading and client list screen", async () => {
     render(
       <BrowserRouter>

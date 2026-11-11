@@ -253,20 +253,41 @@ def project_approval(db, client_id: int, scenario_id: str, readiness: dict) -> d
         or row.readiness_fingerprint != readiness["readiness_fingerprint"]
         or row.dependency_fingerprint != current_dependency
     )
-    if stale:
-        blockers.add("FIXATION_PROFESSIONAL_APPROVAL_STALE")
     decision_state = row.status if row.status == "APPROVED_INTERNAL" else "DRAFT"
     decision_meta = row.decisions_json.get("internal_decision")
-    approved_current = (
-        decision_state == "APPROVED_INTERNAL"
-        and not stale and isinstance(decision_meta, dict)
-        and decision_meta.get("authority_scope") == "FIXATION_INTERNAL_REVIEW_ONLY"
-        and decision_meta.get("admission_review_fingerprint")
-        and decision_meta.get("preparation_fingerprint")
-        and decision_meta.get("eligibility_fingerprint")
-        and decision_meta.get("review_reference")
-        and row.action == "APPROVE_INTERNAL"
-    )
+    approval_preimage_valid = False
+    if decision_state == "APPROVED_INTERNAL" and isinstance(decision_meta, dict):
+        expected_decision_fingerprint = _fingerprint({
+            "contract": CONTRACT, "client_id": client_id,
+            "scenario_id": scenario_id, "approval_version": row.approval_version,
+            "dependency_fingerprint": row.dependency_fingerprint,
+            "actor_id": row.actor_id, "status": "APPROVED_INTERNAL",
+            "internal_decision": decision_meta,
+        })
+        approval_preimage_valid = (
+            expected_decision_fingerprint == row.approval_fingerprint
+            and decision_meta.get("authority_scope") == "FIXATION_INTERNAL_REVIEW_ONLY"
+            and isinstance(decision_meta.get("decision_reason"), str)
+            and len(decision_meta["decision_reason"].strip()) >= 30
+            and isinstance(decision_meta.get("attestations"), list)
+            and set(decision_meta["attestations"]) == _REQUIRED_INTERNAL_ATTESTATIONS
+            and len(decision_meta["attestations"]) == 6
+            and isinstance(decision_meta.get("preparation_fingerprint"), str)
+            and len(decision_meta["preparation_fingerprint"]) == 64
+            and isinstance(decision_meta.get("eligibility_fingerprint"), str)
+            and len(decision_meta["eligibility_fingerprint"]) == 64
+            and isinstance(decision_meta.get("admission_review_fingerprint"), str)
+            and len(decision_meta["admission_review_fingerprint"]) == 64
+            and decision_meta.get("review_reference") in verified_references
+            and row.action == "APPROVE_INTERNAL"
+        )
+        # Missing or de-verified source evidence invalidates a historical
+        # approval without updating or deleting the immutable revision.
+        if not approval_preimage_valid:
+            stale = True
+    if stale:
+        blockers.add("FIXATION_PROFESSIONAL_APPROVAL_STALE")
+    approved_current = decision_state == "APPROVED_INTERNAL" and not stale and approval_preimage_valid
     if decision_state == "APPROVED_INTERNAL" and not approved_current and not stale:
         blockers.add("FIXATION_INTERNAL_APPROVAL_RECORD_INVALID")
     # A stored decision remains historical; only a matching current source
@@ -438,6 +459,14 @@ _INTERNAL_READINESS_NOT_EXECUTION = frozenset({
     "FIXATION_QUALIFYING_PENSION_CLASSIFICATION_MISSING",
     "FIXATION_PLANNED_CAPITAL_TAX_TREATMENT_MISSING",
     "FIXATION_TAX_AUTHORITY_APPROVAL_NOT_ESTABLISHED",
+})
+_REQUIRED_INTERNAL_ATTESTATIONS = frozenset({
+    "ELIGIBILITY_EVIDENCE_EXAMINED",
+    "OFFICIAL_PARAMETERS_EXAMINED",
+    "PENSION_CLASSIFICATION_EXAMINED",
+    "HISTORICAL_GRANTS_AND_CAPITALIZATIONS_EXAMINED",
+    "ABSENCE_OF_OVERLAP_CONFIRMED",
+    "LIMITED_INTERNAL_SCOPE_ACKNOWLEDGED",
 })
 _REQUIRED_GROUPS = frozenset({
     "eligibility", "tax_year_and_parameters", "pension_classification",

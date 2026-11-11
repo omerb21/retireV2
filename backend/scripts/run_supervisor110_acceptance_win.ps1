@@ -185,7 +185,8 @@ try {
         }
         $vitest = Join-Path $frontend "node_modules\.bin\vitest.cmd"
         $ftOutput = Join-Path $report "frontend.log"
-        & $vitest run src/components/ScenarioFixationProfessionalReviewPanel.test.tsx --reporter=verbose --reporter=junit --outputFile.junit=(Join-Path $report "frontend-junit.xml") *> $ftOutput
+        $frontendJunit = Join-Path $report "frontend-junit.xml"
+        & $vitest run src/components/ScenarioFixationProfessionalReviewPanel.test.tsx --reporter=verbose --reporter=junit "--outputFile.junit=$frontendJunit" *> $ftOutput
         $ftExit = $LASTEXITCODE
         Add-Content $ftOutput "EXIT_CODE=$ftExit"
         if ($ftExit -ne 0) { throw "SUPERVISOR110_FRONTEND_FAILED:$ftExit" }
@@ -211,7 +212,7 @@ try {
         Invoke-Checked $python @("-m", "alembic", "-c", "alembic.ini", "upgrade", "head")
         Invoke-Checked $python @("-m", "scripts.seed_supervisor41_local")
     } finally { Pop-Location }
-    $backendArgs = @("-m", "uvicorn", "scripts.supervisor110_test_app:app", "--host", "127.0.0.1",
+    $backendArgs = @("-m", "uvicorn", "scripts.supervisor65_test_app:app", "--host", "127.0.0.1",
         "--port", "8001", "--no-access-log")
     $backendProcess = Start-Process -FilePath $python -WorkingDirectory $backend -ArgumentList $backendArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $report "backend.stdout.log") -RedirectStandardError (Join-Path $report "backend.stderr.log")
     Wait-Http "http://127.0.0.1:8001/health" $backendProcess

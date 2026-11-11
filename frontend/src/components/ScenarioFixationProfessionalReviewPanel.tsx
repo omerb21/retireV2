@@ -857,6 +857,15 @@ export function ScenarioFixationProfessionalReviewPanel({
           <p>אסמכתת בדיקה: {activeReview.internal_decision.review_reference}</p>
           <p>הנמקת ההחלטה: {activeReview.internal_decision.decision_reason}</p>
         </div>}
+        <details>
+          <summary>מקורות שנבדקו והמצב שלהם</summary>
+          <ul>{(activeReview?.selected_source_evidence ?? []).map(source => <li
+            key={source.group + ":" + source.source_id}>
+            {groupName(source.group)}: <code dir="ltr">{source.source_id}</code>
+            {source.blocker
+              ? <> - חסום: <code>{source.blocker}</code></> : " - המקור נמצא"}
+          </li>)}</ul>
+        </details>
         {activeReview?.validity_state === "STALE" && <p role="alert">
           האישור או הטיוטה אינם עדכניים בעקבות שינוי מקור או גרסה. נדרשת בדיקה חדשה.
         </p>}

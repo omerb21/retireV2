@@ -125,6 +125,36 @@ class FixationProfessionalDraftReplace(BaseModel):
 
 
 class FixationProfessionalApprovalRequest(BaseModel):
+    """Explicit internal professional decision, never authority to execute tax."""
     model_config = ConfigDict(extra="forbid")
     expected_approval_version: int = Field(gt=0)
-    expected_approval_fingerprint: str = Field(min_length=64, max_length=64)
+    expected_approval_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_scenario_version: int = Field(gt=0)
+    expected_manifest_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_readiness_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_preparation_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_eligibility_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_admission_review_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["APPROVE_INTERNAL"]
+    decision_reason: str = Field(min_length=30, max_length=2048)
+    review_reference: str = Field(min_length=12, max_length=256)
+    # These are explicit, independently recorded professional judgments. They
+    # do not substitute for server-side validation of source/Admission evidence.
+    attestations: list[Literal[
+        "ELIGIBILITY_EVIDENCE_EXAMINED",
+        "OFFICIAL_PARAMETERS_EXAMINED",
+        "PENSION_CLASSIFICATION_EXAMINED",
+        "HISTORICAL_GRANTS_AND_CAPITALIZATIONS_EXAMINED",
+        "ABSENCE_OF_OVERLAP_CONFIRMED",
+        "LIMITED_INTERNAL_SCOPE_ACKNOWLEDGED",
+    ]] = Field(min_length=6, max_length=6)
+
+    @model_validator(mode="after")
+    def require_unique_complete_attestations(self):
+        if len(set(self.attestations)) != 6:
+            raise ValueError("FIXATION_INTERNAL_ATTESTATIONS_INCOMPLETE")
+        if not self.decision_reason.strip() or self.decision_reason.strip() != self.decision_reason:
+            raise ValueError("FIXATION_INTERNAL_REASON_INVALID")
+        if not self.review_reference.startswith("document://"):
+            raise ValueError("FIXATION_INTERNAL_REVIEW_REFERENCE_REQUIRED")
+        return self

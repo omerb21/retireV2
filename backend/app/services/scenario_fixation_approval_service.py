@@ -538,6 +538,26 @@ def request_internal_approval(db, client_id: int, scenario_id: str,
     if admitted["admission_review_fingerprint"] != request.expected_admission_review_fingerprint:
         raise DraftError("FIXATION_INTERNAL_ADMISSION_SOURCE_CONFLICT", 409)
     blockers = _internal_professional_blockers(item, prepared, eligible, admitted)
+    # An arbitrary document:// string is not evidence. Bind the explicit
+    # professional review reference to a VERIFIED M07 fact of this client and
+    # the chosen finalized eligibility revision. No opaque browser reference
+    # can create a positive professional decision.
+    from app.models.m07_evidence import M07FactEvidence
+    eligibility_sources = [
+        d["source_id"] for d in item["decisions"]
+        if d["group"] == "eligibility" and d["determination"] == "PLANNER_ASSERTED"
+    ]
+    verified_document = None
+    if len(eligibility_sources) == 1:
+        verified_document = db.scalar(select(M07FactEvidence.fact_evidence_id).where(
+            M07FactEvidence.client_id == client_id,
+            M07FactEvidence.m07_evidence_revision_id == eligibility_sources[0],
+            M07FactEvidence.verification_state == "verified",
+            M07FactEvidence.source_document_reference == request.review_reference,
+        ).limit(1))
+    if verified_document is None:
+        blockers.append("FIXATION_INTERNAL_REVIEW_REFERENCE_NOT_VERIFIED")
+    blockers = sorted(set(blockers))
     if blockers:
         return {
             "approval_attempt_state": "BLOCKED", "blockers": blockers,

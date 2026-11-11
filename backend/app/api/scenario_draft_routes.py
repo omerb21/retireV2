@@ -292,14 +292,32 @@ def approve_fixation_professional_review(
     scenario_id: str, client_id: int = Path(gt=0),
     db: Session = Depends(get_db),
 ):
-    """Explicit request; 422 returns blockers, never an internal approval."""
+    """Explicit authorized decision; one SERIALIZABLE transaction and CAS."""
+    from sqlalchemy.exc import DBAPIError
     try:
-        blocked = fixation_review_service.request_internal_approval(
-            db, client_id, scenario_id, payload.expected_approval_version,
-            payload.expected_approval_fingerprint, _actor(request),
+        actor = _actor(request)
+        # Never accept an actor from the request body. Production actor is
+        # derived from the validated authenticated session by middleware.
+        if request.app.state.auth_config.production:
+            session = getattr(request.state, "auth_session", None)
+            if not isinstance(session, dict) or session.get("actor_id") != actor:
+                return error(request, 403, "FIXATION_INTERNAL_AUTHENTICATED_ACTOR_REQUIRED")
+        result = fixation_review_service.request_internal_approval(
+            db, client_id, scenario_id, payload, actor,
         )
-        return JSONResponse(content=blocked, status_code=422, headers=NO_STORE)
+        if result["approval_attempt_state"] == "BLOCKED":
+            db.rollback()
+            return JSONResponse(content=result, status_code=422, headers=NO_STORE)
+        db.commit()
+        return JSONResponse(content=result, headers=NO_STORE)
     except service.DraftError as exc:
-        return error(request, exc.status, exc.code)
-    finally:
         db.rollback()
+        return error(request, exc.status, exc.code)
+    except DBAPIError as exc:
+        db.rollback()
+        if getattr(getattr(exc, "orig", None), "pgcode", None) == "40001":
+            return error(request, 409, "FIXATION_INTERNAL_SERIALIZATION_CONFLICT")
+        raise
+    except Exception:
+        db.rollback()
+        raise

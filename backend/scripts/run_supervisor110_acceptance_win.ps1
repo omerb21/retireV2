@@ -27,6 +27,26 @@ $saved = @{}
 $variables = @("DATABASE_URL", "SCENARIO_TEST_POSTGRES_URL", "APP_ENV", "STAGE6_PREVIEW_ENABLED", "RECOVERY_POSTGRES_TEST", "VITE_API_BASE_URL", "PLAYWRIGHT_JSON_OUTPUT_FILE", "CRTISBA_APPLICATION_DB_ROLE")
 foreach ($name in $variables) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
 
+function Read-JUnitSummary([string]$path) {
+    if (-not (Test-Path $path)) { throw "SUPERVISOR130_JUNIT_MISSING:$path" }
+    [xml]$xml = Get-Content $path -Raw
+    # JUnit reporters may produce one testsuite or several. Count leaf suites
+    # once rather than casting an XML node array to an integer.
+    $suites = @($xml.SelectNodes("//testsuite[not(testsuite)]"))
+    if ($suites.Count -eq 0) { throw "SUPERVISOR130_JUNIT_NO_TESTSUITES:$path" }
+    $total = @{ Tests=0; Failures=0; Errors=0; Skipped=0; Exit=0 }
+    foreach ($suite in $suites) {
+        foreach ($field in @("tests", "failures", "errors", "skipped")) {
+            if ($null -eq $suite.Attributes[$field]) {
+                throw "SUPERVISOR130_JUNIT_ATTRIBUTE_MISSING:$field"
+            }
+            $mapped = @{ tests="Tests"; failures="Failures"; errors="Errors"; skipped="Skipped" }[$field]
+            $total[$mapped] += [int]$suite.GetAttribute($field)
+        }
+    }
+    return $total
+}
+
 function Invoke-Checked([string]$program, [string[]]$arguments) {
     & $program @arguments
     if ($LASTEXITCODE -ne 0) { throw "SUPERVISOR110_COMMAND_FAILED:$program exit=$LASTEXITCODE" }
@@ -180,11 +200,10 @@ try {
         $pgExit = $LASTEXITCODE
         Add-Content $pgOutput "EXIT_CODE=$pgExit"
         if ($pgExit -ne 0) { throw "SUPERVISOR110_POSTGRESQL_FAILED:$pgExit" }
-        $junit = [xml](Get-Content (Join-Path $report "postgresql-junit.xml") -Raw)
-        $suite = $junit.testsuites.testsuite
-        if ($null -eq $suite) { $suite = $junit.testsuite }
-        if ([int]$suite.tests -lt 3 -or [int]$suite.failures -ne 0 -or [int]$suite.errors -ne 0 -or [int]$suite.skipped -ne 0) { throw "SUPERVISOR110_POSTGRESQL_INCOMPLETE" }
-        $counts.PostgreSQL = @{ Tests=[int]$suite.tests; Failures=[int]$suite.failures; Errors=[int]$suite.errors; Skipped=[int]$suite.skipped; Exit=$pgExit }
+        $pgStats = Read-JUnitSummary (Join-Path $report "postgresql-junit.xml")
+        $pgStats.Exit = $pgExit
+        if ($pgStats.Tests -lt 3 -or $pgStats.Failures -ne 0 -or $pgStats.Errors -ne 0 -or $pgStats.Skipped -ne 0) { throw "SUPERVISOR110_POSTGRESQL_INCOMPLETE" }
+        $counts.PostgreSQL = $pgStats
         $stages.PostgreSQL = 'PASS'
     } finally { Pop-Location }
 
@@ -200,11 +219,10 @@ try {
         $ftExit = $LASTEXITCODE
         Add-Content $ftOutput "EXIT_CODE=$ftExit"
         if ($ftExit -ne 0) { throw "SUPERVISOR110_FRONTEND_FAILED:$ftExit" }
-        $ftXml = [xml](Get-Content (Join-Path $report "frontend-junit.xml") -Raw)
-        $ftSuite = $ftXml.testsuites.testsuite
-        if ($null -eq $ftSuite) { $ftSuite = $ftXml.testsuite }
-        if ([int]$ftSuite.tests -lt 1 -or [int]$ftSuite.failures -ne 0 -or [int]$ftSuite.errors -ne 0 -or [int]$ftSuite.skipped -ne 0) { throw "SUPERVISOR110_FRONTEND_INCOMPLETE" }
-        $counts.Frontend = @{ Tests=[int]$ftSuite.tests; Failures=[int]$ftSuite.failures; Errors=[int]$ftSuite.errors; Skipped=[int]$ftSuite.skipped; Exit=$ftExit }
+        $ftStats = Read-JUnitSummary (Join-Path $report "frontend-junit.xml")
+        $ftStats.Exit = $ftExit
+        if ($ftStats.Tests -lt 1 -or $ftStats.Failures -ne 0 -or $ftStats.Errors -ne 0 -or $ftStats.Skipped -ne 0) { throw "SUPERVISOR110_FRONTEND_INCOMPLETE" }
+        $counts.Frontend = $ftStats
         $stages.Frontend = 'PASS'
 
         $tsOutput = Join-Path $report "typescript.log"

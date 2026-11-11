@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import {
   readProfessionalReview, saveProfessionalReview, readProfessionalReviewHistory,
+  requestProfessionalApproval, type InternalAttestation,
   ReviewApiError, type ProfessionalDecision, type ProfessionalReview,
   type ReviewGroup, type ReviewDetermination, type ReviewHistoryItem,
   type FixationAdmissionControls, type FixationPreparation, type FixationAdmissionEligibility,
@@ -23,6 +24,14 @@ const GROUPS: Array<{ value: ReviewGroup; label: string }> = [
   { value: "severance_continuity", label: "פיצויים ורצפים מתוכננים" },
   { value: "historical_capitalization", label: "היוון היסטורי" },
   { value: "planned_withdrawal_or_commutation", label: "היוון או משיכת הון מתוכננים" },
+];
+const INTERNAL_ATTESTATIONS: Array<{ value: InternalAttestation; label: string }> = [
+  { value: "ELIGIBILITY_EVIDENCE_EXAMINED", label: "בדקתי את ראיות הזכאות ומועד הקיבוע" },
+  { value: "OFFICIAL_PARAMETERS_EXAMINED", label: "בדקתי את שנת המס ואת הפרמטרים הרשמיים" },
+  { value: "PENSION_CLASSIFICATION_EXAMINED", label: "בחנתי מקצועית את סיווג הקצבה" },
+  { value: "HISTORICAL_GRANTS_AND_CAPITALIZATIONS_EXAMINED", label: "בדקתי מענקים והיוונים היסטוריים ואת מצב האיסוף" },
+  { value: "ABSENCE_OF_OVERLAP_CONFIRMED", label: "בדקתי שאין חפיפת זכויות לא פתורה" },
+  { value: "LIMITED_INTERNAL_SCOPE_ACKNOWLEDGED", label: "ברור לי שאין באישור הרשאת חישוב או אישור רשות המסים" },
 ];
 const DETERMINATIONS: Array<{ value: ReviewDetermination; label: string }> = [
   { value: "REQUIRES_REVIEW", label: "נדרש בירור מקצועי" },
@@ -186,6 +195,11 @@ export function ScenarioFixationProfessionalReviewPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [serverBlockers, setServerBlockers] = useState<string[]>([]);
+  const [internalReason, setInternalReason] = useState("");
+  const [internalReference, setInternalReference] = useState("");
+  const [internalAttestations, setInternalAttestations] = useState<InternalAttestation[]>([]);
+  const [internalBusy, setInternalBusy] = useState(false);
+
   const [controls, setControls] = useState<FixationAdmissionControls | null>(null);
   const [preparation, setPreparation] = useState<FixationPreparation | null>(null);
   const [preparationError, setPreparationError] = useState<string | null>(null);
@@ -243,6 +257,8 @@ export function ScenarioFixationProfessionalReviewPanel({
     let mounted = true;
     setReview(null); setDraft([]); setItem(emptyDecision()); setRefsText("");
     setHistory(null); setError(null); setNotice(null); setConflict(false);
+    setInternalReason(""); setInternalReference("");
+    setInternalAttestations([]); setInternalBusy(false);
     setServerBlockers([]); setControls(null); setPreparation(null);
     setPreparationError(null); setEligibility(null); setEligibilityError(null);
     invalidateAdmissionReview();
@@ -398,6 +414,62 @@ export function ScenarioFixationProfessionalReviewPanel({
       }
       setError(message(cause));
     } finally { setBusy(false); }
+  }
+  async function approveInternal(event: FormEvent) {
+    event.preventDefault();
+    if (busy || internalBusy || !review || !preparation || !visibleEligibility
+        || !visibleAdmissionReview || visibleAdmissionReview.state !== "ADMITTED_FOR_REVIEW"
+        || review.record_status !== "DRAFT" || review.validity_state === "STALE"
+        || scenario.status !== "draft" || conflict
+        || internalAttestations.length !== INTERNAL_ATTESTATIONS.length
+        || internalReason.trim().length < 30 || !internalReference.trim().startsWith("document://")
+        || !review.approval_fingerprint) return;
+    const identity = `${clientId}:${scenario.scenario_id}`;
+    setInternalBusy(true); setError(null); setServerBlockers([]);
+    try {
+      const result = await requestProfessionalApproval(clientId, scenario.scenario_id, {
+        expected_approval_version: review.approval_version,
+        expected_approval_fingerprint: review.approval_fingerprint,
+        expected_scenario_version: scenario.version,
+        expected_manifest_fingerprint: review.current_readiness.manifest_fingerprint,
+        expected_readiness_fingerprint: review.current_readiness.readiness_fingerprint,
+        expected_preparation_fingerprint: preparation.preparation_fingerprint,
+        expected_eligibility_fingerprint: visibleEligibility.eligibility_fingerprint,
+        expected_admission_review_fingerprint: visibleAdmissionReview.admission_review_fingerprint,
+        decision: "APPROVE_INTERNAL",
+        decision_reason: internalReason.trim(),
+        review_reference: internalReference.trim(),
+        attestations: internalAttestations,
+      });
+      if (scenarioIdentity.current !== identity) return;
+      if (result.approval_attempt_state === "BLOCKED") {
+        setServerBlockers(result.blockers);
+        setError("השרת דחה את האישור המקצועי. יש לטפל בחסמים.");
+        return;
+      }
+      if (result.client_id !== clientId || result.scenario_id !== scenario.scenario_id
+          || result.execution_allowed !== false || result.tax_authority_approval !== null
+          || result.authority_scope !== "FIXATION_INTERNAL_REVIEW_ONLY") {
+        setError("תגובת האישור אינה תואמת את תחום הסמכות המבוקש.");
+        return;
+      }
+      invalidateAdmissionReview();
+      const fresh = await readProfessionalReview(clientId, scenario.scenario_id);
+      if (scenarioIdentity.current !== identity) return;
+      setReview(fresh);
+      setHistory(null);
+      setInternalReason(""); setInternalReference(""); setInternalAttestations([]);
+      setNotice("החלטת אישור מקצועית פנימית נשמרה. אין הרשאת חישוב או אישור רשות המסים.");
+    } catch (cause) {
+      if (scenarioIdentity.current !== identity) return;
+      if (cause instanceof ReviewApiError && cause.status === 409) {
+        setConflict(true);
+        invalidateAdmissionReview();
+      }
+      setError(message(cause));
+    } finally {
+      if (scenarioIdentity.current === identity) setInternalBusy(false);
+    }
   }
   async function loadHistory() {
     if (busy) return;
@@ -762,7 +834,7 @@ export function ScenarioFixationProfessionalReviewPanel({
           <details>
             <summary>
               גרסה {row.approval_version}, {row.actor_id}, {new Date(row.occurred_at).toLocaleString("he-IL")},
-              {" "}{row.decisions.length} הכרעות, טיוטה בלבד.
+              {" "}{row.decisions.length} הכרעות, {row.decision_state === "APPROVED_INTERNAL" ? "אישור מקצועי פנימי" : "טיוטה בלבד"}.
             </summary>
             <ul>{row.decisions.map(decision => <li key={decision.group + ":" + decision.source_id}>
               <strong>{groupName(decision.group)}</strong>: {decision.source_id}.
@@ -774,10 +846,56 @@ export function ScenarioFixationProfessionalReviewPanel({
           </details>
         </li>)}</ul>
       </div>}
-      <p className="professional-workspace__boundary" role="status">
-        אישור מקצועי פנימי חסום עד להשלמת תנאי הסף ואימות הראיות בשרת.
-        אין אפשרות לאשר קיבוע זכויות במסך זה.
-      </p>
+      <section aria-label="החלטת אישור מקצועית פנימית" className="scenario-workflow">
+        <h5>החלטת אישור מקצועית פנימית</h5>
+        <p role="status">מצב החלטה: <strong>{activeReview?.decision_state ?? "MISSING"}</strong>.
+          מצב תוקף: <strong>{activeReview?.validity_state ?? "BLOCKED"}</strong>.
+          תחום סמכות: FIXATION_INTERNAL_REVIEW_ONLY.
+        </p>
+        <p>האישור חל רק על החלופה ומקורותיה שנבדקו. אין הרשאת חישוב, משיכה או אישור רשות המסים.</p>
+        {activeReview?.internal_decision && <div>
+          <p>אסמכתת בדיקה: {activeReview.internal_decision.review_reference}</p>
+          <p>הנמקת ההחלטה: {activeReview.internal_decision.decision_reason}</p>
+        </div>}
+        {activeReview?.validity_state === "STALE" && <p role="alert">
+          האישור או הטיוטה אינם עדכניים בעקבות שינוי מקור או גרסה. נדרשת בדיקה חדשה.
+        </p>}
+        {activeReview?.record_status === "APPROVED_INTERNAL" && activeReview.validity_state === "CURRENT"
+          && <p role="status">אישור מקצועי פנימי בתוקף. ביצוע וחישובי מס ממשיכים להיות חסומים.</p>}
+        <form onSubmit={event => void approveInternal(event)}>
+          <label>נימוק החלטה מקצועית (לפחות 30 תווים)
+            <textarea value={internalReason} onChange={event => setInternalReason(event.target.value)}
+              disabled={busy || internalBusy} rows={3}/>
+          </label>
+          <label>אסמכתת בדיקה מקצועית (document://)
+            <input value={internalReference}
+              onChange={event => setInternalReference(event.target.value)}
+              disabled={busy || internalBusy} placeholder="document://professional-review/..."/>
+          </label>
+          <fieldset disabled={busy || internalBusy}>
+            <legend>הצהרות המתכנן הנדרשות בנוסף לאימות השרת</legend>
+            {INTERNAL_ATTESTATIONS.map(attestation => <label key={attestation.value}>
+              <input type="checkbox" checked={internalAttestations.includes(attestation.value)}
+                onChange={event => setInternalAttestations(current =>
+                  event.target.checked ? [...current, attestation.value]
+                    : current.filter(value => value !== attestation.value))}/>
+              {attestation.label}
+            </label>)}
+          </fieldset>
+          <button type="submit" disabled={!visibleAdmissionReview
+            || visibleAdmissionReview.state !== "ADMITTED_FOR_REVIEW"
+            || !activeReview || activeReview.record_status !== "DRAFT"
+            || activeReview.validity_state === "STALE" || scenario.status !== "draft"
+            || conflict || busy || internalBusy || internalAttestations.length !== 6
+            || internalReason.trim().length < 30
+            || !internalReference.trim().startsWith("document://")}>
+            {internalBusy ? "מתעד החלטה מקצועית..." : "אשר מקצועית את החלופה (ללא הרשאת חישוב)"}
+          </button>
+        </form>
+        {serverBlockers.length > 0 && <ul aria-label="חסמי אישור מקצועי">
+          {serverBlockers.map(code => <li key={code}>{label(code)} <code>{code}</code></li>)}
+        </ul>}
+      </section>
       {scenario.status !== "draft" && <p role="status">החלופה אינה פעילה לעריכת הכרעות.</p>}
     </>}
   </section>;

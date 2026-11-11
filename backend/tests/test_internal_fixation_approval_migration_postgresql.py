@@ -10,6 +10,8 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import text
 
+# Re-export the original base fixture for this narrowly collected pytest module.
+from tests.test_scenario_unified_result_real_postgresql import pg16 as pg16_base
 from tests.test_scenario_unified_engine_binding_postgresql import (
     pg16, _prepared_fixation_sources, _prepared_review,
 )

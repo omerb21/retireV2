@@ -20,6 +20,7 @@ from app.services.pension_product_service import component_balances, product_res
 from app.models.scenario_draft import ScenarioDraft
 from app.services import scenario_draft_service as drafts
 from app.models.scenario_draft import ScenarioDraftDecision
+from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.models.m07_evidence import M07EvidenceRevision, M07FactEvidence
 from app.schemas.m07_evidence import AssessmentRun
 from app.services.m07_evidence_service import finalize_revision as finalize_m07_revision
@@ -147,6 +148,17 @@ def seed_admission_review() -> None:
             source_fingerprint_at_review=source["source_fingerprint"],
             ruleset_digest_at_review="a" * 64,
         ))
+        db.add(ScenarioDraftPensionElection(
+            election_id="supervisor78-pension-election",
+            scenario_id=REVIEW_A,
+            decision_id=REVIEW_DECISION,
+            scenario_version=1,
+            pension_start_date=date(2032, 1, 1),
+            target_year=2032,
+            survivors_option="60%",
+            spouse_age_diff=0,
+            coefficient_selection="manual_review_required",
+        ))
         db.flush()
         for scenario_id in (REVIEW_A, REVIEW_B):
             drafts._revision(db, db.get(ScenarioDraft, scenario_id),
@@ -222,6 +234,11 @@ def seed_admission_review() -> None:
         factory, client_id=REVIEW_CLIENT, scenario_id=REVIEW_A,
     )
     readiness = bound["domain_results"]["fixation_tax"]["readiness"]
+    if bound["base"]["blockers"]:
+        raise RuntimeError(
+            "SUPERVISOR78_SCENARIO_BASE_NOT_CURRENT:" +
+            str(bound["base"]["blockers"])
+        )
     req = FixationProfessionalDraftReplace(
         expected_approval_version=0,
         expected_scenario_version=readiness["scenario_version"],

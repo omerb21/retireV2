@@ -340,7 +340,10 @@ export function RetirementWorkspaceScreen() {
     return products.filter(product => {
       if (q && ![product.product_name, product.provider_name ?? "", product.account_reference ?? ""]
         .join(" ").toLocaleLowerCase("he").includes(q)) return false;
-      if (discrepancyOnly && (!product.reconciliation.product_discrepancy
+      const unmapped = product.source_history?.some(source => source.diagnostics.some(
+        diagnostic => diagnostic.state === "SOURCE_PRESENT_NONZERO_UNMAPPED" && diagnostic.unresolved === true,
+      )) ?? false;
+      if (discrepancyOnly && !unmapped && (!product.reconciliation.product_discrepancy
         || Number(product.reconciliation.product_discrepancy) === 0)) return false;
       return true;
     });
@@ -617,16 +620,26 @@ export function RetirementWorkspaceScreen() {
         <div className="professional-workspace__ledger" role="region" aria-label="טבלת רכיבים נגללת" tabIndex={0}>
           <table>
             <thead>
-              <tr><th scope="col">תוכנית / פוליסה</th><th scope="col">גוף מנהל</th><th scope="col">יתרה מדווחת</th>
+              <tr><th scope="col">תוכנית / פוליסה</th><th scope="col">גוף מנהל</th><th scope="col">יתרה מדווחת</th><th scope="col">מצב מקור וקליטה</th>
                 {columns.map(([code, label]) => <th key={code} scope="col" title={label}>{label}</th>)}
                 <th scope="col">פער</th>
               </tr>
             </thead>
             <tbody>
-              {shownProducts.map(product => <tr key={product.product_id}>
-                <th scope="row"><strong>{product.product_name}</strong><small>חשבון {product.account_reference ?? "לא נמסר"}</small></th>
+              {shownProducts.map(product => {
+                const unmapped = product.source_history?.some(source => source.diagnostics.some(
+                  diagnostic => diagnostic.state === "SOURCE_PRESENT_NONZERO_UNMAPPED" && diagnostic.unresolved === true,
+                )) ?? false;
+                return <tr key={product.product_id}>
+                <th scope="row"><strong>{product.product_name}</strong><small>חשבון {product.account_reference ?? "לא נמסר"}</small>
+                  {unmapped && <span role="alert">נתון מקור לא מסווג: יתרה לא ממופה לרכיב מקצועי. אפס ברכיב אינו ראיה ליתרת אפס במקור.</span>}
+                </th>
                 <td>{product.provider_name ?? "לא נמסר"}</td>
                 <td><bdi>{money(product.reported_product_total)}</bdi></td>
+                <td>{product.source_kind === "imported" ? "נקלט ממקור" : "מוצר ידני"}
+                  {product.source_history?.length ? ` · ${product.source_history.length} רשומות מקור` : " · ללא היסטוריית מקור"} 
+                  {unmapped && <strong> · נדרש בירור</strong>}
+                </td>
                 {columns.map(([code, label]) => {
                   const value = product.components[code];
                   const selected = selection.some(item => item.productId === product.product_id && item.code === code);
@@ -640,8 +653,8 @@ export function RetirementWorkspaceScreen() {
                   </button>}</td>;
                 })}
                 <td><bdi>{money(product.reconciliation.product_discrepancy)}</bdi></td>
-              </tr>)}
-              {shownProducts.length === 0 && <tr><td colSpan={columns.length + 4}>אין מוצרים התואמים לסינון.</td></tr>}
+              </tr>})}
+              {shownProducts.length === 0 && <tr><td colSpan={columns.length + 5}>אין מוצרים התואמים לסינון.</td></tr>}
             </tbody>
           </table>
         </div>

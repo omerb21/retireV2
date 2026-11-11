@@ -238,7 +238,12 @@ function verify(read: ProfessionalReview, clientId: number, scenarioId: string):
       || current?.scenario_version === undefined
       || current.manifest_fingerprint?.length !== 64
       || current.readiness_fingerprint?.length !== 64
-      || read.professional_authority !== false || read.execution_allowed !== false) {
+      || read.professional_authority !== false || read.execution_allowed !== false
+      || (read.validity_state === "CURRENT"
+        && (read.decision_state !== "APPROVED_INTERNAL"
+          || read.internal_professional_authority !== true
+          || read.authority_scope !== "FIXATION_INTERNAL_REVIEW_ONLY"))
+      || (read.validity_state !== "CURRENT" && read.internal_professional_authority === true)) {
     throw new ReviewApiError(409, "FIXATION_REVIEW_IDENTITY_INVALID");
   }
   return read;

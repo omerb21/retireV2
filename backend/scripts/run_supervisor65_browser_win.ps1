@@ -104,7 +104,7 @@ try {
         }
         # SQL proves that the TCP endpoint accepts actual authenticated
         # connections, rather than just advertising readiness.
-        $probe = & docker exec $containerId psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d retire_v2_supervisor41_test -t -A -v ON_ERROR_STOP=1 -c "SELECT CASE WHEN pg_is_in_recovery() THEN 'recovery' ELSE 'primary' END" 2>&1
+        $probe = & docker exec -e "PGPASSWORD=$secret" $containerId psql -X -w -h 127.0.0.1 -p 5432 -U postgres -d retire_v2_supervisor41_test -t -A -v ON_ERROR_STOP=1 -c "SELECT CASE WHEN pg_is_in_recovery() THEN 'recovery' ELSE 'primary' END" 2>&1
         if ($LASTEXITCODE -ne 0) {
             $detail = ($probe | Out-String).Trim()
             if ($detail -match '(?i)database system is (starting up|shutting down)|connection refused|server closed the connection unexpectedly|the database system is in recovery mode') {
@@ -133,7 +133,7 @@ try {
     # after readiness. Any other SQL error is surfaced immediately.
     $roleCreated = $false
     for ($attempt = 0; $attempt -lt 5; $attempt++) {
-        $createOutput = & docker exec $containerId psql -X -w -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -c "CREATE ROLE $role NOLOGIN" 2>&1
+        $createOutput = & docker exec -e "PGPASSWORD=$secret" $containerId psql -X -w -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -c "CREATE ROLE $role NOLOGIN" 2>&1
         if ($LASTEXITCODE -eq 0) {
             if (($createOutput | Out-String) -notmatch 'CREATE ROLE') {
                 throw "SUPERVISOR65_APPLICATION_ROLE_CREATE_UNEXPECTED_OUTPUT"
@@ -149,7 +149,7 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $roleCreated) { throw "SUPERVISOR65_APPLICATION_ROLE_STARTUP_TIMEOUT" }
-    $roleExists = (& docker exec $containerId psql -X -w -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -t -A -c "SELECT count(*) FROM pg_roles WHERE rolname = '$role'").Trim()
+    $roleExists = (& docker exec -e "PGPASSWORD=$secret" $containerId psql -X -w -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -U postgres -d retire_v2_supervisor41_test -t -A -c "SELECT count(*) FROM pg_roles WHERE rolname = '$role'").Trim()
     if ($LASTEXITCODE -ne 0 -or $roleExists -ne "1") {
         throw "SUPERVISOR65_APPLICATION_ROLE_NOT_VERIFIED"
     }

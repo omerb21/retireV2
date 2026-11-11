@@ -422,7 +422,7 @@ export function ScenarioFixationProfessionalReviewPanel({
         || review.record_status !== "DRAFT" || review.validity_state === "STALE"
         || scenario.status !== "draft" || conflict
         || internalAttestations.length !== INTERNAL_ATTESTATIONS.length
-        || internalReason.trim().length < 30 || !internalReference.trim().startsWith("document://")
+        || internalReason.trim().length < 30 || !review.verifiable_review_references?.includes(internalReference.trim())
         || !review.approval_fingerprint) return;
     const identity = `${clientId}:${scenario.scenario_id}`;
     setInternalBusy(true); setError(null); setServerBlockers([]);
@@ -876,10 +876,14 @@ export function ScenarioFixationProfessionalReviewPanel({
             <textarea value={internalReason} onChange={event => setInternalReason(event.target.value)}
               disabled={busy || internalBusy} rows={3}/>
           </label>
-          <label>אסמכתת בדיקה מקצועית (document://)
-            <input value={internalReference}
+          <label>אסמכתת מקור מאומתת שנבדקה
+            <select value={internalReference}
               onChange={event => setInternalReference(event.target.value)}
-              disabled={busy || internalBusy} placeholder="document://professional-review/..."/>
+              disabled={busy || internalBusy}>
+              <option value="">בחר אסמכתה מאומתת</option>
+              {(activeReview?.verifiable_review_references ?? []).map(ref =>
+                <option value={ref} key={ref}>{ref}</option>)}
+            </select>
           </label>
           <fieldset disabled={busy || internalBusy}>
             <legend>הצהרות המתכנן הנדרשות בנוסף לאימות השרת</legend>
@@ -897,7 +901,7 @@ export function ScenarioFixationProfessionalReviewPanel({
             || activeReview.validity_state === "STALE" || scenario.status !== "draft"
             || conflict || busy || internalBusy || internalAttestations.length !== 6
             || internalReason.trim().length < 30
-            || !internalReference.trim().startsWith("document://")}>
+            || !activeReview.verifiable_review_references?.includes(internalReference.trim())}>
             {internalBusy ? "מתעד החלטה מקצועית..." : "אשר מקצועית את החלופה (ללא הרשאת חישוב)"}
           </button>
         </form>

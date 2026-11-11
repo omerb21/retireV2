@@ -101,8 +101,18 @@ test("supervisor 130: create client, import synthetic source, five steps, return
     await expect(page.getByRole("region", { name: "טבלת רכיבים נגללת" })
       .getByText("תכנית מסלקה 130")).toBeVisible();
 
-    // Existing independent synthetic client cannot see newly imported source.
-    await page.goto(ROOT + "/clients/410078/workspace?step=portfolio", { waitUntil: "domcontentloaded" });
+    // Create the second synthetic client through the real UI in this run.
+    // Never rely on a pre-seeded client ID or a different test's database.
+    await page.goto(ROOT + "/clients/new", { waitUntil: "domcontentloaded" });
+    await page.getByLabel("שם הלקוח").fill("לקוח ביקורת שני 130");
+    await page.getByLabel("מספר זהות").fill("123456790");
+    await page.getByRole("button", { name: "שמירת לקוח" }).click();
+    await expect(page).toHaveURL(/\\/clients\\/\\d+\\/workspace\\?step=client/);
+    const secondMatch = new URL(page.url()).pathname.match(/^\\/clients\\/(\\d+)\\/workspace$/);
+    expect(secondMatch).not.toBeNull();
+    const secondId = Number(secondMatch![1]);
+    expect(secondId).not.toBe(id);
+    await page.getByRole("button", { name: /2\\. תיק פנסיוני/ }).click();
     await expect(page.getByRole("region", { name: "טבלת רכיבים נגללת" })).toBeVisible();
     await expect(page.getByText("תכנית מסלקה 130")).toHaveCount(0);
     await page.goto(ROOT + base + "?step=portfolio", { waitUntil: "domcontentloaded" });

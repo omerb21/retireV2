@@ -63,7 +63,7 @@ def request(factory, **changes):
         "expected_eligibility_fingerprint": eligible["eligibility_fingerprint"],
         "expected_admission_review_fingerprint": admitted["admission_review_fingerprint"],
         "decision": "APPROVE_INTERNAL", "decision_reason": _REASON,
-        "review_reference": "document://professional/assessment-7",
+        "review_reference": "document://eligibility-7",
         "attestations": _ATTESTATIONS,
     }
     data.update(changes)
@@ -115,7 +115,7 @@ def test_02_explicit_authenticated_approval_and_audit(pg16, monkeypatch):
     assert state["internal_professional_authority"] is True
     assert [h["action"] for h in history] == ["SAVE_DRAFT", "APPROVE_INTERNAL"]
     assert history[-1]["actor_id"] == "trusted-planner"
-    assert history[-1]["internal_decision"]["review_reference"] == "document://professional/assessment-7"
+    assert history[-1]["internal_decision"]["review_reference"] == "document://eligibility-7"
 
 
 @pytest.mark.parametrize("actor", ["", "local-development-only", None])

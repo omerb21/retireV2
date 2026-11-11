@@ -292,10 +292,10 @@ def test_14_immutable_revision_trigger_in_postgresql(pg16):
     with scoped.begin() as conn:
         conn.execute(text(f"""
             CREATE FUNCTION "{schema}".prevent_scenario_fixation_approval_revision_mutation()
-            RETURNS trigger LANGUAGE plpgsql AS $
+            RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
                 RAISE EXCEPTION 'fixation approval revisions are append-only';
-            END; $;
+            END; $$;
         """))
         conn.execute(text(f"""
             CREATE TRIGGER trg_scenario_fixation_approval_revision_immutable

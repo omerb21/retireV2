@@ -42,7 +42,7 @@ describe("App", () => {
     expect(nav).toBeInTheDocument();
     expect(nav.querySelectorAll("a")).toHaveLength(5);
     expect(nav.querySelector('a[href="/clients/1/workspace?step=portfolio"]')).not.toBeNull();
-    expect(screen.getByText(/כלי מקצועי משני בתיק הלקוח הפעיל/)).toBeInTheDocument();
+    expect(screen.getByText("כלי מקצועי משני. הנתונים והפעולות משויכים לתיק הלקוח הפעיל.")).toBeInTheDocument();
     expect(screen.getByText(/מזהה תיק 1/)).toBeInTheDocument();
   });
 

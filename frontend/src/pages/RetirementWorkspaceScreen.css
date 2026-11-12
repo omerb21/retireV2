@@ -603,3 +603,33 @@
 }
 .professional-workspace__advanced a { color: #19549b; }
 .professional-workspace__advanced form { padding-top: 15px; }
+
+
+/* Supervisor 110: keep every internal-approval attestation reachable in the
+   viewport. The generic form rule lays labels out as inline-flex columns;
+   long RTL attestation text can otherwise expand the fieldset horizontally. */
+.professional-workspace__body section[aria-label="החלטת אישור מקצועית פנימית"] form fieldset {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.professional-workspace__body section[aria-label="החלטת אישור מקצועית פנימית"] form fieldset > label {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.professional-workspace__body section[aria-label="החלטת אישור מקצועית פנימית"] form fieldset > label > input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 4px 0 0;
+}

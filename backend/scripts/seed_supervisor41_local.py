@@ -31,6 +31,7 @@ from app.services import scenario_fixation_approval_service as fixation_review
 from app.services.scenario_unified_engine_binding_service import build_unified_scenario_engine_bindings
 from app.models.planning_input_decision import PlanningInputDecision
 from app.services.scenario_draft_service import _source_evidence
+from app.services.scenario_permission_preview_service import ruleset_digest
 from app.schemas.official_parameter_sets import (
     OfficialParameterSetCreate, OfficialParameterValues,
     OfficialParameterVerificationRequest, OfficialParameterActivationRequest,
@@ -87,7 +88,7 @@ def seed_admission_review() -> None:
         db.flush()
         db.add(PensionProduct(
             product_id=REVIEW_PRODUCT, client_id=REVIEW_CLIENT,
-            source_kind="manual", source_identity="supervisor78:synthetic",
+            source_kind="imported", source_identity="imported:supervisor78:synthetic",
             product_name="קרן פנסיה סינתטית 78", product_type="קרן פנסיה",
             account_reference="SYNTHETIC-78", version=1,
             historical_employers=[], created_by="supervisor78-test",
@@ -99,7 +100,7 @@ def seed_admission_review() -> None:
         db.flush()
         # Canonical product reads require all 11 component codes, including
         # explicit zero balances. Only the single pension component carries value.
-        pension_code = "תגמולי_עובד_עד_2000"
+        pension_code = COMPONENT_CODES[1]
         for code in COMPONENT_CODES:
             db.add(PensionProductComponent(
                 component_id=REVIEW_COMPONENT if code == pension_code
@@ -146,7 +147,7 @@ def seed_admission_review() -> None:
             amount=Decimal("40.00"), action="pension", effective_date=date(2027, 1, 1),
             validation_state="unverified", product_version_at_review=1,
             source_fingerprint_at_review=source["source_fingerprint"],
-            ruleset_digest_at_review="a" * 64,
+            ruleset_digest_at_review=ruleset_digest(),
         ))
         db.add(ScenarioDraftPensionElection(
             election_id="supervisor78-pension-election",

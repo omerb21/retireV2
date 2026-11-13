@@ -579,6 +579,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
             allocationEpoch.current += 1;
             setAllocation(null);
             setAllocationBusy(false);
+            void onSaved(scenario.scenario_id).catch(cause => setError(explain(cause)));
           }} />)}
     </details>}
     {loaded && pensionDecisions.length > 0 && <section aria-label="מצב חישוב החלופה">

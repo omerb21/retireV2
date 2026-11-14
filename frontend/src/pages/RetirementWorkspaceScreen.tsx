@@ -1,23 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
+import { UnifiedClientIntake } from "../components/UnifiedClientIntake";
+import { WorkspaceClearinghouseImport } from "../components/WorkspaceClearinghouseImport";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
+import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import "./RetirementWorkspaceScreen.css";
 
-const FIXED_CODES: Array<[string, string, "פיצויים" | "תגמולים"]> = [
-  ["פיצויים_מעסיק_נוכחי", "פיצויים מעסיק נוכחי", "פיצויים"],
-  ["פיצויים_לאחר_התחשבנות", "פיצויים לאחר התחשבנות", "פיצויים"],
-  ["פיצויים_שלא_עברו_התחשבנות", "פיצויים שלא עברו התחשבנות", "פיצויים"],
-  ["פיצויים_ממעסיקים_קודמים_רצף_זכויות", "פיצויים קודמים — רצף זכויות", "פיצויים"],
-  ["פיצויים_ממעסיקים_קודמים_רצף_קצבה", "פיצויים קודמים — רצף קצבה", "פיצויים"],
-  ["תגמולי_עובד_עד_2000", "תגמולי עובד עד 2000", "תגמולים"],
-  ["תגמולי_עובד_אחרי_2000", "תגמולי עובד אחרי 2000", "תגמולים"],
-  ["תגמולי_עובד_אחרי_2008_לא_משלמת", "תגמולי עובד אחרי 2008 — לא משלמת", "תגמולים"],
-  ["תגמולי_מעביד_עד_2000", "תגמולי מעביד עד 2000", "תגמולים"],
-  ["תגמולי_מעביד_אחרי_2000", "תגמולי מעביד אחרי 2000", "תגמולים"],
-  ["תגמולי_מעביד_אחרי_2008_לא_משלמת", "תגמולי מעביד אחרי 2008 — לא משלמת", "תגמולים"],
-];
+const FIXED_CODES = PORTFOLIO_COMPONENT_COLUMNS;
 type Step = "client" | "portfolio" | "supplement" | "scenario" | "results";
 type Selection = { productId: string; code: string };
 type Draft = { productId: string; version: number; components: Record<string, string> };
@@ -54,8 +45,15 @@ function uniqueProductSelection(items: Selection[]): string | null {
     ? items[0].productId : null;
 }
 
+const WORKSPACE_STEPS: readonly Step[] = ["client", "portfolio", "supplement", "scenario", "results"];
+function workspaceStep(search: string): Step {
+  const requested = new URLSearchParams(search).get("step");
+  return WORKSPACE_STEPS.find(step => step === requested) ?? "portfolio";
+}
+
 export function RetirementWorkspaceScreen() {
   const { clientId: rawClientId } = useParams();
+  const location = useLocation();
   const clientId = rawClientId && /^[1-9][0-9]*$/.test(rawClientId) ? Number(rawClientId) : NaN;
   const validClient = Number.isSafeInteger(clientId);
   const activeClient = useRef(clientId);
@@ -63,8 +61,11 @@ export function RetirementWorkspaceScreen() {
   const grantSaveGeneration = useRef(0);
   activeClient.current = clientId;
   const [read, setRead] = useState<ReadState>({ state: "loading" });
-  const [step, setStep] = useState<Step>("portfolio");
+  const [step, setStep] = useState<Step>(() => workspaceStep(location.search));
   const [chosenComponent, setChosenComponent] = useState<{ productId: string; componentCode: string } | null>(null);
+  const [scenarioChoice, setScenarioChoice] = useState<{ clientId: number; scenarioId: string } | null>(null);
+  // Never reuse another client's scenario, including during A -> B async transitions.
+  const chosenScenarioId = scenarioChoice?.clientId === clientId ? scenarioChoice.scenarioId : null;
   const [supplement, setSupplement] = useState<{ clientId: number; groups: Array<Array<{ client_id: number; title: string; detail: string }>> } | null>(null);
   const [supplementError, setSupplementError] = useState<string | null>(null);
   const [supplementLoading, setSupplementLoading] = useState(false);
@@ -98,8 +99,9 @@ export function RetirementWorkspaceScreen() {
     employmentSaveGeneration.current += 1;
     grantSaveGeneration.current += 1;
     setRead({ state: "loading" });
-    setStep("portfolio");
+    setStep(workspaceStep(location.search));
     setChosenComponent(null);
+    setScenarioChoice(null);
     setSupplement(null);
     setSupplementError(null);
     setSupplementLoading(false);
@@ -338,7 +340,10 @@ export function RetirementWorkspaceScreen() {
     return products.filter(product => {
       if (q && ![product.product_name, product.provider_name ?? "", product.account_reference ?? ""]
         .join(" ").toLocaleLowerCase("he").includes(q)) return false;
-      if (discrepancyOnly && (!product.reconciliation.product_discrepancy
+      const unmapped = product.source_history?.some(source => source.diagnostics.some(
+        diagnostic => diagnostic.state === "SOURCE_PRESENT_NONZERO_UNMAPPED" && diagnostic.unresolved === true,
+      )) ?? false;
+      if (discrepancyOnly && !unmapped && (!product.reconciliation.product_discrepancy
         || Number(product.reconciliation.product_discrepancy) === 0)) return false;
       return true;
     });
@@ -424,6 +429,42 @@ export function RetirementWorkspaceScreen() {
       setGrantEdit({ ...record });
     }
   }
+
+  async function refreshCase() {
+    const captured = clientId;
+    const updated = await getClient(captured);
+    if (activeClient.current !== captured || updated.client_id !== captured) {
+      throw new Error("תשובת תיק הלקוח אינה תואמת ללקוח הנוכחי");
+    }
+    setRead(previous => previous.state === "ready" && previous.client.client_id === captured
+      ? { ...previous, client: updated } : previous);
+  }
+
+  async function refreshImportedProducts(_imported: PensionProduct[]) {
+    const captured = clientId;
+    const updated = await listPensionProducts(captured);
+    if (activeClient.current !== captured || updated.some(product => product.client_id !== captured)) {
+      throw new Error("תשובת מוצרי המסלקה אינה תואמת ללקוח הנוכחי");
+    }
+    setRead(previous => previous.state === "ready" && previous.client.client_id === captured
+      ? { ...previous, products: updated } : previous);
+    setSelection([]);
+    setDraft(null);
+    setChosenComponent(null);
+  }
+
+  // Handles return links from specialist tools without remounting the client.
+  // Never discard an unsaved draft on a query-only navigation.
+  useEffect(() => {
+    const next = new URLSearchParams(location.search).get("step");
+    if (!next || !WORKSPACE_STEPS.some(item => item === next)) return;
+    if (draft !== null || saveState === "saving" || employmentEdit !== null
+        || employmentSaving || grantEdit !== null || grantSaving) {
+      setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
+      return;
+    }
+    setStep(next as Step);
+  }, [location.search, clientId]);
 
   function switchStep(next: Step) {
     if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving) {
@@ -551,8 +592,14 @@ export function RetirementWorkspaceScreen() {
         </dl>
         <div className="professional-workspace__actions">
           <button type="button" onClick={() => switchStep("portfolio")}>פתח את התיק הפנסיוני</button>
-          <Link to={"/clients/" + clientId}>פרטי תיק נוספים</Link>
+          <button type="button" onClick={() => switchStep("portfolio")}>המשך לנתוני המסלקה</button>
         </div>
+        <UnifiedClientIntake client={client} onUpdated={refreshCase}/>
+        <details className="professional-workspace__advanced">
+          <summary>מסמכים, אימות מקורות וניהול נתונים מתקדם</summary>
+          <p>פעולות מקצועיות נוספות שלא שולבו עדיין במסך המרכזי.</p>
+          <Link to={"/clients/" + clientId}>ניהול מסמכי לקוח וראיות</Link>
+        </details>
       </section>}
       {step === "portfolio" && <section aria-label="טבלת התיק הפנסיוני">
         <h1>התיק הפנסיוני</h1>
@@ -561,6 +608,7 @@ export function RetirementWorkspaceScreen() {
           <strong>מצב נתוני אמת.</strong> תיקון יתרה או סיווג משנה את הנתון העובד לאחר שמירה מפורשת.
           זו אינה המרה לקצבה או לנכס הון. בחירות תרחיש אינן מבוצעות כאן.
         </p>
+        <WorkspaceClearinghouseImport clientId={clientId} onImported={refreshImportedProducts}/>
         <div className="professional-workspace__toolbar">
           <label>חיפוש <input type="search" value={search} onChange={event => {
             setSearch(event.target.value); setSelection([]);
@@ -572,16 +620,26 @@ export function RetirementWorkspaceScreen() {
         <div className="professional-workspace__ledger" role="region" aria-label="טבלת רכיבים נגללת" tabIndex={0}>
           <table>
             <thead>
-              <tr><th scope="col">תוכנית / פוליסה</th><th scope="col">גוף מנהל</th><th scope="col">יתרה מדווחת</th>
+              <tr><th scope="col">תוכנית / פוליסה</th><th scope="col">גוף מנהל</th><th scope="col">יתרה מדווחת</th><th scope="col">מצב מקור וקליטה</th>
                 {columns.map(([code, label]) => <th key={code} scope="col" title={label}>{label}</th>)}
                 <th scope="col">פער</th>
               </tr>
             </thead>
             <tbody>
-              {shownProducts.map(product => <tr key={product.product_id}>
-                <th scope="row"><strong>{product.product_name}</strong><small>חשבון {product.account_reference ?? "לא נמסר"}</small></th>
+              {shownProducts.map(product => {
+                const unmapped = product.source_history?.some(source => source.diagnostics.some(
+                  diagnostic => diagnostic.state === "SOURCE_PRESENT_NONZERO_UNMAPPED" && diagnostic.unresolved === true,
+                )) ?? false;
+                return <tr key={product.product_id}>
+                <th scope="row"><strong>{product.product_name}</strong><small>חשבון {product.account_reference ?? "לא נמסר"}</small>
+                  {unmapped && <span role="alert">נתון מקור לא מסווג: יתרה לא ממופה לרכיב מקצועי. אפס ברכיב אינו ראיה ליתרת אפס במקור.</span>}
+                </th>
                 <td>{product.provider_name ?? "לא נמסר"}</td>
                 <td><bdi>{money(product.reported_product_total)}</bdi></td>
+                <td>{product.source_kind === "imported" ? "נקלט ממקור" : "מוצר ידני"}
+                  {product.source_history?.length ? ` · ${product.source_history.length} רשומות מקור` : " · ללא היסטוריית מקור"} 
+                  {unmapped && <strong> · נדרש בירור</strong>}
+                </td>
                 {columns.map(([code, label]) => {
                   const value = product.components[code];
                   const selected = selection.some(item => item.productId === product.product_id && item.code === code);
@@ -595,8 +653,8 @@ export function RetirementWorkspaceScreen() {
                   </button>}</td>;
                 })}
                 <td><bdi>{money(product.reconciliation.product_discrepancy)}</bdi></td>
-              </tr>)}
-              {shownProducts.length === 0 && <tr><td colSpan={columns.length + 4}>אין מוצרים התואמים לסינון.</td></tr>}
+              </tr>})}
+              {shownProducts.length === 0 && <tr><td colSpan={columns.length + 5}>אין מוצרים התואמים לסינון.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -607,9 +665,14 @@ export function RetirementWorkspaceScreen() {
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={startCorrection}>תיקון יתרות נבחרות</button>
             <button type="button" disabled={selection.length !== 1 || draft !== null || saveState === "saving"} onClick={openSavedScenarioFromSelection}>העבר רכיב לחלופה שמורה</button>
             <button type="button" disabled={!selection.length || draft !== null || saveState === "saving"} onClick={() => setSelection([])}>בטל בחירה</button>
-            <Link to={"/clients/" + clientId + "/pension-products"}>ייבוא מסלקה ופרטי מוצר מורחבים</Link>
+
           </div>
         </section>
+        <details className="professional-workspace__advanced">
+          <summary>פרטי מוצר מתקדמים ונתוני מקור</summary>
+          <p>עריכת שדות מקור, היסטוריית המרות ואבחון חריגות. לא נדרש לעבודה השוטפת בטבלת צבעי הכסף.</p>
+          <Link to={"/clients/" + clientId + "/pension-products"}>פתיחת כלי אבחון ועריכה מתקדמים</Link>
+        </details>
         {draft && <form className="professional-workspace__editor" onSubmit={event => void saveCorrection(event)}>
           <h2>תיקון נתוני אמת — {products.find(p => p.product_id === draft.productId)?.product_name}</h2>
           <p>רק רכיבים שנבחרו פתוחים לעריכה. רכיבים אחרים יישמרו ללא שינוי.</p>
@@ -752,14 +815,19 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>
-        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent} />
-        <p className="professional-workspace__boundary">חלופות נשמרות בשרת בנפרד מיתרות התיק. בסביבת Stage 6 מורשית בלבד ניתן לקבל אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו לתרחיש, בכפוף לשערי המוכנות המקצועיים. אין במסלול זה חישובי מס או נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
+        <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent}
+          preferredScenarioId={chosenScenarioId}
+          onScenarioSelected={scenarioId => {
+            if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
+          }} />
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
-        <p className="professional-workspace__boundary">השוואת הקצאות הטיוטה השמורות מוצגת להלן. בסביבת Stage 6 מאושרת ניתן לבדוק אומדני קצבה, סיכום קצבאות ותזרים חודשי ברוטו מאומת. אין במסלול זה מס, נטו, הון נזיל, NPV או הרשאת ביצוע כספי.</p>
-        <ScenarioDraftPanel clientId={clientId} products={products} />
-        <Link to={"/clients/" + clientId + "/retirement-income-readiness"}>מעבר למסך מוכנות ההכנסה הקיים</Link>
+        <ScenarioDraftPanel clientId={clientId} products={products} view="results"
+          preferredScenarioId={chosenScenarioId}
+          onScenarioSelected={scenarioId => {
+            if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });
+          }} />
       </section>}
     </div>
   </main>;

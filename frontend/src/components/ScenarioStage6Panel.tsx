@@ -470,13 +470,12 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
         : "התזרים חסום: לא נמצא חודש עם סכום כולל תקף.";
 
   return <section aria-label="בחירת קצבה ואומדן תרחיש פנימי">
-    <h4>{pensionDecisions.length > 0 ? "בחירת קצבה ובקרת הקצאות" : "בקרת הקצאות תרחיש"} — סביבת בדיקות מאובטחת בלבד</h4>
-    {pensionDecisions.length > 0 && <p className="professional-workspace__boundary">
-      בחירת הקצבה היא טיוטה. שמירתה מעדכנת את גרסת החלופה ומבטלת תוקף של אישורים קודמים.
-      אין כאן אישור מקדם, זכאות או הבטחת קצבה.
-    </p>}
+    <h4>{pensionDecisions.length > 0 ? "תוצאת קצבה" : "נתוני הקצאה"}</h4>
+    <p className="professional-workspace__boundary">קצבה חודשית ברוטו בלבד. ללא אישור מקצועי תקף לא יוצג סכום מחושב.</p>
     {error && <p role="alert">{error}</p>}
-    <section aria-label="בדיקת הקצאות ללא חישוב פיננסי">
+    <details>
+      <summary>פירוט הקצאות ויתרות</summary>
+      <section aria-label="בדיקת הקצאות ללא חישוב פיננסי">
       <h5>בקרת הקצאות תרחיש</h5>
       <p>נתונים מבניים בלבד לרכיבים שהוקצו בהחלטות התרחיש. זו אינה סקירה של כל נכסי הלקוח, ואינה קצבה מחושבת, מס, תזרים או אישור מקצועי.</p>
       <button type="button" disabled={allocationBusy || dirty || scenario.status !== "draft"} onClick={() => void inspectAllocations()}>
@@ -496,7 +495,10 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
           {row.blocker_codes.length > 0 && ` חסימות: ${row.blocker_codes.join(", ")}`}
         </p>)}
       </section>}
-    </section>
+      </section>
+    </details>
+    {pensionDecisions.length > 0 && <details>
+      <summary>בחירות קצבה, שאירים ואישור מקדם</summary>
     {!loaded && !error && pensionDecisions.length > 0 && <p>טוען בחירות קצבה...</p>}
     {loaded && pensionDecisions.length > 0 && <form onSubmit={event => void save(event)}>
       {pensionDecisions.map(decision => {
@@ -577,15 +579,19 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
             allocationEpoch.current += 1;
             setAllocation(null);
             setAllocationBusy(false);
+            void onSaved(scenario.scenario_id).catch(cause => setError(explain(cause)));
           }} />)}
+    </details>}
     {loaded && pensionDecisions.length > 0 && <section aria-label="מצב חישוב החלופה">
-      <h5>מצב חישוב קצבה בחלופה</h5>
+      <h5>קצבה חודשית ברוטו</h5>
       <button type="button" disabled={busy || dirty || scenario.status !== "draft"}
         onClick={() => void checkAggregate()}>
-        חשב סיכום קצבאות מאושר
+        בדוק תוצאת קצבה
       </button>
       <p role="status">{calculationStatus}</p>
-      <p>{readyEstimateCount} אומדנים הושלמו; {blockedEstimateCount} חסומים; {pensionDecisions.length - evaluatedEstimates.length} טרם נבדקו.</p>
+      <details>
+        <summary>פירוט בדיקות מקצועיות</summary>
+        <p>{readyEstimateCount} אומדנים הושלמו; {blockedEstimateCount} חסומים; {pensionDecisions.length - evaluatedEstimates.length} טרם נבדקו.</p>
       {aggregate?.aggregation_state === "COMPLETE"
         && aggregate.monthly_pension_gross_total_ils !== null
         && aggregate.comparison_basis !== null
@@ -597,8 +603,11 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
         : <p>לא מוצג סכום כולל. תוצאות תקינות, אם קיימות, מוצגות לכל החלטה בנפרד בלבד.</p>}
       {aggregate && aggregate.blockers.length > 0
         && <ul aria-label="חסימות סיכום הקצבה">{aggregate.blockers.map(code => <li key={code}>{code}</li>)}</ul>}
+      </details>
     </section>}
-    {loaded && pensionDecisions.length > 0 && <section aria-label="תזרים הכנסות חודשי מבוקר">
+    {loaded && pensionDecisions.length > 0 && <details>
+      <summary>תזרים חודשי ברוטו (מתקדם)</summary>
+      <section aria-label="תזרים הכנסות חודשי מבוקר">
       <h5>תזרים הכנסות חודשי ברוטו</h5>
       <p>הצגה זו משלבת רק קצבאות Stage 6 מאומתות והכנסות חוזרות חודשיות תקפות.
         אין בה מס, נטו, הצמדה, תשואה, היוון, NPV או משיכות הון.</p>
@@ -644,6 +653,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
           {cashflow.blocker_codes.map(code => <li key={code}>{code}</li>)}
         </ul>}
       </>}
-    </section>}
+      </section>
+    </details>}
   </section>;
 }

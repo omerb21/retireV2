@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
-import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
+import { getClient, getClientProfile, updateClientCase, updateClientProfile, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
+import { listPensionProducts, importPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 vi.mock("../components/ScenarioDraftPanel", () => ({
   ScenarioDraftPanel: ({ initialSource }: { initialSource?: { productId: string; componentCode: string } | null }) =>
@@ -10,12 +10,13 @@ vi.mock("../components/ScenarioDraftPanel", () => ({
 }));
 
 vi.mock("../api/clientsApi", () => ({
-  getClient: vi.fn(),
+  getClient: vi.fn(), getClientProfile: vi.fn(), updateClientCase: vi.fn(), updateClientProfile: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
   getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), createHistoricalEmploymentSettlement: vi.fn(), updateGrant: vi.fn(), createGrantForEmployment: vi.fn(), linkGrantToEmployment: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
+  importPensionProducts: vi.fn(),
   savePensionProduct: vi.fn(),
 }));
 
@@ -62,6 +63,7 @@ function SwitchClient() {
   return <>
     <button type="button" onClick={() => navigate("/clients/1/workspace")}>עבור ללקוח א</button>
     <button type="button" onClick={() => navigate("/clients/2/workspace")}>עבור ללקוח ב</button>
+    <button type="button" onClick={() => navigate("/clients/1/workspace?step=supplement")}>חזור לנתונים משלימים</button>
   </>;
 }
 
@@ -77,6 +79,7 @@ function open() {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getClient).mockImplementation(id => Promise.resolve(client(id)));
+  vi.mocked(getClientProfile).mockResolvedValue({ profile: null });
   vi.mocked(getEmploymentRecords).mockResolvedValue([]);
   vi.mocked(getGrants).mockResolvedValue([]);
   vi.mocked(getActualCapitalizations).mockResolvedValue([]);
@@ -87,6 +90,79 @@ beforeEach(() => {
 });
 
 describe("סביבת העבודה המקצועית החדשה", () => {
+
+  it("imports clearinghouse files inside the single money-color ledger without a second table", async () => {
+    vi.mocked(listPensionProducts).mockResolvedValueOnce([product()]).mockResolvedValueOnce([
+      { ...product(), product_name: "קרן מסלקה", reported_product_total: "250.00" }
+    ]);
+    vi.mocked(importPensionProducts).mockResolvedValue({
+      batch_identity: "synthetic-batch", file_count: 1, product_count: 1,
+      products: [{ ...product(), product_name: "קרן מסלקה", reported_product_total: "250.00" }],
+      diagnostics: [],
+    });
+    open();
+    const grid = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(within(grid).getByText("קרן פנסיה א")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "רשימת מוצרים פנסיוניים" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("קובצי מסלקה"), {
+      target: { files: [new File(["<source/>"], "synthetic.xml", { type: "text/xml" })] }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: "ייבוא מסלקה ועדכון הטבלה" }).closest("form")!);
+    await waitFor(() => expect(importPensionProducts).toHaveBeenCalledWith(1, expect.any(Array)));
+    expect(await within(grid).findByText("קרן מסלקה")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("טבלת צבעי הכסף עודכנה");
+  });
+
+  it("shows existing unmapped source warnings in the single money-color table without changing balances", async () => {
+    vi.mocked(listPensionProducts).mockResolvedValue([{
+      ...product(), components: { ...product().components, "פיצויים_לאחר_התחשבנות": "0.00" },
+      source_history: [{
+        checksum: "synthetic-checksum", filename: "synthetic.xml", statement_date: "2026-09-30",
+        diagnostics: [{ code: "UNMAPPED", state: "SOURCE_PRESENT_NONZERO_UNMAPPED", unresolved: true }],
+      }],
+    }]);
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(within(ledger).getByRole("alert")).toHaveTextContent("יתרה לא ממופה");
+    expect(within(ledger).getByText(/נדרש בירור/)).toBeInTheDocument();
+    expect(within(ledger).getByRole("columnheader", { name: "מצב מקור וקליטה" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "הצג רק פערי התאמה" }));
+    expect(within(ledger).getByText("קרן פנסיה א")).toBeInTheDocument();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("returns to the requested workspace step without changing client data", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    // A specialist return link uses the same workspace URL with a step query.
+    // Navigation remains client-scoped and read-only.
+    fireEvent.click(screen.getByRole("button", { name: "חזור לנתונים משלימים" }));
+    await screen.findByRole("heading", { name: "נתונים משלימים" });
+    expect(updateClientCase).not.toHaveBeenCalled();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("keeps intake inside the professional workspace and saves explicit client facts", async () => {
+    vi.mocked(updateClientCase).mockResolvedValue({
+      client_id: 1, display_name: "לקוח א", id_number: "000000001",
+      birth_date: "1963-01-01", gender: "זכר", employment_status: "salaried_employee",
+      planned_retirement_age: 67, planned_retirement_date: null,
+      lifecycle_status: "draft",
+      completeness: { status: "complete", missing_field_ids: [], conflicting_field_ids: [] },
+      updated_at: "2026-11-11T12:00:00Z",
+    });
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "1. לקוח ותיק" }));
+    expect(screen.getByRole("region", { name: "פרטי הלקוח ותכנון פרישה" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "מגדר" }), { target: { value: "זכר" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת פרטי תיק" }));
+    await waitFor(() => expect(updateClientCase).toHaveBeenCalledWith(1, expect.objectContaining({
+      gender: "זכר", id_number: "000000001"
+    })));
+    expect(await screen.findByText("פרטי תיק הפרישה נשמרו.")).toBeInTheDocument();
+  });
+
   it("loads a single ledger from authoritative client/product APIs and never writes on selection", async () => {
     open();
     const region = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });

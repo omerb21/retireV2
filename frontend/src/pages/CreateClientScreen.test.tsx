@@ -3,7 +3,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CreateClientScreen } from "./CreateClientScreen";
-import { ClientDetailScreen } from "./ClientDetailScreen";
 
 function mockJsonResponse(body: unknown, ok = true, status = 200) {
   return {
@@ -22,7 +21,7 @@ afterEach(() => {
 });
 
 describe("CreateClientScreen", () => {
-  it("creates a client and redirects to client detail after successful submit", async () => {
+  it("creates a client and enters the unified professional workspace after successful submit", async () => {
     vi.stubGlobal(
       "fetch",
       vi
@@ -53,7 +52,7 @@ describe("CreateClientScreen", () => {
       <MemoryRouter initialEntries={["/clients/new"]}>
         <Routes>
           <Route path="/clients/new" element={<CreateClientScreen />} />
-          <Route path="/clients/:clientId" element={<ClientDetailScreen />} />
+          <Route path="/clients/:clientId/workspace" element={<div>תיק פרישה מאוחד</div>} />
         </Routes>
       </MemoryRouter>,
     );
@@ -62,10 +61,7 @@ describe("CreateClientScreen", () => {
     fireEvent.change(screen.getByLabelText("מספר זהות"), { target: { value: "001234567" } });
     fireEvent.click(screen.getByRole("button", { name: "שמירת לקוח" }));
 
-    expect(await screen.findByRole("heading", { name: "פרטי לקוח — M01" })).toBeInTheDocument();
-    expect(await screen.findByText("שם מלא: Dana Levi")).toBeInTheDocument();
-    expect(await screen.findByText("מספר זהות: 001234567")).toBeInTheDocument();
-    expect(await screen.findByText("זיהוי מקצועי: זיהוי לא הושלם")).toBeInTheDocument();
+    expect(await screen.findByText("תיק פרישה מאוחד")).toBeInTheDocument();
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/clients",
       expect.objectContaining({

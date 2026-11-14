@@ -27,7 +27,7 @@ from app.models.employment_record import EmploymentRecord
 from app.services.scenario_draft_service import _source_evidence
 from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
 from app.schemas.scenario_draft import DraftReplace, DraftDecisionWrite
-from app.services.scenario_draft_service import replace, DraftError
+from app.services.scenario_draft_service import replace, rename, DraftError
 from app.services.scenario_pension_election_store_service import replace_elections, current_elections
 
 load_all_models()
@@ -64,6 +64,7 @@ def test_atomic_pension_election_store_real_postgresql():
     if engine.dialect.name != "postgresql":
         pytest.fail("PostgreSQL required")
     schema = "sc05c_real_" + uuid.uuid4().hex[:16]
+    restricted_role = "sc05c_runtime_" + uuid.uuid4().hex[:12]
     scoped = engine.execution_options(schema_translate_map={None: schema})
     try:
         with engine.begin() as conn:
@@ -99,7 +100,7 @@ def test_atomic_pension_election_store_real_postgresql():
                 conn.execute(PensionProductComponent.__table__.insert(), {
                     "component_id": "c" if index == 0 else f"c{index}",
                     "product_id": "p", "component_code": code,
-                    "balance": Decimal("100.00") if index == 0 else Decimal("0.00"),
+                    "balance": Decimal("100.00") if index in (0, 1) else Decimal("0.00"),
                 })
             conn.execute(ScenarioDraft.__table__.insert(), {
                 "scenario_id": "s", "client_id": 7, "name": "Synthetic",
@@ -167,21 +168,203 @@ def test_atomic_pension_election_store_real_postgresql():
                 replace_elections(db, 7, "s", payload, "test")
             db.rollback()
             assert len(current_elections(db, 7, "s")) == 1
-        # Replacing a decision with its same ID still invalidates old elections.
+        # Confirm the real app role cannot UPDATE an election. The new
+        # continuity algorithm must use DELETE/INSERT and still be atomic.
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE ROLE "{restricted_role}" NOLOGIN'))
+            conn.execute(text(f'GRANT USAGE ON SCHEMA "{schema}" TO "{restricted_role}"'))
+            grants = {
+                "clients": "SELECT",
+                "pension_products": "SELECT",
+                "pension_product_components": "SELECT",
+                "scenario_drafts": "SELECT, UPDATE",
+                "scenario_draft_decisions": "SELECT, INSERT, DELETE",
+                "scenario_draft_revisions": "SELECT, INSERT",
+                "scenario_draft_pension_elections": "SELECT, INSERT, DELETE",
+            }
+            for table, permissions in grants.items():
+                conn.execute(text(
+                    f'GRANT {permissions} ON "{schema}"."{table}" TO "{restricted_role}"'
+                ))
+            assert not conn.scalar(text(
+                "SELECT has_table_privilege(:role,:table,'UPDATE')"
+            ), {
+                "role": restricted_role,
+                "table": f'{schema}.scenario_draft_pension_elections',
+            })
+
+        # A direct overallocated group must abort its CAS, decisions and any
+        # election changes, even under the real restricted PostgreSQL role.
+        with pytest.raises(DraftError, match="SCENARIO_SOURCE_OVERALLOCATED"):
+            with SessionFactory() as db, db.begin():
+                db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+                replace(db, 7, "s", DraftReplace(
+                    expected_version=2, name="Should not save",
+                    decisions=[
+                        DraftDecisionWrite(
+                            decision_id="d", source_product_id="p",
+                            source_component_id="c", component_code=COMPONENT_CODES[0],
+                            amount=Decimal("60.00"), action="pension",
+                            effective_date=date(2026, 10, 24),
+                        ),
+                        DraftDecisionWrite(
+                            source_product_id="p", source_component_id="c",
+                            component_code=COMPONENT_CODES[0],
+                            amount=Decimal("40.01"), action="capital_asset",
+                            effective_date=date(2026, 10, 25),
+                        ),
+                    ],
+                ), "test")
+        with SessionFactory() as db:
+            assert db.scalar(select(ScenarioDraft.version).where(
+                ScenarioDraft.scenario_id == "s")) == 2
+            assert len(current_elections(db, 7, "s")) == 1
+
+        # Add a separate pension component. The existing election MUST survive
+        # the draft version change, even with restricted PostgreSQL DML grants.
         with SessionFactory() as db, db.begin():
+            db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
             draft = replace(db, 7, "s", DraftReplace(
-                expected_version=2, name="Changed",
-                decisions=[DraftDecisionWrite(
-                    decision_id="d", source_product_id="p", source_component_id="c",
-                    component_code=COMPONENT_CODES[0], amount=Decimal("30.00"),
-                    action="pension", effective_date=date(2026, 10, 24),
-                )],
+                expected_version=2, name="Synthetic",
+                decisions=[
+                    DraftDecisionWrite(
+                        decision_id="d", source_product_id="p",
+                        source_component_id="c", component_code=COMPONENT_CODES[0],
+                        amount=Decimal("40.00"), action="pension",
+                        effective_date=date(2026, 10, 24),
+                    ),
+                    DraftDecisionWrite(
+                        source_product_id="p", source_component_id="c1",
+                        component_code=COMPONENT_CODES[1], amount=Decimal("20.00"),
+                        action="capital_asset", effective_date=date(2026, 10, 25),
+                    ),
+                ],
             ), "test")
             assert draft["version"] == 3
+            assert len(draft["decisions"]) == 2
+            assert len(current_elections(db, 7, "s")) == 1
+            assert current_elections(db, 7, "s")[0]["decision_id"] == "d"
+
+        # Metadata-only version bump must likewise preserve a current choice.
+        with SessionFactory() as db, db.begin():
+            db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+            renamed = rename(db, 7, "s", "Renamed", 3, "test")
+            assert renamed["version"] == 4
+            assert len(current_elections(db, 7, "s")) == 1
+            second_decision_id = next(
+                row["decision_id"] for row in renamed["decisions"]
+                if row["decision_id"] != "d"
+            )
+
+        # A failed re-insert after the CAS and decision DELETE must roll
+        # back the entire transaction, including the old election and revision.
+        def reject_election_insert(_connection, _cursor, statement, *_args):
+            if ("scenario_draft_pension_elections" in statement.lower()
+                    and statement.lstrip().lower().startswith("insert")):
+                raise RuntimeError("INJECTED_ELECTION_INSERT_FAILURE")
+
+        event.listen(scoped, "before_cursor_execute", reject_election_insert)
+        try:
+            with pytest.raises(RuntimeError, match="INJECTED_ELECTION_INSERT_FAILURE"):
+                with SessionFactory() as db, db.begin():
+                    db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+                    replace(db, 7, "s", DraftReplace(
+                        expected_version=4, name="Should rollback",
+                        decisions=[
+                            DraftDecisionWrite(
+                                decision_id="d", source_product_id="p",
+                                source_component_id="c",
+                                component_code=COMPONENT_CODES[0],
+                                amount=Decimal("40.00"), action="pension",
+                                effective_date=date(2026, 10, 24),
+                            ),
+                            DraftDecisionWrite(
+                                decision_id=second_decision_id,
+                                source_product_id="p", source_component_id="c1",
+                                component_code=COMPONENT_CODES[1],
+                                amount=Decimal("20.00"), action="capital_asset",
+                                effective_date=date(2026, 10, 25),
+                            ),
+                        ],
+                    ), "test")
+        finally:
+            event.remove(scoped, "before_cursor_execute", reject_election_insert)
+        with SessionFactory() as db:
+            assert db.scalar(select(ScenarioDraft.version).where(
+                ScenarioDraft.scenario_id == "s")) == 4
+            assert len(current_elections(db, 7, "s")) == 1
+            assert db.scalar(select(func.count()).select_from(
+                ScenarioDraftRevision).where(
+                    ScenarioDraftRevision.scenario_id == "s")) == 3
+
+        # Simulate a canonical balance change committed by another session
+        # while the draft replacement transaction is still open. The draft
+        # writer must never be able to present stale source facts as current
+        # on a fresh read or retain the stale election as usable.
+        with SessionFactory() as draft_db:
+            with draft_db.begin():
+                draft_db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+                changed = replace(draft_db, 7, "s", DraftReplace(
+                    expected_version=4, name="Renamed",
+                    decisions=[
+                        DraftDecisionWrite(
+                            decision_id="d", source_product_id="p",
+                            source_component_id="c", component_code=COMPONENT_CODES[0],
+                            amount=Decimal("40.00"), action="pension",
+                            effective_date=date(2026, 10, 24),
+                        ),
+                        DraftDecisionWrite(
+                            decision_id=second_decision_id, source_product_id="p",
+                            source_component_id="c1", component_code=COMPONENT_CODES[1],
+                            amount=Decimal("20.00"), action="capital_asset",
+                            effective_date=date(2026, 10, 25),
+                        ),
+                    ],
+                ), "test")
+                assert changed["version"] == 5
+                with scoped.begin() as updater:
+                    updater.execute(PensionProductComponent.__table__.update().where(
+                        PensionProductComponent.component_id == "c"
+                    ).values(balance=Decimal("39.00")))
+        with SessionFactory() as db:
+            from app.services.scenario_draft_service import read as read_draft
+            stale = read_draft(db, 7, "s")
+            assert stale["status"] == "needs_revalidation"
+            assert next(row for row in stale["decisions"]
+                        if row["decision_id"] == "d")["validation_state"] == (
+                            "needs_revalidation")
             assert current_elections(db, 7, "s") == []
-            assert db.scalar(select(func.count()).select_from(ScenarioDraftPensionElection)) == 0
+
+        # Material change removes only the relevant old pension election.
+        with SessionFactory() as db, db.begin():
+            db.execute(text(f'SET LOCAL ROLE "{restricted_role}"'))
+            rows = db.scalars(select(ScenarioDraftDecision).where(
+                ScenarioDraftDecision.scenario_id == "s")).all()
+            second = next(row for row in rows if row.decision_id != "d")
+            draft = replace(db, 7, "s", DraftReplace(
+                expected_version=5, name="Changed",
+                decisions=[
+                    DraftDecisionWrite(
+                        decision_id="d", source_product_id="p",
+                        source_component_id="c", component_code=COMPONENT_CODES[0],
+                        amount=Decimal("30.00"), action="pension",
+                        effective_date=date(2026, 10, 24),
+                    ),
+                    DraftDecisionWrite(
+                        decision_id=second.decision_id, source_product_id="p",
+                        source_component_id="c1", component_code=COMPONENT_CODES[1],
+                        amount=Decimal("20.00"), action="capital_asset",
+                        effective_date=date(2026, 10, 25),
+                    ),
+                ],
+            ), "test")
+            assert draft["version"] == 6
+            assert current_elections(db, 7, "s") == []
+            assert db.scalar(select(func.count()).select_from(
+                ScenarioDraftPensionElection)) == 0
     finally:
         with engine.begin() as conn:
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.execute(text(f'DROP ROLE IF EXISTS "{restricted_role}"'))
         scoped.dispose()
         engine.dispose()

@@ -29,6 +29,15 @@
   padding: 9px 13px; border: 1px solid transparent; border-radius: 7px;
   color: #49647e; background: transparent; font-weight: 700;
 }
+.professional-workspace__steps a {
+  padding: 9px 13px; border: 1px solid transparent; border-radius: 7px;
+  color: #49647e; background: transparent; font-weight: 700;
+  text-decoration: none;
+}
+.professional-workspace__steps a:hover,
+.professional-workspace__steps a:focus-visible {
+  background: white; border-color: #d2e0f2;
+}
 .professional-workspace__steps button.is-active {
   background: white; color: #1654a0; border-color: #d2e0f2;
   box-shadow: 0 1px 4px #1a3b6118;
@@ -385,4 +394,242 @@
 }
 .professional-workspace__identity:has(> section) > section.is-empty p {
   margin: 5px 0;
+}
+
+
+/* Scenario workbench: keep everyday planning focused, disclose technical
+   controls only when a planner deliberately expands them. */
+.scenario-workflow { display: grid; gap: 15px; }
+.scenario-workflow > h2 { margin: 0; font-size: 19px; }
+.scenario-workflow > .professional-workspace__boundary { margin: 0; }
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 9px;
+  border: 1px solid #d5e2ef; border-radius: 10px;
+  padding: 12px 14px; background: #f7faff;
+}
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] strong {
+  margin-inline-end: 6px;
+}
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] button {
+  border: 1px solid #b5cce4; border-radius: 8px; background: white;
+  color: #20547f; padding: 8px 13px; font-weight: 600;
+}
+.scenario-workflow [role="group"][aria-label="בחירת חלופה"] button[aria-pressed="true"] {
+  background: #175b9e; color: white; border-color: #175b9e;
+}
+.scenario-workflow details {
+  border: 1px solid #dce6f1; border-radius: 9px;
+  background: #fbfdff; padding: 0 13px;
+}
+.scenario-workflow details > summary {
+  cursor: pointer; padding: 11px 4px; font-size: 13px;
+  font-weight: 700; color: #355a7a;
+}
+.scenario-workflow details[open] {
+  padding-bottom: 13px;
+}
+.scenario-workflow details[open] > summary {
+  border-bottom: 1px solid #e1e9f3; margin-bottom: 10px;
+}
+.scenario-workflow form {
+  margin-top: 12px; padding: 13px;
+  background: #f8fbff; border: 1px solid #dae6f2;
+  border-radius: 9px;
+}
+.scenario-workflow > div > h3 { margin: 2px 0 9px; }
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] {
+  padding: 16px; border: 1px solid #c9ddee; border-radius: 10px;
+  background: #f5faff;
+}
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] > h5 {
+  margin: 0 0 9px; font-size: 16px;
+}
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] > button {
+  border: 0; background: #175b9e; color: white;
+  padding: 10px 15px; border-radius: 7px; font-weight: 700;
+}
+.scenario-workflow section[aria-label="מצב חישוב החלופה"] > button:disabled {
+  background: #a7b8c9;
+}
+.scenario-workflow [role="alert"] { overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .scenario-workflow [role="group"][aria-label="בחירת חלופה"] {
+    align-items: stretch; flex-direction: column;
+  }
+  .scenario-workflow [role="group"][aria-label="בחירת חלופה"] button {
+    width: 100%; text-align: right;
+  }
+}
+
+
+/* Plan conversions directly from the same full-width pension portfolio grid. */
+.scenario-conversion {
+  margin: 12px 0 22px;
+  padding: 16px;
+  border: 1px solid #d2e1ef;
+  border-radius: 12px;
+  background: #fff;
+}
+.scenario-conversion__heading {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px; margin-bottom: 14px;
+}
+.scenario-conversion__heading h3 { margin: 0 0 5px; color: #163a60; font-size: 18px; }
+.scenario-conversion__heading p { margin: 0; font-size: 13px; color: #58718b; }
+.scenario-conversion__heading > span {
+  font-size: 12px; color: #38628a; background: #eff6fc;
+  border-radius: 20px; padding: 6px 11px;
+}
+.scenario-conversion__ledger { max-height: 58vh; overflow: auto; }
+.scenario-conversion__ledger thead th { position: sticky; top: 0; z-index: 4; }
+.scenario-conversion__ledger thead th:first-child { z-index: 6; }
+.scenario-conversion__ledger thead th:nth-child(2) { z-index: 5; }
+.scenario-conversion__ledger thead th button {
+  display: block; margin: 8px 0 0; padding: 5px 9px;
+  color: #175a96; font-size: 11px; font-weight: 700;
+  border: 1px solid #a9c9e6; border-radius: 6px; background: #fff;
+  cursor: pointer;
+}
+.scenario-conversion__ledger tbody th button {
+  display: block; margin-top: 8px; padding: 6px 9px;
+  border-radius: 6px; border: 1px solid #9ebee0;
+  background: #eef6ff; color: #155895; font-weight: 700;
+}
+.scenario-conversion__ledger button:disabled { opacity: .45; cursor: not-allowed; }
+.scenario-conversion__ledger .professional-workspace__cell {
+  min-width: 90px; text-align: center; font-weight: 600;
+}
+.scenario-conversion__ledger .professional-workspace__cell small {
+  display: block; font-size: 10px; font-weight: 400;
+  white-space: normal; color: #6b7d90;
+}
+.scenario-conversion__plan {
+  display: flex; gap: 12px; align-items: end; flex-wrap: wrap;
+  margin-top: 14px !important; padding: 16px !important;
+  background: #f3f8ff !important;
+}
+.scenario-conversion__plan > div:first-child { flex: 1 1 210px; min-width: 190px; }
+.scenario-conversion__plan > div:first-child strong { font-size: 15px; }
+.scenario-conversion__plan > div:first-child p { margin: 5px 0 0; color: #526d89; font-size: 12px; }
+.scenario-conversion__plan label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.scenario-conversion__plan input, .scenario-conversion__plan select {
+  min-height: 42px; border: 1px solid #adcae7;
+  border-radius: 7px; background: #fff;
+}
+.scenario-conversion__plan button[type="submit"] {
+  min-height: 42px; background: #185ea5 !important; color: #fff !important;
+}
+.scenario-conversion__plan button:disabled { opacity: .55; cursor: not-allowed; }
+.scenario-conversion__error { width: 100%; color: #a4422c !important; }
+.scenario-conversion__saved {
+  list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px;
+}
+.scenario-conversion__saved > li {
+  border: 1px solid #e2eaf4; background: #fbfdff;
+  border-radius: 8px; padding: 10px 12px; font-size: 13px;
+}
+.scenario-conversion__saved > li button {
+  margin-inline-start: 8px; padding: 6px 9px; background: white;
+  border: 1px solid #c5d5e8; border-radius: 6px;
+}
+.scenario-conversion__saved > li details { margin-top: 8px; }
+@media (max-width: 760px) {
+  .scenario-conversion { padding: 8px; }
+  .scenario-conversion__plan > label, .scenario-conversion__plan > label input,
+  .scenario-conversion__plan > label select { width: 100%; }
+}
+
+
+/* Independent amounts/dates per component in whole-program and whole-column plans. */
+.scenario-conversion__bulk-detail {
+  flex: 1 1 100%; width: 100%; overflow-x: auto;
+  background: #fff; border: 1px solid #d2e1ef;
+  border-radius: 9px; padding: 11px;
+}
+.scenario-conversion__bulk-detail h4 { margin: 0 0 4px; font-size: 14px; }
+.scenario-conversion__bulk-detail p { font-size: 12px; color: #526c84; margin: 4px 0 10px; }
+.scenario-conversion__bulk-detail table {
+  border-collapse: collapse; width: 100%; font-size: 12px;
+}
+.scenario-conversion__bulk-detail th,
+.scenario-conversion__bulk-detail td {
+  border-bottom: 1px solid #e1eaf4; padding: 8px; text-align: right;
+}
+.scenario-conversion__bulk-detail thead th { background: #eef5fd; }
+.scenario-conversion__bulk-detail input[type="date"],
+.scenario-conversion__bulk-detail input:not([type]) {
+  box-sizing: border-box; width: 100%; min-width: 118px;
+  padding: 6px; min-height: 38px; max-width: unset !important;
+}
+
+
+/* Unified case intake and clearinghouse import share the canonical workspace design. */
+.professional-workspace__intake,
+.professional-workspace__import {
+  border: 1px solid #d6e4f3; border-radius: 11px;
+  background: #f8fbff; padding: 17px; margin: 18px 0;
+}
+.professional-workspace__import form {
+  display: flex; flex-wrap: wrap; align-items: end;
+  gap: 12px; padding-top: 6px;
+}
+.professional-workspace__import form label { display: flex; flex-direction: column; gap: 8px; font-weight: 700; }
+.professional-workspace__import input[type="file"] {
+  max-width: min(100%, 450px); border: 1px solid #c7d8eb;
+  padding: 8px; border-radius: 7px; background: white;
+}
+.professional-workspace__import form button,
+.professional-workspace__intake button,
+.professional-workspace__advanced button {
+  background: #1660b8; border: 1px solid #1660b8; color: white;
+  border-radius: 7px; padding: 9px 14px; font-weight: 700;
+}
+.professional-workspace__import form button:disabled { opacity: .45; }
+.professional-workspace__intake select,
+.professional-workspace__intake textarea,
+.professional-workspace__advanced select,
+.professional-workspace__advanced textarea,
+.professional-workspace__advanced input {
+  min-height: 39px; border: 1px solid #aac8e7;
+  border-radius: 7px; background: white; padding: 8px;
+}
+.professional-workspace__advanced {
+  border: 1px solid #d7e4f0; border-radius: 9px;
+  background: #fbfdff; padding: 12px 15px; margin-top: 20px;
+  font-size: 13px;
+}
+.professional-workspace__advanced summary {
+  cursor: pointer; color: #275a8c; font-weight: 700;
+}
+.professional-workspace__advanced a { color: #19549b; }
+.professional-workspace__advanced form { padding-top: 15px; }
+
+
+/* Supervisor 110: keep every internal-approval attestation reachable in the
+   viewport. The generic form rule lays labels out as inline-flex columns;
+   long RTL attestation text can otherwise expand the fieldset horizontally. */
+.professional-workspace__body section[aria-label="החלטת אישור מקצועית פנימית"] form fieldset {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.professional-workspace__body section[aria-label="החלטת אישור מקצועית פנימית"] form fieldset > label {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.professional-workspace__body section[aria-label="החלטת אישור מקצועית פנימית"] form fieldset > label > input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 4px 0 0;
 }

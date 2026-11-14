@@ -9,6 +9,7 @@ class Base(DeclarativeBase):
 
 def load_all_models() -> None:
     import app.models.scenario_draft  # noqa: F401
+    import app.models.scenario_fixation_approval  # noqa: F401
     import app.models.scenario_draft_pension_election  # noqa: F401
     import app.models.scenario_coefficient_professional_review  # noqa: F401
     import app.models.scenario_pension_factor_admission  # noqa: F401

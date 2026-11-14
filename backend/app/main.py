@@ -41,7 +41,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 load_all_models()
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-EXPECTED_ALEMBIC_HEAD = "d6f1a9c3b704"
+EXPECTED_ALEMBIC_HEAD = "a108c7e5d2b9"
 ACTIVE_RENDER_SERVICE_HOSTNAME = "retirev2.onrender.com"
 
 
@@ -167,7 +167,8 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
     if not config.production:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://127.0.0.1:5173"],
+            allow_origins=["http://127.0.0.1:5174"] if os.getenv("APP_ENV") == "test"
+                          else ["http://127.0.0.1:5173"],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

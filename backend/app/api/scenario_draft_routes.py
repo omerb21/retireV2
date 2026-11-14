@@ -1,13 +1,24 @@
 """Client-scoped scenario drafts; every write is non-authoritative."""
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db.session import get_db
 from app.schemas.scenario_draft import DraftWrite, DraftRename, DraftReplace, DraftVersion
+from app.schemas.scenario_severance_planning import SeverancePlanningReplace
+from app.schemas.scenario_fixation_approval import (
+    FixationProfessionalDraftReplace, FixationProfessionalApprovalRequest,
+)
+from app.services import scenario_fixation_approval_service as fixation_review_service
+from app.services import scenario_fixation_admission_preparation_service as fixation_preparation_service
+from app.services import scenario_fixation_admission_eligibility_service as fixation_eligibility_service
+from app.services import scenario_fixation_admission_review_service as fixation_admission_review_service
 from app.security.transport import NO_STORE, error
 from app.services import scenario_draft_service as service
+from app.services import scenario_severance_planning_service as severance_service
+from app.services.scenario_financial_evidence_service import _severance as severance_evidence
 from app.services import scenario_calculation_admission_service as admission
 
 router = APIRouter(prefix="/api/clients/{client_id}/scenario-drafts", tags=["scenario-drafts"])
@@ -99,3 +110,214 @@ def rename_scenario(request: Request, payload: DraftRename, scenario_id: str, cl
 @router.post("/{scenario_id}/archive")
 def archive_scenario(request: Request, payload: DraftVersion, scenario_id: str, client_id: int = Path(gt=0), db: Session = Depends(get_db)):
     return _run(request, db, lambda: service.archive(db, client_id, scenario_id, payload.expected_version, _actor(request)))
+
+
+def _severance_response(db: Session, client_id: int, scenario_id: str) -> dict:
+    choices = severance_service.read_choices(db, client_id, scenario_id)
+    evidence = severance_evidence(db, {"identity": {
+        "client_id": client_id, "scenario_id": scenario_id,
+        "scenario_version": choices["scenario_version"],
+    }})
+    # Read-only, client-scoped, DB-derived facts. Historical grants are NOT
+    # paid cash, liquidity, tax exemptions or permission to execute.
+    return {**choices, "source_evidence": evidence}
+
+
+@router.get("/{scenario_id}/severance-planning")
+def read_severance_planning(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Read current draft decisions only for the addressed client and scenario."""
+    try:
+        return JSONResponse(
+            content=_severance_response(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.put("/{scenario_id}/severance-planning")
+def save_severance_planning(
+    request: Request, payload: SeverancePlanningReplace, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Reuse the existing CAS/revision writer and caller-owned transaction."""
+    def save():
+        severance_service.replace_choices(
+            db, client_id, scenario_id,
+            expected_version=payload.expected_version,
+            choices=[item.model_dump() for item in payload.choices],
+            actor=_actor(request),
+        )
+        # The draft Session may use autoflush=False. Make the new revision
+        # visible to read_choices inside the same uncommitted transaction.
+        db.flush()
+        # After write/flush, return actual current validated choices rather
+        # than raw unverified client input or a financial calculation.
+        return _severance_response(db, client_id, scenario_id)
+    return _run(request, db, save)
+
+
+
+@router.get("/{scenario_id}/fixation-professional-review")
+def get_fixation_professional_review(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Real database read with current dependency validation, no tax execution."""
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return JSONResponse(
+            content=fixation_review_service.read(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/fixation-professional-review/history")
+def get_fixation_professional_review_history(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        return JSONResponse(
+            content=fixation_review_service.history(db, client_id, scenario_id),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/fixation-admission-preparation")
+def get_fixation_admission_preparation(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Prepare a validated candidate; never invoke fixation calculation."""
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return JSONResponse(
+            content=jsonable_encoder(
+                fixation_preparation_service.prepare(db, client_id, scenario_id)
+            ),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/fixation-admission-eligibility")
+def get_fixation_admission_eligibility(
+    request: Request, scenario_id: str,
+    client_id: int = Path(gt=0), db: Session = Depends(get_db),
+):
+    """Static admission eligibility only; never invoke CBS or tax calculation."""
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return JSONResponse(
+            content=jsonable_encoder(
+                fixation_eligibility_service.assess(db, client_id, scenario_id)
+            ),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.get("/{scenario_id}/fixation-admission-review")
+def get_fixation_admission_review(
+    request: Request,
+    scenario_id: str,
+    client_id: int = Path(gt=0),
+    expected_preparation_fingerprint: str = Query(pattern=r"^[0-9a-f]{64}$"),
+    expected_eligibility_fingerprint: str = Query(pattern=r"^[0-9a-f]{64}$"),
+    db: Session = Depends(get_db),
+):
+    """Run canonical admission only; never calculate, approve, or persist."""
+    try:
+        if db.get_bind().dialect.name != "postgresql":
+            return error(request, 503, "FIXATION_APPROVAL_REQUIRES_POSTGRESQL")
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return JSONResponse(
+            content=jsonable_encoder(fixation_admission_review_service.review(
+                db,
+                client_id,
+                scenario_id,
+                expected_preparation_fingerprint=expected_preparation_fingerprint,
+                expected_eligibility_fingerprint=expected_eligibility_fingerprint,
+            )),
+            headers=NO_STORE,
+        )
+    except service.DraftError as exc:
+        return error(request, exc.status, exc.code)
+    finally:
+        db.rollback()
+
+
+@router.put("/{scenario_id}/fixation-professional-review")
+def save_fixation_professional_review(
+    request: Request, payload: FixationProfessionalDraftReplace,
+    scenario_id: str, client_id: int = Path(gt=0),
+    db: Session = Depends(get_db),
+):
+    return _run(request, db, lambda: fixation_review_service.save_draft(
+        db, client_id, scenario_id, payload, _actor(request),
+    ))
+
+
+@router.post("/{scenario_id}/fixation-professional-review/approve")
+def approve_fixation_professional_review(
+    request: Request, payload: FixationProfessionalApprovalRequest,
+    scenario_id: str, client_id: int = Path(gt=0),
+    db: Session = Depends(get_db),
+):
+    """Explicit authorized decision; one SERIALIZABLE transaction and CAS."""
+    from sqlalchemy.exc import DBAPIError
+    try:
+        actor = _actor(request)
+        # Never accept an actor from the request body. Production actor is
+        # derived from the validated authenticated session by middleware.
+        if request.app.state.auth_config.production:
+            session = getattr(request.state, "auth_session", None)
+            if not isinstance(session, dict) or session.get("actor_id") != actor:
+                return error(request, 403, "FIXATION_INTERNAL_AUTHENTICATED_ACTOR_REQUIRED")
+        result = fixation_review_service.request_internal_approval(
+            db, client_id, scenario_id, payload, actor,
+        )
+        if result["approval_attempt_state"] == "BLOCKED":
+            db.rollback()
+            return JSONResponse(content=result, status_code=422, headers=NO_STORE)
+        db.commit()
+        return JSONResponse(content=result, headers=NO_STORE)
+    except service.DraftError as exc:
+        db.rollback()
+        return error(request, exc.status, exc.code)
+    except DBAPIError as exc:
+        db.rollback()
+        if getattr(getattr(exc, "orig", None), "pgcode", None) == "40001":
+            return error(request, 409, "FIXATION_INTERNAL_SERIALIZATION_CONFLICT")
+        raise
+    except Exception:
+        db.rollback()
+        raise

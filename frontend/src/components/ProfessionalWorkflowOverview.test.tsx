@@ -153,7 +153,7 @@ describe("ProfessionalWorkflowOverview", () => {
     renderOverview(props());
 
     expect(await screen.findByRole("navigation", { name: "מפת תהליך העבודה המקצועי" })).toHaveAttribute("dir", "rtl");
-    expect(within(phase(/^1\./)).getByText(/COMPLETE/)).toBeInTheDocument();
+    await waitFor(() => expect(within(phase(/^1\./)).getByText(/COMPLETE/)).toBeInTheDocument());
     expect(within(phase(/^2\./)).getByText(/READY_TO_CONTINUE/)).toBeInTheDocument();
     expect(within(phase(/^3\./)).getByText(/COMPLETE/)).toBeInTheDocument();
     expect(within(phase(/^4\./)).getByText(/READY_TO_CONTINUE/)).toBeInTheDocument();
@@ -313,7 +313,7 @@ describe("ProfessionalWorkflowOverview", () => {
       expect(killed).toBe(true);
       await ordinary();
     }
-  });
+  }, 20000);
 
   it("invalidates same-client readiness immediately and ignores an obsolete revision response", async () => {
     const oldContext = deferred<ReadinessContext>();

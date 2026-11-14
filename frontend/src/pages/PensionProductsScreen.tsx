@@ -79,6 +79,7 @@ function ProductEditor({ product, clientId, onSaved, onDeleted }: { product: Pen
 
 function ProductsForClient({ clientId }: { clientId: number }) {
   const [products, setProducts] = useState<PensionProduct[]>([]);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,8 +114,35 @@ function ProductsForClient({ clientId }: { clientId: number }) {
     <form onSubmit={ingest}><fieldset disabled={busy || loading}><legend>ייבוא מקורות יחד</legend><label>קובצי מקור<input type="file" multiple accept=".xml,.dat" required onChange={event => setFiles(Array.from(event.target.files ?? []))} /></label><p>נבחרו {files.length} קבצים</p><ul aria-label="קבצים שנבחרו">{files.map((file, index) => <li key={index}><bdi>{file.name}</bdi></li>)}</ul><button type="submit" disabled={!files.length}>ייבוא מוצרים</button></fieldset></form>
     <details><summary>יצירת מוצר ידנית</summary><form onSubmit={create}><fieldset disabled={busy || loading}><legend>מוצר חדש</legend><MetadataFields value={manual} onChange={setManual} /><p>כל אחד עשר הרכיבים ייווצרו ביתרה אפס. הסך המדווח לא יחולק בין הרכיבים.</p><button type="submit">יצירת מוצר</button></fieldset></form></details>
     {!loading && products.length === 0 && <p>אין מוצרים פנסיוניים. ניתן לייבא מקור או ליצור מוצר ידנית.</p>}
-    {products.length > 0 && <table><caption>מוצרים פנסיוניים שמורים</caption><thead><tr><th>שם תכנית</th><th>גוף מנהל</th><th>חשבון</th><th>סך מדווח</th></tr></thead><tbody>{products.map(product => <tr key={product.product_id}><td>{product.product_name}</td><td>{product.provider_name ?? "לא נמסר"}</td><td><bdi>{product.account_reference}</bdi></td><td><bdi>{product.reported_product_total ?? "לא נמסר"}</bdi></td></tr>)}</tbody></table>}
-    {products.map(product => <ProductEditor key={`${product.product_id}:${product.version}`} product={product} clientId={clientId} onSaved={replace} onDeleted={() => setProducts(current => current.filter(item => item.product_id !== product.product_id))} />)}
+    {products.length > 0 && <>
+      <h3>תיק מוצרים ({products.length})</h3>
+      <p>המוצרים מוצגים בטבלה מרוכזת. עריכת יתרות ורכיבים מתבצעת רק לאחר בחירת מוצר.</p>
+      <div style={{ overflowX: "auto" }}>
+        <table aria-label="רשימת מוצרים פנסיוניים">
+          <caption>מוצרים פנסיוניים שמורים</caption>
+          <thead><tr><th>שם תכנית</th><th>סוג מוצר</th><th>גוף מנהל</th><th>חשבון</th><th>תאריך יתרה</th><th>סך מדווח (₪)</th><th>בדיקת מקור</th><th>פעולה</th></tr></thead>
+          <tbody>{products.map(product => {
+            const unresolved = product.source_history?.some(source => source.diagnostics.some(item => item.state === "SOURCE_PRESENT_NONZERO_UNMAPPED" && item.unresolved === true));
+            return <tr key={product.product_id} aria-selected={selectedProductId === product.product_id}>
+              <td>{product.product_name}</td>
+              <td>{productTypeLabel(product.product_type)}</td>
+              <td>{product.provider_name ?? "לא נמסר"}</td>
+              <td><bdi>{product.account_reference ?? "לא נמסר"}</bdi></td>
+              <td><bdi>{formatIsoDate(product.statement_date) || "לא נמסר"}</bdi></td>
+              <td><bdi>{product.reported_product_total ?? "לא נמסר"}</bdi></td>
+              <td>{unresolved ? <span role="alert">נמצאה יתרה במקור שלא ניתן לסווג לרכיב מקצועי. יש לבדוק את נתוני המקור; אפס ברכיב אינו בהכרח אפס שדווח במקור.</span> : "ללא יתרה לא מסווגת שזוהתה"}</td>
+              <td><button type="button" aria-expanded={selectedProductId === product.product_id} aria-controls="selected-pension-product" onClick={() => setSelectedProductId(current => current === product.product_id ? null : product.product_id)}>{selectedProductId === product.product_id ? "סגירת פרטי מוצר" : `פרטי מוצר: ${product.product_name}`}</button></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+    </>}
+    {products.filter(product => product.product_id === selectedProductId).map(product =>
+      <div id="selected-pension-product" key={`${product.product_id}:${product.version}`}>
+        <h3>פרטי המוצר שנבחר</h3>
+        <ProductEditor product={product} clientId={clientId} onSaved={replace} onDeleted={() => { setProducts(current => current.filter(item => item.product_id !== product.product_id)); setSelectedProductId(null); }} />
+      </div>
+    )}
   </section>;
 }
 

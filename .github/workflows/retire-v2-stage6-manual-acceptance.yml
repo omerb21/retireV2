@@ -1,14 +1,8 @@
 name: RETIRE V2 Stage 6 manual acceptance
 
-# One-time supervised push trigger, restricted to this workflow on this branch.
-# Restore workflow_dispatch only with a [skip ci] cleanup commit.
+# Manually dispatched only. No push, pull_request, schedule, or automatic trigger.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feature/neon-stage6-db-reconnect-20261105
-    paths:
-      - .github/workflows/retire-v2-stage6-manual-acceptance.yml
 
 permissions:
   contents: read

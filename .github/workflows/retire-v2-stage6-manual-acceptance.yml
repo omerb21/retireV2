@@ -1,0 +1,138 @@
+name: RETIRE V2 Stage 6 manual acceptance
+
+# Manually dispatched only. No push, pull_request, schedule, or automatic trigger.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retire-v2-stage6-manual-acceptance
+  cancel-in-progress: false
+
+jobs:
+  focused-acceptance:
+    name: PG16 P1D and isolated frontend acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      APP_ENV: test
+      STAGE6_PREVIEW_ENABLED: "0"
+      SCENARIO_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:retire_v2_ci_only@127.0.0.1:5432/retire_v2_scenario_test
+      DATABASE_URL: postgresql+psycopg2://postgres:retire_v2_ci_only@127.0.0.1:5432/retire_v2_scenario_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: retire_v2_ci_only
+          POSTGRES_DB: retire_v2_scenario_test
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d retire_v2_scenario_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout triggering ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate isolated test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = test
+          test "$STAGE6_PREVIEW_ENABLED" = 0
+          test "$GITHUB_REF_TYPE" = branch
+          test "$GITHUB_REF_NAME" = feature/neon-stage6-db-reconnect-20261105
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          for name in ("DATABASE_URL", "SCENARIO_TEST_POSTGRES_URL"):
+              url = urlsplit(os.environ[name].replace("postgresql+psycopg2://", "postgresql://", 1))
+              assert url.hostname == "127.0.0.1" and url.path == "/retire_v2_scenario_test"
+          PY
+          mkdir -p acceptance-evidence
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install existing backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Verify PostgreSQL 16 and isolated database
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee acceptance-evidence/postgresql-version.txt
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ["SCENARIO_TEST_POSTGRES_URL"])
+          try:
+              with engine.connect() as connection:
+                  version = connection.scalar(text("SHOW server_version"))
+                  dbname = connection.scalar(text("SELECT current_database()"))
+                  print(f"PostgreSQL server_version={version} database={dbname}")
+                  assert version.startswith("16.")
+                  assert dbname == "retire_v2_scenario_test"
+          finally:
+              engine.dispose()
+          PY
+
+      - name: Run existing real PostgreSQL P1D acceptance
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -v -s \
+            tests/test_stage6_p1d_postgresql.py::test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations \
+            --junitxml="../acceptance-evidence/p1d-junit.xml" \
+            2>&1 | tee ../acceptance-evidence/p1d-pytest.log
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install existing frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Run isolated mocked-API factor admission component tests
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test -- src/components/ScenarioFactorAdmissionPanel.test.tsx \
+            src/components/ScenarioStage6Panel.test.tsx \
+            --reporter=default --reporter=junit \
+            --outputFile.junit=../acceptance-evidence/frontend-junit.xml \
+            2>&1 | tee ../acceptance-evidence/frontend-vitest.log
+
+      - name: Verify TypeScript and frontend build
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee ../acceptance-evidence/frontend-build.log
+
+      - name: Save JUnit and test logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retire-v2-stage6-acceptance-${{ github.run_id }}
+          path: acceptance-evidence/
+          if-no-files-found: warn
+          retention-days: 7

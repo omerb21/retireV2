@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadM12Draft, type M12Draft } from "../api/m12DraftReportApi";
+import { loadM12Draft, downloadM12DraftPdf, type M12Draft } from "../api/m12DraftReportApi";
 
 interface Props { clientId: number; }
 const missing = "לא תועד";
@@ -13,6 +13,7 @@ export function M12DraftReportPanel({ clientId }: Props) {
   const [loadedFor, setLoadedFor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const generation = useRef(0);
   useEffect(() => {
     ++generation.current;
@@ -45,8 +46,25 @@ export function M12DraftReportPanel({ clientId }: Props) {
     {error && <p role="alert">{error}</p>}
     {current && <>
       <p>תצוגה מקדימה. המסמך הוא טיוטה בלבד ואינו מאשר חישובים.</p>
-      <button type="button" onClick={() => window.print()}>
-        שמור כ-PDF / הדפס
+      <button type="button" disabled={downloading} onClick={() => {
+        const epoch = generation.current;
+        setDownloading(true);
+        setError(null);
+        void downloadM12DraftPdf(clientId).then(blob => {
+          if (generation.current !== epoch) return;
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "retirement-draft.pdf";
+          link.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }).catch(reason => {
+          if (generation.current === epoch) setError(reason instanceof Error ? reason.message : "הפקת PDF נכשלה");
+        }).finally(() => {
+          if (generation.current === epoch) setDownloading(false);
+        });
+      }}>
+        {downloading ? "מכין PDF..." : "הורד טיוטת תכנון פרישה (PDF)"}
       </button>
       <style>{`
         .m12-draft-page { direction: rtl; text-align: right; font-family: Arial, "Noto Sans Hebrew", sans-serif;

@@ -28,6 +28,7 @@ from app.api.retirement_income_readiness_routes import router as readiness_route
 from app.api.scenario_permission_preview_routes import router as scenario_permission_preview_router
 from app.api.scenario_draft_routes import router as scenario_draft_router
 from app.api.m11_preferred_scenario_routes import router as m11_preferred_scenario_router
+from app.api.m12_draft_report_routes import router as m12_draft_report_router
 from app.api.scenario_stage6_internal_routes import router as scenario_stage6_internal_router
 from app.api.scenario_stage6_factor_admission_routes import router as scenario_stage6_factor_admission_router
 from app.db.base import load_all_models
@@ -178,7 +179,7 @@ def create_app(config: AuthConfig | None = None) -> FastAPI:
         auth_router, clients_router, professional_source_router, planning_input_router,
         readiness_router, fixation_router, fixation_m07_router, official_parameter_router,
         pension_product_router, canonical_conversion_router, m06_conversion_router,
-        m09_cashflow_router, m10_comparison_router, scenario_permission_preview_router, scenario_draft_router, m11_preferred_scenario_router,
+        m09_cashflow_router, m10_comparison_router, scenario_permission_preview_router, scenario_draft_router, m11_preferred_scenario_router, m12_draft_report_router,
     ):
         app.include_router(router)
     # Both route families require authenticated production-mode middleware and

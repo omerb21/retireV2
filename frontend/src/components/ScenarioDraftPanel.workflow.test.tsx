@@ -20,6 +20,9 @@ vi.mock("../api/scenarioDraftPermissionApi", () => ({
 vi.mock("../api/scenarioStage6Api", () => ({
   readStage6GrossResultsCapability: mocks.capability,
 }));
+vi.mock("./M11PreferredScenarioPanel", () => ({
+  M11PreferredScenarioPanel: () => <section aria-label="M11 selection">M11</section>,
+}));
 vi.mock("./ScenarioStage6Panel", () => ({
   ScenarioStage6Panel: () => <section aria-label="Stage 6 scenario result">Stage 6 enabled</section>,
 }));

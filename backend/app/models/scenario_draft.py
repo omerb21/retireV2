@@ -11,6 +11,7 @@ from app.models.pension_product import COMPONENT_CODES, ExactMoney
 class ScenarioDraft(Base):
     __tablename__ = "scenario_drafts"
     __table_args__ = (
+        UniqueConstraint("scenario_id", "client_id", name="uq_m11_scenario_identity_client"),
         CheckConstraint("version > 0", name="ck_scenario_draft_version"),
         CheckConstraint("status IN ('draft','needs_revalidation','archived')", name="ck_scenario_draft_status"),
     )

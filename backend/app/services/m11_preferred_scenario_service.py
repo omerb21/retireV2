@@ -61,7 +61,7 @@ def save(db: Session, *, client_id: int, scenario_id: str, expected_scenario_ver
     scenario = db.scalar(select(ScenarioDraft).where(
         ScenarioDraft.client_id == client_id, ScenarioDraft.scenario_id == scenario_id
     ).with_for_update())
-    if scenario is None or scenario.status != "draft":
+    if scenario is None or scenario.status == "archived":
         raise DraftError("M11_SCENARIO_NOT_ACTIVE", 409)
     if scenario.version != expected_scenario_version:
         raise DraftError("M11_SCENARIO_VERSION_CONFLICT", 409)

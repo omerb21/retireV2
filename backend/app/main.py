@@ -42,7 +42,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 load_all_models()
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-EXPECTED_ALEMBIC_HEAD = "a108c7e5d2b9"
+EXPECTED_ALEMBIC_HEAD = "b2d7e4c9f108"
 ACTIVE_RENDER_SERVICE_HOSTNAME = "retirev2.onrender.com"
 
 

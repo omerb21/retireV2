@@ -40,3 +40,13 @@ export async function loadM12Draft(clientId: number, signal?: AbortSignal): Prom
   }
   return result;
 }
+
+export async function downloadM12DraftPdf(clientId: number): Promise<Blob> {
+  const response = await apiFetch(buildApiUrl(`/clients/${clientId}/m12-draft/pdf`), { method: "GET" });
+  if (!response.ok || !response.headers.get("Content-Type")?.includes("application/pdf")) {
+    throw new Error("הפקת PDF נכשלה.");
+  }
+  const result = await response.blob();
+  if (result.size < 600) throw new Error("קובץ PDF ריק או פגום.");
+  return result;
+}

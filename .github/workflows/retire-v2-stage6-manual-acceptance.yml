@@ -1,6 +1,6 @@
 name: RETIRE V2 Stage 6 manual acceptance
 
-# One-shot M12 acceptance; restored after run.
+# One-shot M12 acceptance retry after corrected mock assertion; restored after run.
 on:
   workflow_dispatch:
   push:

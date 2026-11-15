@@ -44,7 +44,7 @@ def build(db: Session, client_id: int) -> dict:
         PlannerAssumption.client_id == client_id, PlannerAssumption.lifecycle_status == "current"
     ).order_by(PlannerAssumption.id)))
     missing = list(db.scalars(select(MissingDataItem).where(
-        MissingDataItem.client_id == client_id, MissingDataItem.advisory_status != "resolved"
+        MissingDataItem.client_id == client_id, (MissingDataItem.advisory_status.is_(None) | (MissingDataItem.advisory_status != "resolved"))
     ).order_by(MissingDataItem.created_at)))
     scenarios = list(db.scalars(select(ScenarioDraft).where(
         ScenarioDraft.client_id == client_id, ScenarioDraft.status != "archived"

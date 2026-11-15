@@ -31,7 +31,6 @@ def test_partially_populated_draft_does_not_invent_money_or_calculations():
     assert not content["pension_products"]
     assert not content["capital_assets"]
     assert any("לא נשמרה חלופה" in w for w in content["warnings"])
-    assert not hasattr(db, "commit_called")
     db.commit.assert_not_called()
 
 def test_missing_client_fails_closed():

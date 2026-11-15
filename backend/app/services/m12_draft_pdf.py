@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, CondPageBreak
 
 _FONT = "M12DejaVu"
 _FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
@@ -41,8 +41,9 @@ def render_pdf(doc: dict) -> bytes:
                                topMargin=37, bottomMargin=37, title="טיוטת תכנון פרישה")
     story = []
     def section(label):
-        story.append(Spacer(1, 7))
-        story.append(_p(label, 12, keep_next=True))
+        story.append(CondPageBreak(95))
+        story.append(Spacer(1, 6))
+        story.append(_p(label, 12))
     def table(headers, rows):
         if not rows: rows = [["אין נתונים"] + [""]*(len(headers)-1)]
         body = [[_p(value, 8) for value in reversed(headers)]]
@@ -86,7 +87,7 @@ def render_pdf(doc: dict) -> bytes:
     section("חלופות והחלטות")
     for scenario in doc["scenarios"]:
         story.append(_p(scenario["name"]+(" (מועדפת)" if scenario["preferred"] else "")
-                        +(" - מחייבת אימות" if scenario["status"]=="needs_revalidation" else ""),keep_next=True))
+                        +(" - מחייבת אימות" if scenario["status"]=="needs_revalidation" else "")))
         table(["רכיב","החלטה","סכום שהוזן ₪","מצב"],
               [[d["component"],"קצבה" if d["action"]=="pension" else "הון",
                 _money(d["declared_amount"]),"לא אומת"] for d in scenario["decisions"]])

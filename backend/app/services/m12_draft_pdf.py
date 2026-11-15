@@ -1,5 +1,6 @@
 """Hebrew RTL print-ready PDF for a read-only M12 draft snapshot."""
 from io import BytesIO
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from xml.sax.saxutils import escape
 from bidi.algorithm import get_display
@@ -14,11 +15,22 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, 
 _FONT = "M12DejaVu"
 _FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
-def _p(value, font_size=9):
+def _money(value):
+    """Format existing source amounts without converting absence to zero."""
+    if value is None or value == "":
+        return "לא נמסר"
+    try:
+        n = Decimal(str(value))
+        return f"{n:,.2f} ₪" if n.is_finite() else "נתון לא תקין"
+    except (InvalidOperation, ValueError):
+        return "נתון לא תקין"
+
+def _p(value, font_size=9, keep_next=False):
     text = "לא נמסר" if value is None or value == "" else str(value)
     return Paragraph(escape(get_display(text)), ParagraphStyle(
         "rtl", fontName=_FONT, fontSize=font_size, leading=font_size*1.65,
-        alignment=TA_RIGHT, textColor=colors.HexColor("#273849"), spaceAfter=4))
+        alignment=TA_RIGHT, textColor=colors.HexColor("#273849"), spaceAfter=3,
+        keepWithNext=keep_next))
 
 def render_pdf(doc: dict) -> bytes:
     if _FONT not in pdfmetrics.getRegisteredFontNames():
@@ -26,23 +38,23 @@ def render_pdf(doc: dict) -> bytes:
         pdfmetrics.registerFont(TTFont(_FONT, str(_FONT_PATH)))
     stream = BytesIO()
     layout = SimpleDocTemplate(stream, pagesize=A4, rightMargin=36, leftMargin=36,
-                               topMargin=40, bottomMargin=40, title="טיוטת תכנון פרישה")
+                               topMargin=37, bottomMargin=37, title="טיוטת תכנון פרישה")
     story = []
     def section(label):
-        story.append(Spacer(1, 12))
-        story.append(_p(label, 13))
+        story.append(Spacer(1, 7))
+        story.append(_p(label, 12, keep_next=True))
     def table(headers, rows):
         if not rows: rows = [["אין נתונים"] + [""]*(len(headers)-1)]
-        body = [[_p(value, 7.5) for value in reversed(headers)]]
-        body += [[_p(value, 7.5) for value in reversed(row)] for row in rows]
+        body = [[_p(value, 8) for value in reversed(headers)]]
+        body += [[_p(value, 8) for value in reversed(row)] for row in rows]
         item = Table(body, colWidths=[(A4[0]-72)/len(headers)]*len(headers),
-                     hAlign="RIGHT", repeatRows=1)
+                     hAlign="RIGHT", repeatRows=1, splitByRow=1)
         item.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#e5edf4")),
             ("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#bdc7d0")),
             ("VALIGN",(0,0),(-1,-1),"TOP"),
-            ("TOPPADDING",(0,0),(-1,-1),6),
-            ("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+            ("TOPPADDING",(0,0),(-1,-1),5),
+            ("BOTTOMPADDING",(0,0),(-1,-1),5)]))
         story.append(item)
     story += [_p("טיוטת תכנון פרישה",19),
               _p("מסמך עבודה בלבד. אין לראות בו תכנון סופי או אישור תקינות חישובים."),
@@ -55,15 +67,15 @@ def render_pdf(doc: dict) -> bytes:
     table(["שם","פרישה מתוכננת"],[[client["name"],retirement]])
     section("מוצרים פנסיוניים - נתוני מקור")
     table(["מוצר","גוף מנהל","יתרה מדווחת ₪","מועד נתונים","אימות"],
-          [[p["name"],p["provider"],p["reported_total"],p["statement_date"],p["verification"]]
+          [[p["name"],p["provider"],_money(p["reported_total"]),p["statement_date"],p["verification"]]
            for p in doc["pension_products"]])
     section("נכסי הון")
     table(["נכס","סוג","שווי ידוע ₪","מועד נתונים","אימות"],
-          [[a["name"],a["category"],a["value"],a["value_date"],a["verification"]]
+          [[a["name"],a["category"],_money(a["value"]),a["value_date"],a["verification"]]
            for a in doc["capital_assets"]])
     section("הכנסות והוצאות מדווחות (ללא תחזית)")
     table(["סוג","תיאור","סכום ₪","תדירות","אימות"],
-          [[kind,x["name"],x["amount"],x["frequency"],x["verification"]]
+          [[kind,x["name"],_money(x["amount"]),x["frequency"],x["verification"]]
            for kind,items in (("הכנסה",doc["incomes"]),("הוצאה",doc["expenses"])) for x in items])
     section("חלופה מועדפת")
     preferred=doc["preferred"]
@@ -74,10 +86,10 @@ def render_pdf(doc: dict) -> bytes:
     section("חלופות והחלטות")
     for scenario in doc["scenarios"]:
         story.append(_p(scenario["name"]+(" (מועדפת)" if scenario["preferred"] else "")
-                        +(" - מחייבת אימות" if scenario["status"]=="needs_revalidation" else "")))
+                        +(" - מחייבת אימות" if scenario["status"]=="needs_revalidation" else ""),keep_next=True))
         table(["רכיב","החלטה","סכום שהוזן ₪","מצב"],
               [[d["component"],"קצבה" if d["action"]=="pension" else "הון",
-                d["declared_amount"],"לא אומת"] for d in scenario["decisions"]])
+                _money(d["declared_amount"]),"לא אומת"] for d in scenario["decisions"]])
     if not doc["scenarios"]: story.append(_p("אין חלופות פעילות."))
     section("הנחות המתכנן")
     for a in doc["assumptions"]: story.append(_p(a["title"]+": "+a["value"]))

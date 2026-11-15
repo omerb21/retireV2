@@ -144,6 +144,7 @@ def test_guard_rejects_unsafe_target_without_entering_transaction():
 
 def test_stage6_factor_admission_fixture_preconditions_without_database(monkeypatch):
     """Exercise fixture construction and assert admission input facts, without writes."""
+    seed.load_all_models()
     from datetime import date
     from decimal import Decimal
 

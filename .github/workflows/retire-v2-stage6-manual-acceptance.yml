@@ -100,6 +100,12 @@ jobs:
         run: |
           set -euo pipefail
           python -m pytest -v tests/test_m12_draft_report.py --junitxml="../acceptance-evidence/m12-junit.xml" 2>&1 | tee ../acceptance-evidence/m12-backend.log
+          pdfinfo ../acceptance-evidence/m12-updated-multipage-synthetic.pdf | tee ../acceptance-evidence/m12-pdfinfo.txt
+          count=$(pdfinfo ../acceptance-evidence/m12-updated-multipage-synthetic.pdf | awk '/^Pages:/ {print $2}')
+          test "$count" -ge 2
+          mkdir -p ../acceptance-evidence/m12-pages
+          pdftoppm -f 1 -l 4 -r 110 -png ../acceptance-evidence/m12-updated-multipage-synthetic.pdf ../acceptance-evidence/m12-pages/page >/dev/null 2>&1
+
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

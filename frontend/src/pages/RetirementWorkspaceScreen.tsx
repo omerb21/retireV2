@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { UnifiedClientIntake } from "../components/UnifiedClientIntake";
 import { WorkspaceClearinghouseImport } from "../components/WorkspaceClearinghouseImport";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
+import { M12DraftReportPanel } from "../components/M12DraftReportPanel";
 import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
@@ -823,6 +824,7 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "results" && <section>
         <h1>תוצאות והשוואה</h1>
+        <M12DraftReportPanel key={clientId} clientId={clientId} />
         <ScenarioDraftPanel clientId={clientId} products={products} view="results"
           preferredScenarioId={chosenScenarioId}
           onScenarioSelected={scenarioId => {

@@ -1,8 +1,13 @@
 name: RETIRE V2 Stage 6 manual acceptance
 
-# Manually dispatched only. No push, pull_request, schedule, or automatic trigger.
+# Temporary one-shot push gate, limited to this workflow path.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/neon-stage6-db-reconnect-20261105
+    paths:
+      - .github/workflows/retire-v2-stage6-manual-acceptance.yml
 
 permissions:
   contents: read
@@ -13,7 +18,7 @@ concurrency:
 
 jobs:
   focused-acceptance:
-    name: PG16 P1D and isolated frontend acceptance
+    name: M11 real PostgreSQL16 isolated acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -89,44 +94,30 @@ jobs:
               engine.dispose()
           PY
 
-      - name: Run existing real PostgreSQL P1D acceptance
+      - name: Migrate isolated empty PostgreSQL to M11 revision
         working-directory: backend
         shell: bash
         run: |
           set -euo pipefail
-          python -m pytest -v -s \
-            tests/test_stage6_p1d_postgresql.py::test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations \
-            --junitxml="../acceptance-evidence/p1d-junit.xml" \
-            2>&1 | tee ../acceptance-evidence/p1d-pytest.log
+          python - <<'PY'
+          from sqlalchemy import create_engine, text
+          import os
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.begin() as conn:
+              conn.execute(text("CREATE ROLE retire_v2_m11_ci_app"))
+          engine.dispose()
+          PY
+          CRTISBA_APPLICATION_DB_ROLE=retire_v2_m11_ci_app alembic upgrade b2d7e4c9f108 \
+            2>&1 | tee ../acceptance-evidence/m11-migrations.log
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install existing frontend dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Run isolated mocked-API factor admission component tests
-        working-directory: frontend
+      - name: Test M11 against actual isolated PostgreSQL 16
+        working-directory: backend
         shell: bash
         run: |
           set -euo pipefail
-          npm test -- src/components/ScenarioFactorAdmissionPanel.test.tsx \
-            src/components/ScenarioStage6Panel.test.tsx \
-            --reporter=default --reporter=junit \
-            --outputFile.junit=../acceptance-evidence/frontend-junit.xml \
-            2>&1 | tee ../acceptance-evidence/frontend-vitest.log
-
-      - name: Verify TypeScript and frontend build
-        working-directory: frontend
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm run build 2>&1 | tee ../acceptance-evidence/frontend-build.log
+          python -m pytest -v -s tests/test_m11_preferred_scenario_postgresql.py \
+            --junitxml="../acceptance-evidence/m11-postgresql-junit.xml" \
+            2>&1 | tee ../acceptance-evidence/m11-postgresql-pytest.log
 
       - name: Save JUnit and test logs even on failure
         if: always()

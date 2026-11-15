@@ -94,7 +94,7 @@ jobs:
               engine.dispose()
           PY
 
-      - name: M12 PDF regression and formatting
+      - name: M12 PDF regression, compact pagination and formatting
         working-directory: backend
         shell: bash
         run: |

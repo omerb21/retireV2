@@ -27,6 +27,7 @@ import {
   useClientContextGeneration
 } from "../hooks/useClientContextGeneration";
 import { HebrewDateInput } from "../components/HebrewDateInput";
+import { M12DraftReportPanel } from "../components/M12DraftReportPanel";
 import {
   ProfessionalWorkflowOverview,
   workflowLifecyclePolicy
@@ -900,6 +901,7 @@ export function ClientDetailScreen() {
       ) : null}
       <section aria-labelledby="retirement-planning-file-heading">
         <h3 id="retirement-planning-file-heading">תיק תכנון הפרישה</h3>
+        <M12DraftReportPanel clientId={parsedClientId} />
         <p>מצב תיק: {heLabel(client.file_status)}</p>
         <p>זיהוי מקצועי: {heLabel(professionalIdentificationStatus)}</p>
       </section>

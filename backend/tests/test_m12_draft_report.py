@@ -1,5 +1,6 @@
 """M12 report is descriptive, read-only, and emits printable Hebrew PDF."""
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import Mock
 import pytest
 from app.services.m12_draft_report_service import build
@@ -64,3 +65,29 @@ def test_complete_synthetic_pdf_is_valid_and_not_an_authorized_calculation():
 def test_partial_synthetic_pdf_also_renders():
     result=render_pdf(build(_empty_database(), 902))
     assert result.startswith(b"%PDF") and len(result)>900
+
+def test_multi_page_synthetic_report_preserves_qualified_absence_and_rtl_artifact():
+    sample = build(_empty_database(), 903)
+    sample["pension_products"] = [{
+        "name": "קרן פנסיה סינתטית " + str(i) + " ארוכת שם לצורך בדיקת גלישת טקסט",
+        "provider": "חברת ניהול סינתטית", "type": "קרן פנסיה",
+        "reported_total": "1234567.89", "statement_date": "2026-11-01",
+        "verification": "דיווח מקור אינו אישור חישוב"
+    } for i in range(19)]
+    sample["capital_assets"] = [{
+        "name": "נכס הוני סינתטי " + str(i) + " - תיאור ארוך שמטרתו לבחון חלוקת עמודים",
+        "category": "נכס הוני", "value": "2345678.12",
+        "value_date": "2026-10-01", "verification": "unverified"
+    } for i in range(9)]
+    sample["preferred"] = {
+        "name": "חלופה סינתטית מועדפת", "rationale": "נימוק מקצועי ארוך " * 28,
+        "version_at_selection": 2, "saved_at": "2026-11-15T00:00:00Z", "outdated": True,
+    }
+    sample["warnings"].extend(["מידע מהותי אינו מאומת."] * 4)
+    payload = render_pdf(sample)
+    assert payload.startswith(b"%PDF") and len(payload) > 3000
+    assert sample["cashflow_results"] is None
+    assert sample["calculation_traceability"] == "not_established"
+    destination = Path("../acceptance-evidence/m12-updated-multipage-synthetic.pdf")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(payload)

@@ -6,6 +6,7 @@ import { ScenarioConversionMatrix } from "./ScenarioConversionMatrix";
 import { ScenarioSeverancePlanningPanel } from "./ScenarioSeverancePlanningPanel";
 import { ScenarioFixationProfessionalReviewPanel } from "./ScenarioFixationProfessionalReviewPanel";
 import { ScenarioMonthlyComparisonPanel } from "./ScenarioMonthlyComparisonPanel";
+import { M11PreferredScenarioPanel } from "./M11PreferredScenarioPanel";
 import { readStage6GrossResultsCapability } from "../api/scenarioStage6Api";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
@@ -241,6 +242,8 @@ export function ScenarioDraftPanel({
         {item.name}{item.status === "archived" ? " (בארכיון)" : ""}
       </button>)}
     </div>}
+    {view === "planning" && <M11PreferredScenarioPanel key={clientId} clientId={clientId}
+      scenarios={visibleDrafts} onChooseScenario={selectScenario}/>}
     {active && <div>
       {view === "results" && <h3>{active.name}</h3>}
       {view === "planning" && <ScenarioConversionMatrix

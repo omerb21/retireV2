@@ -1,13 +1,8 @@
 name: RETIRE V2 Stage 6 manual acceptance
 
-# Temporary scoped push for M11 focused acceptance only; restore after run.
+# Manually dispatched only. No push, pull_request, schedule, or automatic trigger.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feature/neon-stage6-db-reconnect-20261105
-    paths:
-      - .github/workflows/retire-v2-stage6-manual-acceptance.yml
 
 permissions:
   contents: read
@@ -18,7 +13,7 @@ concurrency:
 
 jobs:
   focused-acceptance:
-    name: M11 isolated backend frontend acceptance
+    name: PG16 P1D and isolated frontend acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -94,14 +89,15 @@ jobs:
               engine.dispose()
           PY
 
-      - name: Run isolated M11 backend acceptance
+      - name: Run existing real PostgreSQL P1D acceptance
         working-directory: backend
         shell: bash
         run: |
           set -euo pipefail
-          python -m pytest -v tests/test_m11_preferred_scenario.py \
-            --junitxml="../acceptance-evidence/m11-backend-junit.xml" \
-            2>&1 | tee ../acceptance-evidence/m11-backend.log
+          python -m pytest -v -s \
+            tests/test_stage6_p1d_postgresql.py::test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations \
+            --junitxml="../acceptance-evidence/p1d-junit.xml" \
+            2>&1 | tee ../acceptance-evidence/p1d-pytest.log
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -114,22 +110,23 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
-      - name: Run isolated M11 frontend regression
+      - name: Run isolated mocked-API factor admission component tests
         working-directory: frontend
         shell: bash
         run: |
           set -euo pipefail
-          npm test -- src/components/M11PreferredScenarioPanel.test.tsx \
-            src/components/ScenarioDraftPanel.workflow.test.tsx \
-            --reporter=default \
-            2>&1 | tee ../acceptance-evidence/m11-frontend.log
+          npm test -- src/components/ScenarioFactorAdmissionPanel.test.tsx \
+            src/components/ScenarioStage6Panel.test.tsx \
+            --reporter=default --reporter=junit \
+            --outputFile.junit=../acceptance-evidence/frontend-junit.xml \
+            2>&1 | tee ../acceptance-evidence/frontend-vitest.log
 
-      - name: Check TypeScript and frontend build
+      - name: Verify TypeScript and frontend build
         working-directory: frontend
         shell: bash
         run: |
           set -euo pipefail
-          npm run build 2>&1 | tee ../acceptance-evidence/m11-build.log
+          npm run build 2>&1 | tee ../acceptance-evidence/frontend-build.log
 
       - name: Save JUnit and test logs even on failure
         if: always()

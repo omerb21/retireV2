@@ -9,6 +9,14 @@ vi.mock("../components/ScenarioDraftPanel", () => ({
     <section aria-label="עורך חלופות שמורות">{initialSource ? initialSource.productId + "|" + initialSource.componentCode : "חלופות שמורות"}</section>,
 }));
 
+vi.mock("../components/M12DraftReportPanel", () => ({
+  M12DraftReportPanel: ({ clientId }: { clientId: number }) =>
+    <section aria-label="M12 טיוטת תכנון פרישה">
+      <button type="button">הפק טיוטת תכנון פרישה</button>
+      <span>תיק פעיל למסמך: {clientId}</span>
+    </section>,
+}));
+
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(), getClientProfile: vi.fn(), updateClientCase: vi.fn(), updateClientProfile: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
@@ -625,6 +633,31 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("אינם תואמים");
     expect(screen.queryByRole("heading", { name: /רשומות תעסוקה/ })).toBeNull();
+  });
+
+  it("shows M12 in step 5 only, without opening the legacy screen", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(screen.queryByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "הפק טיוטת תכנון פרישה" })).toBeInTheDocument();
+    expect(screen.getByText("תיק פעיל למסמך: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.queryByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeNull();
+  });
+
+  it("remounts M12 under the new client identity after navigating between clients", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByText("תיק פעיל למסמך: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח ב" }));
+    await screen.findByText("קרן פנסיה ב");
+    expect(screen.queryByText("תיק פעיל למסמך: 1")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByText("תיק פעיל למסמך: 2")).toBeInTheDocument();
+    expect(screen.queryByText("תיק פעיל למסמך: 1")).toBeNull();
   });
 
 });

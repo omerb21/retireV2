@@ -16,6 +16,7 @@ from sqlalchemy.engine import make_url
 from app.db.base import load_all_models
 from app.db.session import get_session_factory
 from app.models.client import Client
+from app.models.client_profile import ClientProfile
 from app.models.pension_product import COMPONENT_CODES, PensionProduct, PensionProductComponent
 from app.models.planning_input_decision import PlanningInputDecision
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
@@ -33,6 +34,7 @@ CLIENT_ID = 410078
 SCENARIO_A = "supervisor78-scenario-a"
 SCENARIO_B = "supervisor78-scenario-b"
 PRODUCT_ID = "supervisor78-product"
+PROFILE_ID = "supervisor78-profile"
 PENSION_COMPONENT_ID = "supervisor78-pension-component"
 DECISION_ID = "supervisor78-pension-decision"
 ELECTION_ID = "supervisor78-pension-election"
@@ -70,6 +72,7 @@ def _assert_no_collision(db) -> None:
     """Any preexisting marker, including a cross-client marker, blocks the whole seed."""
     ids = (
         (Client, CLIENT_ID),
+        (ClientProfile, PROFILE_ID),
         (PensionProduct, PRODUCT_ID),
         (PlanningInputDecision, CLIENT_ID),
         (ScenarioDraft, SCENARIO_A),
@@ -83,6 +86,10 @@ def _assert_no_collision(db) -> None:
         component_id = PENSION_COMPONENT_ID if i == 1 else f"supervisor78-zero-{i:02d}"
         if db.get(PensionProductComponent, component_id) is not None:
             raise RuntimeError("SUPERVISOR78_FIXTURE_COLLISION")
+    if db.scalar(select(ClientProfile.client_profile_id).where(
+        ClientProfile.client_id == CLIENT_ID
+    )) is not None:
+        raise RuntimeError("SUPERVISOR78_FIXTURE_COLLISION")
     if db.scalar(select(Client.client_id).where(Client.id_number == IDENTITY_NUMBER)) is not None:
         raise RuntimeError("SUPERVISOR78_FIXTURE_COLLISION")
     if db.scalar(select(PensionProduct.product_id).where(
@@ -100,10 +107,15 @@ def create_fixture(db) -> None:
     db.add(Client(client_id=CLIENT_ID, display_name="לקוח סינתטי קבילות 78",
                   id_number=IDENTITY_NUMBER, birth_date=date(1965, 5, 12)))
     db.flush()
+    db.add(ClientProfile(
+        client_profile_id=PROFILE_ID, client_id=CLIENT_ID,
+        birth_date=date(1965, 5, 12), gender="female",
+    ))
     db.add(PensionProduct(
         product_id=PRODUCT_ID, client_id=CLIENT_ID, source_kind="imported",
         source_identity=SOURCE_IDENTITY, product_name="קרן פנסיה סינתטית 78",
         product_type="קרן פנסיה", account_reference="SYNTHETIC-78",
+        statement_date=date(2026, 9, 30),
         version=1, historical_employers=[], created_by=ACTOR, updated_by=ACTOR,
         reported_product_total=Decimal("200.00"),
         reported_rewards_total=Decimal("200.00"),
@@ -159,6 +171,7 @@ def create_fixture(db) -> None:
         pension_start_date=date(2032, 1, 1), target_year=2032,
         survivors_option="60%", spouse_age_diff=0,
         coefficient_selection="manual_review_required",
+        company_name="מבטח סינתטי 78", option_name="standard",
     ))
     db.flush()
     for scenario_id in (SCENARIO_A, SCENARIO_B):

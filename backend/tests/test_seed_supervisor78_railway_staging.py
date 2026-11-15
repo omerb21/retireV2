@@ -83,6 +83,7 @@ class CollisionDB:
 
 @pytest.mark.parametrize("model,pk", [
     (seed.Client, seed.CLIENT_ID),
+    (seed.ClientProfile, seed.PROFILE_ID),
     (seed.PensionProduct, seed.PRODUCT_ID),
     (seed.ScenarioDraft, seed.SCENARIO_A),
     (seed.ScenarioDraft, seed.SCENARIO_B),
@@ -140,3 +141,91 @@ def test_guard_rejects_unsafe_target_without_entering_transaction():
 
     with pytest.raises(RuntimeError, match="SUPERVISOR78_RAILWAY_STAGING_TARGET_INVALID"):
         seed.run({"RAILWAY_ENVIRONMENT_NAME": "production"}, Factory())
+
+def test_stage6_factor_admission_fixture_preconditions_without_database(monkeypatch):
+    """Exercise fixture construction and assert admission input facts, without writes."""
+    from datetime import date
+    from decimal import Decimal
+
+    class RecordingDB:
+        def __init__(self):
+            self.bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+            self.rows = {}
+            self.added = []
+
+        def execute(self, statement):
+            return None
+
+        def scalar(self, statement):
+            return None
+
+        def get(self, model, pk):
+            return self.rows.get((model, pk))
+
+        def add(self, row):
+            self.added.append(row)
+
+        def flush(self):
+            for row in self.added:
+                model = type(row)
+                primary_key = model.__mapper__.primary_key[0].key
+                self.rows[(model, getattr(row, primary_key))] = row
+
+    db = RecordingDB()
+    monkeypatch.setattr(seed, "component_balances", lambda db, product_id: {
+        code: Decimal("200.00") if i == 1 else Decimal("0.00")
+        for i, code in enumerate(seed.COMPONENT_CODES)
+    })
+    monkeypatch.setattr(seed, "product_response", lambda db, product: {
+        "client_id": seed.CLIENT_ID,
+        "conversion_components": [{}] * len(seed.COMPONENT_CODES),
+    })
+    monkeypatch.setattr(seed, "_source_evidence", lambda product, component: {
+        "source_fingerprint": "a" * 64,
+    })
+    monkeypatch.setattr(seed, "ruleset_digest", lambda: "b" * 64)
+    monkeypatch.setattr(seed, "_revision", lambda *args: None)
+    seed.create_fixture(db)
+
+    def single(model):
+        values = [row for row in db.added if isinstance(row, model)]
+        assert len(values) == 1
+        return values[0]
+
+    profile = single(seed.ClientProfile)
+    product = single(seed.PensionProduct)
+    election = single(seed.ScenarioDraftPensionElection)
+    decision = single(seed.ScenarioDraftDecision)
+    assert profile.client_profile_id == seed.PROFILE_ID
+    assert profile.client_id == product.client_id == seed.CLIENT_ID
+    assert profile.birth_date == date(1965, 5, 12) and profile.gender == "female"
+    assert product.statement_date == date(2026, 9, 30)
+    assert election.company_name == "מבטח סינתטי 78"
+    assert election.option_name == "standard"
+    assert election.coefficient_selection == "manual_review_required"
+    assert election.scenario_id == decision.scenario_id == seed.SCENARIO_A
+    assert election.decision_id == decision.decision_id == seed.DECISION_ID
+    assert election.scenario_version == 1
+    assert election.pension_start_date >= product.statement_date
+    assert election.pension_start_date >= decision.effective_date
+    assert decision.source_product_id == seed.PRODUCT_ID
+    assert decision.source_component_id == seed.PENSION_COMPONENT_ID
+    assert decision.amount == Decimal("40.00")
+    assert decision.source_fingerprint_at_review == "a" * 64
+    assert decision.ruleset_digest_at_review == "b" * 64
+    assert len([r for r in db.added if isinstance(r, seed.PensionProductComponent)]) == len(seed.COMPONENT_CODES)
+    assert not any("FactorAdmission" in type(r).__name__ or
+                   "FixationProfessional" in type(r).__name__ for r in db.added)
+
+
+def test_factor_write_is_not_called_by_fixture(monkeypatch):
+    def must_not_be_called(*args, **kwargs):
+        raise AssertionError("PROFESSIONAL_FACTOR_ADMISSION_MUST_BE_EXPLICIT")
+    from app.services import scenario_pension_factor_admission_write_service as writes
+    monkeypatch.setattr(writes, "append_authenticated_serializable_factor_admission",
+                        must_not_be_called)
+    # The record-construction test above exercises create_fixture; no factor
+    # admission is imported, called or persisted by the staging fixture.
+    assert "append_authenticated_serializable_factor_admission" not in (
+        __import__("inspect").getsource(seed.create_fixture)
+    )

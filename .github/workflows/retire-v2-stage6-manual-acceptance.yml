@@ -1,13 +1,8 @@
 name: RETIRE V2 Stage 6 manual acceptance
 
-# Temporary one-shot PKG-01 verification; restore exactly after completion.
+# Manually dispatched only. No push, pull_request, schedule, or automatic trigger.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feature/neon-stage6-db-reconnect-20261105
-    paths:
-      - .github/workflows/retire-v2-stage6-manual-acceptance.yml
 
 permissions:
   contents: read
@@ -18,7 +13,7 @@ concurrency:
 
 jobs:
   focused-acceptance:
-    name: UNIFIED WORKSPACE PKG-01 acceptance
+    name: PG16 P1D and isolated frontend acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -94,6 +89,16 @@ jobs:
               engine.dispose()
           PY
 
+      - name: Run existing real PostgreSQL P1D acceptance
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -v -s \
+            tests/test_stage6_p1d_postgresql.py::test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations \
+            --junitxml="../acceptance-evidence/p1d-junit.xml" \
+            2>&1 | tee ../acceptance-evidence/p1d-pytest.log
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -105,14 +110,23 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
-      - name: Verify PKG-01 editors and preserved legacy behavior
+      - name: Run isolated mocked-API factor admission component tests
         working-directory: frontend
         shell: bash
         run: |
           set -euo pipefail
-          npm test -- src/pages/AdvisoryMissingInformationSection.test.tsx src/pages/PlannerAssumptionsSection.test.tsx src/pages/RetirementWorkspaceScreen.test.tsx --reporter=default 2>&1 | tee ../acceptance-evidence/pkg01-focused.log
-          npm test -- --reporter=dot src/ 2>&1 | tee ../acceptance-evidence/pkg01-all-frontend.log
-          npm run build 2>&1 | tee ../acceptance-evidence/pkg01-build.log
+          npm test -- src/components/ScenarioFactorAdmissionPanel.test.tsx \
+            src/components/ScenarioStage6Panel.test.tsx \
+            --reporter=default --reporter=junit \
+            --outputFile.junit=../acceptance-evidence/frontend-junit.xml \
+            2>&1 | tee ../acceptance-evidence/frontend-vitest.log
+
+      - name: Verify TypeScript and frontend build
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee ../acceptance-evidence/frontend-build.log
 
       - name: Save JUnit and test logs even on failure
         if: always()

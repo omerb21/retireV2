@@ -32,7 +32,7 @@ test.describe.serial("PKG-01: 11 independent acceptance checkpoints on real PG16
     await expect(page).toHaveURL(/\/clients\/\d+\/workspace\?step=client/);
     clientA = Number(new URL(page.url()).pathname.match(/\/clients\/(\d+)\/workspace/)?.[1]);
     expect(clientA).toBeGreaterThan(0);
-    await expect(page.getByText("לקוח סינתטי PKG01 א", { exact: false })).toBeVisible();
+    await expect(page.getByText("לקוח סינתטי PKG01 א", { exact: true })).toBeVisible();
     await page.screenshot({ path: info.outputPath("01-client-a.png"), fullPage: true });
   });
 

@@ -311,3 +311,72 @@ def test_pg16_version_only_bookkeeping_does_not_invalidate_professional_fingerpr
             })
     finally:
         engine.dispose()
+
+
+def test_pg16_saved_projection_decision_stale_only_for_direct_capital_dependency():
+    """A live saved professional basis decision is checked after dependent and unrelated edits."""
+    with httpx.Client(timeout=30) as http:
+        a = _client(http, "PROJECTION-DECISION")
+        url = f"{BASE}/{a}/retirement-planning-input"
+        base = http.put(url + "/base-date", json={
+            "expected_version": 0, "planning_base_date": "2030-01-01"})
+        assert base.status_code == 200, base.text
+        current = http.get(url)
+        assert current.status_code == 200, current.text
+        p = current.json()
+        target = http.put(url + "/target-date", json={
+            "expected_version": p["decision_version"],
+            "expected_target_reference_fingerprint":
+                p["retirement_target"]["current_reference_fingerprint"],
+            "retirement_target_date": "2030-01-01"})
+        assert target.status_code == 200, target.text
+        capital = _post(http, f"{BASE}/{a}/capital-assets", {
+            "asset_category": "other", "asset_description": "PROJECTED SYNTHETIC",
+            "known_value_amount": "1000.00", "value_as_of_date": "2025-01-01"})
+        asset_id = capital["id"]
+        overview = http.get(url + "/projection-basis")
+        assert overview.status_code == 200, overview.text
+        before = overview.json()
+        src = next(x for x in before["covered_capital_sources"] if x["capital_asset_id"] == asset_id)
+        response = http.put(url + f"/projection-basis/{asset_id}", json={
+            "expected_version": before["decision_version"],
+            "expected_planning_calculation_input_fingerprint":
+                before["planning_calculation_input_fingerprint"],
+            "expected_source_semantic_fingerprint":
+                src["source_semantic_fingerprint"],
+            "expected_timing_context_fingerprint":
+                src["projection_timing_context_fingerprint"],
+            "annual_rate": "0", "return_basis": "NET", "price_basis": "NOMINAL"})
+        assert response.status_code == 200, response.text
+        accepted = http.get(url + "/projection-basis").json()
+        rec = next(x for x in accepted["covered_capital_sources"] if x["capital_asset_id"] == asset_id)
+        assert rec["projection_basis_source_readiness"] is True, rec
+        assert "SOURCE_STATE_CHANGED_SINCE_DECISION" not in rec["blockers"]
+        unrelated_expense = _post(http, f"{BASE}/{a}/recurring-expenses",
+                                   _payloads()["recurring-expenses"])
+        unrel_update = http.put(
+            f"{BASE}/{a}/recurring-expenses/{unrelated_expense['id']}",
+            json={"amount": "900.00", "frequency": "quarterly",
+                  "expected_version": unrelated_expense["version"]})
+        assert unrel_update.status_code == 200, unrel_update.text
+        unchanged_basis = http.get(url + "/projection-basis").json()
+        stable = next(x for x in unchanged_basis["covered_capital_sources"]
+                      if x["capital_asset_id"] == asset_id)
+        assert "SOURCE_STATE_CHANGED_SINCE_DECISION" not in stable["blockers"]
+        new_value = http.put(f"{BASE}/{a}/capital-assets/{asset_id}", json={
+            "known_value_amount": "2100.00", "value_as_of_date": "2025-02-02",
+            "expected_version": capital["version"]})
+        assert new_value.status_code == 200, new_value.text
+        stale = http.get(url + "/projection-basis").json()
+        check = next(x for x in stale["covered_capital_sources"] if x["capital_asset_id"] == asset_id)
+        assert "SOURCE_STATE_CHANGED_SINCE_DECISION" in check["blockers"], check
+        assert check["projection_basis_source_readiness"] is False
+        assert stale["projection_basis_ready"] is False
+        print("PKG02_PG16_PROJECTION_STALENESS", {
+            "before_source": rec["source_semantic_fingerprint"],
+            "after_source": check["source_semantic_fingerprint"],
+            "before_ready": rec["projection_basis_source_readiness"],
+            "after_ready": check["projection_basis_source_readiness"],
+            "after_blockers": check["blockers"],
+            "unrelated_expense_changed_but_source_decision_not_stale": True,
+        })

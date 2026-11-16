@@ -33,8 +33,6 @@ import {
 } from "../components/ProfessionalWorkflowOverview";
 import { heLabel } from "../i18n/he";
 import { formatIsoDate } from "../utils/dateFormat";
-import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
-import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
 import { RetirementPlanningConsolidatedReviewSection } from "./RetirementPlanningConsolidatedReviewSection";
 import { RetirementPlanningFactsSection } from "./RetirementPlanningFactsSection";
 
@@ -1011,12 +1009,6 @@ export function ClientDetailScreen() {
               clientId={parsedClientId}
               onFactSaved={() => setReadinessContextRevision((current) => current + 1)}
             />
-          </li>
-          <li>
-            <PlannerAssumptionsSection clientId={parsedClientId} />
-          </li>
-          <li>
-            <AdvisoryMissingInformationSection clientId={parsedClientId} />
           </li>
           <li>
             <RetirementPlanningConsolidatedReviewSection

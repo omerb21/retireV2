@@ -76,7 +76,6 @@ def test_195_fixation_real_saved_manifest_and_changed_capitalization_api():
     """Persist real run with manifest, update persisted capitalization, compare through active HTTP API."""
     engine = create_engine(os.environ["MIGRATION_DATABASE_URL"])
     factory = sessionmaker(engine, expire_on_commit=False)
-    app.dependency_overrides[get_db] = lambda: (db for db in [factory()])  # replaced below
     def session_override():
         with factory() as db:
             yield db
@@ -121,7 +120,8 @@ def test_195_fixation_real_saved_manifest_and_changed_capitalization_api():
             after = http.post(url, json=_comparison_request(revised))
             assert after.status_code == 200, after.text
             assert after.json()["technical_result"] == "changed", after.json()
-            assert "actual_capitalization" in "|".join(after.json()["changed_dependency_types"]), after.json()
+            assert "capitalization" in after.json()["changed_dependency_types"], after.json()
+            assert "capitalization:cap-1.amount" in after.json()["changed_fields"], after.json()
             # Contract is technical comparison only: no fictional automatic professional lifecycle status.
             with factory() as db:
                 assert db.get(FixationRun, run_id) is not None

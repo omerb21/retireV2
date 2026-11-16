@@ -9,6 +9,10 @@ on:
       - 'backend/tests/test_pkg02_cas_dependency_pg16.py'
       - 'backend/app/api/clients_routes.py'
       - 'backend/app/models/retirement_facts.py'
+      - 'backend/app/services/professional_source_snapshot_service.py'
+      - 'backend/app/services/planning_input_service.py'
+      - 'backend/app/services/retirement_target_date_income_source_admission_service.py'
+      - 'backend/app/services/scenario_stage6_monthly_cashflow_service.py'
       - 'backend/app/models/actual_capitalization.py'
       - 'backend/alembic/versions/c194e2f0a816_pkg02_atomic_fact_versions.py'
       - 'frontend/src/api/clientsApi.ts'
@@ -54,6 +58,10 @@ jobs:
             "backend/app/api/clients_routes.py",
             "backend/app/models/actual_capitalization.py",
             "backend/app/models/retirement_facts.py",
+            "backend/app/services/professional_source_snapshot_service.py",
+            "backend/app/services/planning_input_service.py",
+            "backend/app/services/retirement_target_date_income_source_admission_service.py",
+            "backend/app/services/scenario_stage6_monthly_cashflow_service.py",
             "backend/tests/test_pkg02_cas_dependency_pg16.py",
             "frontend/src/api/clientsApi.ts",
             "frontend/src/pages/ActualCapitalizationsSection.tsx",

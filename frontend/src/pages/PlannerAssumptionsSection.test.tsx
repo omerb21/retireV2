@@ -218,4 +218,13 @@ describe("PlannerAssumptionsSection", () => {
     expect(screen.queryByLabelText("מצב מקור")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("מצב אימות")).not.toBeInTheDocument();
   });
+  it("fails closed when the API delivers a different client's row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ ...assumptionRow, client_id: 8 }]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PlannerAssumptionsSection clientId={7} />);
+    expect(await screen.findByText("לא ניתן לטעון את הנחות המתכנן.")).toBeInTheDocument();
+    expect(screen.queryByText("Existing assumption")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(requestUrl).every(url => url.includes("/clients/7/"))).toBe(true);
+  });
+
 });

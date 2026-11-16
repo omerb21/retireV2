@@ -49,6 +49,9 @@ jobs:
             "frontend/src/pages/RetirementPlanningFactsSection.tsx",
             "frontend/src/pages/ActualCapitalizationsScreen.tsx",
             "frontend/src/pages/ActualCapitalizationsSection.tsx",
+            "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
+            "frontend/src/pages/RetirementPlanningFactsSection.test.tsx",
+            "frontend/src/pages/RetirementWorkspaceScreen.test.tsx",
             "dev/compose.pkg02-ci.override.yml",
             ".github/workflows/retire-v2-pkg02-acceptance.yml",
           }
@@ -144,7 +147,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm test 2>&1 | tee ../acceptance-evidence/pkg02-unit.log
+          npx vitest run src 2>&1 | tee ../acceptance-evidence/pkg02-unit.log
 
       - name: Validate TypeScript and production build
         working-directory: frontend

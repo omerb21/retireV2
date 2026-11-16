@@ -36,7 +36,7 @@ type FactPayloadValue = string | null | number;
 type FactPayload = Record<string, FactPayloadValue>;
 type FactItem = {
   id: number;
-  version: number;
+  version?: number;
   lifecycle_status: string;
   source_status: string;
   verification_state: string;
@@ -340,7 +340,11 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
         if ((current as FactItem & { origin_kind?: string }).origin_kind === "canonical_component_conversion") {
           throw new Error("CONVERSION_DESTINATION_READ_ONLY: יש לבטל המרה דרך מסך ההמרות.");
         }
-        await config.update(clientId, editingId, { ...payloadFromForm(config.fields, formState, touchedFields), expected_version: baseline.version });
+        const changes = payloadFromForm(config.fields, formState, touchedFields);
+        if (config.key !== "retirement-timing-work-intentions" && (!Number.isInteger(baseline.version) || (baseline.version ?? 0) < 1)) {
+          throw new Error("גרסת הרשומה חסרה; נדרש רענון לפני שמירה.");
+        }
+        await config.update(clientId, editingId, config.key === "retirement-timing-work-intentions" ? changes : { ...changes, expected_version: baseline.version ?? 0 });
       }
       // Commit success and failed list refresh are distinct outcomes; never submit the write twice automatically.
       resetForm();

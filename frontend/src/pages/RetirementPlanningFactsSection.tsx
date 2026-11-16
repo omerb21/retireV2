@@ -420,7 +420,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
           <button type="submit" disabled={isSubmitting}>
             {isSubmitting ? "שומר…" : editingId === null ? config.addButton : config.saveButton}
           </button>
-          {editingId !== null ? (
+          {(editingId !== null || touchedFields.size > 0) ? (
             <button type="button" onClick={resetForm} disabled={isSubmitting}>
               ביטול העריכה
             </button>

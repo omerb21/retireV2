@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { UnifiedClientIntake } from "../components/UnifiedClientIntake";
 import { WorkspaceClearinghouseImport } from "../components/WorkspaceClearinghouseImport";
@@ -6,6 +6,8 @@ import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
 import { M12DraftReportPanel } from "../components/M12DraftReportPanel";
 import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
 import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
+import { RetirementPlanningFactsSection } from "./RetirementPlanningFactsSection";
+import { ActualCapitalizationsSection } from "./ActualCapitalizationsSection";
 import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
@@ -90,6 +92,22 @@ export function RetirementWorkspaceScreen() {
   const [linkingGrantId, setLinkingGrantId] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [supplementCategory, setSupplementCategory] = useState<number | null>(null);
+  const [supplementGeneration, setSupplementGeneration] = useState(0);
+  const supplementDirty = useRef<Record<string, boolean>>({});
+  const onSupplementDirty = useCallback((key: string, dirty: boolean) => {
+    if (activeClient.current !== clientId) return;
+    if (dirty) supplementDirty.current[key] = true;
+    else delete supplementDirty.current[key];
+  }, [clientId]);
+  const hasSupplementDraft = () => Object.values(supplementDirty.current).some(Boolean);
+  const notifySupplementSaved = useCallback(() => { if (activeClient.current === clientId) setSupplementGeneration(n => n + 1); }, [clientId]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (hasSupplementDraft()) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [clientId]);
   const [search, setSearch] = useState("");
   const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
   const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
@@ -126,6 +144,7 @@ export function RetirementWorkspaceScreen() {
     setEmploymentError(null);
     setEmploymentSaving(false);
     setSupplementCategory(null);
+    supplementDirty.current = {};
     setSearch("");
     setHideEmptyColumns(false);
     setDiscrepancyOnly(false);
@@ -185,7 +204,7 @@ export function RetirementWorkspaceScreen() {
       if (active && activeClient.current === clientId) setSupplementLoading(false);
     });
     return () => { active = false; };
-  }, [step, clientId, validClient, read.state === "ready" ? read.client.client_id : null]);
+  }, [step, clientId, validClient, read.state === "ready" ? read.client.client_id : null, supplementGeneration]);
 
   async function saveEmployment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -354,7 +373,7 @@ export function RetirementWorkspaceScreen() {
 
   function chooseSupplementCategory(next: number | null) {
     if (next === supplementCategory) return;
-    if (employmentEdit || grantEdit || employmentSaving || grantSaving) {
+    if (employmentEdit || grantEdit || employmentSaving || grantSaving || hasSupplementDraft()) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לקטגוריה אחרת.");
       return;
     }
@@ -462,7 +481,7 @@ export function RetirementWorkspaceScreen() {
     const next = new URLSearchParams(location.search).get("step");
     if (!next || !WORKSPACE_STEPS.some(item => item === next)) return;
     if (draft !== null || saveState === "saving" || employmentEdit !== null
-        || employmentSaving || grantEdit !== null || grantSaving) {
+        || employmentSaving || grantEdit !== null || grantSaving || hasSupplementDraft()) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
       return;
     }
@@ -470,7 +489,7 @@ export function RetirementWorkspaceScreen() {
   }, [location.search, clientId]);
 
   function switchStep(next: Step) {
-    if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving) {
+    if (draft !== null || saveState === "saving" || employmentEdit !== null || employmentSaving || grantEdit !== null || grantSaving || hasSupplementDraft()) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
       return;
     }
@@ -575,7 +594,7 @@ export function RetirementWorkspaceScreen() {
         <strong>בן־צבי · סביבת תכנון פרישה</strong>
         <p>תיק פעיל: {client.full_name} · מזהה תיק {client.client_id}</p>
       </div>
-      <Link to="/clients">החלפת לקוח</Link>
+      <Link to="/clients" onClick={event => { if (hasSupplementDraft() && !window.confirm("קיימת טיוטה שלא נשמרה. לעבור ללקוח אחר ולבטל את הטיוטה?")) event.preventDefault(); }}>החלפת לקוח</Link>
     </header>
     <nav aria-label="שלבי תכנון פרישה" className="professional-workspace__steps">
       {STEPS.map(({ key, label }, index) => <button type="button" key={key}
@@ -697,11 +716,25 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "supplement" && <section>
         <h1>נתונים משלימים</h1>
-        <p className="professional-workspace__sub">נתוני הלקוח מוצגים ממסד הנתונים. ניתן לנהל כאן מידע חסר והנחות מקצועיות, וכן להוסיף ולתקן תעסוקה ומענקים. פעולות אחרות ממשיכות במסכים ייעודיים.</p>
+        <p className="professional-workspace__sub">נתוני הלקוח מוצגים ממסד הנתונים. ניתן לערוך כאן מידע חסר, הנחות, תעסוקה, מענקים, היוונים, נכסי הון, הכנסות והוצאות. ממשקים מקצועיים ייעודיים נשארים זמינים.</p>
         <div className="professional-workspace__identity" aria-label="מידע חסר והנחות מתכנן">
           <AdvisoryMissingInformationSection key={`missing:${clientId}`} clientId={clientId} />
           <PlannerAssumptionsSection key={`assumptions:${clientId}`} clientId={clientId} />
         </div>
+        <section aria-label="עורכי נתונים משלימים PKG-02">
+          <p role="note">PKG02-CONCURRENCY-001: בדיקת מקור לפני עדכון היא הגנה חלקית בלבד, לא CAS אטומי.</p>
+          {(supplementCategory === null || supplementCategory === 2) && <ActualCapitalizationsSection
+            key={`actual-capitalizations:${clientId}`} parsedClientId={clientId}
+            onDirtyChange={dirty => onSupplementDirty("actual-capitalizations", dirty)}
+            onSaved={notifySupplementSaved} />}
+          {(supplementCategory === null || supplementCategory === 3 || supplementCategory === 4 || supplementCategory === 5) &&
+          <RetirementPlanningFactsSection key={`facts:${clientId}:${supplementCategory ?? "all"}`}
+            clientId={clientId} onFactSaved={notifySupplementSaved} onDirtyChange={onSupplementDirty}
+            includeKeys={supplementCategory === 3 ? ["capital-assets"]
+              : supplementCategory === 4 ? ["recurring-incomes"]
+              : supplementCategory === 5 ? ["recurring-expenses"]
+              : ["capital-assets", "recurring-incomes", "recurring-expenses"]} />}
+        </section>
         {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
         {supplementError && <p role="alert">{supplementError}</p>}
         {linkError && <p role="alert">{linkError}</p>}

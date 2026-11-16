@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c 'cd /app/backend && PKG02_SYNTHETIC_PG16=1 python -m pytest -v -s tests/test_pkg02_gate195_pg16.py --junitxml=/tmp/pkg02-gate195-junit.xml' 2>&1 | tee acceptance-evidence/gate195-pg16.log
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c 'cd /app/backend && PKG02_SYNTHETIC_PG16=1 python -m pytest -v -s tests/test_pkg02_gate195_pg16.py::test_195_fixation_real_saved_manifest_and_changed_capitalization_api --junitxml=/tmp/pkg02-gate195-junit.xml' 2>&1 | tee acceptance-evidence/gate195-pg16.log
           docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend cat /tmp/pkg02-gate195-junit.xml > acceptance-evidence/gate195-junit.xml
       - name: Collect synthetic logs
         if: always()

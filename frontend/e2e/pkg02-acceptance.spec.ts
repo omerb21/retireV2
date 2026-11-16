@@ -146,7 +146,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await expect(page.getByRole("heading",{name:"נתונים משלימים",exact:true})).toBeVisible();
     await expect(assets(page).getByLabel("תיאור הנכס")).toHaveValue("PKG02 unsaved draft");
     await page.screenshot({path:info.outputPath("07-draft-preserved.png"),fullPage:true});
-    await assets(page).getByLabel("תיאור הנכס").fill("");
+    await assets(page).getByRole("button",{name:"ביטול העריכה"}).click();
     await page.getByRole("button",{name:/4\. תכנון תרחישים/}).click();
     await expect(page.getByRole("heading",{name:"תכנון תרחישים",exact:true})).toBeVisible();
     await page.getByRole("button",{name:/3\. נתונים משלימים/}).click();

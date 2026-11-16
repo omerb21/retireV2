@@ -91,6 +91,14 @@ def test_pg16_four_api_records_versioned_writes_and_isolation():
             url = f"{BASE}/{a}/{route}/{identity}"
             rows = http.get(f"{BASE}/{a}/{route}").json()
             assert any(_id(route, row) == identity and row["version"] == 1 for row in rows)
+            unchanged = {"expected_version": item["version"]}
+            if route == "actual-capitalizations":
+                unchanged = {**original, **unchanged}
+            no_op = http.put(url, json=unchanged)
+            assert no_op.status_code == 422, (route, no_op.status_code, no_op.text)
+            assert no_op.json()["detail"]["code"] == "NO_FACT_CHANGES"
+            assert any(_id(route, row) == identity and row["version"] == 1
+                       for row in http.get(f"{BASE}/{a}/{route}").json())
             update = _change(route, item, original)
             accepted = http.put(url, json=update)
             assert accepted.status_code == 200, (route, accepted.text)

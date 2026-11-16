@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,6 +16,8 @@ class ActualCapitalization(Base):
     )
 
     capitalization_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     client_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("clients.client_id"), nullable=False
     )

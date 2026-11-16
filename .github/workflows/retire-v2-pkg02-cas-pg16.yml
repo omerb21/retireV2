@@ -97,6 +97,52 @@ jobs:
           set -euo pipefail
           docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c 'cd /app/backend && PKG02_SYNTHETIC_PG16=1 python -m pytest -v tests/test_pkg02_cas_dependency_pg16.py --junitxml=/tmp/pkg02-cas-junit.xml' 2>&1 | tee acceptance-evidence/pkg02-cas-pg16-tests.log
           docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend cat /tmp/pkg02-cas-junit.xml > acceptance-evidence/pkg02-cas-junit.xml
+      - name: Set up Node.js and Chromium on isolated runner
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend and test-only Playwright
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false @playwright/test@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start isolated Vite for full API-backed acceptance
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev -- --mode test --host 127.0.0.1 > ../acceptance-evidence/vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5174/__retire_v2_test_identity > ../acceptance-evidence/vite-identity.json; then break; fi
+            sleep 2
+          done
+          grep -q RETIRE_V2_FRONTEND ../acceptance-evidence/vite-identity.json
+          curl --fail --silent --show-error http://127.0.0.1:5174/api/auth/session | tee ../acceptance-evidence/localhost-auth.json
+      - name: Run affected frontend unit tests
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx vitest run src/pages/ActualCapitalizationsScreen.test.tsx src/pages/RetirementPlanningFactsSection.test.tsx src/pages/RetirementWorkspaceScreen.test.tsx 2>&1 | tee ../acceptance-evidence/cas-frontend-units.log
+      - name: Build typed frontend application
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee ../acceptance-evidence/cas-frontend-build.log
+      - name: Run changed-contract browser acceptance against real PG16
+        working-directory: frontend
+        shell: bash
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../acceptance-evidence/pkg02-cas-playwright-junit.xml
+        run: |
+          set -euo pipefail
+          npx playwright test e2e/pkg02-acceptance.spec.ts --browser chromium --workers 1 --retries 0 --reporter=line,junit --output=test-results 2>&1 | tee ../acceptance-evidence/cas-playwright.log
       - name: Collect synthetic logs
         if: always()
         shell: bash
@@ -108,7 +154,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pkg02-cas-pg16-${{ github.run_id }}
-          path: acceptance-evidence/
+          path: |
+            acceptance-evidence/
+            frontend/test-results/
           retention-days: 14
       - name: Destroy synthetic resources including volumes
         if: always()

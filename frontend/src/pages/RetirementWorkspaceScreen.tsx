@@ -4,6 +4,8 @@ import { UnifiedClientIntake } from "../components/UnifiedClientIntake";
 import { WorkspaceClearinghouseImport } from "../components/WorkspaceClearinghouseImport";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
 import { M12DraftReportPanel } from "../components/M12DraftReportPanel";
+import { AdvisoryMissingInformationSection } from "./AdvisoryMissingInformationSection";
+import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
 import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
@@ -695,7 +697,11 @@ export function RetirementWorkspaceScreen() {
       </section>}
       {step === "supplement" && <section>
         <h1>נתונים משלימים</h1>
-        <p className="professional-workspace__sub">נתוני הלקוח מוצגים כאן ממסד הנתונים. ניתן לתקן כאן תעסוקה ומענקים קיימים; הוספה, מחיקה ועריכת נתונים אחרים מתבצעות במסכים הייעודיים.</p>
+        <p className="professional-workspace__sub">נתוני הלקוח מוצגים ממסד הנתונים. ניתן לנהל כאן מידע חסר והנחות מקצועיות, וכן להוסיף ולתקן תעסוקה ומענקים. פעולות אחרות ממשיכות במסכים ייעודיים.</p>
+        <div className="professional-workspace__identity" aria-label="מידע חסר והנחות מתכנן">
+          <AdvisoryMissingInformationSection key={`missing:${clientId}`} clientId={clientId} />
+          <PlannerAssumptionsSection key={`assumptions:${clientId}`} clientId={clientId} />
+        </div>
         {supplementLoading && <p role="status">טוען נתונים משלימים...</p>}
         {supplementError && <p role="alert">{supplementError}</p>}
         {linkError && <p role="alert">{linkError}</p>}

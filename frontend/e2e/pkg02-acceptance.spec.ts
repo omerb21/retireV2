@@ -257,4 +257,18 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await page.screenshot({path:info.outputPath("14-confirmed-deletion.png"),fullPage:true});
   });
 
+  test("15 converted capital asset appears read-only in factual editor",async ({page,request},info)=>{
+    const real=await getRows(request,a,"capital-assets");
+    const synthetic={...real[0],id:999999,origin_kind:"canonical_component_conversion",
+      conversion_id:"synthetic-ui-only",asset_description:"UI-only converted asset"};
+    await page.route("**/capital-assets?lifecycle_status=current",route=>route.fulfill({
+      status:200,contentType:"application/json",body:JSON.stringify([...real,synthetic])
+    }));
+    await page.goto(workspace(a));
+    const item=assets(page).getByRole("heading",{name:/רשומת נכס הון 999999/}).locator("..");
+    await expect(item.getByRole("button",{name:"עריכת נכס הון"})).toBeDisabled();
+    await page.screenshot({path:info.outputPath("15-converted-readonly-ui.png"),fullPage:true});
+    // UI-only response fixture, not evidence of successful canonical conversion persistence.
+  });
+
 });

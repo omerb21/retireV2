@@ -5,11 +5,12 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.db.session import get_db
 from app.models.actual_capitalization import ActualCapitalization
@@ -266,7 +267,12 @@ class ActualCapitalizationRequest(BaseModel):
         return self
 
 
+class ActualCapitalizationUpdateRequest(ActualCapitalizationRequest):
+    expected_version: int = Field(ge=1)
+
+
 class ActualCapitalizationResponse(BaseModel):
+    version: int
     capitalization_id: str
     client_id: int
     amount: Decimal
@@ -509,6 +515,7 @@ class CapitalAssetCreateRequest(BaseModel):
 
 class CapitalAssetUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
 
     asset_category: str | None = None
     asset_description: str | None = None
@@ -544,6 +551,7 @@ class CapitalAssetUpdateRequest(BaseModel):
 
 
 class CapitalAssetResponse(BaseModel):
+    version: int
     id: int
     origin_kind: str
     conversion_id: str | None
@@ -615,6 +623,7 @@ class RecurringIncomeCreateRequest(BaseModel):
 
 class RecurringIncomeUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
 
     income_category: str | None = None
     description: str | None = None
@@ -662,6 +671,7 @@ class RecurringIncomeUpdateRequest(BaseModel):
 
 
 class RecurringIncomeResponse(BaseModel):
+    version: int
     id: int
     client_id: int
     income_category: str
@@ -732,6 +742,7 @@ class RecurringExpenseCreateRequest(BaseModel):
 
 class RecurringExpenseUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
 
     expense_category: str | None = None
     description: str | None = None
@@ -779,6 +790,7 @@ class RecurringExpenseUpdateRequest(BaseModel):
 
 
 class RecurringExpenseResponse(BaseModel):
+    version: int
     id: int
     client_id: int
     expense_category: str
@@ -1043,6 +1055,7 @@ def _grant_to_response(row: Grant) -> GrantResponse:
 
 def _actual_capitalization_to_response(row: ActualCapitalization) -> ActualCapitalizationResponse:
     return ActualCapitalizationResponse(
+        version=row.version,
         capitalization_id=row.capitalization_id,
         client_id=row.client_id,
         amount=row.amount,
@@ -1162,6 +1175,7 @@ def _pension_analysis_record_to_response(row: PensionAnalysisRecord) -> PensionA
 
 def _capital_asset_to_response(row: CapitalAsset) -> CapitalAssetResponse:
     return CapitalAssetResponse(
+        version=row.version,
         id=row.id,
         origin_kind=row.origin_kind,
         conversion_id=row.conversion_id,
@@ -1186,6 +1200,7 @@ def _capital_asset_to_response(row: CapitalAsset) -> CapitalAssetResponse:
 
 def _recurring_income_to_response(row: RecurringIncome) -> RecurringIncomeResponse:
     return RecurringIncomeResponse(
+        version=row.version,
         id=row.id,
         client_id=row.client_id,
         income_category=row.income_category,
@@ -1209,6 +1224,7 @@ def _recurring_income_to_response(row: RecurringIncome) -> RecurringIncomeRespon
 
 def _recurring_expense_to_response(row: RecurringExpense) -> RecurringExpenseResponse:
     return RecurringExpenseResponse(
+        version=row.version,
         id=row.id,
         client_id=row.client_id,
         expense_category=row.expense_category,
@@ -1255,9 +1271,27 @@ def _retirement_timing_work_intention_to_response(
     )
 
 
+def _assert_fact_version(row: Any, expected_version: int) -> None:
+    if row.version != expected_version:
+        raise HTTPException(409, detail={"code": "RECORD_VERSION_CONFLICT",
+                                         "message": "The record changed; reload before saving"})
+
+
+def _commit_fact_cas(db: Session) -> None:
+    try:
+        # SQLAlchemy's version_id_col emits an UPDATE/DELETE with a version predicate.
+        # This single SQL statement is the atomic compare-and-swap.
+        db.commit()
+    except StaleDataError as error:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "RECORD_VERSION_CONFLICT",
+                                         "message": "The record changed during the write"}) from error
+
+
 def _apply_fact_update(row: Any, payload: BaseModel) -> None:
     for field_name in payload.model_fields_set:
-        setattr(row, field_name, getattr(payload, field_name))
+        if field_name != "expected_version":
+            setattr(row, field_name, getattr(payload, field_name))
 
 
 def _validation_error(message: str) -> HTTPException:
@@ -1872,10 +1906,11 @@ def update_capital_asset(
     from app.services.pension_product_service import lock_client
     lock_client(db, client_id)
     row = _require_capital_asset(db, client_id, capital_asset_id)
+    _assert_fact_version(row, payload.expected_version)
     if row.origin_kind == "canonical_component_conversion":
         raise HTTPException(409, detail={"code": "CONVERSION_DESTINATION_READ_ONLY", "message": "יעד שנוצר מהמרה ניתן לביטול דרך היסטוריית ההמרות בלבד"})
     _apply_fact_update(row, payload)
-    db.commit()
+    _commit_fact_cas(db)
     db.refresh(row)
     return _capital_asset_to_response(row)
 
@@ -1927,8 +1962,9 @@ def update_recurring_income(
 ) -> RecurringIncomeResponse:
     _require_client(db, client_id)
     row = _require_recurring_income(db, client_id, recurring_income_id)
+    _assert_fact_version(row, payload.expected_version)
     _apply_fact_update(row, payload)
-    db.commit()
+    _commit_fact_cas(db)
     db.refresh(row)
     return _recurring_income_to_response(row)
 
@@ -1980,8 +2016,9 @@ def update_recurring_expense(
 ) -> RecurringExpenseResponse:
     _require_client(db, client_id)
     row = _require_recurring_expense(db, client_id, recurring_expense_id)
+    _assert_fact_version(row, payload.expected_version)
     _apply_fact_update(row, payload)
-    db.commit()
+    _commit_fact_cas(db)
     db.refresh(row)
     return _recurring_expense_to_response(row)
 
@@ -2564,11 +2601,12 @@ def list_actual_capitalizations(
 def update_actual_capitalization(
     client_id: int,
     capitalization_id: str,
-    payload: ActualCapitalizationRequest,
+    payload: ActualCapitalizationUpdateRequest,
     db: Session = Depends(get_db),
 ) -> ActualCapitalizationResponse:
     _require_client(db, client_id)
     cap = _require_actual_capitalization(db, client_id, capitalization_id)
+    _assert_fact_version(cap, payload.expected_version)
 
     cap.amount = payload.amount
     cap.capitalization_date = payload.capitalization_date
@@ -2577,7 +2615,7 @@ def update_actual_capitalization(
     cap.planner_assertion = payload.planner_assertion
     cap.planner_assertion_basis = payload.planner_assertion_basis
     cap.notes = payload.notes
-    db.commit()
+    _commit_fact_cas(db)
     db.refresh(cap)
 
     return _actual_capitalization_to_response(cap)
@@ -2587,11 +2625,13 @@ def update_actual_capitalization(
 def delete_actual_capitalization(
     client_id: int,
     capitalization_id: str,
+    expected_version: int = Query(..., ge=1),
     db: Session = Depends(get_db),
 ) -> dict:
     _require_client(db, client_id)
     cap = _require_actual_capitalization(db, client_id, capitalization_id)
+    _assert_fact_version(cap, expected_version)
 
     db.delete(cap)
-    db.commit()
+    _commit_fact_cas(db)
     return {"deleted": True, "capitalization_id": capitalization_id}

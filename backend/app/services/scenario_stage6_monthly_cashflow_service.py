@@ -19,7 +19,7 @@ from app.models.planning_input_decision import PensionIncomeResolution
 from app.models.retirement_facts import RecurringIncome
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
 from app.services.planning_input_service import fingerprint
-from app.services.professional_source_snapshot_service import record
+from app.services.professional_source_snapshot_service import record, semantic_record
 from app.services.scenario_snapshot_candidate_service import (
     ScenarioSnapshotError, _stage6_identity_extension,
     build_manifest_candidate_snapshot,
@@ -122,7 +122,7 @@ def _partial_month(value: date, start: date | None, end: date | None) -> bool:
 def _recurring_source(row: RecurringIncome,
                       resolution: PensionIncomeResolution | None) -> dict:
     source_id = f"income:{row.id}"
-    source_fingerprint = fingerprint(record(row))
+    source_fingerprint = fingerprint(semantic_record(row))
     blockers: set[str] = set()
     if row.income_category == "pension":
         blockers.add("STAGE6_CASHFLOW_RECURRING_PENSION_NOT_CANONICAL")

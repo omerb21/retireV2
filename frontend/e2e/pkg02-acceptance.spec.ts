@@ -271,4 +271,16 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     // UI-only response fixture, not evidence of successful canonical conversion persistence.
   });
 
+  test("16 factual change from legacy screen appears in unified step 3",async ({page,request},info)=>{
+    await page.goto(ROOT+`/clients/${a}`);
+    await expect(assets(page).getByText(/PKG02 external update/)).toBeVisible();
+    await assets(page).getByRole("button",{name:"עריכת נכס הון"}).click();
+    await assets(page).getByLabel("תיאור הנכס").fill("PKG02 edited from legacy");
+    await assets(page).getByRole("button",{name:"שמירת נכס הון"}).click();
+    await expect.poll(async()=>(await getRows(request,a,"capital-assets")).find((x:any)=>x.id===asset)?.asset_description).toBe("PKG02 edited from legacy");
+    await page.goto(workspace(a));
+    await expect(assets(page).getByText(/PKG02 edited from legacy/)).toBeVisible();
+    await page.screenshot({path:info.outputPath("16-legacy-to-workspace.png"),fullPage:true});
+  });
+
 });

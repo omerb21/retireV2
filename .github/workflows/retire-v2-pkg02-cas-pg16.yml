@@ -13,6 +13,7 @@ on:
       - 'backend/alembic/versions/c194e2f0a816_pkg02_atomic_fact_versions.py'
       - 'frontend/src/api/clientsApi.ts'
       - 'frontend/src/pages/ActualCapitalizationsSection.tsx'
+      - 'frontend/src/pages/ActualCapitalizationsScreen.test.tsx'
       - 'frontend/src/pages/RetirementPlanningFactsSection.tsx'
       - 'frontend/e2e/pkg02-acceptance.spec.ts'
   workflow_dispatch:
@@ -55,6 +56,7 @@ jobs:
             "backend/tests/test_pkg02_cas_dependency_pg16.py",
             "frontend/src/api/clientsApi.ts",
             "frontend/src/pages/ActualCapitalizationsSection.tsx",
+            "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
             "frontend/src/pages/RetirementPlanningFactsSection.tsx",
             "frontend/e2e/pkg02-acceptance.spec.ts",
             ".github/workflows/retire-v2-pkg02-cas-pg16.yml",

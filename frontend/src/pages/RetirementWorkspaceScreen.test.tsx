@@ -363,7 +363,7 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
     await screen.findByText("מעסיק");
     fireEvent.click(screen.getByRole("button", { name: "תקן רשומת תעסוקה" }));
-    fireEvent.change(screen.getByLabelText("תאריך סיום"), { target: { value: "2019-01-01" } });
+    fireEvent.change(within(screen.getByRole("button", { name: "שמור תיקון תעסוקה" }).closest("form")!).getByLabelText("תאריך סיום"), { target: { value: "2019-01-01" } });
     fireEvent.click(screen.getByRole("button", { name: "שמור תיקון תעסוקה" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("תאריך הסיום");
     expect(updateEmploymentRecord).not.toHaveBeenCalled();

@@ -156,7 +156,8 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await page.goto(workspace(a));
     await assets(page).getByRole("button",{name:"עריכת נכס הון"}).click();
     await assets(page).getByLabel("תיאור הנכס").fill("UNSAVED_DRAFT_SHOULD_REMAIN");
-    const server=await request.put(API+`/${a}/capital-assets/${asset}`,{data:{asset_description:"PKG02 external update"}});
+    const externalAsset=(await getRows(request,a,"capital-assets")).find((x:any)=>x.id===asset);
+    const server=await request.put(API+`/${a}/capital-assets/${asset}`,{data:{asset_description:"PKG02 external update",expected_version:externalAsset.version}});
     expect(server.status()).toBe(200);
     await assets(page).getByRole("button",{name:"שמירת נכס הון"}).click();
     await expect(assets(page).getByText(/PKG02-CONCURRENCY-001/)).toBeVisible();
@@ -187,7 +188,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     const evidence:any[]=[];
     for(const [route,id] of resources){
       const read=route==="actual-capitalizations" ? null : await request.get(API+`/${b}/${route}/${id}`);
-      const put=await request.put(API+`/${b}/${route}/${id}`,{data:route==="actual-capitalizations"?{amount:"1",capitalization_date:"2026-01-15"}:route==="capital-assets"?{asset_description:"FOREIGN_OVERWRITE"}:{description:"FOREIGN_OVERWRITE"}});
+      const put=await request.put(API+`/${b}/${route}/${id}`,{data:route==="actual-capitalizations"?{amount:"1",capitalization_date:"2026-01-15",expected_version:1}:route==="capital-assets"?{asset_description:"FOREIGN_OVERWRITE",expected_version:1}:{description:"FOREIGN_OVERWRITE",expected_version:1}});
       if(read) expect(read.status()).toBe(404); else expect((await getRows(request,b,route)).some((r:any)=>r.capitalization_id===id)).toBe(false);
       expect(put.status()).toBe(404);
       evidence.push({route,id,read:read?.status()??"scoped-list-empty",update:put.status()});
@@ -214,7 +215,8 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
       expense_category:"NOT_ALLOWED",description:"bad",amount:"100.00",frequency:"monthly",expense_type:"mandatory",continuation_status:"ongoing"
     }});
     expect(invalid.status()).toBe(422);
-    const changed=await request.put(API+`/${a}/recurring-expenses/${expense}`,{data:{amount:"810.00"}});
+    const oldExpense=(await getRows(request,a,"recurring-expenses")).find((row:any)=>row.id===expense);
+    const changed=await request.put(API+`/${a}/recurring-expenses/${expense}`,{data:{amount:"810.00",expected_version:oldExpense.version}});
     expect(changed.status()).toBe(200);
     const after=await request.get(API+`/${a}/retirement-planning-input`);
     expect(after.status()).toBe(200);

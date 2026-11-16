@@ -194,10 +194,10 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
   }
 
   async function handleDelete(capitalization: ActualCapitalizationItem) {
+    if (!window.confirm("למחוק את ההיוון בפועל? פעולה זו אינה ניתנת לביטול.")) return;
     setIsSubmitting(true);
     setMutationErrorMessage(null);
 
-    if (!window.confirm("למחוק את ההיוון בפועל? פעולה זו אינה ניתנת לביטול.")) return;
     try {
       await deleteActualCapitalization(parsedClientId, capitalization.capitalization_id);
       onSaved?.();

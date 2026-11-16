@@ -170,6 +170,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await page.getByLabel("שם הלקוח").fill(B_NAME);
     await page.getByLabel("מספר זהות").fill("192000002");
     await page.getByRole("button",{name:"שמירת לקוח"}).click();
+    await expect(page).toHaveURL(/\/clients\/\d+\/workspace\?step=client/);
     b=Number(new URL(page.url()).pathname.match(/\/clients\/(\d+)\/workspace/)?.[1]);
     expect(b).toBeGreaterThan(0);expect(b).not.toBe(a);
     await page.goto(workspace(b));

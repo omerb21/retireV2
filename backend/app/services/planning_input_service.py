@@ -7,7 +7,7 @@ from sqlalchemy import select, or_
 from app.models.client import Client
 from app.models.retirement_facts import RecurringIncome, RecurringExpense, RetirementTimingWorkIntention
 from app.models.planning_input_decision import PlanningInputDecision, PensionIncomeResolution
-from app.services.professional_source_snapshot_service import begin_read, _snapshot, record, serialize
+from app.services.professional_source_snapshot_service import begin_read, _snapshot, record, semantic_record, serialize
 from app.services.pension_product_service import PensionProductError, lock_client
 
 CONTRACT = "canonical-retirement-planning-input-v1"
@@ -114,7 +114,7 @@ def derive(db, client_id):
         stale = False
         linked = False
         if resolution:
-            stale = resolution.income_fingerprint != fingerprint(record(income))
+            stale = resolution.income_fingerprint != fingerprint(semantic_record(income))
             if resolution.decision_kind != "MISCLASSIFIED_GENERAL_INCOME":
                 target = pensions.get(resolution.canonical_source_id)
                 stale = stale or income.income_category != "pension" or target is None or fingerprint(target) != resolution.canonical_fingerprint
@@ -122,7 +122,7 @@ def derive(db, client_id):
             else:
                 stale = stale or income.income_category == "pension" or resolution.canonical_source_id is not None or resolution.canonical_fingerprint is not None
         if income.income_category == "pension" or stale:
-            item = {**record(income), "source_id": f"income:{income.id}", "source_fingerprint": fingerprint(record(income)),
+            item = {**record(income), "source_id": f"income:{income.id}", "source_fingerprint": fingerprint(semantic_record(income)),
                     "resolution": record(resolution) if resolution else None}
             if linked:
                 item.update(inclusion_state="excluded", reason="same_canonical_pension", canonical_source_id=resolution.canonical_source_id)
@@ -163,7 +163,7 @@ def derive(db, client_id):
                 "product_id": product["product_id"], "product_name": product["product_name"], "classification": "remaining_unconverted_source", "inclusion_state": "reference_only"})
     result["planning_input_ready"] = not result["blocking_facts"]
     result["planning_input_fingerprint"] = fingerprint({"contract": CONTRACT, "source": snapshot["source_state_fingerprint"],
-        "incomes": [record(r) for r in incomes], "expenses": [record(r) for r in expenses], "timings": [record(r) for r in timings],
+        "incomes": [semantic_record(r) for r in incomes], "expenses": [semantic_record(r) for r in expenses], "timings": [record(r) for r in timings],
         "client": record(client), "decision": planning_decision_semantics(decision), "resolutions": [record(r) for r in resolutions]})
     from app.services.retirement_target_service import extend_read
     extend_read(result, decision, client, timings, snapshot)
@@ -171,7 +171,7 @@ def derive(db, client_id):
 
 
 def normalized(row, kind, base, classify):
-    item = {**record(row), "source_id": f"{kind}:{row.id}", "source_fingerprint": fingerprint(record(row))}
+    item = {**record(row), "source_id": f"{kind}:{row.id}", "source_fingerprint": fingerprint(semantic_record(row))}
     blockers = []
     denominator = {"monthly": 1, "quarterly": 3, "annual": 12}.get(row.frequency)
     item["monthly_equivalent_ratio"] = {"numerator": row.amount, "denominator": denominator} if denominator else None
@@ -217,7 +217,7 @@ def resolve_income(db, client_id, income_id, payload):
     decision = writable_decision(db, client_id, payload.expected_version)
     income = db.scalar(select(RecurringIncome).where(RecurringIncome.id == income_id, RecurringIncome.client_id == client_id)
                        .with_for_update().execution_options(populate_existing=True))
-    if income is None or income.lifecycle_status != "current" or fingerprint(record(income)) != payload.expected_income_fingerprint:
+    if income is None or income.lifecycle_status != "current" or fingerprint(semantic_record(income)) != payload.expected_income_fingerprint:
         fail("INCOME_SOURCE_STALE")
     resolution = db.get(PensionIncomeResolution, income_id)
     if income.income_category != "pension" and resolution is None:
@@ -237,7 +237,7 @@ def resolve_income(db, client_id, income_id, payload):
             fail("CANONICAL_PENSION_STALE")
     # Load server-updated source facts before adding a partially initialized
     # decision. PostgreSQL may expire updated_at after the source UPDATE.
-    income_fingerprint = fingerprint(record(income))
+    income_fingerprint = fingerprint(semantic_record(income))
     if resolution is None:
         resolution = PensionIncomeResolution(income_id=income_id, client_id=client_id, version=1)
         db.add(resolution)

@@ -1,0 +1,158 @@
+"""Run the isolated Neon Stage 6 bootstrap without logging connection secrets."""
+from __future__ import annotations
+
+import argparse
+import getpass
+import os
+import re
+from pathlib import Path
+import subprocess
+import sys
+
+from sqlalchemy.engine import make_url
+
+EXPECTED_HOST = "ep-raspy-mouse-b90m3k25.c-7.eu-central-1.aws.neon.tech"
+EXPECTED_DB = "retire_v2_stage6_validation"
+EXPECTED_USER = "retire_v2_stage6_validation_owner"
+
+
+def validate_connection_string(value: str) -> None:
+    if not value or value.count("://") != 1 or any(ch.isspace() for ch in value):
+        raise ValueError("Paste exactly one URL, without commands or extra text")
+    if any(ch in value for ch in ("'", '"', "<", ">")):
+        raise ValueError("Do not include quotes or markup")
+    try:
+        parsed = make_url(value)
+    except Exception:
+        raise ValueError("Malformed PostgreSQL URL") from None
+    if parsed.drivername not in {"postgresql", "postgresql+psycopg2"}:
+        raise ValueError("Expected a PostgreSQL URL")
+    if (parsed.host or "").lower() != EXPECTED_HOST or parsed.database != EXPECTED_DB:
+        raise ValueError("Wrong Neon project or database")
+    if parsed.username != EXPECTED_USER or not parsed.password:
+        raise ValueError("Expected the Neon migration-owner role")
+    if parsed.port not in (None, 5432):
+        raise ValueError("Unexpected PostgreSQL port")
+    if set(parsed.query) - {"sslmode", "channel_binding"}:
+        raise ValueError("Unexpected query parameters")
+    if parsed.query.get("sslmode") not in {"require", "verify-ca", "verify-full"}:
+        raise ValueError("TLS is required")
+    if parsed.query.get("channel_binding", "require") != "require":
+        raise ValueError("Duplicated or invalid channel_binding")
+
+
+def show_safe_failure_summary(stderr: str) -> None:
+    """Print only allowlisted Alembic revision IDs and database error types."""
+    revs = re.findall(r"Running upgrade[^\r\n]*?->\s+([0-9a-f]{12})", stderr)
+    if revs:
+        print("LAST_ATTEMPTED_MIGRATION: " + revs[-1])
+    else:
+        print("LAST_ATTEMPTED_MIGRATION: not reported")
+
+    pg = re.search(
+        r"(?m)^\s*psycopg2\.errors\.([A-Za-z][A-Za-z0-9_]*):\s*([^\r\n]*)",
+        stderr,
+    )
+    if pg:
+        print("POSTGRES_ERROR_TYPE: " + pg.group(1))
+        detail = pg.group(2).strip()
+        forbidden = ("postgresql://", "postgresql+", "password", "npg_", "secret", "://")
+        if detail and not any(token in detail.lower() for token in forbidden):
+            print("POSTGRES_ERROR_DETAIL: " + detail[:180])
+        return
+
+    kind = re.search(
+        r"(?m)^\s*(?:sqlalchemy\.exc\.|alembic\.util\.exc\.)?"
+        r"([A-Za-z][A-Za-z0-9_]*(?:Error|Exception)):",
+        stderr,
+    )
+    if kind:
+        print("MIGRATION_ERROR_TYPE: " + kind.group(1))
+    else:
+        print("MIGRATION_ERROR_TYPE: unknown; inspect local environment")
+
+    # Report code location without dumping any Python source or filesystem
+    # directory (the traceback itself may include a credential-bearing URL).
+    frames = re.findall(
+        r'(?m)^\s*File "[^"\r\n]*[/\\]([^/\\"]+\.py)", line (\d+), in ([^\r\n]+)',
+        stderr,
+    )
+    if frames:
+        filename, line, function = frames[-1]
+        print("FAILURE_LOCATION: " + filename + ":" + line + " (" + function + ")")
+
+    # Restrict the textual detail to safe non-connection-related messages.
+    failure = re.findall(
+        r"(?m)^\s*(?:TypeError|ValueError|RuntimeError|ImportError|AttributeError):\s*([^\r\n]+)",
+        stderr,
+    )
+    if failure:
+        detail = failure[-1].strip()
+        forbidden = (
+            "://", "password", "npg_", "channel_binding", "sslmode",
+            "postgresql", "token", "secret", "@",
+        )
+        if not any(token in detail.lower() for token in forbidden):
+            print("MIGRATION_ERROR_DETAIL: " + detail[:200])
+
+
+def supported_migration_python(version_info) -> bool:
+    """Match the pinned SQLAlchemy/Alembic runtime to supported Python versions."""
+    return tuple(version_info[:2]) in {(3, 11), (3, 12)}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Safe, isolated Neon Stage 6 bootstrap")
+    parser.add_argument("--apply", action="store_true")
+    args = parser.parse_args()
+
+    if not supported_migration_python(sys.version_info):
+        print("STOP: pinned SQLAlchemy 2.0.36 is incompatible with Python " +
+              str(sys.version_info.major) + "." + str(sys.version_info.minor) +
+              "; run the migration with Python 3.11 (recommended) or 3.12.")
+        return 2
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    target = backend_dir / "scripts" / "neon_stage6_bootstrap.py"
+    if not target.is_file():
+        print("STOP: original bootstrap script missing")
+        return 2
+
+    url = getpass.getpass("Paste a single Neon Direct URL (hidden): ").strip()
+    try:
+        validate_connection_string(url)
+    except ValueError as exc:
+        print("STOP: " + str(exc))
+        return 2
+
+    env = dict(os.environ)
+    env["DATABASE_URL"] = url
+    command = [sys.executable, str(target)]
+    if args.apply:
+        command.append("--apply")
+    try:
+        result = subprocess.run(
+            command, cwd=backend_dir, env=env,
+            capture_output=True, text=True, timeout=300, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        print("STOP: bootstrap did not complete; inspect DB state before retrying")
+        return 1
+    finally:
+        env.pop("DATABASE_URL", None)
+        url = ""
+
+    preflight_ok = "PREFLIGHT PASS:" in result.stdout
+    migration_ok = "MIGRATION PASS:" in result.stdout
+    if preflight_ok:
+        print("PREFLIGHT PASS")
+    if result.returncode == 0 and (migration_ok if args.apply else preflight_ok):
+        print("MIGRATION PASS" if args.apply else "PREFLIGHT COMPLETE")
+        return 0
+    show_safe_failure_summary(result.stderr)
+    print("STOP: bootstrap failed. Check database state before retrying --apply.")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -12,6 +12,10 @@ const product = (): api.PensionProduct => ({ product_id: "p1", client_id: 1, ver
 function open(path = "/clients/1/pension-products") {
   return render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/clients/:clientId/pension-products" element={<PensionProductsScreen />} /></Routes></MemoryRouter>);
 }
+async function openEditor(name = "תכנית א") {
+  fireEvent.click(await screen.findByRole("button", { name: `פרטי מוצר: ${name}` }));
+  return screen.findByRole("region", { name: `עריכת ${name}` });
+}
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.listPensionProducts).mockResolvedValue([product()]); vi.mocked(listConversions).mockResolvedValue([]); });
 
 describe("מוצרים פנסיוניים קנוניים", () => {
@@ -24,6 +28,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     vi.mocked(executeConversion).mockResolvedValue({ product_version: 2 });
     vi.mocked(listConversions).mockResolvedValueOnce([]).mockResolvedValue([{ conversion_id: "conversion", source_product_id: "p1", destination_type: "capital", tax_treatment: "exempt", converted_amount: "40.00", status: "active", version: 1, effective_date: "2026-09-12", actor: "test", pension: null, allocations: [] }]);
     open();
+    await openEditor();
     fireEvent.click(await screen.findByRole("button", { name: "המרת תגמולי עובד עד 2000" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("כל היתרה")).toBeChecked();
@@ -54,7 +59,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
       diagnostics: [{ code: "component_source_state", component: codes[0], state }],
     }] }]);
     open();
-    await screen.findByRole("region", { name: "עריכת תכנית א" });
+    await openEditor();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -72,7 +77,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
 
   it("opens directly and displays all eleven components with Hebrew names and Israeli dates", async () => {
     const { container } = open();
-    const editor = await screen.findByRole("region", { name: "עריכת תכנית א" });
+    const editor = await openEditor();
     for (const code of codes) expect(within(editor).getByLabelText(code.replace(/_/g, " "))).toHaveValue("0.00");
     expect(within(editor).getByLabelText("תאריך התחלה")).toHaveValue("01/02/2000");
     expect(within(editor).getByLabelText("תאריך נכונות היתרה")).toHaveValue("01/09/2026");
@@ -86,7 +91,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     const saved = { ...product(), version: 2, components: { ...product().components, [codes[0]]: "99.99" } };
     vi.mocked(api.savePensionProduct).mockResolvedValue(saved);
     open();
-    const editor = await screen.findByRole("region", { name: "עריכת תכנית א" });
+    const editor = await openEditor();
     fireEvent.change(within(editor).getByLabelText("פיצויים מעסיק נוכחי"), { target: { value: "99.99" } });
     expect(api.savePensionProduct).not.toHaveBeenCalled();
     fireEvent.click(within(editor).getByRole("button", { name: "שמירת מוצר" }));
@@ -97,6 +102,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
   it("keeps stale edits visible and reports failed save in Hebrew", async () => {
     vi.mocked(api.savePensionProduct).mockRejectedValue(new Error("המוצר השתנה. יש לטעון מחדש לפני שמירה"));
     open();
+    await openEditor();
     fireEvent.click(await screen.findByRole("button", { name: "שמירת מוצר" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("המוצר השתנה");
     expect(screen.queryByText("המוצר נשמר")).toBeNull();
@@ -105,6 +111,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
   it("requires confirmation before deleting with the exact current version", async () => {
     vi.mocked(api.deletePensionProduct).mockResolvedValue(undefined);
     open();
+    await openEditor();
     fireEvent.click(await screen.findByRole("button", { name: "מחיקת מוצר" }));
     expect(api.deletePensionProduct).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "אישור מחיקה" }));
@@ -134,7 +141,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     // jsdom's synthetic files assignment does not populate the native file
     // input value used by browser constraint validation. Submit the form.
     fireEvent.submit(screen.getByRole("button", { name: "ייבוא מוצרים" }).closest("form")!);
-    expect(await screen.findByRole("region", { name: "עריכת תכנית א" })).toBeInTheDocument();
+    expect(await openEditor()).toBeInTheDocument();
     expect(api.importPensionProducts).toHaveBeenCalledWith(1, [file]);
   });
 
@@ -142,7 +149,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
     let finish!: (batch: api.PensionSourceBatch) => void;
     vi.mocked(api.importPensionProducts).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     open();
-    await screen.findByRole("region", { name: "עריכת תכנית א" });
+    await openEditor();
     const files = [new File(["a"], "a.xml"), new File(["b"], "b.dat")];
     const input = screen.getByLabelText("קובצי מקור");
     expect(input).toHaveAttribute("multiple");
@@ -165,7 +172,7 @@ describe("מוצרים פנסיוניים קנוניים", () => {
   it("keeps the entire original table on batch failure and identifies the conflicting file", async () => {
     vi.mocked(api.importPensionProducts).mockRejectedValue(new Error("נתוני מקור סותרים בקובץ bad.xml"));
     open();
-    const original = await screen.findByRole("region", { name: "עריכת תכנית א" });
+    const original = await openEditor();
     const before = original.innerHTML;
     fireEvent.change(screen.getByLabelText("קובצי מקור"), { target: { files: [new File(["a"], "a.xml"), new File(["bad"], "bad.xml")] } });
     fireEvent.submit(screen.getByRole("button", { name: "ייבוא מוצרים" }).closest("form")!);

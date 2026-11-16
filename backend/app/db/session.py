@@ -9,7 +9,9 @@ def _build_session_local() -> sessionmaker:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is required")
-    engine = create_engine(database_url)
+    # Managed PostgreSQL may suspend idle computes (for example Neon Free).
+    # Revalidate pooled connections before checkout and bound their lifetime.
+    engine = create_engine(database_url, pool_pre_ping=True, pool_recycle=240)
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

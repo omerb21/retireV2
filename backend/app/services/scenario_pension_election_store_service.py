@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.scenario_draft import ScenarioDraftDecision
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection as Election
 from app.schemas.scenario_pension_election import ScenarioPensionElectionSet
-from app.services.scenario_draft_service import DraftError, _cas, _revision, _scenario
+from app.services.scenario_draft_service import DraftError, _cas, _revision, _scenario, read as read_draft
 
 
 def replace_elections(db: Session, client_id: int, scenario_id: str,
@@ -71,6 +71,13 @@ def current_elections(db: Session, client_id: int, scenario_id: str) -> list[dic
         return []
     decisions = {d.decision_id: d for d in db.scalars(select(ScenarioDraftDecision).where(
         ScenarioDraftDecision.scenario_id == scenario_id, ScenarioDraftDecision.action == "pension"))}
+    # A saved draft selection is not usable when its canonical source changed
+    # or its component is overallocated. A fresh read recomputes that status
+    # from DB-owned source facts, never from a browser-supplied preview.
+    current = read_draft(db, client_id, scenario_id)
+    usable = {row["decision_id"] for row in current["decisions"]
+              if row["action"] == "pension"
+              and row["validation_state"] == "unverified"}
     rows = db.scalars(select(Election).where(
         Election.scenario_id == scenario_id, Election.scenario_version == scenario.version
     ).order_by(Election.decision_id)).all()
@@ -81,5 +88,6 @@ def current_elections(db: Session, client_id: int, scenario_id: str) -> list[dic
              company_name=row.company_name, option_name=row.option_name,
              authority_state="NOT_EVALUATED")
         for row in rows if row.decision_id in decisions
+        and row.decision_id in usable
         and row.pension_start_date >= decisions[row.decision_id].effective_date
     ]

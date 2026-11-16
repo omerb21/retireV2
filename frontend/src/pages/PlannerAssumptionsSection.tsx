@@ -117,6 +117,9 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
 
   async function refreshAssumptions(selectedLifecycleStatus = lifecycleStatus) {
     const nextAssumptions = await getPlannerAssumptions(clientId, selectedLifecycleStatus);
+    if (nextAssumptions.some((item) => item.client_id !== clientId)) {
+      throw new Error("התקבלו הנחות מתכנן של לקוח אחר.");
+    }
     setAssumptions(nextAssumptions);
     setErrorMessage(null);
   }
@@ -129,6 +132,9 @@ export function PlannerAssumptionsSection({ clientId }: PlannerAssumptionsSectio
 
       try {
         const nextAssumptions = await getPlannerAssumptions(clientId, lifecycleStatus);
+        if (nextAssumptions.some((item) => item.client_id !== clientId)) {
+          throw new Error("התקבלו הנחות מתכנן של לקוח אחר.");
+        }
         if (!isActive) {
           return;
         }

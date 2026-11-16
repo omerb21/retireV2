@@ -99,9 +99,7 @@ export function ClientListScreen() {
               <p>מצב תיק: {heLabel(client.file_status)}</p>
               <p>מצב זיהוי מקצועי: {heLabel(client.professional_identification_status)}</p>
               <p>
-                <Link to={"/clients/" + client.client_id + "/workspace"}>פתיחת סביבת התכנון החדשה</Link>
-                {" · "}
-                <Link to={`/clients/${client.client_id}`}>פרטי לקוח בממשק הקיים</Link>
+                <Link to={"/clients/" + client.client_id + "/workspace"}>פתיחת תיק תכנון הפרישה</Link>
               </p>
             </article>
           </li>

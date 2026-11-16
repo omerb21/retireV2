@@ -1269,6 +1269,7 @@ describe("ClientDetailScreen", () => {
     fireEvent.change(screen.getByLabelText("מצב תעסוקה"), { target: { value: "salaried_employee" } });
     fireEvent.click(screen.getByRole("button", { name: "שמירת נתוני התיק" }));
     expect(await screen.findByText("נתוני תיק הלקוח נשמרו.")).toBeInTheDocument();
+    await waitFor(() => expect(contextReads).toBe(2));
     expect(screen.queryByText("OLD_JOURNEY_CONTEXT")).not.toBeInTheDocument();
     expect(screen.getByText("טוען מצב מוכנות עדכני…")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "מעבר לפעולה הבאה" })).toHaveAttribute(

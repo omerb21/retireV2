@@ -97,6 +97,9 @@ export function AdvisoryMissingInformationSection({ clientId }: AdvisoryMissingI
 
   async function refreshItems() {
     const nextItems = await getMissingDataItems(clientId);
+    if (nextItems.some((item) => item.client_id !== clientId)) {
+      throw new Error("התקבל מידע חסר של לקוח אחר.");
+    }
     setItems(nextItems);
     setErrorMessage(null);
   }
@@ -109,6 +112,9 @@ export function AdvisoryMissingInformationSection({ clientId }: AdvisoryMissingI
 
       try {
         const nextItems = await getMissingDataItems(clientId);
+        if (nextItems.some((item) => item.client_id !== clientId)) {
+          throw new Error("התקבל מידע חסר של לקוח אחר.");
+        }
         if (!isActive) {
           return;
         }

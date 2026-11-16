@@ -1,21 +1,39 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
-import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
+import { getClient, getClientProfile, updateClientCase, updateClientProfile, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, updateGrant, createGrantForEmployment, linkGrantToEmployment, type ClientDetailItem } from "../api/clientsApi";
+import { listPensionProducts, importPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 vi.mock("../components/ScenarioDraftPanel", () => ({
   ScenarioDraftPanel: ({ initialSource }: { initialSource?: { productId: string; componentCode: string } | null }) =>
     <section aria-label="עורך חלופות שמורות">{initialSource ? initialSource.productId + "|" + initialSource.componentCode : "חלופות שמורות"}</section>,
 }));
 
+vi.mock("../components/M12DraftReportPanel", () => ({
+  M12DraftReportPanel: ({ clientId }: { clientId: number }) =>
+    <section aria-label="M12 טיוטת תכנון פרישה">
+      <button type="button">הפק טיוטת תכנון פרישה</button>
+      <span>תיק פעיל למסמך: {clientId}</span>
+    </section>,
+}));
+
+vi.mock("./AdvisoryMissingInformationSection", () => ({
+  AdvisoryMissingInformationSection: ({ clientId }: { clientId: number }) =>
+    <section aria-label="ניהול מידע חסר לייעוץ">מידע חסר בתיק {clientId}</section>,
+}));
+vi.mock("./PlannerAssumptionsSection", () => ({
+  PlannerAssumptionsSection: ({ clientId }: { clientId: number }) =>
+    <section aria-label="ניהול הנחות מתכנן">הנחות מתכנן בתיק {clientId}</section>,
+}));
+
 vi.mock("../api/clientsApi", () => ({
-  getClient: vi.fn(),
+  getClient: vi.fn(), getClientProfile: vi.fn(), updateClientCase: vi.fn(), updateClientProfile: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
   getCapitalAssets: vi.fn(), getRecurringIncomes: vi.fn(), getRecurringExpenses: vi.fn(), updateEmploymentRecord: vi.fn(), createEmploymentRecord: vi.fn(), createHistoricalEmploymentSettlement: vi.fn(), updateGrant: vi.fn(), createGrantForEmployment: vi.fn(), linkGrantToEmployment: vi.fn(),
 }));
 vi.mock("../api/pensionProductsApi", () => ({
   listPensionProducts: vi.fn(),
+  importPensionProducts: vi.fn(),
   savePensionProduct: vi.fn(),
 }));
 
@@ -62,6 +80,7 @@ function SwitchClient() {
   return <>
     <button type="button" onClick={() => navigate("/clients/1/workspace")}>עבור ללקוח א</button>
     <button type="button" onClick={() => navigate("/clients/2/workspace")}>עבור ללקוח ב</button>
+    <button type="button" onClick={() => navigate("/clients/1/workspace?step=supplement")}>חזור לנתונים משלימים</button>
   </>;
 }
 
@@ -77,6 +96,7 @@ function open() {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getClient).mockImplementation(id => Promise.resolve(client(id)));
+  vi.mocked(getClientProfile).mockResolvedValue({ profile: null });
   vi.mocked(getEmploymentRecords).mockResolvedValue([]);
   vi.mocked(getGrants).mockResolvedValue([]);
   vi.mocked(getActualCapitalizations).mockResolvedValue([]);
@@ -87,6 +107,79 @@ beforeEach(() => {
 });
 
 describe("סביבת העבודה המקצועית החדשה", () => {
+
+  it("imports clearinghouse files inside the single money-color ledger without a second table", async () => {
+    vi.mocked(listPensionProducts).mockResolvedValueOnce([product()]).mockResolvedValueOnce([
+      { ...product(), product_name: "קרן מסלקה", reported_product_total: "250.00" }
+    ]);
+    vi.mocked(importPensionProducts).mockResolvedValue({
+      batch_identity: "synthetic-batch", file_count: 1, product_count: 1,
+      products: [{ ...product(), product_name: "קרן מסלקה", reported_product_total: "250.00" }],
+      diagnostics: [],
+    });
+    open();
+    const grid = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(within(grid).getByText("קרן פנסיה א")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "רשימת מוצרים פנסיוניים" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("קובצי מסלקה"), {
+      target: { files: [new File(["<source/>"], "synthetic.xml", { type: "text/xml" })] }
+    });
+    fireEvent.submit(screen.getByRole("button", { name: "ייבוא מסלקה ועדכון הטבלה" }).closest("form")!);
+    await waitFor(() => expect(importPensionProducts).toHaveBeenCalledWith(1, expect.any(Array)));
+    expect(await within(grid).findByText("קרן מסלקה")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("טבלת צבעי הכסף עודכנה");
+  });
+
+  it("shows existing unmapped source warnings in the single money-color table without changing balances", async () => {
+    vi.mocked(listPensionProducts).mockResolvedValue([{
+      ...product(), components: { ...product().components, "פיצויים_לאחר_התחשבנות": "0.00" },
+      source_history: [{
+        checksum: "synthetic-checksum", filename: "synthetic.xml", statement_date: "2026-09-30",
+        diagnostics: [{ code: "UNMAPPED", state: "SOURCE_PRESENT_NONZERO_UNMAPPED", unresolved: true }],
+      }],
+    }]);
+    open();
+    const ledger = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(within(ledger).getByRole("alert")).toHaveTextContent("יתרה לא ממופה");
+    expect(within(ledger).getByText(/נדרש בירור/)).toBeInTheDocument();
+    expect(within(ledger).getByRole("columnheader", { name: "מצב מקור וקליטה" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "הצג רק פערי התאמה" }));
+    expect(within(ledger).getByText("קרן פנסיה א")).toBeInTheDocument();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("returns to the requested workspace step without changing client data", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    // A specialist return link uses the same workspace URL with a step query.
+    // Navigation remains client-scoped and read-only.
+    fireEvent.click(screen.getByRole("button", { name: "חזור לנתונים משלימים" }));
+    await screen.findByRole("heading", { name: "נתונים משלימים" });
+    expect(updateClientCase).not.toHaveBeenCalled();
+    expect(savePensionProduct).not.toHaveBeenCalled();
+  });
+
+  it("keeps intake inside the professional workspace and saves explicit client facts", async () => {
+    vi.mocked(updateClientCase).mockResolvedValue({
+      client_id: 1, display_name: "לקוח א", id_number: "000000001",
+      birth_date: "1963-01-01", gender: "זכר", employment_status: "salaried_employee",
+      planned_retirement_age: 67, planned_retirement_date: null,
+      lifecycle_status: "draft",
+      completeness: { status: "complete", missing_field_ids: [], conflicting_field_ids: [] },
+      updated_at: "2026-11-11T12:00:00Z",
+    });
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "1. לקוח ותיק" }));
+    expect(screen.getByRole("region", { name: "פרטי הלקוח ותכנון פרישה" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "מגדר" }), { target: { value: "זכר" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת פרטי תיק" }));
+    await waitFor(() => expect(updateClientCase).toHaveBeenCalledWith(1, expect.objectContaining({
+      gender: "זכר", id_number: "000000001"
+    })));
+    expect(await screen.findByText("פרטי תיק הפרישה נשמרו.")).toBeInTheDocument();
+  });
+
   it("loads a single ledger from authoritative client/product APIs and never writes on selection", async () => {
     open();
     const region = await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
@@ -549,6 +642,63 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("אינם תואמים");
     expect(screen.queryByRole("heading", { name: /רשומות תעסוקה/ })).toBeNull();
+  });
+
+  it("shows M12 in step 5 only, without opening the legacy screen", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(screen.queryByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "הפק טיוטת תכנון פרישה" })).toBeInTheDocument();
+    expect(screen.getByText("תיק פעיל למסמך: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.queryByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeNull();
+  });
+
+  it("remounts M12 under the new client identity after navigating between clients", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByText("תיק פעיל למסמך: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח ב" }));
+    await screen.findByText("קרן פנסיה ב");
+    expect(screen.queryByText("תיק פעיל למסמך: 1")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByText("תיק פעיל למסמך: 2")).toBeInTheDocument();
+    expect(screen.queryByText("תיק פעיל למסמך: 1")).toBeNull();
+  });
+
+  it("exposes both existing editors only in step 3 of the main workspace", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(screen.queryByRole("region", { name: "ניהול מידע חסר לייעוץ" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "ניהול הנחות מתכנן" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(screen.getByText("מידע חסר בתיק 1")).toBeInTheDocument();
+    expect(screen.getByText("הנחות מתכנן בתיק 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.queryByRole("region", { name: "ניהול מידע חסר לייעוץ" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "ניהול הנחות מתכנן" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeInTheDocument();
+  });
+
+  it("remounts both step 3 editors for each selected client and never retains the prior client", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(screen.getByText("מידע חסר בתיק 1")).toBeInTheDocument();
+    expect(screen.getByText("הנחות מתכנן בתיק 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח ב" }));
+    await screen.findByText("קרן פנסיה ב");
+    expect(screen.queryByText("מידע חסר בתיק 1")).toBeNull();
+    expect(screen.queryByText("הנחות מתכנן בתיק 1")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(screen.getByText("מידע חסר בתיק 2")).toBeInTheDocument();
+    expect(screen.getByText("הנחות מתכנן בתיק 2")).toBeInTheDocument();
+    expect(screen.queryByText("מידע חסר בתיק 1")).toBeNull();
+    expect(screen.queryByText("הנחות מתכנן בתיק 1")).toBeNull();
   });
 
 });

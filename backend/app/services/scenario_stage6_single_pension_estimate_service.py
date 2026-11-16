@@ -7,6 +7,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation, localcontext
 
 from app.services.pension_monthly_basis_service import fingerprint
+from app.services.scenario_draft_service import DraftError
 from app.services.scenario_snapshot_candidate_service import (
     ScenarioSnapshotError, _STAGE6_P1D_EXECUTION_CAPABILITY,
     _stage6_identity_extension, build_manifest_candidate_snapshot,
@@ -210,6 +211,10 @@ def estimate_single_pension_decision(factory, *, client_id: int,
             factory,client_id=client_id,scenario_id=scenario_id,decision_id=decision_id,
             _stage6_executor=_execute_verified,
             _stage6_capability=_STAGE6_P1D_EXECUTION_CAPABILITY)
+    except DraftError as exc:
+        if exc.code != "SCENARIO_NOT_FOUND":
+            raise
+        return _blocked(client_id, scenario_id, decision_id, "STAGE6_P1D_SCENARIO_NOT_FOUND")
     except ScenarioSnapshotError as exc:
         code=str(exc)
         if not code.startswith(("STAGE6_","SCENARIO_GLOBAL_TARGET_CONFLICT")):

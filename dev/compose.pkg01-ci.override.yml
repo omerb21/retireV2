@@ -1,0 +1,6 @@
+# PKG-01 CI extension of the existing disposable dev compose stack.
+# The database remains in Docker's private network and tmpfs only.
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8001:8000"

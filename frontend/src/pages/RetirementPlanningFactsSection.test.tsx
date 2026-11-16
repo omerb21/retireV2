@@ -511,7 +511,7 @@ describe("RetirementPlanningFactsSection", () => {
     expect(body).not.toHaveProperty("verification_state");
 
     await waitFor(() => {
-      expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 2);
+      expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 1);
     });
     expect(onFactSaved).toHaveBeenCalledTimes(1);
     const postCallIndex = fetchMock.mock.calls.findIndex((call) => call === postCall);
@@ -555,7 +555,7 @@ describe("RetirementPlanningFactsSection", () => {
     expectNoForbiddenPayloadFields(body);
 
     await waitFor(() => {
-      expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 1);
+      expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 2);
     });
     const putCallIndex = fetchMock.mock.calls.findIndex((call) => call === putCall);
     const callsAfterPut = fetchMock.mock.calls.slice(putCallIndex + 1).map(requestUrl);

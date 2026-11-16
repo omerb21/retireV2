@@ -382,7 +382,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
                 ? "Add Actual Capitalization"
                 : "Save Actual Capitalization"}
           </button>
-          {editingId !== null ? (
+          {dirty ? (
             <button type="button" onClick={resetForm} disabled={isSubmitting}>
               Cancel Edit
             </button>

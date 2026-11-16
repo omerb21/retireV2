@@ -511,7 +511,7 @@ describe("RetirementPlanningFactsSection", () => {
     expect(body).not.toHaveProperty("verification_state");
 
     await waitFor(() => {
-      expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 1);
+      expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(initialResourceCalls + 2);
     });
     expect(onFactSaved).toHaveBeenCalledTimes(1);
     const postCallIndex = fetchMock.mock.calls.findIndex((call) => call === postCall);

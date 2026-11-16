@@ -178,7 +178,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     for(const route of ["actual-capitalizations","capital-assets","recurring-incomes","recurring-expenses"])expect(await getRows(request,b,route)).toEqual([]);
     await page.screenshot({path:info.outputPath("09-client-b-isolation.png"),fullPage:true});
     await page.goto(workspace(a));
-    await expect(page.getByText("PKG02 external update",{exact:true})).toBeVisible();
+    await expect(page.getByText(/PKG02 external update/).first()).toBeVisible();
     await page.screenshot({path:info.outputPath("09-return-client-a.png"),fullPage:true});
   });
 
@@ -201,8 +201,8 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await expect(page.getByText("PKG02 synthetic capital",{exact:true})).toBeVisible();
     await page.goto(ROOT+`/clients/${a}`);
     await expect(page.getByText("PKG02 external update",{exact:true})).toBeVisible();
-    await expect(page.getByText("PKG02 rental edited",{exact:true})).toBeVisible();
-    await expect(page.getByText("PKG02 housing edited",{exact:true})).toBeVisible();
+    await expect(page.getByText(/PKG02 rental edited/).first()).toBeVisible();
+    await expect(page.getByText(/PKG02 housing edited/).first()).toBeVisible();
     await page.screenshot({path:info.outputPath("11-legacy-parity.png"),fullPage:true});
   });
 

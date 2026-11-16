@@ -22,6 +22,7 @@ afterEach(() => {
 
 describe("ActualCapitalizationsScreen", () => {
   it("adds, edits, deletes, and saves capitalizations without calculation calls", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
     const firstCapitalization = {
       capitalization_id: "AC-1",
       client_id: 7,
@@ -49,6 +50,7 @@ describe("ActualCapitalizationsScreen", () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([firstCapitalization]))
       .mockResolvedValueOnce(jsonResponse(secondCapitalization))
+      .mockResolvedValueOnce(jsonResponse([firstCapitalization, secondCapitalization]))
       .mockResolvedValueOnce(jsonResponse([firstCapitalization, secondCapitalization]))
       .mockResolvedValueOnce(jsonResponse({ ...firstCapitalization, amount: 650, source_label: "Updated" }))
       .mockResolvedValueOnce(jsonResponse([{ ...firstCapitalization, amount: 650, source_label: "Updated" }, secondCapitalization]))
@@ -110,7 +112,7 @@ describe("ActualCapitalizationsScreen", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
-        4,
+        5,
         "/api/clients/7/actual-capitalizations/AC-1",
         expect.objectContaining({ method: "PUT" })
       );
@@ -120,7 +122,7 @@ describe("ActualCapitalizationsScreen", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Delete Actual Capitalization" })[0]);
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
-        6,
+        7,
         "/api/clients/7/actual-capitalizations/AC-1",
         expect.objectContaining({ method: "DELETE" })
       );

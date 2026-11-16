@@ -118,6 +118,7 @@ const rowsByResource: Record<ResourceName, Record<string, unknown>[]> = {
   "capital-assets": [
     {
       id: 21,
+      version: 1,
       client_id: 7,
       asset_category: "bank deposit",
       asset_description: "Existing deposit",
@@ -138,6 +139,7 @@ const rowsByResource: Record<ResourceName, Record<string, unknown>[]> = {
   "recurring-incomes": [
     {
       id: 31,
+      version: 1,
       client_id: 7,
       income_category: "employment",
       description: "Existing income",
@@ -160,6 +162,7 @@ const rowsByResource: Record<ResourceName, Record<string, unknown>[]> = {
   "recurring-expenses": [
     {
       id: 41,
+      version: 1,
       client_id: 7,
       expense_category: "housing",
       description: "Existing expense",
@@ -231,6 +234,7 @@ const resourceConfigs: ResourceConfig[] = [
     blankEditLabel: "הערת נזילות",
     updatePayload: {
       asset_description: "Updated deposit",
+      expected_version: 1,
       liquidity_note: null
     },
     amountField: "known_value_amount"
@@ -266,6 +270,7 @@ const resourceConfigs: ResourceConfig[] = [
     blankEditLabel: "תאריך התחלה",
     updatePayload: {
       description: "Updated income",
+      expected_version: 1,
       start_date: null
     },
     amountField: "amount"
@@ -301,6 +306,7 @@ const resourceConfigs: ResourceConfig[] = [
     blankEditLabel: "תאריך התחלה",
     updatePayload: {
       description: "Updated expense",
+      expected_version: 1,
       start_date: null
     },
     amountField: "amount"
@@ -640,7 +646,8 @@ describe("RetirementPlanningFactsSection", () => {
     });
     expect(requestBody(callsFor(fetchMock, "recurring-incomes", "PUT")[0])).toEqual({
       source_status: "planner entered",
-      verification_state: "reviewed"
+      verification_state: "reviewed",
+      expected_version: 1
     });
   });
 

@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -140,6 +141,8 @@ class CapitalAsset(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     client_id: Mapped[int] = mapped_column(Integer, ForeignKey("clients.client_id"), nullable=False)
     asset_category: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_description: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -209,6 +212,8 @@ class RecurringIncome(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     client_id: Mapped[int] = mapped_column(Integer, ForeignKey("clients.client_id"), nullable=False)
     income_category: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -277,6 +282,8 @@ class RecurringExpense(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     client_id: Mapped[int] = mapped_column(Integer, ForeignKey("clients.client_id"), nullable=False)
     expense_category: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -187,7 +187,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     const evidence:any[]=[];
     for(const [route,id] of resources){
       const read=route==="actual-capitalizations" ? null : await request.get(API+`/${b}/${route}/${id}`);
-      const put=await request.put(API+`/${b}/${route}/${id}`,{data:route==="actual-capitalizations"?{amount:"1",capitalization_date:"2026-01-15"}:{description:"FOREIGN_OVERWRITE"}});
+      const put=await request.put(API+`/${b}/${route}/${id}`,{data:route==="actual-capitalizations"?{amount:"1",capitalization_date:"2026-01-15"}:route==="capital-assets"?{asset_description:"FOREIGN_OVERWRITE"}:{description:"FOREIGN_OVERWRITE"}});
       if(read) expect(read.status()).toBe(404); else expect((await getRows(request,b,route)).some((r:any)=>r.capitalization_id===id)).toBe(false);
       expect(put.status()).toBe(404);
       evidence.push({route,id,read:read?.status()??"scoped-list-empty",update:put.status()});

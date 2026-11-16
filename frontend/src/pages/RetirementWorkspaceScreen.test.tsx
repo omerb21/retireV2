@@ -17,6 +17,15 @@ vi.mock("../components/M12DraftReportPanel", () => ({
     </section>,
 }));
 
+vi.mock("./AdvisoryMissingInformationSection", () => ({
+  AdvisoryMissingInformationSection: ({ clientId }: { clientId: number }) =>
+    <section aria-label="ניהול מידע חסר לייעוץ">מידע חסר בתיק {clientId}</section>,
+}));
+vi.mock("./PlannerAssumptionsSection", () => ({
+  PlannerAssumptionsSection: ({ clientId }: { clientId: number }) =>
+    <section aria-label="ניהול הנחות מתכנן">הנחות מתכנן בתיק {clientId}</section>,
+}));
+
 vi.mock("../api/clientsApi", () => ({
   getClient: vi.fn(), getClientProfile: vi.fn(), updateClientCase: vi.fn(), updateClientProfile: vi.fn(),
   getEmploymentRecords: vi.fn(), getGrants: vi.fn(), getActualCapitalizations: vi.fn(),
@@ -658,6 +667,38 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
     expect(screen.getByText("תיק פעיל למסמך: 2")).toBeInTheDocument();
     expect(screen.queryByText("תיק פעיל למסמך: 1")).toBeNull();
+  });
+
+  it("exposes both existing editors only in step 3 of the main workspace", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    expect(screen.queryByRole("region", { name: "ניהול מידע חסר לייעוץ" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "ניהול הנחות מתכנן" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(screen.getByText("מידע חסר בתיק 1")).toBeInTheDocument();
+    expect(screen.getByText("הנחות מתכנן בתיק 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "4. תכנון תרחישים" }));
+    expect(screen.queryByRole("region", { name: "ניהול מידע חסר לייעוץ" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "ניהול הנחות מתכנן" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "5. תוצאות והשוואה" }));
+    expect(screen.getByRole("region", { name: "M12 טיוטת תכנון פרישה" })).toBeInTheDocument();
+  });
+
+  it("remounts both step 3 editors for each selected client and never retains the prior client", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(screen.getByText("מידע חסר בתיק 1")).toBeInTheDocument();
+    expect(screen.getByText("הנחות מתכנן בתיק 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "עבור ללקוח ב" }));
+    await screen.findByText("קרן פנסיה ב");
+    expect(screen.queryByText("מידע חסר בתיק 1")).toBeNull();
+    expect(screen.queryByText("הנחות מתכנן בתיק 1")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    expect(screen.getByText("מידע חסר בתיק 2")).toBeInTheDocument();
+    expect(screen.getByText("הנחות מתכנן בתיק 2")).toBeInTheDocument();
+    expect(screen.queryByText("מידע חסר בתיק 1")).toBeNull();
+    expect(screen.queryByText("הנחות מתכנן בתיק 1")).toBeNull();
   });
 
 });

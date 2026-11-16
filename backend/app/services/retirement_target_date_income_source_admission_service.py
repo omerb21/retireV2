@@ -15,7 +15,7 @@ from app.models.retirement_facts import RecurringIncome
 from app.services import pension_target_date_portfolio_service as portfolio_service
 from app.services import planning_input_service
 from app.services.pension_product_service import PensionProductError
-from app.services.professional_source_snapshot_service import record, serialize
+from app.services.professional_source_snapshot_service import record, semantic_record, serialize
 
 
 SCHEMA_VERSION = "CANONICAL_RETIREMENT_TARGET_DATE_INCOME_SOURCE_ADMISSION_RESULT_V1"
@@ -490,7 +490,7 @@ def _pension_entry(source: dict, pte: dict | None, group: str | None) -> dict:
 
 def _recurring_entry(row: RecurringIncome, resolution: PensionIncomeResolution | None, pension_map: dict[str, dict], target: date) -> dict:
     source_id = f"income:{row.id}"
-    row_record = record(row)
+    row_record = semantic_record(row)
     source_fp = planning_input_service.fingerprint(row_record)
     resolution_data = _resolution_value(resolution)
     pension_alias = row.income_category == "pension" or resolution is not None and resolution.decision_kind != "MISCLASSIFIED_GENERAL_INCOME"

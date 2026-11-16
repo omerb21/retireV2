@@ -226,4 +226,24 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
       caveat:"A changed fingerprint does not prove invalidation of every downstream scenario/result"
     },null,2));
   });
+  test("13 409 error and network failure preserve a dirty capitalization draft",async ({page,request},info)=>{
+    await page.goto(workspace(a));
+    const section=caps(page);
+    await section.getByRole("button",{name:"Edit Actual Capitalization"}).first().click();
+    await section.getByLabel("Amount").fill("620.00");
+    await page.route("**/actual-capitalizations/**",route=>route.request().method()==="PUT"
+      ? route.fulfill({status:409,contentType:"application/json",body:'{"detail":"test-injected 409"}'})
+      : route.continue());
+    await section.getByRole("button",{name:"Save Actual Capitalization"}).click();
+    await expect(section.getByText(/Request failed: 409/)).toBeVisible();
+    await expect(section.getByLabel("Amount")).toHaveValue("620.00");
+    await page.unroute("**/actual-capitalizations/**");
+    await page.route("**/actual-capitalizations/**",route=>route.request().method()==="PUT"
+      ? route.abort("failed") : route.continue());
+    await section.getByRole("button",{name:"Save Actual Capitalization"}).click();
+    await expect(section.getByLabel("Amount")).toHaveValue("620.00");
+    expect((await getRows(request,a,"actual-capitalizations")).some((r:any)=>r.capitalization_id===cap&&String(r.amount).startsWith("501.25"))).toBe(true);
+    await page.screenshot({path:info.outputPath("13-failed-write-draft.png"),fullPage:true});
+  });
+
 });

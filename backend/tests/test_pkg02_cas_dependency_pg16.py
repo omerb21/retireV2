@@ -18,7 +18,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.db.base import load_all_models
 from app.models.retirement_facts import RecurringExpense
+
+load_all_models()
 from app.services import planning_input_service as planning
 
 pytestmark = pytest.mark.skipif(

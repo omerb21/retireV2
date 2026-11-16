@@ -38,6 +38,11 @@ def record(row):
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
 
 
+def semantic_record(row):
+    """Preserve pre-CAS source identity: row locking/version metadata is not a financial fact."""
+    return {k: v for k, v in record(row).items() if k != "version"}
+
+
 def begin_read(db):
     # The route owns a fresh Session. Never turn an existing writer transaction
     # into a supposedly read-only snapshot or let pending ORM changes autoflush.
@@ -242,5 +247,6 @@ def _snapshot(db, client_id, *, as_of):
     # pretend that authoritative balances/versions changed.
     state = {k: v for k, v in result.items() if k != "pension_temporal_authority_registry_fingerprint"}
     state["pension_sources"] = serialize(sorted(legacy_sources, key=lambda s: s["source_id"]))
+    state["capital_sources"] = [{k: v for k, v in source.items() if k != "version"} for source in state["capital_sources"]]
     result["source_state_fingerprint"] = hashlib.sha256(json.dumps(state, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
     return result

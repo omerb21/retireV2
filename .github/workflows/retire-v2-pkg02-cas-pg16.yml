@@ -14,6 +14,7 @@ on:
       - 'frontend/src/api/clientsApi.ts'
       - 'frontend/src/pages/ActualCapitalizationsSection.tsx'
       - 'frontend/src/pages/ActualCapitalizationsScreen.test.tsx'
+      - 'frontend/src/pages/RetirementPlanningFactsSection.test.tsx'
       - 'frontend/src/pages/RetirementPlanningFactsSection.tsx'
       - 'frontend/e2e/pkg02-acceptance.spec.ts'
   workflow_dispatch:
@@ -57,6 +58,7 @@ jobs:
             "frontend/src/api/clientsApi.ts",
             "frontend/src/pages/ActualCapitalizationsSection.tsx",
             "frontend/src/pages/ActualCapitalizationsScreen.test.tsx",
+            "frontend/src/pages/RetirementPlanningFactsSection.test.tsx",
             "frontend/src/pages/RetirementPlanningFactsSection.tsx",
             "frontend/e2e/pkg02-acceptance.spec.ts",
             ".github/workflows/retire-v2-pkg02-cas-pg16.yml",

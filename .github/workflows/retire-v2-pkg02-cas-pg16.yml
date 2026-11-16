@@ -1,0 +1,115 @@
+name: RETIRE V2 PKG02 isolated atomic CAS and dependency PG16
+
+on:
+  push:
+    branches:
+      - fix/pkg02-dependency-cas-20261116
+    paths:
+      - '.github/workflows/retire-v2-pkg02-cas-pg16.yml'
+      - 'backend/tests/test_pkg02_cas_dependency_pg16.py'
+      - 'backend/app/api/clients_routes.py'
+      - 'backend/app/models/retirement_facts.py'
+      - 'backend/app/models/actual_capitalization.py'
+      - 'backend/alembic/versions/c194e2f0a816_pkg02_atomic_fact_versions.py'
+      - 'frontend/src/api/clientsApi.ts'
+      - 'frontend/src/pages/ActualCapitalizationsSection.tsx'
+      - 'frontend/src/pages/RetirementPlanningFactsSection.tsx'
+      - 'frontend/e2e/pkg02-acceptance.spec.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkg02-cas-194-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-cas:
+    if: github.ref == 'refs/heads/fix/pkg02-dependency-cas-20261116'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PRODUCT_BASE_SHA: 2c2eb2ce0269f46310bc6a731d0baad902530b64
+      COMPOSE_PROJECT_NAME: retirev2_pkg02_cas_194
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Guard base and authorized file list
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/fix/pkg02-dependency-cas-20261116"
+          test "$(git merge-base HEAD "$PRODUCT_BASE_SHA")" = "$PRODUCT_BASE_SHA"
+          git diff --name-only "$PRODUCT_BASE_SHA" HEAD | tee /tmp/pkg02-cas-files.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allow = {
+            "backend/alembic/versions/c194e2f0a816_pkg02_atomic_fact_versions.py",
+            "backend/app/api/clients_routes.py",
+            "backend/app/models/actual_capitalization.py",
+            "backend/app/models/retirement_facts.py",
+            "backend/tests/test_pkg02_cas_dependency_pg16.py",
+            "frontend/src/api/clientsApi.ts",
+            "frontend/src/pages/ActualCapitalizationsSection.tsx",
+            "frontend/src/pages/RetirementPlanningFactsSection.tsx",
+            "frontend/e2e/pkg02-acceptance.spec.ts",
+            ".github/workflows/retire-v2-pkg02-cas-pg16.yml",
+          }
+          files = set(Path("/tmp/pkg02-cas-files.txt").read_text().splitlines())
+          assert files <= allow and files, files - allow
+          print("CAS_FILE_SCOPE_GUARD_PASS", sorted(files))
+          PY
+          mkdir -p acceptance-evidence
+          git rev-parse HEAD > acceptance-evidence/commit-sha.txt
+      - name: Guard synthetic disposable database and localhost-only application
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml config --format json > /tmp/cas-compose.json
+          python3 - <<'PY'
+          import json
+          c=json.load(open("/tmp/cas-compose.json"))["services"]
+          assert set(c)=={"backend","db"}
+          assert c["db"]["image"]=="postgres:16"
+          assert "/var/lib/postgresql/data" in c["db"]["tmpfs"]
+          assert not c["db"].get("ports")
+          assert c["db"]["environment"]["POSTGRES_DB"]=="retirement_v2_synthetic"
+          assert c["db"]["environment"]["POSTGRES_USER"]=="synthetic_planner"
+          assert c["backend"]["environment"]["APP_ENV"]=="development"
+          assert c["backend"]["environment"]["MIGRATION_DATABASE_URL"].startswith("postgresql://synthetic_planner:synthetic_only_local_password@db:5432/retirement_v2_synthetic")
+          assert all(p["host_ip"]=="127.0.0.1" for p in c["backend"]["ports"])
+          print("CAS_ISOLATED_POSTGRES16_PASS")
+          PY
+      - name: Start synthetic PostgreSQL 16 and the actual Backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml up -d --build --wait db backend
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T db psql -U synthetic_planner -d retirement_v2_synthetic -tAc 'SHOW server_version;' | tee acceptance-evidence/postgresql-version.txt
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c 'cd /app/backend && DATABASE_URL="$MIGRATION_DATABASE_URL" alembic heads' | tee acceptance-evidence/alembic-heads.txt
+      - name: Run targeted actual PG16 migrations, dependency and CAS concurrency tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c 'cd /app/backend && PKG02_SYNTHETIC_PG16=1 python -m pytest -v tests/test_pkg02_cas_dependency_pg16.py --junitxml=/tmp/pkg02-cas-junit.xml' 2>&1 | tee acceptance-evidence/pkg02-cas-pg16-tests.log
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend cat /tmp/pkg02-cas-junit.xml > acceptance-evidence/pkg02-cas-junit.xml
+      - name: Collect synthetic logs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p acceptance-evidence
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml logs --no-color backend db > acceptance-evidence/local-docker.log 2>&1 || true
+      - name: Upload PG16 audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg02-cas-pg16-${{ github.run_id }}
+          path: acceptance-evidence/
+          retention-days: 14
+      - name: Destroy synthetic resources including volumes
+        if: always()
+        run: docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml down -v --remove-orphans

@@ -44,7 +44,7 @@ test.describe.serial("PKG-01: 11 independent acceptance checkpoints on real PG16
 
   test("03 displays advisory missing information region", async ({ page }, info) => {
     await page.goto(ROOT + `/clients/${clientA}/workspace?step=supplement`);
-    await expect(page.getByRole("heading", { name: "מידע חסר לייעוץ" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "מידע חסר לייעוץ", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "הוספת מידע חסר לייעוץ" })).toBeVisible();
     await page.screenshot({ path: info.outputPath("03-missing-region.png"), fullPage: true });
   });
@@ -110,7 +110,7 @@ test.describe.serial("PKG-01: 11 independent acceptance checkpoints on real PG16
     await page.getByRole("button", { name: /4\. תכנון תרחישים/ }).click();
     await expect(page.getByRole("heading", { name: "תכנון תרחישים" })).toBeVisible();
     await page.getByRole("button", { name: /3\. נתונים משלימים/ }).click();
-    await expect(page.getByRole("heading", { name: "מידע חסר לייעוץ" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "מידע חסר לייעוץ", exact: true })).toBeVisible();
   });
 
   test("09 both records persist across step navigation and refresh", async ({ page, request }, info) => {

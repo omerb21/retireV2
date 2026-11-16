@@ -263,3 +263,43 @@ def test_pg16_migration_backfills_existing_rows_without_mutating_financial_value
                 cur.execute("DROP DATABASE IF EXISTS " + dbname + " WITH (FORCE)")
         finally:
             cleanup.close()
+
+
+def test_pg16_version_only_bookkeeping_does_not_invalidate_professional_fingerprints():
+    """CAS metadata must not silently change pre-existing professional source meaning."""
+    engine = create_engine(os.environ["MIGRATION_DATABASE_URL"])
+    try:
+        with httpx.Client(timeout=20) as http:
+            a = _client(http, "VERSION-ONLY")
+            saved = {}
+            for route, original in _payloads().items():
+                saved[route] = _post(http, f"{BASE}/{a}/{route}", original)
+            path = f"{BASE}/{a}/retirement-planning-input"
+            initial = http.get(path)
+            assert initial.status_code == 200
+            expected = initial.json()
+            with engine.begin() as db:
+                table_map = {
+                    "actual-capitalizations": ("actual_capitalizations", "capitalization_id"),
+                    "capital-assets": ("capital_asset", "id"),
+                    "recurring-incomes": ("recurring_income", "id"),
+                    "recurring-expenses": ("recurring_expense", "id"),
+                }
+                for domain, (table, key) in table_map.items():
+                    rowid = _id(domain, saved[domain])
+                    stmt = text(f"UPDATE {table} SET version = version + 1 WHERE {key} = :rowid AND client_id = :client")
+                    result = db.execute(stmt, {"rowid": rowid, "client": a})
+                    assert result.rowcount == 1
+            current = http.get(path)
+            assert current.status_code == 200
+            actual = current.json()
+            for key in ("source_state_fingerprint", "planning_input_fingerprint",
+                        "planning_calculation_input_fingerprint"):
+                assert actual[key] == expected[key], (key, expected[key], actual[key])
+            print("PKG02_VERSION_ONLY_NO_FALSE_STALENESS", {
+                k: actual[k] for k in ("source_state_fingerprint",
+                                      "planning_input_fingerprint",
+                                      "planning_calculation_input_fingerprint")
+            })
+    finally:
+        engine.dispose()

@@ -1289,9 +1289,13 @@ def _commit_fact_cas(db: Session) -> None:
 
 
 def _apply_fact_update(row: Any, payload: BaseModel) -> None:
-    for field_name in payload.model_fields_set:
-        if field_name != "expected_version":
-            setattr(row, field_name, getattr(payload, field_name))
+    fields = payload.model_fields_set - {"expected_version"}
+    if isinstance(row, (CapitalAsset, RecurringIncome, RecurringExpense)) and (
+        not fields or all(getattr(row, field) == getattr(payload, field) for field in fields)
+    ):
+        raise HTTPException(422, detail={"code": "NO_FACT_CHANGES", "message": "No fact change was supplied"})
+    for field_name in fields:
+        setattr(row, field_name, getattr(payload, field_name))
 
 
 def _validation_error(message: str) -> HTTPException:
@@ -2607,6 +2611,9 @@ def update_actual_capitalization(
     _require_client(db, client_id)
     cap = _require_actual_capitalization(db, client_id, capitalization_id)
     _assert_fact_version(cap, payload.expected_version)
+    changed_fields = ("amount", "capitalization_date", "source_label", "source_basis", "planner_assertion", "planner_assertion_basis", "notes")
+    if all(getattr(cap, field) == getattr(payload, field) for field in changed_fields):
+        raise HTTPException(422, detail={"code": "NO_FACT_CHANGES", "message": "No capitalization change was supplied"})
 
     cap.amount = payload.amount
     cap.capitalization_date = payload.capitalization_date

@@ -181,7 +181,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
       if (editingId === null) {
         await createActualCapitalization(parsedClientId, payload);
       } else {
-        await updateActualCapitalization(parsedClientId, editingId, payload);
+        await updateActualCapitalization(parsedClientId, editingId, { ...payload, expected_version: baseRecord!.version });
       }
       resetForm();
       onSaved?.();
@@ -199,7 +199,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
     setMutationErrorMessage(null);
 
     try {
-      await deleteActualCapitalization(parsedClientId, capitalization.capitalization_id);
+      await deleteActualCapitalization(parsedClientId, capitalization.capitalization_id, capitalization.version);
       onSaved?.();
       await refreshCapitalizations();
       if (editingId === capitalization.capitalization_id) {

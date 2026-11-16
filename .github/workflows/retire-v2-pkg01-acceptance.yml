@@ -7,6 +7,7 @@ on:
       - test/pkg01-gha-acceptance-20261116
     paths:
       - '.github/workflows/retire-v2-pkg01-acceptance.yml'
+      - 'frontend/e2e/pkg01-acceptance.spec.ts'
   workflow_dispatch:
 
 permissions:

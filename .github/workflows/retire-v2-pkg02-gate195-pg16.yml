@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      PRODUCT_BASE_SHA: 2c2eb2ce0269f46310bc6a731d0baad902530b64
+      PRODUCT_BASE_SHA: 13e53d5784bfd21545bf509fa9d106b1b0543b60
       COMPOSE_PROJECT_NAME: retirev2_pkg02_gate195
       CI: 'true'
     steps:

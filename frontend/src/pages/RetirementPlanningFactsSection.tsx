@@ -27,6 +27,8 @@ import { formatIsoDate } from "../utils/dateFormat";
 export type RetirementPlanningFactsSectionProps = {
   clientId: number;
   onFactSaved?: () => void;
+  includeKeys?: string[];
+  onDirtyChange?: (section: string, dirty: boolean) => void;
 };
 
 type FieldKind = "text" | "date" | "amount" | "select" | "textarea";
@@ -237,10 +239,11 @@ function renderField(
   );
 }
 
-function FactMaintenanceSection({ clientId, config, onFactSaved }: {
+function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }: {
   clientId: number;
   config: FactSectionConfig;
   onFactSaved?: () => void;
+  onDirtyChange?: (section: string, dirty: boolean) => void;
 }) {
   const [items, setItems] = useState<FactItem[]>([]);
   const [lifecycleStatus, setLifecycleStatus] = useState<LifecycleStatusFilter>("current");
@@ -251,9 +254,13 @@ function FactMaintenanceSection({ clientId, config, onFactSaved }: {
   const [touchedFields, setTouchedFields] = useState<Set<string>>(new Set());
   const [mutationErrorMessage, setMutationErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [baseline, setBaseline] = useState<FactItem | null>(null);
+  const isDirty = touchedFields.size > 0 || isSubmitting;
+  useEffect(() => { onDirtyChange?.(config.key, isDirty); return () => onDirtyChange?.(config.key, false); }, [config.key, isDirty, onDirtyChange]);
 
   async function refreshList(selectedLifecycleStatus = lifecycleStatus) {
     const nextItems = await config.list(clientId, selectedLifecycleStatus);
+    if (nextItems.some(item => (item as FactItem & {client_id?: number}).client_id !== clientId)) throw new Error("תשובת שרת אינה שייכת ללקוח הפעיל");
     setItems(nextItems);
     setErrorMessage(null);
   }
@@ -266,6 +273,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved }: {
 
       try {
         const nextItems = await config.list(clientId, lifecycleStatus);
+        if (nextItems.some(item => (item as FactItem & {client_id?: number}).client_id !== clientId)) throw new Error("תשובת שרת אינה שייכת ללקוח הפעיל");
         if (!isActive) {
           return;
         }
@@ -299,6 +307,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved }: {
 
   function startEditing(item: FactItem) {
     setEditingId(item.id);
+    setBaseline({ ...item });
     setFormState(formStateFromItem(config.fields, item));
     setTouchedFields(new Set());
     setMutationErrorMessage(null);
@@ -306,6 +315,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved }: {
 
   function resetForm() {
     setEditingId(null);
+    setBaseline(null);
     setFormState(emptyFormState(config.fields));
     setTouchedFields(new Set());
     setMutationErrorMessage(null);
@@ -320,11 +330,21 @@ function FactMaintenanceSection({ clientId, config, onFactSaved }: {
       if (editingId === null) {
         await config.create(clientId, payloadFromForm(config.fields, formState));
       } else {
+        // Non-atomic preflight comparison: prevents already-visible stale writes, not races between GET and PUT.
+        const now = await config.list(clientId, "all");
+        const current = now.find(item => item.id === editingId);
+        if (!current || (current as FactItem & {client_id?: number}).client_id !== clientId || !baseline || JSON.stringify(current) !== JSON.stringify(baseline)) {
+          throw new Error("PKG02-CONCURRENCY-001: הרשומה השתנתה בשרת; הטיוטה נשמרה ויש לרענן לפני אישור נוסף.");
+        }
+        if ((current as FactItem & { origin_kind?: string }).origin_kind === "canonical_component_conversion") {
+          throw new Error("CONVERSION_DESTINATION_READ_ONLY: יש לבטל המרה דרך מסך ההמרות.");
+        }
         await config.update(clientId, editingId, payloadFromForm(config.fields, formState, touchedFields));
       }
-      await refreshList();
-      onFactSaved?.();
+      // Commit success and failed list refresh are distinct outcomes; never submit the write twice automatically.
       resetForm();
+      onFactSaved?.();
+      try { await refreshList(); } catch (refreshError) { setErrorMessage("השמירה הצליחה אך רענון הרשימה נכשל: " + getErrorMessage(refreshError)); }
     } catch (error) {
       setMutationErrorMessage(getErrorMessage(error));
     } finally {
@@ -378,7 +398,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved }: {
                   );
                 })}
                 <p>
-                  <button type="button" onClick={() => startEditing(item)} disabled={isSubmitting}>
+                  <button type="button" onClick={() => startEditing(item)} disabled={isSubmitting || (item as FactItem & {origin_kind?: string}).origin_kind === "canonical_component_conversion"}>
                     {config.editButton}
                   </button>
                 </p>
@@ -651,12 +671,12 @@ const factSectionConfigs: FactSectionConfig[] = [
   }
 ];
 
-export function RetirementPlanningFactsSection({ clientId, onFactSaved }: RetirementPlanningFactsSectionProps) {
+export function RetirementPlanningFactsSection({ clientId, onFactSaved, includeKeys, onDirtyChange }: RetirementPlanningFactsSectionProps) {
   return (
     <section aria-labelledby="retirement-planning-facts-heading">
       <h3 id="retirement-planning-facts-heading">עובדות תכנון פרישה</h3>
-      {factSectionConfigs.map((config) => (
-        <FactMaintenanceSection key={config.key} clientId={clientId} config={config} onFactSaved={onFactSaved} />
+      {factSectionConfigs.filter(config => !includeKeys || includeKeys.includes(config.key)).map((config) => (
+        <FactMaintenanceSection key={`${clientId}:${config.key}`} clientId={clientId} config={config} onFactSaved={onFactSaved} onDirtyChange={onDirtyChange} />
       ))}
     </section>
   );

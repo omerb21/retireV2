@@ -25,6 +25,7 @@ describe("ActualCapitalizationsScreen", () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
     const firstCapitalization = {
       capitalization_id: "AC-1",
+      version: 1,
       client_id: 7,
       amount: 500,
       capitalization_date: "2023-01-01",
@@ -36,6 +37,7 @@ describe("ActualCapitalizationsScreen", () => {
     };
     const secondCapitalization = {
       capitalization_id: "AC-2",
+      version: 1,
       client_id: 7,
       amount: 750,
       capitalization_date: "2024-02-01",
@@ -52,8 +54,8 @@ describe("ActualCapitalizationsScreen", () => {
       .mockResolvedValueOnce(jsonResponse(secondCapitalization))
       .mockResolvedValueOnce(jsonResponse([firstCapitalization, secondCapitalization]))
       .mockResolvedValueOnce(jsonResponse([firstCapitalization, secondCapitalization]))
-      .mockResolvedValueOnce(jsonResponse({ ...firstCapitalization, amount: 650, source_label: "Updated" }))
-      .mockResolvedValueOnce(jsonResponse([{ ...firstCapitalization, amount: 650, source_label: "Updated" }, secondCapitalization]))
+      .mockResolvedValueOnce(jsonResponse({ ...firstCapitalization, version: 2, amount: 650, source_label: "Updated" }))
+      .mockResolvedValueOnce(jsonResponse([{ ...firstCapitalization, version: 2, amount: 650, source_label: "Updated" }, secondCapitalization]))
       .mockResolvedValueOnce(jsonResponse({ deleted: true }))
       .mockResolvedValueOnce(jsonResponse([secondCapitalization]));
 
@@ -123,7 +125,7 @@ describe("ActualCapitalizationsScreen", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         7,
-        "/api/clients/7/actual-capitalizations/AC-1",
+        "/api/clients/7/actual-capitalizations/AC-1?expected_version=2",
         expect.objectContaining({ method: "DELETE" })
       );
     });

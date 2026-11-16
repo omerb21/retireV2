@@ -32,10 +32,11 @@ export type RetirementPlanningFactsSectionProps = {
 };
 
 type FieldKind = "text" | "date" | "amount" | "select" | "textarea";
-type FactPayloadValue = string | null;
+type FactPayloadValue = string | null | number;
 type FactPayload = Record<string, FactPayloadValue>;
 type FactItem = {
   id: number;
+  version: number;
   lifecycle_status: string;
   source_status: string;
   verification_state: string;
@@ -339,7 +340,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
         if ((current as FactItem & { origin_kind?: string }).origin_kind === "canonical_component_conversion") {
           throw new Error("CONVERSION_DESTINATION_READ_ONLY: יש לבטל המרה דרך מסך ההמרות.");
         }
-        await config.update(clientId, editingId, payloadFromForm(config.fields, formState, touchedFields));
+        await config.update(clientId, editingId, { ...payloadFromForm(config.fields, formState, touchedFields), expected_version: baseline.version });
       }
       // Commit success and failed list refresh are distinct outcomes; never submit the write twice automatically.
       resetForm();
@@ -477,7 +478,7 @@ const factSectionConfigs: FactSectionConfig[] = [
     ],
     list: (clientId, lifecycleStatus) => getCapitalAssets(clientId, lifecycleStatus) as Promise<FactItem[]>,
     create: (clientId, payload) => createCapitalAsset(clientId, payload as unknown as CapitalAssetCreatePayload),
-    update: (clientId, id, payload) => updateCapitalAsset(clientId, id, payload)
+    update: (clientId, id, payload) => updateCapitalAsset(clientId, id, payload as unknown as import("../api/clientsApi").CapitalAssetUpdatePayload)
   },
   {
     key: "recurring-incomes",
@@ -541,7 +542,7 @@ const factSectionConfigs: FactSectionConfig[] = [
     list: (clientId, lifecycleStatus) => getRecurringIncomes(clientId, lifecycleStatus) as Promise<FactItem[]>,
     create: (clientId, payload) =>
       createRecurringIncome(clientId, payload as unknown as RecurringIncomeCreatePayload),
-    update: (clientId, id, payload) => updateRecurringIncome(clientId, id, payload)
+    update: (clientId, id, payload) => updateRecurringIncome(clientId, id, payload as unknown as import("../api/clientsApi").RecurringIncomeUpdatePayload)
   },
   {
     key: "recurring-expenses",
@@ -605,7 +606,7 @@ const factSectionConfigs: FactSectionConfig[] = [
     list: (clientId, lifecycleStatus) => getRecurringExpenses(clientId, lifecycleStatus) as Promise<FactItem[]>,
     create: (clientId, payload) =>
       createRecurringExpense(clientId, payload as unknown as RecurringExpenseCreatePayload),
-    update: (clientId, id, payload) => updateRecurringExpense(clientId, id, payload)
+    update: (clientId, id, payload) => updateRecurringExpense(clientId, id, payload as unknown as import("../api/clientsApi").RecurringExpenseUpdatePayload)
   },
   {
     key: "retirement-timing-work-intentions",

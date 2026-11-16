@@ -81,7 +81,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await page.goto(workspace(a));const section=incomes(page);
     await section.getByLabel("קטגוריית הכנסה").selectOption("rental");
     await section.getByLabel("תיאור").fill("PKG02 rental income");
-    await section.getByLabel("סכום").fill("1200.00");
+    await section.getByLabel("סכום", {exact:true}).fill("1200.00");
     await section.getByLabel("בסיס הסכום").selectOption("gross");
     await section.getByLabel("תדירות").selectOption("monthly");
     await section.getByLabel("מצב המשכיות").selectOption("ongoing");

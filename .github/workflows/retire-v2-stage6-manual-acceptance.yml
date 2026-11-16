@@ -105,7 +105,7 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
-      - name: Verify PKG-01 editor CRUD, workspace isolation and full frontend regression
+      - name: Verify PKG-01 editors and preserved legacy behavior
         working-directory: frontend
         shell: bash
         run: |

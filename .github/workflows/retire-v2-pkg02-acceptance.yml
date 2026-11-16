@@ -1,0 +1,178 @@
+name: RETIRE V2 PKG-02 isolated CI acceptance
+
+# Test-only branch. No manual/push hooks in the product branch.
+on:
+  push:
+    branches:
+      - feature/pkg02-supplement-editors-20261116
+    paths:
+      - '.github/workflows/retire-v2-pkg02-acceptance.yml'
+      - 'frontend/e2e/pkg02-acceptance.spec.ts'
+      - 'frontend/src/pages/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retire-v2-pkg02-189-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-pkg02:
+    name: PKG02 unit build and Chromium PG16 acceptance
+    if: github.ref == 'refs/heads/feature/pkg02-supplement-editors-20261116'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PRODUCT_SHA: c623577b76317009e2262c5b7fc23d1fe19c66b7
+      COMPOSE_PROJECT_NAME: retirev2_pkg02_ci_192
+      CI: 'true'
+    steps:
+      - name: Checkout test branch without persistent token
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Guard approved product SHA and test-only changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/feature/pkg02-supplement-editors-20261116"
+          test "$(git merge-base HEAD "$PRODUCT_SHA")" = "$PRODUCT_SHA"
+          git diff --name-only "$PRODUCT_SHA" HEAD | tee /tmp/pkg02-changed-paths.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+            "frontend/src/pages/RetirementWorkspaceScreen.tsx",
+            "frontend/src/pages/RetirementPlanningFactsSection.tsx",
+            "frontend/src/pages/ActualCapitalizationsScreen.tsx",
+            "frontend/src/pages/ActualCapitalizationsSection.tsx",
+            "dev/compose.pkg02-ci.override.yml",
+            ".github/workflows/retire-v2-pkg02-acceptance.yml",
+          }
+          paths = set(Path("/tmp/pkg02-changed-paths.txt").read_text().splitlines())
+          assert paths == expected, f"Non-test application changes or missing acceptance files: {paths ^ expected}"
+          PY
+          mkdir -p acceptance-evidence
+          printf '%s\n' "$PRODUCT_SHA" > acceptance-evidence/approved-product-sha.txt
+          git rev-parse HEAD > acceptance-evidence/test-branch-sha.txt
+          printf '%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > acceptance-evidence/workflow-url.txt
+
+      - name: Guard fully isolated disposable Docker resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml config --format json > /tmp/pkg02-compose.json
+          python3 - <<'PY'
+          import json
+          conf = json.load(open("/tmp/pkg02-compose.json"))
+          services = conf["services"]
+          assert set(services) == {"backend", "db"}, services.keys()
+          db = services["db"]
+          assert "postgres:16" == db["image"]
+          assert "/var/lib/postgresql/data" in db["tmpfs"]
+          assert not db.get("ports"), "Database must not be published"
+          assert db["environment"]["POSTGRES_DB"] == "retirement_v2_synthetic"
+          assert db["environment"]["POSTGRES_USER"] == "synthetic_planner"
+          backend = services["backend"]
+          env = backend["environment"]
+          assert env["MIGRATION_DATABASE_URL"].startswith("postgresql://synthetic_planner:synthetic_only_local_password@db:5432/retirement_v2_synthetic")
+          assert env["APPLICATION_DATABASE_URL"].startswith("postgresql://rtdir_synthetic_app:synthetic_local_only_app_password@db:5432/retirement_v2_synthetic")
+          assert env["APP_ENV"] == "development"
+          for port in backend["ports"]:
+              assert port["host_ip"] == "127.0.0.1", port
+          assert any(p["published"] == "8001" and p["target"] == 8000 for p in backend["ports"])
+          assert not conf.get("volumes"), "No persistent Compose volumes"
+          print("ISOLATED_RESOURCE_GUARD_PASS: local PG16 tmpfs, no DB port, no external DATABASE_URL")
+          PY
+          echo "ISOLATED_RESOURCE_GUARD_PASS" > acceptance-evidence/isolation-guard.txt
+
+      - name: Start existing isolated PostgreSQL 16 and backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml up -d --build --wait db backend
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T db \
+            psql -U synthetic_planner -d retirement_v2_synthetic -tAc 'SHOW server_version;' \
+            | tee acceptance-evidence/postgresql-version.txt
+          curl --fail --silent --show-error http://127.0.0.1:8001/healthz/ready \
+            | tee acceptance-evidence/backend-ready.json
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install existing frontend and CI-only Playwright/Chromium
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false @playwright/test@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Start actual Vite UI backed by local backend and PG16
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev -- --mode test --host 127.0.0.1 > ../acceptance-evidence/vite.log 2>&1 &
+          echo $! > ../acceptance-evidence/vite.pid
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5174/__retire_v2_test_identity > ../acceptance-evidence/vite-test-identity.json; then
+              break
+            fi
+            sleep 2
+          done
+          grep -q RETIRE_V2_FRONTEND ../acceptance-evidence/vite-test-identity.json
+          curl --fail --silent --show-error http://127.0.0.1:5174/api/auth/session \
+            > ../acceptance-evidence/localhost-auth-session.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("../acceptance-evidence/localhost-auth-session.json"))
+          assert d["authenticated"] is True
+          assert d["actor_id"] == "development-professional"
+          PY
+
+      - name: Run existing frontend unit tests
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test 2>&1 | tee ../acceptance-evidence/pkg02-unit.log
+
+      - name: Validate TypeScript and production build
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee ../acceptance-evidence/pkg02-build.log
+
+      - name: Collect sanitized CI-only log evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p acceptance-evidence
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml logs --no-color backend db \
+            > acceptance-evidence/local-docker.log 2>&1 || true
+          git rev-parse HEAD > acceptance-evidence/test-branch-sha.txt || true
+
+      - name: Upload screenshots, JUnit and local-only logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retire-v2-pkg02-acceptance-${{ github.run_id }}
+          path: |
+            acceptance-evidence/
+            frontend/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Destroy disposable test containers
+        if: always()
+        run: docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml down -v --remove-orphans

@@ -151,6 +151,7 @@ export interface GrantPayload {
 }
 
 export interface ActualCapitalizationItem {
+  version: number;
   capitalization_id: string;
   client_id: number;
   amount: number | string;
@@ -311,6 +312,7 @@ export interface FactMetadataPayload {
 
 
 export interface CapitalAssetItem {
+  version: number;
   id: number;
   client_id: number;
   asset_category: string;
@@ -338,9 +340,10 @@ export interface CapitalAssetCreatePayload extends FactMetadataPayload {
   restriction_note?: string | null;
 }
 
-export type CapitalAssetUpdatePayload = Partial<CapitalAssetCreatePayload>;
+export type CapitalAssetUpdatePayload = Partial<CapitalAssetCreatePayload> & { expected_version: number };
 
 export interface RecurringIncomeItem {
+  version: number;
   id: number;
   client_id: number;
   income_category: string;
@@ -372,9 +375,10 @@ export interface RecurringIncomeCreatePayload extends FactMetadataPayload {
   end_date?: string | null;
 }
 
-export type RecurringIncomeUpdatePayload = Partial<RecurringIncomeCreatePayload>;
+export type RecurringIncomeUpdatePayload = Partial<RecurringIncomeCreatePayload> & { expected_version: number };
 
 export interface RecurringExpenseItem {
+  version: number;
   id: number;
   client_id: number;
   expense_category: string;
@@ -406,7 +410,7 @@ export interface RecurringExpenseCreatePayload extends FactMetadataPayload {
   end_date?: string | null;
 }
 
-export type RecurringExpenseUpdatePayload = Partial<RecurringExpenseCreatePayload>;
+export type RecurringExpenseUpdatePayload = Partial<RecurringExpenseCreatePayload> & { expected_version: number };
 
 export interface RetirementTimingWorkIntentionItem {
   id: number;
@@ -638,7 +642,7 @@ export function createActualCapitalization(
 export function updateActualCapitalization(
   clientId: number,
   capitalizationId: string,
-  payload: ActualCapitalizationPayload
+  payload: ActualCapitalizationPayload & { expected_version: number }
 ): Promise<ActualCapitalizationItem> {
   return requestJson<ActualCapitalizationItem>(`/clients/${clientId}/actual-capitalizations/${capitalizationId}`, {
     method: "PUT",
@@ -646,8 +650,8 @@ export function updateActualCapitalization(
   });
 }
 
-export function deleteActualCapitalization(clientId: number, capitalizationId: string): Promise<unknown> {
-  return requestJson<unknown>(`/clients/${clientId}/actual-capitalizations/${capitalizationId}`, {
+export function deleteActualCapitalization(clientId: number, capitalizationId: string, expectedVersion: number): Promise<unknown> {
+  return requestJson<unknown>(`/clients/${clientId}/actual-capitalizations/${capitalizationId}?expected_version=${expectedVersion}`, {
     method: "DELETE"
   });
 }

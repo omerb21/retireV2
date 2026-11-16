@@ -246,4 +246,15 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     await page.screenshot({path:info.outputPath("13-failed-write-draft.png"),fullPage:true});
   });
 
+  test("14 capitalization deletion requires explicit confirmation",async ({page,request},info)=>{
+    await page.goto(workspace(a));
+    page.once("dialog",dialog=>dialog.dismiss());
+    await caps(page).getByRole("button",{name:"Delete Actual Capitalization"}).first().click();
+    expect((await getRows(request,a,"actual-capitalizations")).some((r:any)=>r.capitalization_id===cap)).toBe(true);
+    page.once("dialog",dialog=>dialog.accept());
+    await caps(page).getByRole("button",{name:"Delete Actual Capitalization"}).first().click();
+    await expect.poll(async()=>(await getRows(request,a,"actual-capitalizations")).some((r:any)=>r.capitalization_id===cap)).toBe(false);
+    await page.screenshot({path:info.outputPath("14-confirmed-deletion.png"),fullPage:true});
+  });
+
 });

@@ -213,4 +213,13 @@ describe("AdvisoryMissingInformationSection", () => {
     expect(requestedUrls.some((url) => url.includes("package-e"))).toBe(false);
     expect(fetchMock.mock.calls.some((call) => requestMethod(call) === "DELETE")).toBe(false);
   });
+  it("fails closed when the API delivers a different client's row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ ...advisoryRow, client_id: 8 }]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdvisoryMissingInformationSection clientId={7} />);
+    expect(await screen.findByText("לא ניתן לטעון מידע חסר לייעוץ.")).toBeInTheDocument();
+    expect(screen.queryByText("רשומת מידע חסר לייעוץ MD-V21")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(requestUrl).every(url => url.includes("/clients/7/"))).toBe(true);
+  });
+
 });

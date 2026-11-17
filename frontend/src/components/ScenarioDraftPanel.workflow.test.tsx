@@ -6,13 +6,13 @@ import type { PensionProduct } from "../api/pensionProductsApi";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), preview: vi.fn(), create: vi.fn(), replace: vi.fn(), rename: vi.fn(), duplicate: vi.fn(),
-  capability: vi.fn(),
+  capability: vi.fn(), admission: vi.fn(),
 }));
 vi.mock("../api/scenarioDraftsApi", () => ({
   listScenarioDrafts: mocks.list,
   createScenarioDraft: mocks.create, duplicateScenarioDraft: mocks.duplicate,
   replaceScenarioDraft: mocks.replace, renameScenarioDraft: mocks.rename,
-  archiveScenarioDraft: vi.fn(),
+  archiveScenarioDraft: vi.fn(), readCalculationAdmission: mocks.admission,
 }));
 vi.mock("../api/scenarioDraftPermissionApi", () => ({
   previewDraftDecision: mocks.preview,
@@ -37,8 +37,14 @@ vi.mock("./ScenarioFixationProfessionalReviewPanel", () => ({
     <section aria-label="Fixation professional review">הכרעות מקצועיות לקיבוע זכויות</section>
   ),
 }));
-mocks.capability.mockResolvedValue(false);
-afterEach(() => { cleanup(); vi.resetAllMocks(); mocks.capability.mockResolvedValue(false); });
+mocks.capability.mockResolvedValue(false);\nmocks.admission.mockImplementation(async (clientId: number, scenarioId: string) => ({\n  schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: clientId,\n  scenario_id: scenarioId, scenario_version: 2, assessment_state: "blocked",\n  financial_result: null, blockers: [{ code: "PERMISSION_NOT_ADMITTED", decision_id: null }],\n}));
+afterEach(() => { cleanup(); vi.resetAllMocks(); mocks.capability.mockResolvedValue(false);
+  mocks.admission.mockImplementation(async (clientId: number, scenarioId: string) => ({
+    schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: clientId,
+    scenario_id: scenarioId, scenario_version: 2, assessment_state: "blocked",
+    financial_result: null, blockers: [{ code: "PERMISSION_NOT_ADMITTED", decision_id: null }],
+  }));
+});
 
 function draft(id: string, status: ScenarioDraft["status"] = "draft"): ScenarioDraft {
   return {
@@ -305,4 +311,63 @@ it("embeds fixation professional review in the existing planning view, not a sep
   expect(screen.getByRole("region", { name: "Severance planning" })).toBeTruthy();
   view.rerender(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
   expect(screen.queryByRole("region", { name: "Fixation professional review" })).toBeNull();
+});
+
+it("shows blocked read-only admission for selected saved revision without creating a financial result", async () => {
+  mocks.list.mockResolvedValue([draft("readiness")]);
+  render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  const section = await screen.findByRole("region", { name: "ראיית קבלה לחישוב" });
+  await waitFor(() => expect(section).toHaveTextContent("blocked (חסום)"));
+  expect(section).toHaveTextContent("PERMISSION_NOT_ADMITTED");
+  expect(section).toHaveTextContent("גרסה: 2");
+  expect(section).toHaveTextContent("אין תוצאה פיננסית מורשית");
+  expect(mocks.admission).toHaveBeenCalledWith(1, "readiness", expect.any(AbortSignal));
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("fail-closes stale source evidence, HTTP errors and version mismatches", async () => {
+  mocks.list.mockResolvedValue([draft("readiness")]);
+  mocks.admission.mockResolvedValueOnce({
+    schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: 1,
+    scenario_id: "readiness", scenario_version: 2, assessment_state: "blocked",
+    financial_result: null, blockers: [{ code: "SOURCE_STALE", decision_id: "d1" }],
+  }).mockRejectedValueOnce(new Error("ADMISSION_HTTP_409")).mockResolvedValueOnce({
+    schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: 1,
+    scenario_id: "readiness", scenario_version: 999, assessment_state: "blocked",
+    financial_result: null, blockers: [],
+  });
+  render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  const section = await screen.findByRole("region", { name: "ראיית קבלה לחישוב" });
+  await waitFor(() => expect(section).toHaveTextContent("מקור התיישן"));
+  fireEvent.click(screen.getByRole("button", { name: /רענן ראיית קבלה/ }));
+  await waitFor(() => expect(section).toHaveTextContent("ADMISSION_HTTP_409"));
+  expect(section).not.toHaveTextContent("blocked (חסום)");
+  fireEvent.click(screen.getByRole("button", { name: /רענן ראיית קבלה/ }));
+  await waitFor(() => expect(section).toHaveTextContent("גרסת החלופה השתנתה"));
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("isolates A-B-A admission responses by client, scenario and epoch", async () => {
+  const oldA = pending<unknown>();
+  mocks.list.mockImplementation(async (id: number) => [{ ...draft("same-scenario"), client_id: id }]);
+  mocks.admission.mockReturnValueOnce(oldA.promise).mockResolvedValueOnce({
+    schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: 2,
+    scenario_id: "same-scenario", scenario_version: 2, assessment_state: "blocked",
+    financial_result: null, blockers: [{ code: "SOURCE_STALE", decision_id: null }],
+  });
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  await waitFor(() => expect(mocks.admission).toHaveBeenCalledWith(1, "same-scenario", expect.any(AbortSignal)));
+  view.rerender(<ScenarioDraftPanel clientId={2} products={products} view="results" />);
+  await waitFor(() => expect(mocks.admission).toHaveBeenCalledWith(2, "same-scenario", expect.any(AbortSignal)));
+  const section = screen.getByRole("region", { name: "ראיית קבלה לחישוב" });
+  await waitFor(() => expect(section).toHaveTextContent("SOURCE_STALE"));
+  view.rerender(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  oldA.resolve({
+    schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: 1,
+    scenario_id: "same-scenario", scenario_version: 2, assessment_state: "blocked",
+    financial_result: null, blockers: [{ code: "SHOULD_NOT_APPEAR", decision_id: null }],
+  });
+  await waitFor(() => expect(mocks.admission).toHaveBeenCalledTimes(3));
+  expect(screen.queryByText("SHOULD_NOT_APPEAR")).toBeNull();
+  expect(screen.queryByText("SOURCE_STALE")).toBeNull();
 });

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -37,6 +38,7 @@ def require_synthetic() -> str:
 
 def main(case: str) -> None:
     url = require_synthetic()
+    sys.path.insert(0, "/tmp/pkg204-old" if case == "old-cas" else "/app/backend")
     from app.db import session as db_session
     from app.main import EXPECTED_ALEMBIC_HEAD, create_app
     from app.security.config import AuthConfig

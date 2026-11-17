@@ -10,7 +10,7 @@ import { M11PreferredScenarioPanel } from "./M11PreferredScenarioPanel";
 import { readStage6GrossResultsCapability } from "../api/scenarioStage6Api";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
-  renameScenarioDraft, replaceScenarioDraft, type DraftDecisionInput, type ScenarioDraft,
+  renameScenarioDraft, replaceScenarioDraft, readCalculationAdmission,\n  type CalculationAdmissionEvidence, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
 
 interface Props {
@@ -56,6 +56,40 @@ export function ScenarioDraftPanel({
   const selected = preferredScenarioId && visibleDrafts.some(item => item.scenario_id === preferredScenarioId)
     ? preferredScenarioId : localSelected;
   const active = visibleDrafts.find(item => item.scenario_id === selected) ?? null;
+  const [admission, setAdmission] = useState<{
+    identity: string; state: "loading" | "blocked" | "unavailable";
+    evidence?: CalculationAdmissionEvidence; error?: string;
+  } | null>(null);
+  const [admissionRefresh, setAdmissionRefresh] = useState(0);
+  const admissionEpoch = useRef(0);
+  const admissionIdentity = active ? `${clientId}:${active.scenario_id}:${active.version}` : null;
+  // The response is useful only for its exact client, scenario and revision.
+  // Switching A-B-A invalidates both in-flight and previously displayed evidence.
+  useEffect(() => {
+    const epoch = ++admissionEpoch.current;
+    const controller = new AbortController();
+    if (!active || !admissionIdentity) {
+      setAdmission(null);
+      return () => { admissionEpoch.current++; controller.abort(); };
+    }
+    const identity = admissionIdentity;
+    setAdmission({ identity, state: "loading" });
+    void readCalculationAdmission(clientId, active.scenario_id, controller.signal)
+      .then(evidence => {
+        if (controller.signal.aborted || admissionEpoch.current !== epoch) return;
+        if (evidence.scenario_version !== active.version) {
+          setAdmission({ identity, state: "unavailable", error: "גרסת החלופה השתנתה. יש לרענן את הנתונים." });
+          return;
+        }
+        setAdmission({ identity, state: "blocked", evidence });
+      })
+      .catch(cause => {
+        if (controller.signal.aborted || admissionEpoch.current !== epoch) return;
+        setAdmission({ identity, state: "unavailable", error: message(cause) });
+      });
+    return () => { admissionEpoch.current++; controller.abort(); };
+  }, [clientId, active?.scenario_id, active?.version, admissionRefresh]);
+  const visibleAdmission = admission?.identity === admissionIdentity ? admission : null;
   function selectScenario(id: string) {
     setLocalSelected(id);
     onScenarioSelected?.(id);
@@ -246,6 +280,24 @@ export function ScenarioDraftPanel({
       scenarios={visibleDrafts} onChooseScenario={selectScenario}/>}
     {active && <div>
       {view === "results" && <h3>{active.name}</h3>}
+      <section aria-label="ראיית קבלה לחישוב" className="professional-workspace__boundary">
+        <h3>מצב בדיקת קבלה של חלופה שמורה</h3>
+        <p>חלופה: {active.name} | מזהה: <bdi>{active.scenario_id}</bdi> | גרסה: {active.version} | מצב טיוטה: {active.status}</p>
+        <p>בדיקת השרת היא ראיה מוגבלת לקריאה בלבד, ולא אישור מקצועי או הרשאה לחישוב.</p>
+        {!visibleAdmission || visibleAdmission.state === "loading"
+          ? <p role="status">בודק חסמי קבלה...</p>
+          : visibleAdmission.state === "unavailable"
+            ? <p role="alert">מצב הקבלה אינו ידוע. {visibleAdmission.error} אין אישור לחישוב.</p>
+            : <>
+              <p role="status">מצב הקבלה מהשרת: blocked (חסום). אין תוצאה פיננסית מורשית.</p>
+              {visibleAdmission.evidence?.blockers.some(item => item.code === "SOURCE_STALE") &&
+                <p role="alert">מקור התיישן לפי בדיקת השרת. נדרשת בדיקה מחודשת של ההחלטות.</p>}
+              <ul aria-label="חסמי קבלה">{visibleAdmission.evidence?.blockers.map((item, index) =>
+                <li key={index}><bdi>{item.code}</bdi>{item.decision_id ? <> | החלטה <bdi>{item.decision_id}</bdi></> : null}</li>)}</ul>
+            </>}
+        <p>הקצאות ויתרות המופיעות בטיוטה אינן תוצאת קצבה, מס או תזרים. זמינות תוצאה פיננסית: לא מאושרת בחוזה קבלה זה.</p>
+        <button type="button" onClick={() => setAdmissionRefresh(n => n + 1)}>רענן ראיית קבלה (קריאה בלבד)</button>
+      </section>
       {view === "planning" && <ScenarioConversionMatrix
         key={`${clientId}:${active.scenario_id}`}
         products={products} scenario={active} disabled={active.status !== "draft"}

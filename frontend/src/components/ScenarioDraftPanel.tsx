@@ -10,7 +10,8 @@ import { M11PreferredScenarioPanel } from "./M11PreferredScenarioPanel";
 import { readStage6GrossResultsCapability } from "../api/scenarioStage6Api";
 import {
   archiveScenarioDraft, createScenarioDraft, duplicateScenarioDraft, listScenarioDrafts,
-  renameScenarioDraft, replaceScenarioDraft, readCalculationAdmission,\n  type CalculationAdmissionEvidence, type DraftDecisionInput, type ScenarioDraft,
+  renameScenarioDraft, replaceScenarioDraft, readCalculationAdmission,
+  type CalculationAdmissionEvidence, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
 
 interface Props {

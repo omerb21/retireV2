@@ -1,0 +1,127 @@
+name: RETIRE V2 PKG-03 isolated readiness acceptance
+on:
+  push:
+    branches:
+      - feat/pkg03-scenario-readiness-20261117
+    paths:
+      - '.github/workflows/retire-v2-pkg03-readiness.yml'
+      - 'frontend/src/api/scenarioDraftsApi.ts'
+      - 'frontend/src/components/ScenarioDraftPanel.tsx'
+      - 'frontend/src/components/ScenarioDraftPanel.workflow.test.tsx'
+      - 'frontend/e2e/pkg03-readiness.spec.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: retire-v2-pkg03-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  isolated-readiness:
+    if: github.ref == 'refs/heads/feat/pkg03-scenario-readiness-20261117'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      COMPOSE_PROJECT_NAME: retirev2_pkg03_ci
+      BASE_SHA: e824bb2bdf629de64e15d48b5d65f79a23e06066
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate authorized PKG-03 scope
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          git diff --name-only "$BASE_SHA" HEAD > /tmp/pkg03-changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allowed = {
+            "frontend/src/api/scenarioDraftsApi.ts",
+            "frontend/src/components/ScenarioDraftPanel.tsx",
+            "frontend/src/components/ScenarioDraftPanel.workflow.test.tsx",
+            "frontend/e2e/pkg03-readiness.spec.ts",
+            ".github/workflows/retire-v2-pkg03-readiness.yml",
+          }
+          actual = set(Path("/tmp/pkg03-changed.txt").read_text().splitlines())
+          assert actual <= allowed, f"Unauthorized paths: {actual - allowed}"
+          assert {"frontend/src/api/scenarioDraftsApi.ts", "frontend/src/components/ScenarioDraftPanel.tsx"} <= actual
+          PY
+          mkdir -p acceptance-evidence
+          git rev-parse HEAD > acceptance-evidence/sha.txt
+          printf '%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > acceptance-evidence/workflow-url.txt
+      - name: Check isolated disposable PostgreSQL 16 resources
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml config --format json >/tmp/pkg03-compose.json
+          python3 - <<'PY'
+          import json
+          conf=json.load(open("/tmp/pkg03-compose.json"))
+          assert set(conf["services"]) == {"backend","db"}
+          db=conf["services"]["db"]
+          assert db["image"]=="postgres:16"
+          assert "/var/lib/postgresql/data" in db["tmpfs"]
+          assert not db.get("ports")
+          assert not conf.get("volumes")
+          assert conf["services"]["backend"]["environment"]["APP_ENV"]=="development"
+          assert all(p["host_ip"]=="127.0.0.1" for p in conf["services"]["backend"]["ports"])
+          PY
+      - name: Start isolated backend and PostgreSQL
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml up -d --build --wait db backend
+          curl --fail --silent --show-error http://127.0.0.1:8001/healthz/ready > acceptance-evidence/backend-ready.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install existing frontend and CI browser
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm install --no-save --package-lock=false @playwright/test@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Targeted unit and build
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npx vitest run src/components/ScenarioDraftPanel.workflow.test.tsx 2>&1 | tee ../acceptance-evidence/pkg03-unit.log
+          npm run build 2>&1 | tee ../acceptance-evidence/pkg03-build.log
+      - name: Start local browser app
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm run dev -- --mode test --host 127.0.0.1 > ../acceptance-evidence/vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5174/__retire_v2_test_identity >/tmp/pkg03-identity.json; then break; fi
+            sleep 2
+          done
+          grep -q RETIRE_V2_FRONTEND /tmp/pkg03-identity.json
+          curl -fsS http://127.0.0.1:5174/api/auth/session > acceptance-evidence/session.json
+      - name: Real PostgreSQL browser acceptance
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../acceptance-evidence/pkg03-junit.xml
+        run: |
+          set -euo pipefail
+          npx playwright test e2e/pkg03-readiness.spec.ts --browser chromium --workers 1 --retries 0 --reporter=line,junit --output=test-results 2>&1 | tee ../acceptance-evidence/pkg03-playwright.log
+      - name: Collect isolated diagnostic logs
+        if: always()
+        run: |
+          mkdir -p acceptance-evidence
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml logs --no-color backend db > acceptance-evidence/docker.log 2>&1 || true
+      - name: Upload JUnit screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retire-v2-pkg03-${{ github.run_id }}
+          path: |
+            acceptance-evidence/
+            frontend/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Destroy disposable resources
+        if: always()
+        run: docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml down -v --remove-orphans

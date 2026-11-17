@@ -77,3 +77,37 @@ export const archiveScenarioDraft = (clientId: number, scenario: ScenarioDraft) 
   request<ScenarioDraft>(clientId, `/${encodeURIComponent(scenario.scenario_id)}/archive`, "POST", {
     expected_version: scenario.version,
   });
+
+/** Read-only, snapshot-scoped evidence. This contract never authorizes financial execution. */
+export interface CalculationAdmissionEvidence {
+  schema_version: "SCENARIO_CALCULATION_ADMISSION_V1";
+  client_id: number;
+  scenario_id: string;
+  scenario_version: number;
+  assessment_state: "blocked";
+  financial_result: null;
+  blockers: Array<{ code: string; decision_id: string | null }>;
+}
+export async function readCalculationAdmission(
+  clientId: number, scenarioId: string, signal?: AbortSignal,
+): Promise<CalculationAdmissionEvidence> {
+  const response = await apiFetch(
+    buildApiUrl(`/clients/${clientId}/scenario-drafts/${encodeURIComponent(scenarioId)}/calculation-admission`),
+    { method: "GET", signal, cache: "no-store" },
+  );
+  if (!response.ok) throw new Error(`ADMISSION_HTTP_${response.status}`);
+  const body: unknown = await response.json();
+  if (!body || typeof body !== "object") throw new Error("ADMISSION_INVALID_RESPONSE");
+  const value = body as Record<string, unknown>;
+  if (value.schema_version !== "SCENARIO_CALCULATION_ADMISSION_V1"
+      || value.client_id !== clientId || value.scenario_id !== scenarioId
+      || !Number.isSafeInteger(value.scenario_version) || (value.scenario_version as number) < 1
+      || value.assessment_state !== "blocked" || value.financial_result !== null
+      || !Array.isArray(value.blockers)
+      || !value.blockers.every(item => item && typeof item === "object"
+        && typeof item.code === "string" && /^[A-Z0-9_]+$/.test(item.code)
+        && (item.decision_id === null || typeof item.decision_id === "string"))) {
+    throw new Error("ADMISSION_INVALID_RESPONSE");
+  }
+  return value as unknown as CalculationAdmissionEvidence;
+}

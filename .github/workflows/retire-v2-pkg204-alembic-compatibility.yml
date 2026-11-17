@@ -1,0 +1,161 @@
+name: RETIRE V2 PKG204 isolated Alembic CAS compatibility
+
+on:
+  push:
+    branches:
+      - fix/pkg204-alembic-cas-startup-20261117
+    paths:
+      - 'backend/app/main.py'
+      - 'backend/tests/pkg204_startup_pg16_probe.py'
+      - '.github/workflows/retire-v2-pkg204-alembic-compatibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkg204-compat-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      BASE_SHA: 3a8e9d4e233ae58172d4d61bdb363501a8a20179
+      OLD_SHA: c623577b76317009e2262c5b7fc23d1fe19c66b7
+      COMPOSE_PROJECT_NAME: retirev2_pkg204_synthetic
+      PKG204_SYNTHETIC_PG16: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Guard approved code scope and exact ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/fix/pkg204-alembic-cas-startup-20261117"
+          test "$(git merge-base "$BASE_SHA" HEAD)" = "$BASE_SHA"
+          git diff --name-only "$BASE_SHA" HEAD >/tmp/pkg204-diff.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allowed={
+              "backend/app/main.py",
+              "backend/tests/pkg204_startup_pg16_probe.py",
+              ".github/workflows/retire-v2-pkg204-alembic-compatibility.yml",
+          }
+          files=set(Path("/tmp/pkg204-diff.txt").read_text().splitlines())
+          assert files == allowed, (files, allowed)
+          p=Path("backend/app/main.py").read_text()
+          assert 'EXPECTED_ALEMBIC_HEAD = "c194e2f0a816"' in p
+          old=__import__("subprocess").check_output(
+              ["git", "show", "3a8e9d4e233ae58172d4d61bdb363501a8a20179:backend/app/main.py"],
+              text=True,
+          )
+          assert p == old.replace(
+              'EXPECTED_ALEMBIC_HEAD = "b2d7e4c9f108"',
+              'EXPECTED_ALEMBIC_HEAD = "c194e2f0a816"',
+          )
+          print("PKG204_APPROVED_SCOPE_AND_SINGLE_CONSTANT_DIFF_PASS")
+          PY
+          mkdir -p pkg204-evidence
+          git rev-parse HEAD > pkg204-evidence/commit-sha.txt
+          git diff --stat "$BASE_SHA" HEAD > pkg204-evidence/changed-files.txt
+      - name: Prove unique direct CAS migration and shared code bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee pkg204-evidence/migration-ancestry.txt
+          import ast
+          from pathlib import Path
+          paths=list(Path("backend/alembic/versions").glob("*.py"))
+          edges={}
+          for p in paths:
+              t=ast.parse(p.read_text())
+              assignments={target.id:node.value for node in t.body if isinstance(node,ast.Assign)
+                  for target in node.targets if isinstance(target,ast.Name)
+                  and target.id in {"revision","down_revision"}}
+              if "revision" in assignments:
+                  name=ast.literal_eval(assignments["revision"])
+                  parent=ast.literal_eval(assignments["down_revision"])
+                  edges[name]=parent
+          assert edges["c194e2f0a816"]=="b2d7e4c9f108"
+          assert not [rev for rev,dep in edges.items()
+                      if rev != "c194e2f0a816" and dep == "b2d7e4c9f108"]
+          docker=Path("Dockerfile").read_text()
+          assert "COPY backend/ ./backend/" in docker
+          assert "COPY --from=frontend-build /src/frontend/dist ./frontend/dist" in docker
+          assert "alembic" not in docker.lower()
+          print("PKG204_DIRECT_CAS_CHILD_ONLY_PASS")
+          print("PKG204_SINGLE_FRONTEND_BACKEND_BUILD_CONTEXT_PASS")
+          PY
+      - name: Guard isolated Docker endpoints
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml config --format json > /tmp/pkg204-compose.json
+          python3 - <<'PY'
+          import json
+          c=json.load(open("/tmp/pkg204-compose.json"))["services"]
+          assert set(c)=={"backend","db"}
+          assert c["db"]["image"]=="postgres:16"
+          assert "/var/lib/postgresql/data" in c["db"]["tmpfs"]
+          assert not c["db"].get("ports")
+          assert c["db"]["environment"]["POSTGRES_DB"]=="retirement_v2_synthetic"
+          assert c["db"]["environment"]["POSTGRES_USER"]=="synthetic_planner"
+          assert c["backend"]["environment"]["APP_ENV"]=="development"
+          assert all(p["host_ip"]=="127.0.0.1" for p in c["backend"]["ports"])
+          print("PKG204_DISPOSABLE_PG16_ONLY_PASS")
+          PY
+      - name: Start temporary PostgreSQL 16 and backend toolbox
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml up -d --build --wait db backend
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T db psql -U synthetic_planner -d retirement_v2_synthetic -tAc 'SHOW server_version' | tee pkg204-evidence/pg16.txt
+          git worktree add --detach /tmp/pkg204-old "$OLD_SHA"
+          container_id="$(docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml ps -q backend)"
+          docker cp /tmp/pkg204-old/backend/. "$container_id:/tmp/pkg204-old/"
+      - name: Prepare five separate disposable schema states
+        run: |
+          set -euo pipefail
+          for name in pkg204_old pkg204_new pkg204_unknown pkg204_missing; do
+            docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T db               psql -v ON_ERROR_STOP=1 -U synthetic_planner -d retirement_v2_synthetic -c "CREATE DATABASE $name"
+          done
+          for name in pkg204_old pkg204_missing; do
+            docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c               "cd /app/backend && DATABASE_URL=postgresql://synthetic_planner:synthetic_only_local_password@db:5432/$name alembic upgrade b2d7e4c9f108"
+          done
+          for name in pkg204_new pkg204_unknown; do
+            docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T backend sh -c               "cd /app/backend && DATABASE_URL=postgresql://synthetic_planner:synthetic_only_local_password@db:5432/$name alembic upgrade c194e2f0a816"
+          done
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T db             psql -v ON_ERROR_STOP=1 -U synthetic_planner -d pkg204_unknown -c "UPDATE alembic_version SET version_num='deadbeef0000'"
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T db             psql -v ON_ERROR_STOP=1 -U synthetic_planner -d pkg204_missing -c "DROP TABLE alembic_version"
+          echo 'All modifications above are confined to the tmpfs disposable PostgreSQL16 service' | tee pkg204-evidence/isolation.txt
+      - name: Test new backend CAS, old revision, unknown, missing, disconnected
+        shell: bash
+        run: |
+          set -euo pipefail
+          for entry in new-cas:pkg204_new new-old:pkg204_old new-unknown:pkg204_unknown new-missing:pkg204_missing new-disconnected:pkg204_absent; do
+            case="${entry%%:*}"
+            name="${entry##*:}"
+            docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T               -e PKG204_SYNTHETIC_PG16=1               -e DATABASE_URL="postgresql://synthetic_planner:synthetic_only_local_password@db:5432/$name"               backend python tests/pkg204_startup_pg16_probe.py "$case" 2>&1 | tee -a pkg204-evidence/new-backend.log
+          done
+      - name: Test old backend against CAS schema and old ORM writes
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml exec -T             -e PKG204_SYNTHETIC_PG16=1             -e PYTHONPATH=/tmp/pkg204-old             -e DATABASE_URL=postgresql://synthetic_planner:synthetic_only_local_password@db:5432/pkg204_new             backend python tests/pkg204_startup_pg16_probe.py old-cas 2>&1 | tee pkg204-evidence/old-backend.log
+          grep -q PKG204_OLD_WRITES_WITHOUT_VERSION_INCREMENT_CONFIRMED_ALL_FOUR pkg204-evidence/old-backend.log
+      - name: Collect isolated logs
+        if: always()
+        run: |
+          mkdir -p pkg204-evidence
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml logs --no-color backend db > pkg204-evidence/docker.log 2>&1 || true
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg204-compatibility-${{ github.run_id }}
+          path: pkg204-evidence/
+          retention-days: 14
+      - name: Destroy temporary resources
+        if: always()
+        run: docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml down -v --remove-orphans

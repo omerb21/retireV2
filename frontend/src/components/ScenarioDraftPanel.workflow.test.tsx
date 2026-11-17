@@ -37,7 +37,12 @@ vi.mock("./ScenarioFixationProfessionalReviewPanel", () => ({
     <section aria-label="Fixation professional review">הכרעות מקצועיות לקיבוע זכויות</section>
   ),
 }));
-mocks.capability.mockResolvedValue(false);\nmocks.admission.mockImplementation(async (clientId: number, scenarioId: string) => ({\n  schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: clientId,\n  scenario_id: scenarioId, scenario_version: 2, assessment_state: "blocked",\n  financial_result: null, blockers: [{ code: "PERMISSION_NOT_ADMITTED", decision_id: null }],\n}));
+mocks.capability.mockResolvedValue(false);
+mocks.admission.mockImplementation(async (clientId: number, scenarioId: string) => ({
+  schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: clientId,
+  scenario_id: scenarioId, scenario_version: 2, assessment_state: "blocked",
+  financial_result: null, blockers: [{ code: "PERMISSION_NOT_ADMITTED", decision_id: null }],
+}));
 afterEach(() => { cleanup(); vi.resetAllMocks(); mocks.capability.mockResolvedValue(false);
   mocks.admission.mockImplementation(async (clientId: number, scenarioId: string) => ({
     schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: clientId,

@@ -99,7 +99,7 @@ jobs:
             sleep 2
           done
           grep -q RETIRE_V2_FRONTEND /tmp/pkg03-identity.json
-          curl -fsS http://127.0.0.1:5174/api/auth/session > acceptance-evidence/session.json
+          curl -fsS http://127.0.0.1:5174/api/auth/session > ../acceptance-evidence/session.json
       - name: Real PostgreSQL browser acceptance
         working-directory: frontend
         env:

@@ -27,6 +27,24 @@ const scenario: ScenarioDraft = {
 };
 afterEach(cleanup);
 
+it("reports unsaved amounts and dates until save or cancel, including a failed save", async () => {
+  const onDirtyChange = vi.fn();
+  const onApply = vi.fn().mockResolvedValue(false);
+  const p = product("p1", "Program A", { [second]: "200.00" });
+  render(<ScenarioConversionMatrix products={[p]} scenario={scenario} disabled={false}
+    busy={false} onApply={onApply} onDirtyChange={onDirtyChange} />);
+  fireEvent.click(screen.getByRole("button", { name: `בחר יתרת ${PORTFOLIO_COMPONENT_COLUMNS[6][1]} בתוכנית Program A` }));
+  fireEvent.change(screen.getByLabelText("סכום להמרה"), { target: { value: "42.50" } });
+  fireEvent.change(screen.getByLabelText("תאריך ביצוע מתוכנן"), { target: { value: "2029-02-03" } });
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "שמור המרה בחלופה" }));
+  await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  expect(screen.getByLabelText("סכום להמרה")).toHaveProperty("value", "42.50");
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "בטל בחירה" }));
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+});
+
 it("shows the complete portfolio grid with one button per component and effective date", async () => {
   const onApply = vi.fn().mockResolvedValue(true);
   const p = product("p1", "Program A", { [second]: "200.00" });

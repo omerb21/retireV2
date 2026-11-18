@@ -5,8 +5,12 @@ import { getClient, getClientProfile, updateClientCase, updateClientProfile, get
 import { listPensionProducts, importPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
 import { RetirementWorkspaceScreen } from "./RetirementWorkspaceScreen";
 vi.mock("../components/ScenarioDraftPanel", () => ({
-  ScenarioDraftPanel: ({ initialSource }: { initialSource?: { productId: string; componentCode: string } | null }) =>
-    <section aria-label="עורך חלופות שמורות">{initialSource ? initialSource.productId + "|" + initialSource.componentCode : "חלופות שמורות"}</section>,
+  ScenarioDraftPanel: ({ initialSource, onDirtyChange }: { initialSource?: { productId: string; componentCode: string } | null; onDirtyChange?: (dirty: boolean) => void }) =>
+    <section aria-label="עורך חלופות שמורות">
+      {initialSource ? initialSource.productId + "|" + initialSource.componentCode : "חלופות שמורות"}
+      <button type="button" onClick={() => onDirtyChange?.(true)}>ערוך המרה לא שמורה</button>
+      <button type="button" onClick={() => onDirtyChange?.(false)}>בטל המרה לא שמורה</button>
+    </section>,
 }));
 
 vi.mock("../components/M12DraftReportPanel", () => ({
@@ -107,6 +111,38 @@ beforeEach(() => {
 });
 
 describe("סביבת העבודה המקצועית החדשה", () => {
+
+  it("blocks step and query navigation while scenario conversion input is unsaved", async () => {
+    open();
+    await screen.findByText(/תיק פעיל: לקוח א/);
+    fireEvent.click(screen.getByRole("button", { name: /4\. תכנון תרחישים/ }));
+    fireEvent.click(screen.getByRole("button", { name: "ערוך המרה לא שמורה" }));
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /5\. תוצאות והשוואה/ }));
+    expect(screen.getByRole("heading", { name: "תכנון תרחישים" })).toBeTruthy();
+    expect(screen.getByText(/יש לשמור או לבטל את תיקון הנתונים/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "חזור לנתונים משלימים" }));
+    expect(screen.getByRole("heading", { name: "תכנון תרחישים" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "בטל המרה לא שמורה" }));
+    fireEvent.click(screen.getByRole("button", { name: /5\. תוצאות והשוואה/ }));
+    expect(screen.getByRole("heading", { name: "תוצאות והשוואה" })).toBeTruthy();
+  });
+
+  it("requires explicit confirmation before leaving an unsaved scenario for another client", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      open();
+      await screen.findByText(/תיק פעיל: לקוח א/);
+      fireEvent.click(screen.getByRole("button", { name: /4\. תכנון תרחישים/ }));
+      fireEvent.click(screen.getByRole("button", { name: "ערוך המרה לא שמורה" }));
+      fireEvent.click(screen.getByRole("link", { name: "החלפת לקוח" }));
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(screen.getByRole("heading", { name: "תכנון תרחישים" })).toBeTruthy();
+      expect(screen.getByText(/תיק פעיל: לקוח א/)).toBeTruthy();
+    } finally { confirm.mockRestore(); }
+  });
 
   it("imports clearinghouse files inside the single money-color ledger without a second table", async () => {
     vi.mocked(listPensionProducts).mockResolvedValueOnce([product()]).mockResolvedValueOnce([

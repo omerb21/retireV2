@@ -14,13 +14,14 @@ interface Props {
   busy: boolean;
   initialSource?: { productId: string; componentCode: string } | null;
   onApply: (decisions: DraftDecisionInput[]) => Promise<boolean>;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 const display = (value: string | null | undefined) =>
   value == null ? "לא דווח" : (planCents(value) === null ? "נתון לא תקין" : planMoney(planCents(value)!));
 
 /** Portfolio-shaped planning only; conversion always remains in the scenario draft. */
 export function ScenarioConversionMatrix({
-  products, scenario, disabled, busy, initialSource, onApply,
+  products, scenario, disabled, busy, initialSource, onApply, onDirtyChange,
 }: Props) {
   const rows = useMemo(() => buildPlanRows(products, scenario.decisions), [products, scenario.decisions]);
   const [chosen, setChosen] = useState<string[]>([]);
@@ -32,6 +33,12 @@ export function ScenarioConversionMatrix({
   const [rowAmounts, setRowAmounts] = useState<Record<string, string>>({});
   const [issue, setIssue] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const pendingInput = chosen.length > 0 || saving || when !== "" || partial !== ""
+    || target !== "pension" || Object.keys(rowDates).length > 0 || Object.keys(rowAmounts).length > 0;
+  useEffect(() => {
+    onDirtyChange?.(pendingInput);
+    return () => onDirtyChange?.(false);
+  }, [pendingInput, onDirtyChange]);
   const all = rows.flatMap(row => row.cells);
   const selectedCells = chosen.map(key => all.find(cell => cell.key === key)).filter(
     (cell): cell is PlanCell => cell !== undefined,
@@ -105,6 +112,8 @@ export function ScenarioConversionMatrix({
       if (saved) {
         setChosen([]);
         setPartial("");
+        setWhen("");
+        setTarget("pension");
         setRowDates({});
         setRowAmounts({});
         setScope("רכיב בודד");
@@ -222,8 +231,9 @@ export function ScenarioConversionMatrix({
       <button type="submit" disabled={unable || !chosen.length || !datesReady}>
         {saving ? "שומר..." : chosen.length > 1 ? `שמור ${chosen.length} המרות בחלופה` : "שמור המרה בחלופה"}
       </button>
-      {chosen.length > 0 && <button type="button" disabled={unable} onClick={() => {
-        setChosen([]); setPartial(""); setRowDates({}); setRowAmounts({}); setIssue(null);
+      {pendingInput && <button type="button" disabled={unable} onClick={() => {
+        setChosen([]); setPartial(""); setWhen(""); setTarget("pension");
+        setRowDates({}); setRowAmounts({}); setIssue(null);
       }}>בטל בחירה</button>}
       {issue && <p className="scenario-conversion__error" role="alert">{issue}</p>}
     </form>

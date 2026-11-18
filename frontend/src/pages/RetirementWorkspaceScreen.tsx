@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { UnifiedClientIntake } from "../components/UnifiedClientIntake";
 import { WorkspaceClearinghouseImport } from "../components/WorkspaceClearinghouseImport";
 import { ScenarioDraftPanel } from "../components/ScenarioDraftPanel";
@@ -59,6 +59,7 @@ function workspaceStep(search: string): Step {
 export function RetirementWorkspaceScreen() {
   const { clientId: rawClientId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const clientId = rawClientId && /^[1-9][0-9]*$/.test(rawClientId) ? Number(rawClientId) : NaN;
   const validClient = Number.isSafeInteger(clientId);
   const activeClient = useRef(clientId);
@@ -98,6 +99,11 @@ export function RetirementWorkspaceScreen() {
     if (activeClient.current !== clientId) return;
     if (dirty) supplementDirty.current[key] = true;
     else delete supplementDirty.current[key];
+  }, [clientId]);
+  const onScenarioDirty = useCallback((dirty: boolean) => {
+    if (activeClient.current !== clientId) return;
+    if (dirty) supplementDirty.current["scenario-planning"] = true;
+    else delete supplementDirty.current["scenario-planning"];
   }, [clientId]);
   const hasSupplementDraft = () => Object.values(supplementDirty.current).some(Boolean);
   const notifySupplementSaved = useCallback(() => { if (activeClient.current === clientId) setSupplementGeneration(n => n + 1); }, [clientId]);
@@ -483,6 +489,9 @@ export function RetirementWorkspaceScreen() {
     if (draft !== null || saveState === "saving" || employmentEdit !== null
         || employmentSaving || grantEdit !== null || grantSaving || hasSupplementDraft()) {
       setError("יש לשמור או לבטל את תיקון הנתונים לפני מעבר לשלב אחר.");
+      const restored = new URLSearchParams(location.search);
+      restored.set("step", step);
+      navigate({ search: `?${restored.toString()}` }, { replace: true });
       return;
     }
     setStep(next as Step);
@@ -856,6 +865,7 @@ export function RetirementWorkspaceScreen() {
       {step === "scenario" && <section>
         <h1>תכנון תרחישים</h1>
         <ScenarioDraftPanel clientId={clientId} products={products} initialSource={chosenComponent}
+          onDirtyChange={onScenarioDirty}
           preferredScenarioId={chosenScenarioId}
           onScenarioSelected={scenarioId => {
             if (activeClient.current === clientId) setScenarioChoice({ clientId, scenarioId });

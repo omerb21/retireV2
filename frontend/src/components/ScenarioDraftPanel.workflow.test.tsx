@@ -78,6 +78,22 @@ function pending<T>() {
   return { promise, resolve };
 }
 
+it("registers edited scenario name and decision amounts as unsaved until cancelled", async () => {
+  mocks.list.mockResolvedValue([draft("editable")]);
+  const onDirtyChange = vi.fn();
+  render(<ScenarioDraftPanel clientId={1} products={products} onDirtyChange={onDirtyChange} />);
+  await screen.findByRole("button", { name: "editable" });
+  fireEvent.change(screen.getByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "unsaved" } });
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  fireEvent.change(screen.getByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "" } });
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  fireEvent.click(screen.getByRole("button", { name: "ערוך" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "סכום מתוכנן (₪)" }), { target: { value: "25.00" } });
+  expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "בטל עריכה" }));
+  expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+});
+
 it("creates once and selects the saved server ID after a successful refresh", async () => {
   const saved = { ...draft("created-once"), name: "New plan", decisions: [] };
   mocks.list.mockResolvedValueOnce([]).mockResolvedValueOnce([saved]);

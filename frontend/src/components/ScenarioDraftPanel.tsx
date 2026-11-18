@@ -92,6 +92,7 @@ interface Props {
   view?: "planning" | "results";
   preferredScenarioId?: string | null;
   onScenarioSelected?: (scenarioId: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "אירעה שגיאה בשמירת הטיוטה.";
@@ -99,7 +100,7 @@ function message(error: unknown): string {
 const exactAmount = (value: string): boolean => /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value) && !/^0+(?:\.0{1,2})?$/.test(value);
 export function ScenarioDraftPanel({
   clientId, products, initialSource, view = "planning",
-  preferredScenarioId = null, onScenarioSelected,
+  preferredScenarioId = null, onScenarioSelected, onDirtyChange,
 }: Props) {
   const [drafts, setDrafts] = useState<ScenarioDraft[]>([]);
   const [localSelected, setLocalSelected] = useState<string | null>(null);
@@ -111,12 +112,19 @@ export function ScenarioDraftPanel({
   const [action, setAction] = useState<DraftDecisionInput["action"]>("pension");
   const [effectiveDate, setEffectiveDate] = useState("");
   const [busy, setBusy] = useState(false);
+  const [conversionDirty, setConversionDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createRefreshFailure, setCreateRefreshFailure] = useState<{
     clientId: number; scenarioId: string; reason: string;
   } | null>(null);
   const currentClientId = useRef(clientId);
   currentClientId.current = clientId;
+  const formDirty = name.trim().length > 0 || rename.trim().length > 0 || editingDecisionId !== null;
+  const planningDirty = view === "planning" && (formDirty || conversionDirty || busy);
+  useEffect(() => {
+    onDirtyChange?.(planningDirty);
+    return () => onDirtyChange?.(false);
+  }, [planningDirty, onDirtyChange]);
   const [loading, setLoading] = useState(true);
   // Store the client identity with the approval. A rerender for a different
   // client must fail closed before the capability-fetch effect can run.
@@ -167,7 +175,11 @@ export function ScenarioDraftPanel({
     return () => { admissionEpoch.current++; controller.abort(); };
   }, [clientId, active?.scenario_id, active?.version, admissionRefresh]);
   const visibleAdmission = admission?.identity === admissionIdentity ? admission : null;
-  function selectScenario(id: string) {
+  function selectScenario(id: string, savedByCreate = false) {
+    if (!savedByCreate && id !== selected && (formDirty || conversionDirty)) {
+      setError("יש לשמור או לבטל את קלט התכנון לפני החלפת חלופה.");
+      return;
+    }
     setLocalSelected(id);
     onScenarioSelected?.(id);
     setEditingDecisionId(null);
@@ -187,6 +199,8 @@ export function ScenarioDraftPanel({
     let mounted = true;
     setLoading(true);
     setBusy(false);
+    setConversionDirty(false);
+    setName("");
     setError(null);
     setCreateRefreshFailure(null);
     setEditingDecisionId(null);
@@ -284,7 +298,7 @@ export function ScenarioDraftPanel({
       // the following GET fails, so a retry never creates another scenario.
       setName("");
       setDrafts(existing => [...existing.filter(item => item.scenario_id !== saved.scenario_id), saved]);
-      selectScenario(saved.scenario_id);
+      selectScenario(saved.scenario_id, true);
       try {
         await reload(saved.scenario_id);
       } catch (cause) {
@@ -427,7 +441,7 @@ export function ScenarioDraftPanel({
         key={`${clientId}:${active.scenario_id}`}
         products={products} scenario={active} disabled={active.status !== "draft"}
         busy={busy} initialSource={initialSource}
-        onApply={saveConversionBatch} />}
+        onApply={saveConversionBatch} onDirtyChange={setConversionDirty} />}
       {view === "planning" && <ScenarioSeverancePlanningPanel
         key={`severance:${clientId}:${active.scenario_id}`}
         clientId={clientId} scenario={active} products={products}

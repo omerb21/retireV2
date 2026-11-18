@@ -43,3 +43,58 @@ def test_legacy_run_is_preserved_and_identified(monkeypatch):
 
 def test_unavailable_canonical_source_fails_closed(monkeypatch):
     assert _assess(monkeypatch, source_present=False)["state"] == "unknown"
+
+
+def test_authoritative_parameter_change_detected(monkeypatch):
+    run = SimpleNamespace(fixation_dependency_manifest=object())
+    monkeypatch.setattr(service, "get_run_with_dependency_manifest", lambda **kwargs: run)
+    values = SimpleNamespace(monthly_cap=Decimal("1000"), exemption_percentage=Decimal("0.5"),
+        capital_multiplier=Decimal("180"), grant_impact_multiplier=Decimal("1.35"))
+    entry = SimpleNamespace(dependency_type="parameter_set", stable_identity="p1",
+        canonical_content=SimpleNamespace(parameter_set_id="p1", tax_year=2026, values=values),
+        availability_state="available")
+    monkeypatch.setattr(service, "parse_persisted_manifest", lambda run: SimpleNamespace(
+        context_availability="available", dependencies=[entry]))
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(tax_year=2026, monthly_cap=Decimal("1100"),
+        exemption_percentage=Decimal("0.5"), capital_multiplier=Decimal("180"),
+        grant_impact_multiplier=Decimal("1.35"))
+    db.scalars.side_effect = [SimpleNamespace(all=lambda: []), SimpleNamespace(all=lambda: [])]
+    assert service.assess_persisted_fixation_freshness(
+        client_id=7, run_id=2, db_session=db)["state"] == "changed"
+
+
+def test_unverifiable_professional_parameter_approval_remains_unknown(monkeypatch):
+    run = SimpleNamespace(fixation_dependency_manifest=object())
+    monkeypatch.setattr(service, "get_run_with_dependency_manifest", lambda **kwargs: run)
+    values = SimpleNamespace(monthly_cap=Decimal("1000"), exemption_percentage=Decimal("0.5"),
+        capital_multiplier=Decimal("180"), grant_impact_multiplier=Decimal("1.35"))
+    entry = SimpleNamespace(dependency_type="parameter_set", stable_identity="p1",
+        canonical_content=SimpleNamespace(parameter_set_id="p1", tax_year=2026, values=values),
+        availability_state="available")
+    monkeypatch.setattr(service, "parse_persisted_manifest", lambda run: SimpleNamespace(
+        context_availability="available", dependencies=[entry]))
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(tax_year=2026, **values.__dict__)
+    db.scalars.side_effect = [SimpleNamespace(all=lambda: []), SimpleNamespace(all=lambda: [])]
+    result = service.assess_persisted_fixation_freshness(client_id=7, run_id=2, db_session=db)
+    assert result["state"] == "unknown"
+    assert "parameter_acceptance_authority_unresolved" in result["reason_codes"]
+
+
+def test_m07_resolver_fingerprint_change_is_detected(monkeypatch):
+    run = SimpleNamespace(fixation_dependency_manifest=object())
+    monkeypatch.setattr(service, "get_run_with_dependency_manifest", lambda **kwargs: run)
+    entry = SimpleNamespace(dependency_type="m07_resolver", stable_identity="r1",
+        canonical_content=SimpleNamespace(calculation_scope="fixation", manifest_version="v1",
+            b1_evidence_revision_id="r1", selections=[], resolver_fingerprint="a" * 64),
+        availability_state="available")
+    monkeypatch.setattr(service, "parse_persisted_manifest", lambda run: SimpleNamespace(
+        context_availability="available", dependencies=[entry]))
+    monkeypatch.setattr(service, "resolve_calculation_inputs", lambda **kwargs: SimpleNamespace(
+        outcome="resolved", fingerprint="b" * 64))
+    db = MagicMock()
+    db.scalars.side_effect = [SimpleNamespace(all=lambda: []), SimpleNamespace(all=lambda: [])]
+    result = service.assess_persisted_fixation_freshness(client_id=7, run_id=2, db_session=db)
+    assert result["state"] == "changed"
+    assert "m07_resolver" in result["reason_codes"]

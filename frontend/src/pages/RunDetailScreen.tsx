@@ -250,6 +250,7 @@ export function RunDetailScreen() {
   return (
     <section>
       <h2>Fixation Run Detail</h2>
+      <p role="status">נתוני ריצה היסטורית. אין אישור עדכניות להסתמכות מקצועית.</p>
       <p>Client ID: {clientId}</p>
       {clientName ? <p>Client Name: {clientName}</p> : null}
       <p>Run ID: {runId}</p>

@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.fixation_run import FixationRun
 from app.models.grant import Grant
 from app.models.actual_capitalization import ActualCapitalization
+from app.models.official_parameter_set import OfficialParameterSet
+from app.schemas.m07_calculation_input_resolution import CalculationInputResolutionRequest
+from app.services.m07_calculation_input_resolver import resolve_calculation_inputs
 from app.schemas.fixation_admissibility import (
     AdmissibleFixationInput,
     FixationAdmissionRequest,
@@ -131,7 +134,7 @@ def assess_persisted_fixation_freshness(
 
     changed: set[str] = set()
     unknown: set[str] = set()
-    entries = [entry for entry in manifest.dependencies if entry.dependency_type in {"grant", "capitalization"}]
+    entries = manifest.dependencies
     grants = {row.grant_id: row for row in db_session.scalars(
         select(Grant).where(Grant.client_id == client_id)).all()}
     caps = {row.capitalization_id: row for row in db_session.scalars(
@@ -141,10 +144,15 @@ def assess_persisted_fixation_freshness(
     for entry in entries:
         identity = entry.stable_identity
         content = entry.canonical_content
-        if not identity or content is None or entry.availability_state != "available":
+        if entry.availability_state == "not_applicable":
+            continue
+        if content is None or entry.availability_state != "available":
             unknown.add("incomplete_dependency_entry")
             continue
         if entry.dependency_type == "grant":
+            if not identity:
+                unknown.add("grant_identity_missing")
+                continue
             observed_grants.add(identity)
             row = grants.get(identity)
             if row is None:
@@ -160,21 +168,69 @@ def assess_persisted_fixation_freshness(
                 unknown.add(f"grant_indexation_unavailable:{identity}")
             elif row.indexed_amount != content.indexed_amount:
                 changed.add(f"grant:{identity}")
-        else:
+        elif entry.dependency_type == "capitalization":
+            if not identity:
+                unknown.add("capitalization_identity_missing")
+                continue
             observed_caps.add(identity)
             row = caps.get(identity)
             if row is None:
                 unknown.add(f"capitalization_source_unavailable:{identity}")
             elif row.amount != content.amount or row.capitalization_date != content.capitalization_date:
                 changed.add(f"capitalization:{identity}")
+        elif entry.dependency_type == "parameter_set":
+            # An accepted planner parameter envelope is not identical to the
+            # official source registry. Compare only matching authoritative
+            # numeric fields, and leave approval semantics unknown.
+            row = db_session.get(OfficialParameterSet, content.parameter_set_id)
+            if row is None:
+                unknown.add(f"parameter_source_unavailable:{content.parameter_set_id}")
+            elif row.tax_year != content.tax_year or any((
+                row.monthly_cap != content.values.monthly_cap,
+                row.exemption_percentage != content.values.exemption_percentage,
+                row.capital_multiplier != content.values.capital_multiplier,
+                row.grant_impact_multiplier != content.values.grant_impact_multiplier,
+            )):
+                changed.add(f"parameter_set:{content.parameter_set_id}")
+            else:
+                unknown.add("parameter_acceptance_authority_unresolved")
+        elif entry.dependency_type == "m07_resolver":
+            try:
+                current = resolve_calculation_inputs(
+                    db_session=db_session, client_id=client_id,
+                    request=CalculationInputResolutionRequest(
+                        calculation_scope=content.calculation_scope,
+                        manifest_version=content.manifest_version,
+                        b1_evidence_revision_id=content.b1_evidence_revision_id,
+                        selections=content.selections,
+                    ),
+                )
+            except (LookupError, ValueError):
+                unknown.add("m07_resolution_unavailable")
+            else:
+                if current.outcome != "resolved":
+                    unknown.add("m07_resolution_not_resolved")
+                elif current.fingerprint != content.resolver_fingerprint:
+                    changed.add("m07_resolver")
+        elif entry.dependency_type == "m07":
+            unknown.add("legacy_m07_authority_unresolved")
+        elif entry.dependency_type == "calculation_context":
+            # No approved running engine-version registry is available here.
+            unknown.add("calculation_implementation_version_unresolved")
+        elif entry.dependency_type == "future_reserve":
+            unknown.add("future_reserve_professional_decision_unresolved")
+        elif entry.dependency_type == "cbs":
+            unknown.add("live_cbs_evidence_unavailable")
+        else:
+            unknown.add(f"unsupported_dependency_type:{entry.dependency_type}")
     if set(grants) - observed_grants:
         changed.add("grant:collection")
     if set(caps) - observed_caps:
         changed.add("capitalization:collection")
     # Stored accepted judgments, pension products, CBS evidence and calculation
     # implementation version lack a complete authoritative live resolver here.
-    unknown.add("full_authoritative_dependency_resolution_unavailable")
-    state = "changed" if changed else "unknown"
+    unknown.add("pension_product_dependency_not_in_manifest")
+    state = "changed" if changed else "unknown" if unknown else "current"
     return {"run_id": run_id, "client_id": client_id, "state": state,
             "assessed_at": assessed_at, "reason_codes": sorted(changed | unknown)}
 

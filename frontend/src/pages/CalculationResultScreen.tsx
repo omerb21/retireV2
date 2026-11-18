@@ -243,6 +243,7 @@ export function CalculationResultScreen() {
   return (
     <section>
       <h2>Calculation Result</h2>
+      <p>תוצאת חישוב לצפייה בלבד. אין אישור עדכניות אוטומטי לשימוש מקצועי.</p>
       <p>Client ID: {clientId}</p>
       {clientName ? <p>Client Name: {clientName}</p> : null}
       <p><Link to={inputPath} state={navigationState}>Back to Fixation Parameters</Link></p>

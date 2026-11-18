@@ -7,27 +7,50 @@ equate distinct domain operations merely because they share a verb.
 import re
 from collections import defaultdict
 
+from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from app.main import create_app
 
 
 def _shape(path: str) -> str:
     # {client_id} and {id} still address the same HTTP resource.
-    return re.sub(r"\\{[^{}]+\\}", "{}", path)
+    return re.sub(r"\{[^{}]+\}", "{}", path)
 
 
-def test_no_duplicate_canonical_api_operation_registration():
-    app = create_app()
+def _duplicates(routes):
     registered = defaultdict(list)
-    for route in app.routes:
+    for route in routes:
         if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
             continue
         for method in route.methods:
             if method in {"HEAD", "OPTIONS"}:
                 continue
             registered[(method, _shape(route.path))].append(route.endpoint.__qualname__)
-    duplicates = {str(key): handlers for key, handlers in registered.items()
-                  if len(handlers) != 1}
+    return {str(key): handlers for key, handlers in registered.items()
+            if len(handlers) != 1}
+
+
+def test_parameter_aliases_are_detected_as_duplicate_api_operations():
+    app = FastAPI()
+
+    @app.get("/api/clients/{client_id}/records/{record_id}")
+    def by_client_record(client_id: int, record_id: int):
+        return {}
+
+    @app.get("/api/clients/{id}/records/{item_id}")
+    def by_alias(id: int, item_id: int):
+        return {}
+
+    assert _shape("/api/clients/{client_id}/records/{record_id}") == \
+        _shape("/api/clients/{id}/records/{item_id}")
+    duplicates = _duplicates(app.routes)
+    assert len(duplicates) == 1, duplicates
+    assert len(next(iter(duplicates.values()))) == 2
+
+
+def test_no_duplicate_canonical_api_operation_registration():
+    app = create_app()
+    duplicates = _duplicates(app.routes)
     assert not duplicates, duplicates
 
 

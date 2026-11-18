@@ -221,13 +221,17 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     const after=await request.get(API+`/${a}/retirement-planning-input`);
     expect(after.status()).toBe(200);
     const next=await after.json();
-    const fingerprintChanged = next.source_state_fingerprint !== current.source_state_fingerprint;
+    // Expenses are planning inputs, not canonical pension source state.
+    expect(next.source_state_fingerprint).toBe(current.source_state_fingerprint);
+    expect(next.planning_input_fingerprint).not.toBe(current.planning_input_fingerprint);
+    expect(next.planning_calculation_input_fingerprint).not.toBe(current.planning_calculation_input_fingerprint);
     const savedExpense = (await getRows(request,a,"recurring-expenses")).find((row:any)=>row.id===expense);
     expect(String(savedExpense?.amount)).toMatch(/^810(?:\.0+)?$/);
     writeFileSync(info.outputPath("12-fingerprint-regression.json"),JSON.stringify({
-      before:current.source_state_fingerprint,after:next.source_state_fingerprint,
-      changed:fingerprintChanged,invalidInputStatus:invalid.status(),
-      regressionFinding:fingerprintChanged ? null : "PKG02-REGRESSION-001: expense amount changed in PostgreSQL but planning-input source_state_fingerprint remained unchanged",
+      sourceState:{before:current.source_state_fingerprint,after:next.source_state_fingerprint,expected:"unchanged"},
+      planningInput:{before:current.planning_input_fingerprint,after:next.planning_input_fingerprint,expected:"changed"},
+      planningCalculationInput:{before:current.planning_calculation_input_fingerprint,after:next.planning_calculation_input_fingerprint,expected:"changed"},
+      invalidInputStatus:invalid.status(),
       caveat:"A changed fingerprint does not prove invalidation of every downstream scenario/result"
     },null,2));
   });

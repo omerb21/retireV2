@@ -319,28 +319,47 @@ it("reports changed source version as UNKNOWN even when permission says allowed"
   render(<ScenarioDraftPanel clientId={1} products={products} />);
   fireEvent.click(await screen.findByRole("button", { name: /בדוק ראיות להרשאת רכיב/ }));
   const evidence = screen.getByRole("region", { name: "ראיות החלטה decision-version-change" });
-  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN (המקור השתנה"));
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN (המקור או גרסת הכללים"));
   expect(evidence).not.toHaveTextContent("אישור כשירות מקצועית: מאושר");
 });
 
 it("fails closed for unavailable/ambiguous source evidence and source revalidation", async () => {
   mocks.list.mockResolvedValue([draft("unknown", "needs_revalidation")]);
-  mocks.preview.mockRejectedValueOnce(new Error("UNKNOWN_PRODUCT_TYPE"))
-    .mockResolvedValueOnce({ ...allowed, permission_status: "allowed" });
   render(<ScenarioDraftPanel clientId={1} products={products} />);
   const button = await screen.findByRole("button", { name: /בדוק ראיות להרשאת רכיב/ });
   fireEvent.click(button);
   const evidence = screen.getByRole("region", { name: "ראיות החלטה decision-unknown" });
-  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN_PRODUCT_TYPE"));
-  fireEvent.click(button);
-  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN (המקור השתנה"));
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN: גרסת התרחיש או ראיית המקור השתנו"));
+  expect(mocks.preview).not.toHaveBeenCalled();
   expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("treats ambiguous product type from authoritative preview as UNKNOWN", async () => {
+  mocks.list.mockResolvedValue([draft("ambiguous")]);
+  mocks.preview.mockRejectedValue(new Error("UNKNOWN_PRODUCT_TYPE"));
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByRole("button", { name: /בדוק ראיות להרשאת רכיב/ }));
+  const evidence = screen.getByRole("region", { name: "ראיות החלטה decision-ambiguous" });
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN: UNKNOWN_PRODUCT_TYPE"));
+});
+
+it("rejects a source fingerprint change detected by fresh server reconciliation", async () => {
+  const initial = draft("source-fingerprint");
+  const changed = draft("source-fingerprint");
+  changed.decisions[0].validation_state = "needs_revalidation";
+  mocks.list.mockResolvedValueOnce([initial]).mockResolvedValueOnce([changed]);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByRole("button", { name: /בדוק ראיות להרשאת רכיב/ }));
+  const evidence = screen.getByRole("region", { name: "ראיות החלטה decision-source-fingerprint" });
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN: גרסת התרחיש או ראיית המקור השתנו"));
+  expect(mocks.preview).not.toHaveBeenCalled();
 });
 
 it("keeps a blocked decision separate from an independent allowed-permission decision", async () => {
   const separate = draft("two-decisions");
   separate.decisions.push({ ...separate.decisions[0], decision_id: "independent",
-    source_component_id: "c2", component_code: "תגמולי_מעביד_עד_2000" });
+    source_component_id: "c2", component_code: "תגמולי_מעביד_עד_2000",
+    ruleset_digest_at_review: "b".repeat(64) });
   mocks.list.mockResolvedValue([separate]);
   mocks.preview.mockImplementation(async (_client: number, decision: ScenarioDraft["decisions"][number]) =>
     decision.decision_id === "independent"

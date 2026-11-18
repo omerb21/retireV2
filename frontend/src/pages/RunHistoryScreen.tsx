@@ -166,6 +166,7 @@ export function RunHistoryScreen() {
                   <p>
                     <strong>Status:</strong> {entry.status}
                   </p>
+                  <p role="status">תוצאה היסטורית. עדכניות הנתונים לא אומתה לצורך הסתמכות מקצועית.</p>
                   <p>
                     <strong>Calculation Version:</strong> {entry.calculation_version ?? "Unknown"}
                   </p>

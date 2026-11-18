@@ -11,6 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.fixation_run import FixationRun
+from app.models.grant import Grant
+from app.models.actual_capitalization import ActualCapitalization
 from app.schemas.fixation_admissibility import (
     AdmissibleFixationInput,
     FixationAdmissionRequest,
@@ -104,6 +106,77 @@ def canonical_json(value: Any) -> str:
 
 def dependency_fingerprint(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def assess_persisted_fixation_freshness(
+    *, client_id: int, run_id: int, db_session: Session,
+) -> dict[str, Any] | None:
+    """Fail closed against canonical records; never trust a caller's current_context.
+
+    A run's stored professional decisions and pension product dependencies cannot
+    currently be reconstructed from the canonical records as one complete input.
+    Thus an unchanged subset is UNKNOWN, never evidence of current eligibility.
+    """
+    run = get_run_with_dependency_manifest(client_id=client_id, run_id=run_id, db_session=db_session)
+    if run is None:
+        return None
+    manifest = parse_persisted_manifest(run)
+    assessed_at = datetime.now(timezone.utc).isoformat()
+    if run.fixation_dependency_manifest is None:
+        return {"run_id": run_id, "client_id": client_id, "state": "legacy",
+                "assessed_at": assessed_at, "reason_codes": ["legacy_manifest_absent"]}
+    if manifest is None or manifest.context_availability != "available":
+        return {"run_id": run_id, "client_id": client_id, "state": "unknown",
+                "assessed_at": assessed_at, "reason_codes": ["manifest_unavailable_or_incompatible"]}
+
+    changed: set[str] = set()
+    unknown: set[str] = set()
+    entries = [entry for entry in manifest.dependencies if entry.dependency_type in {"grant", "capitalization"}]
+    grants = {row.grant_id: row for row in db_session.scalars(
+        select(Grant).where(Grant.client_id == client_id)).all()}
+    caps = {row.capitalization_id: row for row in db_session.scalars(
+        select(ActualCapitalization).where(ActualCapitalization.client_id == client_id)).all()}
+    observed_grants: set[str] = set()
+    observed_caps: set[str] = set()
+    for entry in entries:
+        identity = entry.stable_identity
+        content = entry.canonical_content
+        if not identity or content is None or entry.availability_state != "available":
+            unknown.add("incomplete_dependency_entry")
+            continue
+        if entry.dependency_type == "grant":
+            observed_grants.add(identity)
+            row = grants.get(identity)
+            if row is None:
+                unknown.add(f"grant_source_unavailable:{identity}")
+            elif any((
+                row.nominal_amount != content.nominal_amount,
+                row.grant_date != content.grant_date,
+                row.work_start_date != content.work_start_date,
+                row.work_end_date != content.work_end_date,
+            )):
+                changed.add(f"grant:{identity}")
+            elif row.indexed_amount is None:
+                unknown.add(f"grant_indexation_unavailable:{identity}")
+            elif row.indexed_amount != content.indexed_amount:
+                changed.add(f"grant:{identity}")
+        else:
+            observed_caps.add(identity)
+            row = caps.get(identity)
+            if row is None:
+                unknown.add(f"capitalization_source_unavailable:{identity}")
+            elif row.amount != content.amount or row.capitalization_date != content.capitalization_date:
+                changed.add(f"capitalization:{identity}")
+    if set(grants) - observed_grants:
+        changed.add("grant:collection")
+    if set(caps) - observed_caps:
+        changed.add("capitalization:collection")
+    # Stored accepted judgments, pension products, CBS evidence and calculation
+    # implementation version lack a complete authoritative live resolver here.
+    unknown.add("full_authoritative_dependency_resolution_unavailable")
+    state = "changed" if changed else "unknown"
+    return {"run_id": run_id, "client_id": client_id, "state": state,
+            "assessed_at": assessed_at, "reason_codes": sorted(changed | unknown)}
 
 
 def _entry_sort_key(entry: DependencyEntry) -> tuple[str, str]:

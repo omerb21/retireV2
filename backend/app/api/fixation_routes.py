@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ from app.services.fixation_admission_service import (
     parse_and_admit_fixation_payload,
 )
 from app.services.fixation_dependency_service import (
+    assess_persisted_fixation_freshness,
     build_fixation_dependency_manifest,
     compare_fixation_dependency_manifests,
     get_run_with_dependency_manifest,
@@ -343,6 +344,18 @@ def fixation_run_detail(
             for err in detail.fixation_validation_errors
         ],
     }
+
+
+@router.get(
+    "/clients/{client_id}/fixation/runs/{run_id}/freshness",
+)
+def fixation_run_freshness(client_id: int, run_id: int, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    _require_client(db, client_id)
+    result = assess_persisted_fixation_freshness(client_id=client_id, run_id=run_id, db_session=db)
+    if result is None:
+        raise _run_not_found(run_id)
+    return result
 
 
 @router.get(

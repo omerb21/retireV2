@@ -3,6 +3,7 @@ import type { PensionProduct } from "../api/pensionProductsApi";
 import { preserveEditedDecisionId } from "./scenarioDraftEdit";
 import { ScenarioStage6Panel } from "./ScenarioStage6Panel";
 import { ScenarioConversionMatrix } from "./ScenarioConversionMatrix";
+import { previewDraftDecision, type CheckedPermissionComponent } from "../api/scenarioDraftPermissionApi";
 import { ScenarioSeverancePlanningPanel } from "./ScenarioSeverancePlanningPanel";
 import { ScenarioFixationProfessionalReviewPanel } from "./ScenarioFixationProfessionalReviewPanel";
 import { ScenarioMonthlyComparisonPanel } from "./ScenarioMonthlyComparisonPanel";
@@ -13,6 +14,60 @@ import {
   renameScenarioDraft, replaceScenarioDraft, readCalculationAdmission,
   type CalculationAdmissionEvidence, type DraftDecisionInput, type ScenarioDraft,
 } from "../api/scenarioDraftsApi";
+
+/** Read-only permission evidence. Never a professional admission or approval. */
+function SavedDecisionEvidence({ clientId, decision }: {
+  clientId: number; decision: ScenarioDraft["decisions"][number];
+}) {
+  const [result, setResult] = useState<{ state: "unknown" | "loading" | "checked";
+    data?: CheckedPermissionComponent; error?: string }>({ state: "unknown" });
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+  async function inspect() {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setResult({ state: "loading" });
+    try {
+      const data = await previewDraftDecision(clientId, decision, controller.signal);
+      if (!controller.signal.aborted) setResult({ state: "checked", data });
+    } catch (cause) {
+      if (!controller.signal.aborted) setResult({ state: "unknown",
+        error: cause instanceof Error ? cause.message : "ראיית ההרשאה אינה זמינה." });
+    }
+  }
+  const changed = result.data && (decision.product_version_at_review === null
+    || result.data.preview_product_version !== decision.product_version_at_review);
+  const unverified = decision.validation_state === "needs_revalidation" || changed;
+  const action = decision.action === "pension" ? "קצבה" : "הון";
+  return <div role="region" aria-label={`ראיות החלטה ${decision.decision_id}`}>
+    <p>מקור: <bdi>{decision.source_product_id}</bdi> / <bdi>{decision.source_component_id}</bdi>
+      {" | "}גרסת מקור בשמירה: {decision.product_version_at_review ?? "UNKNOWN"}
+      {" | "}מצב החלטה: {decision.validation_state}</p>
+    <p>בדיקת הרשאות: {result.state === "loading" ? "נטענת" :
+      result.state === "unknown" ? "UNKNOWN (לא נבדקה או חסרה ראיה)" :
+        unverified ? "UNKNOWN (המקור השתנה או נדרש אימות מחדש)" :
+          result.data?.permission_status === "allowed" ? "הרשאת רכיב בלבד, ללא אישור כשירות" :
+            "חסום או לא ידוע"}</p>
+    {result.data && <div>
+      <p>גרסת מקור נוכחית: {result.data.preview_product_version}
+        {" | "}יתרת מקור: <bdi>{result.data.balance}</bdi>
+        {" | "}בדיקת יעד: {action}</p>
+      <p>סיווג הרשאה: {unverified ? "UNKNOWN" : result.data.permission_status}
+        {" | "}סיבה: <bdi>{result.data.reason_code}</bdi> - {result.data.reason_he}</p>
+      <p>טביעת מקור: <bdi>{result.data.source_fingerprint}</bdi>
+        {" | "}טביעת כללים: <bdi>{result.data.ruleset_digest}</bdi></p>
+      {unverified && <p role="alert">החלטת {action} זו דורשת בדיקה מחדש; אין להסתמך על הרשאה ישנה.</p>}
+      {result.data.permission_status !== "allowed" &&
+        <p role="alert">החסימה מתייחסת להחלטה זו ({action}), ולא לרכיבים בלתי תלויים.</p>}
+    </div>}
+    {result.error && <p role="alert">UNKNOWN: {result.error}</p>}
+    <button type="button" disabled={result.state === "loading"} onClick={() => void inspect()}>
+      בדוק ראיות להרשאת רכיב (ללא אישור מקצועי)
+    </button>
+    <p>אישור כשירות מקצועית: לא זמין בשלב A.</p>
+  </div>;
+}
 
 interface Props {
   clientId: number;
@@ -350,6 +405,8 @@ export function ScenarioDraftPanel({
         <strong>{sources.find(item => item.componentId === decision.source_component_id)?.label ?? decision.component_code}</strong>
         {" "} - {decision.amount} ₪ {decision.action === "pension" ? "לקצבה" : "להון"}
         {" "} - ביצוע מתוכנן: {decision.effective_date}
+        <SavedDecisionEvidence key={`${clientId}:${active.scenario_id}:${active.version}:${decision.decision_id}`}
+          clientId={clientId} decision={decision}/>
         {active.status !== "archived" && <>
           <button disabled={busy} type="button" onClick={() => beginEdit(decision)}>ערוך</button>
           <button disabled={busy} type="button" onClick={() => void remove(index)}>מחק המרה</button>

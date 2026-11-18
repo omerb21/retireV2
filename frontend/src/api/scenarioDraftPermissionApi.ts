@@ -25,15 +25,18 @@ export interface ScenarioPermissionPreview {
 }
 export interface CheckedPermissionComponent extends PermissionComponent {
   preview_product_version: number;
+  source_fingerprint: string;
+  ruleset_digest: string;
 }
 
 export async function previewDraftDecision(
   clientId: number,
   decision: ScenarioDraftDecision,
+  signal?: AbortSignal,
 ): Promise<CheckedPermissionComponent> {
   const response = await apiFetch(
     buildApiUrl(`/clients/${clientId}/scenario-conversions/permission-preview`),
-    { method: "POST", headers: { "Content-Type": "application/json" },
+    { method: "POST", signal, cache: "no-store", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         product_id: decision.source_product_id,
         action: decision.action,
@@ -64,5 +67,13 @@ export async function previewDraftDecision(
   if (!Number.isInteger(result.product_version) || result.product_version < 1) {
     throw new Error("גרסת מוצר המקור בתשובת ההרשאות אינה תקינה.");
   }
-  return { ...matching[0], preview_product_version: result.product_version };
+  if (!/^[a-f0-9]{64}$/.test(result.source_fingerprint)
+      || !/^[a-f0-9]{64}$/.test(result.ruleset_digest)
+      || !["allowed", "blocked", "needs_source_reconciliation", "unknown"].includes(matching[0].permission_status)
+      || typeof matching[0].reason_code !== "string" || !matching[0].reason_code
+      || typeof matching[0].reason_he !== "string" || !matching[0].reason_he) {
+    throw new Error("ראיות ההרשאה חסרות או אינן תקינות.");
+  }
+  return { ...matching[0], preview_product_version: result.product_version,
+    source_fingerprint: result.source_fingerprint, ruleset_digest: result.ruleset_digest };
 }

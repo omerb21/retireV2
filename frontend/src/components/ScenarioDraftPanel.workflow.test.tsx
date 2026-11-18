@@ -70,7 +70,8 @@ const products = [{
   conversion_components: [{ component_id: "c1", component_code: "תגמולי_עובד_עד_2000", balance: "100.00" }],
 }] as unknown as PensionProduct[];
 const allowed = { preview_product_version: 1, component_id: "c1", component_code: "תגמולי_עובד_עד_2000",
-  balance: "100.00", permission_status: "allowed", reason_code: "BASE_PERMISSION_ALLOWED", reason_he: "מותר" };
+  balance: "100.00", permission_status: "allowed", reason_code: "BASE_PERMISSION_ALLOWED", reason_he: "מותר",
+  source_fingerprint: "a".repeat(64), ruleset_digest: "b".repeat(64) };
 function pending<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(r => { resolve = r; });
@@ -293,6 +294,67 @@ it("keeps source-stale drafts noneditable without showing a permission workflow"
   await screen.findByRole("button", { name: "stale" });
   expect((screen.getByRole("button", { name: "המר תוכנית Product" }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: /בדוק הרשאת בסיס/ })).toBeNull();
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("inspects saved decision source evidence without professional approval or any write", async () => {
+  mocks.list.mockResolvedValue([draft("evidence")]);
+  mocks.preview.mockResolvedValue({ ...allowed, permission_status: "blocked",
+    reason_code: "DEPENDENCY_MISSING", reason_he: "חסרה אסמכתה" });
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const evidence = await screen.findByRole("region", { name: "ראיות החלטה decision-evidence" });
+  expect(evidence).toHaveTextContent("UNKNOWN");
+  fireEvent.click(screen.getByRole("button", { name: /בדוק ראיות להרשאת רכיב/ }));
+  await waitFor(() => expect(evidence).toHaveTextContent("DEPENDENCY_MISSING"));
+  expect(evidence).toHaveTextContent("חסרה אסמכתה");
+  expect(evidence).toHaveTextContent("החסימה מתייחסת להחלטה זו");
+  expect(evidence).toHaveTextContent("אישור כשירות מקצועית: לא זמין");
+  expect(mocks.preview).toHaveBeenCalledWith(1, expect.objectContaining({ decision_id: "decision-evidence" }), expect.any(AbortSignal));
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("reports changed source version as UNKNOWN even when permission says allowed", async () => {
+  mocks.list.mockResolvedValue([draft("version-change")]);
+  mocks.preview.mockResolvedValue({ ...allowed, preview_product_version: 2 });
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.click(await screen.findByRole("button", { name: /בדוק ראיות להרשאת רכיב/ }));
+  const evidence = screen.getByRole("region", { name: "ראיות החלטה decision-version-change" });
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN (המקור השתנה"));
+  expect(evidence).not.toHaveTextContent("אישור כשירות מקצועית: מאושר");
+});
+
+it("fails closed for unavailable/ambiguous source evidence and source revalidation", async () => {
+  mocks.list.mockResolvedValue([draft("unknown", "needs_revalidation")]);
+  mocks.preview.mockRejectedValueOnce(new Error("UNKNOWN_PRODUCT_TYPE"))
+    .mockResolvedValueOnce({ ...allowed, permission_status: "allowed" });
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const button = await screen.findByRole("button", { name: /בדוק ראיות להרשאת רכיב/ });
+  fireEvent.click(button);
+  const evidence = screen.getByRole("region", { name: "ראיות החלטה decision-unknown" });
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN_PRODUCT_TYPE"));
+  fireEvent.click(button);
+  await waitFor(() => expect(evidence).toHaveTextContent("UNKNOWN (המקור השתנה"));
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("keeps a blocked decision separate from an independent allowed-permission decision", async () => {
+  const separate = draft("two-decisions");
+  separate.decisions.push({ ...separate.decisions[0], decision_id: "independent",
+    source_component_id: "c2", component_code: "תגמולי_מעביד_עד_2000" });
+  mocks.list.mockResolvedValue([separate]);
+  mocks.preview.mockImplementation(async (_client: number, decision: ScenarioDraft["decisions"][number]) =>
+    decision.decision_id === "independent"
+      ? { ...allowed, component_id: "c2", component_code: decision.component_code }
+      : { ...allowed, permission_status: "blocked", reason_code: "MISSING_EVIDENCE", reason_he: "חסרה ראיה" });
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  const sections = await screen.findAllByRole("region", { name: /^ראיות החלטה/ });
+  const buttons = screen.getAllByRole("button", { name: /בדוק ראיות להרשאת רכיב/ });
+  fireEvent.click(buttons[0]);
+  fireEvent.click(buttons[1]);
+  await waitFor(() => expect(sections[0]).toHaveTextContent("MISSING_EVIDENCE"));
+  await waitFor(() => expect(sections[1]).toHaveTextContent("הרשאת רכיב בלבד"));
+  expect(sections[1]).not.toHaveTextContent("MISSING_EVIDENCE");
+  expect(sections[1]).toHaveTextContent("אישור כשירות מקצועית: לא זמין");
   expect(mocks.replace).not.toHaveBeenCalled();
 });
 

@@ -13,7 +13,7 @@ const response = {
   schema_version: "SCENARIO_PERMISSION_PREVIEW_V1",
   client_id: 1, product_id: "p1", product_version: 1, action: "pension", effective_date: "2026-10-24",
   overall_status: "mixed", professional_eligibility_status: "not_evaluated",
-  tax_status: "not_evaluated", source_fingerprint: "source", ruleset_digest: "rules",
+  tax_status: "not_evaluated", source_fingerprint: "a".repeat(64), ruleset_digest: "b".repeat(64),
   components: [{ component_id: "c1", component_code: sample.component_code,
     balance: "50.00", permission_status: "blocked",
     reason_code: "BASE_PERMISSION_BLOCKED", reason_he: "חסום" }],
@@ -25,9 +25,18 @@ it("matches the exact saved component and action, without treating overall produ
   const component = await previewDraftDecision(1, sample);
   expect(component.permission_status).toBe("blocked");
   expect(component.preview_product_version).toBe(1);
+  expect(component.source_fingerprint).toBe("a".repeat(64));
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(fetcher.mock.calls[0][1].method).toBe("POST");
   expect(JSON.parse(fetcher.mock.calls[0][1].body).product_id).toBe("p1");
+});
+it("fails closed on missing ruleset and unknown component permission state", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true,
+    json: async () => ({ ...response, ruleset_digest: "" }) }));
+  await expect(previewDraftDecision(1, sample)).rejects.toThrow("חסרות");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true,
+    json: async () => ({ ...response, components: [{ ...response.components[0], permission_status: "approved" }] }) }));
+  await expect(previewDraftDecision(1, sample)).rejects.toThrow("חסרות");
 });
 it("rejects a mismatched client or missing component instead of showing permission", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...response, client_id: 2 }) }));

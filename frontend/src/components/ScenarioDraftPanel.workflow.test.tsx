@@ -78,6 +78,69 @@ function pending<T>() {
   return { promise, resolve };
 }
 
+it("creates once and selects the saved server ID after a successful refresh", async () => {
+  const saved = { ...draft("created-once"), name: "New plan", decisions: [] };
+  mocks.list.mockResolvedValueOnce([]).mockResolvedValueOnce([saved]);
+  mocks.create.mockResolvedValue(saved);
+  const selected = vi.fn();
+  render(<ScenarioDraftPanel clientId={1} products={products} onScenarioSelected={selected} />);
+  await screen.findByRole("textbox", { name: "שם חלופה חדשה" });
+  fireEvent.change(screen.getByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "New plan" } });
+  fireEvent.click(screen.getByRole("button", { name: "צור ושמור חלופה" }));
+  await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(mocks.create).toHaveBeenCalledWith(1, "New plan");
+  expect(selected).toHaveBeenCalledWith("created-once");
+  expect(screen.queryByRole("button", { name: "נסה לרענן חלופות" })).toBeNull();
+});
+
+it("does not claim success or retry when the creation POST fails", async () => {
+  mocks.list.mockResolvedValue([]);
+  mocks.create.mockRejectedValue(Error("POST failed"));
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.change(await screen.findByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "New plan" } });
+  fireEvent.click(screen.getByRole("button", { name: "צור ושמור חלופה" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("POST failed");
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "נסה לרענן חלופות" })).toBeNull();
+});
+
+it("preserves a successful POST and retries only GET after refresh failure", async () => {
+  const saved = { ...draft("saved-after-get-failure"), name: "New plan", decisions: [] };
+  mocks.list.mockResolvedValueOnce([]).mockRejectedValueOnce(Error("GET failed"))
+    .mockResolvedValueOnce([saved]);
+  mocks.create.mockResolvedValue(saved);
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.change(await screen.findByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "New plan" } });
+  fireEvent.click(screen.getByRole("button", { name: "צור ושמור חלופה" }));
+  const retry = await screen.findByRole("button", { name: "נסה לרענן חלופות" });
+  expect(retry.parentElement).toHaveTextContent("saved-after-get-failure");
+  expect(retry.parentElement).toHaveTextContent("GET failed");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  fireEvent.click(retry);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "נסה לרענן חלופות" })).toBeNull());
+  expect(mocks.list).toHaveBeenCalledTimes(3);
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "New plan" })).toHaveAttribute("aria-pressed", "true");
+});
+
+it("does not display a late client A creation on client B", async () => {
+  const late = pending<ScenarioDraft>();
+  mocks.list.mockImplementation(async (id: number) => id === 1 ? [] : [{ ...draft("client-B"), client_id: 2 }]);
+  mocks.create.mockReturnValue(late.promise);
+  const view = render(<ScenarioDraftPanel clientId={1} products={products} />);
+  fireEvent.change(await screen.findByRole("textbox", { name: "שם חלופה חדשה" }), { target: { value: "Client A plan" } });
+  fireEvent.click(screen.getByRole("button", { name: "צור ושמור חלופה" }));
+  await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+  view.rerender(<ScenarioDraftPanel clientId={2} products={products} />);
+  await screen.findByRole("button", { name: "client-B" });
+  late.resolve({ ...draft("client-A"), name: "Client A plan" });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Client A plan" })).toBeNull());
+  expect(screen.queryByRole("button", { name: "נסה לרענן חלופות" })).toBeNull();
+  expect(mocks.list).toHaveBeenCalledTimes(2);
+});
+
 it("shows Stage 6 only after an affirmative backend capability", async () => {
   mocks.list.mockResolvedValue([draft("approved")]);
   mocks.capability.mockResolvedValue(true);

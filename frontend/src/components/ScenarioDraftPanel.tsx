@@ -112,6 +112,11 @@ export function ScenarioDraftPanel({
   const [effectiveDate, setEffectiveDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createRefreshFailure, setCreateRefreshFailure] = useState<{
+    clientId: number; scenarioId: string; reason: string;
+  } | null>(null);
+  const currentClientId = useRef(clientId);
+  currentClientId.current = clientId;
   const [loading, setLoading] = useState(true);
   // Store the client identity with the approval. A rerender for a different
   // client must fail closed before the capability-fetch effect can run.
@@ -170,8 +175,10 @@ export function ScenarioDraftPanel({
     setRename("");
   }
   async function reload(prefer?: string) {
-    const list = await listScenarioDrafts(clientId);
-    if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
+    const requestedClientId = clientId;
+    const list = await listScenarioDrafts(requestedClientId);
+    if (currentClientId.current !== requestedClientId) return;
+    if (list.some(item => item.client_id !== requestedClientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
     setDrafts(list);
     setLocalSelected(current => prefer ?? (list.some(item => item.scenario_id === current) ? current : list[0]?.scenario_id ?? null));
     if (prefer && list.some(item => item.scenario_id === prefer)) onScenarioSelected?.(prefer);
@@ -179,7 +186,9 @@ export function ScenarioDraftPanel({
   useEffect(() => {
     let mounted = true;
     setLoading(true);
+    setBusy(false);
     setError(null);
+    setCreateRefreshFailure(null);
     setEditingDecisionId(null);
     setRename("");
     void listScenarioDrafts(clientId).then(list => {
@@ -262,8 +271,47 @@ export function ScenarioDraftPanel({
   }
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (name.trim()) {
-      if (await run(() => createScenarioDraft(clientId, name.trim()))) setName("");
+    if (!name.trim() || busy) return;
+    const requestedClientId = clientId;
+    setBusy(true);
+    setError(null);
+    setCreateRefreshFailure(null);
+    try {
+      const saved = await createScenarioDraft(requestedClientId, name.trim());
+      if (currentClientId.current !== requestedClientId) return;
+      if (saved.client_id !== requestedClientId) throw Error("תוצאת שרת בהקשר לקוח שגוי.");
+      // The POST has already committed. Preserve its authoritative ID even if
+      // the following GET fails, so a retry never creates another scenario.
+      setName("");
+      setDrafts(existing => [...existing.filter(item => item.scenario_id !== saved.scenario_id), saved]);
+      selectScenario(saved.scenario_id);
+      try {
+        await reload(saved.scenario_id);
+      } catch (cause) {
+        if (currentClientId.current === requestedClientId) {
+          setCreateRefreshFailure({ clientId: requestedClientId,
+            scenarioId: saved.scenario_id, reason: message(cause) });
+        }
+      }
+    } catch (cause) {
+      if (currentClientId.current === requestedClientId) setError(message(cause));
+    } finally {
+      if (currentClientId.current === requestedClientId) setBusy(false);
+    }
+  }
+  async function retryCreateRefresh() {
+    const pending = createRefreshFailure;
+    if (!pending || pending.clientId !== clientId || busy) return;
+    setBusy(true);
+    try {
+      await reload(pending.scenarioId);
+      if (currentClientId.current === pending.clientId) setCreateRefreshFailure(null);
+    } catch (cause) {
+      if (currentClientId.current === pending.clientId) {
+        setCreateRefreshFailure({ ...pending, reason: message(cause) });
+      }
+    } finally {
+      if (currentClientId.current === pending.clientId) setBusy(false);
     }
   }
   async function addDecision(event: FormEvent) {
@@ -333,6 +381,11 @@ export function ScenarioDraftPanel({
     </p>}
     {loading && <p>טוען טיוטות...</p>}
     {error && <p role="alert">{error}</p>}
+    {createRefreshFailure?.clientId === clientId && <div role="status">
+      החלופה נוצרה ונשמרה בשרת (מזהה: {createRefreshFailure.scenarioId}), אך רענון הרשימה נכשל:
+      {" "}{createRefreshFailure.reason}. אין ליצור אותה מחדש.
+      <button type="button" disabled={busy} onClick={() => void retryCreateRefresh()}>נסה לרענן חלופות</button>
+    </div>}
     {view === "planning" && <details open={visibleDrafts.length === 0}>
       <summary>יצירת חלופה חדשה</summary>
       <form onSubmit={create}>

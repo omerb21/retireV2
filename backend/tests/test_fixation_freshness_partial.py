@@ -34,7 +34,9 @@ def test_authoritative_grant_change_is_detected(monkeypatch):
 def test_unverified_dependencies_never_produce_current(monkeypatch):
     result = _assess(monkeypatch)
     assert result["state"] == "unknown"
-    assert "full_authoritative_dependency_resolution_unavailable" in result["reason_codes"]
+    # The live resolver identifies the missing authoritative dependency
+    # precisely.  A matched grant alone never certifies the entire run.
+    assert "pension_product_dependency_not_in_manifest" in result["reason_codes"]
 
 
 def test_legacy_run_is_preserved_and_identified(monkeypatch):

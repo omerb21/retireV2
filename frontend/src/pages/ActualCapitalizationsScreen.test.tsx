@@ -21,6 +21,26 @@ afterEach(() => {
 });
 
 describe("ActualCapitalizationsScreen", () => {
+  it("preserves unsaved capitalization edits after CAS 409 and prevents automatic retry", async () => {
+    const row = { capitalization_id: "AC-1", version: 1, client_id: 7, amount: 500, capitalization_date: "2023-01-01", source_label: "Manual", source_basis: null, planner_assertion: null, planner_assertion_basis: null, notes: "Original" };
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => Promise.resolve(init?.method === "PUT"
+      ? { ...jsonResponse({ detail: { code: "RECORD_VERSION_CONFLICT" } }), ok: false, status: 409, statusText: "Conflict" }
+      : jsonResponse([row])));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MemoryRouter initialEntries={["/clients/7/actual-capitalizations"]}><Routes><Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Capitalization ID: AC-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Actual Capitalization" }));
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Draft kept" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Actual Capitalization" }));
+    expect(await screen.findByText(/השמירה לא בוצעה/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Notes")).toHaveValue("Draft kept");
+    expect(screen.getByRole("button", { name: "Save Actual Capitalization" })).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /רענון רשומות להשוואה/ }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(screen.getByLabelText("Notes")).toHaveValue("Draft kept");
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
+  });
   it("adds, edits, deletes, and saves capitalizations without calculation calls", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
     const firstCapitalization = {

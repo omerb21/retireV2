@@ -23,6 +23,7 @@ import {
 import { HebrewDateInput } from "../components/HebrewDateInput";
 import { heLabel } from "../i18n/he";
 import { formatIsoDate } from "../utils/dateFormat";
+import { CAS_CONFLICT_MESSAGE, isCasConflict } from "../utils/casConflictMessage";
 
 export type RetirementPlanningFactsSectionProps = {
   clientId: number;
@@ -254,6 +255,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
   const [editingId, setEditingId] = useState<number | null>(null);
   const [touchedFields, setTouchedFields] = useState<Set<string>>(new Set());
   const [mutationErrorMessage, setMutationErrorMessage] = useState<string | null>(null);
+  const [staleEdit, setStaleEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [baseline, setBaseline] = useState<FactItem | null>(null);
   const isDirty = touchedFields.size > 0 || isSubmitting;
@@ -307,6 +309,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
   }
 
   function startEditing(item: FactItem) {
+    setStaleEdit(false);
     setEditingId(item.id);
     setBaseline({ ...item });
     setFormState(formStateFromItem(config.fields, item));
@@ -315,6 +318,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
   }
 
   function resetForm() {
+    setStaleEdit(false);
     setEditingId(null);
     setBaseline(null);
     setFormState(emptyFormState(config.fields));
@@ -324,6 +328,7 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (staleEdit) return;
     setIsSubmitting(true);
     setMutationErrorMessage(null);
 
@@ -335,7 +340,8 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
         const now = await config.list(clientId, "all");
         const current = now.find(item => item.id === editingId);
         if (!current || (current as FactItem & {client_id?: number}).client_id !== clientId || !baseline || JSON.stringify(current) !== JSON.stringify(baseline)) {
-          throw new Error("PKG02-CONCURRENCY-001: הרשומה השתנתה בשרת; הטיוטה נשמרה ויש לרענן לפני אישור נוסף.");
+          setStaleEdit(true);
+          throw new Error(CAS_CONFLICT_MESSAGE);
         }
         if ((current as FactItem & { origin_kind?: string }).origin_kind === "canonical_component_conversion") {
           throw new Error("CONVERSION_DESTINATION_READ_ONLY: יש לבטל המרה דרך מסך ההמרות.");
@@ -351,7 +357,8 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
       onFactSaved?.();
       try { await refreshList(); } catch (refreshError) { setErrorMessage("השמירה הצליחה אך רענון הרשימה נכשל: " + getErrorMessage(refreshError)); }
     } catch (error) {
-      setMutationErrorMessage(getErrorMessage(error));
+      if (isCasConflict(error)) setStaleEdit(true);
+      setMutationErrorMessage(isCasConflict(error) ? CAS_CONFLICT_MESSAGE : getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -417,12 +424,13 @@ function FactMaintenanceSection({ clientId, config, onFactSaved, onDirtyChange }
         {config.fields.map((field) => renderField(config.key, field, formState, updateFormField))}
         {mutationErrorMessage ? (
           <>
-            <p>לא ניתן לשמור את הרשומה.</p>
+            <p role="alert">לא ניתן לשמור את הרשומה.</p>
             <pre>{mutationErrorMessage}</pre>
           </>
         ) : null}
+        {staleEdit && <button type="button" onClick={() => { void refreshList().catch(error => setErrorMessage(getErrorMessage(error))); }}>רענון רשומות להשוואה (הקלט בטופס יישמר)</button>}
         <p>
-          <button type="submit" disabled={isSubmitting}>
+          <button type="submit" disabled={isSubmitting || staleEdit}>
             {isSubmitting ? "שומר…" : editingId === null ? config.addButton : config.saveButton}
           </button>
           {(editingId !== null || touchedFields.size > 0) ? (

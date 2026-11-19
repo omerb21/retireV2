@@ -570,6 +570,32 @@ describe("RetirementPlanningFactsSection", () => {
     expectNoProhibitedPackageCRequests(fetchMock);
   });
 
+  it.each(resourceConfigs.slice(0, 3))("rejects CAS 409 without success, retry or lost draft for $heading", async (config) => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse({ detail: { code: "RECORD_VERSION_CONFLICT" } }, 409, "Conflict"));
+      if (url.includes(`/${config.resourceName}?`)) return Promise.resolve(jsonResponse(rowsByResource[config.resourceName]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    const onFactSaved = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RetirementPlanningFactsSection clientId={7} onFactSaved={onFactSaved} />);
+    expect(await screen.findByText(config.rowText)).toBeInTheDocument();
+    const section = sectionQueries(config.heading);
+    fireEvent.click(section.getByRole("button", { name: config.editButton }));
+    fireEvent.change(section.getByLabelText(config.changedEditLabel), { target: { value: config.changedEditValue } });
+    fireEvent.click(section.getByRole("button", { name: config.saveButton }));
+    expect(await section.findByText(/השמירה לא בוצעה/)).toBeInTheDocument();
+    expect(section.getByLabelText(config.changedEditLabel)).toHaveValue(config.changedEditValue);
+    expect(section.getByRole("button", { name: config.saveButton })).toBeDisabled();
+    expect(onFactSaved).not.toHaveBeenCalled();
+    expect(callsFor(fetchMock, config.resourceName, "PUT")).toHaveLength(1);
+    fireEvent.click(section.getByRole("button", { name: /רענון רשומות להשוואה/ }));
+    await waitFor(() => expect(callsFor(fetchMock, config.resourceName, "GET")).toHaveLength(3));
+    expect(section.getByLabelText(config.changedEditLabel)).toHaveValue(config.changedEditValue);
+    expect(section.getByRole("button", { name: config.saveButton })).toBeDisabled();
+    expect(callsFor(fetchMock, config.resourceName, "PUT")).toHaveLength(1);
+  });
+
   it("proves API 422 responses are visibly rendered through the existing error display pattern", async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (init?.method === "POST") {

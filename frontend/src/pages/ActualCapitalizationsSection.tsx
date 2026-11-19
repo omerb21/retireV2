@@ -10,6 +10,7 @@ import {
   getActualCapitalizations,
   updateActualCapitalization
 } from "../api/clientsApi";
+import { CAS_CONFLICT_MESSAGE, isCasConflict } from "../utils/casConflictMessage";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
@@ -76,6 +77,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
   const [formState, setFormState] = useState<FormState>(emptyFormState);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [mutationErrorMessage, setMutationErrorMessage] = useState<string | null>(null);
+  const [staleEdit, setStaleEdit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [baseRecord, setBaseRecord] = useState<ActualCapitalizationItem | null>(null);
   const dirty = isSubmitting || editingId !== null && JSON.stringify(formState) !== JSON.stringify(baseRecord ? formStateFromCapitalization(baseRecord) : emptyFormState) || editingId === null && JSON.stringify(formState) !== JSON.stringify(emptyFormState);
@@ -148,6 +150,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
   const backState = clientName ? { clientName } : undefined;
 
   function startEditing(capitalization: ActualCapitalizationItem) {
+    setStaleEdit(false);
     setEditingId(capitalization.capitalization_id);
     setBaseRecord(capitalization);
     setFormState(formStateFromCapitalization(capitalization));
@@ -155,6 +158,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
   }
 
   function resetForm() {
+    setStaleEdit(false);
     setEditingId(null);
     setBaseRecord(null);
     setFormState(emptyFormState);
@@ -163,6 +167,7 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (staleEdit) return;
 
     if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
       setMutationErrorMessage("Unable to save actual capitalization for this client.");
@@ -176,7 +181,10 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
       const payload = payloadFromForm(formState);
       if (editingId !== null) {
         const current = (await getActualCapitalizations(parsedClientId)).find(item => item.capitalization_id === editingId);
-        if (!current || current.client_id !== parsedClientId || !baseRecord || JSON.stringify(current) !== JSON.stringify(baseRecord)) throw new Error("CONFLICT: הרשומה השתנתה מאז תחילת העריכה. הטיוטה נשמרה, יש לבדוק את הנתונים מחדש.");
+        if (!current || current.client_id !== parsedClientId || !baseRecord || JSON.stringify(current) !== JSON.stringify(baseRecord)) {
+          setStaleEdit(true);
+          throw new Error(CAS_CONFLICT_MESSAGE);
+        }
       }
       if (editingId === null) {
         await createActualCapitalization(parsedClientId, payload);
@@ -187,7 +195,8 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
       onSaved?.();
       try { await refreshCapitalizations(); } catch (refreshError) { setErrorMessage("השמירה הצליחה, אך רענון הנתונים נכשל: " + getErrorMessage(refreshError)); }
     } catch (error) {
-      setMutationErrorMessage(getErrorMessage(error));
+      if (isCasConflict(error)) setStaleEdit(true);
+      setMutationErrorMessage(isCasConflict(error) ? CAS_CONFLICT_MESSAGE : getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -206,7 +215,9 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
         resetForm();
       }
     } catch (error) {
-      setMutationErrorMessage(getErrorMessage(error));
+      setMutationErrorMessage(isCasConflict(error)
+        ? "המחיקה לא בוצעה. הרשומה השתנתה בשרת מאז טעינת המסך. יש לרענן ולבדוק את הנתונים לפני ניסיון נוסף."
+        : getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -373,9 +384,10 @@ export function ActualCapitalizationsSection({ parsedClientId, clientName = null
             />
           </label>
         </p>
-        {mutationErrorMessage ? <p>{mutationErrorMessage}</p> : null}
+        {mutationErrorMessage ? <p role="alert">{mutationErrorMessage}</p> : null}
+        {staleEdit && <button type="button" onClick={() => { void refreshCapitalizations().catch(error => setErrorMessage(getErrorMessage(error))); }}>רענון רשומות להשוואה (הקלט בטופס יישמר)</button>}
         <p>
-          <button type="submit" disabled={isSubmitting}>
+          <button type="submit" disabled={isSubmitting || staleEdit}>
             {isSubmitting
               ? "Saving..."
               : editingId === null

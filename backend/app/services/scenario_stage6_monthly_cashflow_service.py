@@ -180,6 +180,36 @@ def _recurring_source(row: RecurringIncome,
     }
 
 
+def _flag_unresolved_recurring_identity(rows: list[RecurringIncome],
+                                        sources: list[dict]) -> None:
+    """Flag M09-style economic collisions without asserting that they are duplicates.
+
+    RecurringIncome.id identifies a record, not an economic income stream.
+    Matching descriptive facts cannot justify dropping either record, but
+    cannot justify certifying their combined monthly amount either.
+    """
+    candidates: dict[tuple, list[int]] = {}
+    for row in rows:
+        if row.income_category == "pension" or not isinstance(row.description, str):
+            continue
+        key = (
+            row.income_category, row.description.strip().casefold(),
+            row.amount, row.start_date, row.end_date,
+        )
+        candidates.setdefault(key, []).append(row.id)
+    ambiguous_ids = {
+        income_id for group in candidates.values() if len(group) > 1
+        for income_id in group
+    }
+    for source in sources:
+        if source["recurring_income_id"] in ambiguous_ids:
+            source["source_state"] = "BLOCKED"
+            source["monthly_amount_gross_ils"] = None
+            source["blocker_codes"] = sorted(set(source["blocker_codes"]) | {
+                "STAGE6_CASHFLOW_RECURRING_ECONOMIC_IDENTITY_UNRESOLVED",
+            })
+
+
 def _source_dates(source: dict) -> tuple[date | None, date | None]:
     start = date.fromisoformat(source["start_date"]) if source["start_date"] else None
     end = date.fromisoformat(source["end_date"]) if source["end_date"] else None
@@ -264,10 +294,12 @@ def _cashflow_extension(*, client_id: int, scenario_id: str,
             PensionIncomeResolution.client_id == client_id,
         ).order_by(PensionIncomeResolution.income_id)))
         resolution_by_income = {row.income_id: row for row in resolutions}
-        sources.extend(
+        recurring_sources = [
             _recurring_source(row, resolution_by_income.get(row.id))
             for row in recurring_rows
-        )
+        ]
+        _flag_unresolved_recurring_identity(recurring_rows, recurring_sources)
+        sources.extend(recurring_sources)
         sources.sort(key=lambda source: source["source_id"])
         if len({source["source_id"] for source in sources}) != len(sources):
             raise ScenarioSnapshotError("STAGE6_CASHFLOW_SOURCE_IDENTITY_DUPLICATE")

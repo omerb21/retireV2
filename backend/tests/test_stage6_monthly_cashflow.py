@@ -171,6 +171,50 @@ def test_duplicate_pension_source_never_counts_twice(monkeypatch):
     assert any("DUPLICATE_PENSION_SOURCE" in code for code in result["blocker_codes"])
 
 
+def test_two_independent_recurring_incomes_with_equal_amount_are_counted(monkeypatch):
+    result = run(
+        monkeypatch, pair(), {},
+        incomes=[recurring(id=11, description="Rental unit A"),
+                 recurring(id=12, description="Rental unit B")],
+    )
+    assert result["cashflow_state"] == "COMPLETE"
+    assert all(row["gross_income_total_ils"] == "2400.00"
+               for row in result["monthly_rows"])
+    assert all(len(row["contributions"]) == 2 for row in result["monthly_rows"])
+
+
+def test_unresolved_recurring_economic_identity_never_certifies_double_total(monkeypatch):
+    result = run(
+        monkeypatch, pair(), {},
+        incomes=[recurring(id=11), recurring(id=12)],
+    )
+    assert result["cashflow_state"] == "BLOCKED"
+    assert all(row["gross_income_total_ils"] is None for row in result["monthly_rows"])
+    assert all(row["known_income_subtotal_ils"] == "0.00"
+               for row in result["monthly_rows"])
+    assert all(source["source_state"] == "BLOCKED" for source in result["sources"])
+    assert all("STAGE6_CASHFLOW_RECURRING_ECONOMIC_IDENTITY_UNRESOLVED"
+               in source["blocker_codes"] for source in result["sources"])
+    assert subject.validate_monthly_cashflow_result(
+        result, client_id=1, scenario_id="scenario", scenario_version=2,
+        start_month="2027-01", end_month="2027-03",
+    )
+
+
+def test_recurring_identity_ambiguity_affects_only_overlapping_months(monkeypatch):
+    result = run(
+        monkeypatch, pair(), {}, start_month="2027-01", end_month="2027-03",
+        incomes=[recurring(id=11, end_date=date(2027, 1, 31),
+                           continuation_status="known end date"),
+                 recurring(id=12, end_date=date(2027, 1, 31),
+                           continuation_status="known end date")],
+    )
+    assert result["monthly_rows"][0]["gross_income_total_ils"] is None
+    assert [row["gross_income_total_ils"] for row in result["monthly_rows"][1:]] == [
+        "0.00", "0.00",
+    ]
+
+
 def test_partial_start_month_is_blocked_instead_of_prorated(monkeypatch):
     result = run(
         monkeypatch, pair(decision("d1", "p1", "c1")),

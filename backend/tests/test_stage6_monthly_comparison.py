@@ -3,6 +3,7 @@ from copy import deepcopy
 import pytest
 
 from app.services import retirement_monthly_income_target_service as target_service
+from app.services import retirement_target_date_income_comparison_basis_service as basis_service
 from app.services.planning_input_service import fingerprint
 from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
 from app.services.scenario_stage6_monthly_comparison_service import (
@@ -91,19 +92,48 @@ def reseal_cashflow(value):
     return value
 
 
-def reader(a, b, t):
-    return lambda *_args, **_kwargs: (deepcopy(a), deepcopy(b), deepcopy(t))
+def authorized_basis(t, a, *, entries=None):
+    """Synthetic, RTICB-signed source evidence; no invented indexation."""
+    if entries is None:
+        entries = [{
+            "schema_version": "CRTISBA_SOURCE_BASIS_ENTRY_V1", "source_id": "income:1",
+            "source_kind": "RECURRING_INCOME", "source_category": "RENTAL",
+            "admission_state": "INCLUDED", "rtisa_reason_codes": [],
+            "source_version": "a" * 64, "source_fingerprint": "a" * 64,
+            "amount_authority_fingerprint": "b" * 64, "decision_version": 1,
+            "decision_fingerprint": "c" * 64, "decision_state": "CURRENT",
+            "income_basis": "GROSS", "income_basis_provenance": "UPSTREAM_RECURRING_AMOUNT_BASIS",
+            "price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE", "price_reference_date": None,
+            "price_basis_provenance": "EXPLICIT_PROFESSIONAL", "blockers": [],
+        }]
+    collection = {
+        "client_id": 7, "planning_calculation_input_fingerprint": "d" * 64,
+        "retirement_target_date": t["retirement_target_date"],
+        "result_fingerprint": "e" * 64, "source_basis_entries": entries,
+    }
+    return basis_service._result({
+        "client_id": 7,
+        "expected_planning_calculation_input_fingerprint": "d" * 64,
+        "expected_retirement_target_date": t["retirement_target_date"],
+    }, t, collection)
+
+
+def reader(a, b, t, basis=None):
+    return lambda *_args, **_kwargs: (deepcopy(a), deepcopy(b), deepcopy(t),
+                                      deepcopy(authorized_basis(t, a) if basis is None else
+                                               None if basis == "unavailable" else basis))
 
 
 def compare(a=None, b=None, t=None, **overrides):
     a = a or cashflow("a", 2)
     b = b or cashflow("b", 3, ("7000.00", "7000.00"))
     t = t or target()
+    reader_override = overrides.pop("_snapshot_reader", reader(a, b, t))
     return compare_scenario_monthly_cashflows(
         object(), client_id=7, scenario_a_id="a", scenario_a_version=2,
         scenario_b_id="b", scenario_b_version=3,
         start_month="2030-01", end_month="2030-02",
-        _snapshot_reader=reader(a, b, t), **overrides,
+        _snapshot_reader=reader_override, **overrides,
     )
 
 
@@ -118,6 +148,90 @@ def test_two_scenarios_compare_and_only_target_month_has_authoritative_gap():
     assert result["shared_source_ids"] == ["income:1"]
     assert result["execution_allowed"] is False
     assert len(result["comparison_fingerprint"]) == 64
+
+
+def test_matching_explicit_authority_is_required_for_positive_target_gap():
+    result = compare()
+    assert result["target_comparison_state"] == "COMPLETE"
+    assert result["monthly_rows"][0]["scenario_a_minus_target_gross_ils"] == "-1500"
+
+
+@pytest.mark.parametrize("kind", ["missing", "unknown", "different_date", "partial", "target_changed", "pension_od2"])
+def test_unverified_price_authority_never_generates_partial_or_certified_gap(kind):
+    t = target()
+    a, b = cashflow("a", 2), cashflow("b", 3, ("7000.00", "7000.00"))
+    basis = authorized_basis(t, a)
+    if kind == "missing":
+        basis = "unavailable"
+    elif kind == "unknown":
+        entry = {**basis["source_comparisons"][0], "decision_state": "UNKNOWN",
+                 "price_basis": "UNKNOWN", "price_basis_provenance": "MISSING",
+                 "decision_version": None, "decision_fingerprint": None,
+                 "source_comparison_fingerprint": "f" * 64}
+        basis = authorized_basis(t, a, entries=[{
+            "schema_version": "CRTISBA_SOURCE_BASIS_ENTRY_V1",
+            **{key: value for key, value in entry.items() if key in basis_service.ENTRY_FIELDS - {"schema_version", "blockers"}},
+            "blockers": ["CRTISBA_DECISION_UNKNOWN"],
+        }])
+    elif kind == "different_date":
+        entries = [{
+            "schema_version": "CRTISBA_SOURCE_BASIS_ENTRY_V1",
+            **{key: value for key, value in basis["source_comparisons"][0].items()
+               if key in basis_service.ENTRY_FIELDS - {"schema_version", "blockers"}},
+            "price_basis": "REAL_AT_REFERENCE_DATE", "price_reference_date": "2029-01-01",
+            "blockers": [],
+        }]
+        basis = authorized_basis(t, a, entries=entries)
+    elif kind == "partial":
+        b = cashflow("b", 3, ("7000.00", "7000.00"), source_id="income:2")
+        b["sources"][0]["recurring_income_id"] = 2
+    elif kind == "target_changed":
+        t = target()
+        t["target"]["retirement_target_date"] = "2030-02-01"
+        t["retirement_target_date"] = "2030-02-01"
+        t["target_semantic_fingerprint"] = target_service._semantic_fingerprint(t["target"])
+        t["target_result_fingerprint"] = target_service._fingerprint({
+            "contract": target_service.RESULT_CONTRACT,
+            **{key: value for key, value in t.items() if key != "target_result_fingerprint"},
+        })
+    else:
+        pension_entry = {
+            "schema_version": "CRTISBA_SOURCE_BASIS_ENTRY_V1", "source_id": "manual:1",
+            "source_kind": "PENSION", "source_category": "PENSION",
+            "admission_state": "INCLUDED", "rtisa_reason_codes": [],
+            "source_version": 1, "source_fingerprint": "a" * 64,
+            "amount_authority_fingerprint": "b" * 64, "decision_version": 1,
+            "decision_fingerprint": "c" * 64, "decision_state": "CURRENT",
+            "income_basis": "GROSS", "income_basis_provenance": "EXPLICIT_PROFESSIONAL",
+            "price_basis": "NOMINAL_AT_RETIREMENT_TARGET_DATE", "price_reference_date": None,
+            "price_basis_provenance": "OWNER_DECISION_OD2", "blockers": [],
+        }
+        recurring_entry = {
+            "schema_version": "CRTISBA_SOURCE_BASIS_ENTRY_V1",
+            **{key: value for key, value in basis["source_comparisons"][0].items()
+               if key in basis_service.ENTRY_FIELDS - {"schema_version", "blockers"}},
+            "blockers": [],
+        }
+        basis = authorized_basis(t, a, entries=[recurring_entry, pension_entry])
+        a["sources"][0].update(source_kind="CALCULATED_PENSION", source_id="scenario-decision:a:d1", recurring_income_id=None, decision_id="d1", price_basis="NOMINAL_UNINDEXED")
+        a["monthly_rows"][0]["contributions"][0].update(source_kind="CALCULATED_PENSION", source_id="scenario-decision:a:d1", contribution_state="CALCULATED")
+        a["monthly_rows"][1]["contributions"][0].update(source_kind="CALCULATED_PENSION", source_id="scenario-decision:a:d1", contribution_state="CALCULATED")
+        for row in a["monthly_rows"]:
+            row["known_income_subtotal_ils"] = "0.00"
+            row["calculated_pension_subtotal_ils"] = row["gross_income_total_ils"]
+        a = reseal_cashflow(a)
+    if kind == "partial":
+        b = reseal_cashflow(b)
+    result = compare(a=a, b=b, t=t, _snapshot_reader=reader(a, b, t, basis))
+    assert result["target_comparison_state"] == "BLOCKED"
+    assert all(row["scenario_a_minus_target_gross_ils"] is None for row in result["monthly_rows"])
+    assert all(row["scenario_b_minus_target_gross_ils"] is None for row in result["monthly_rows"])
+    assert result["monthly_rows"][0]["scenario_a_gross_income_ils"] is not None
+
+
+@pytest.mark.parametrize("basis,price", [("NET", "NOMINAL_AT_RETIREMENT_TARGET_DATE"), ("GROSS", "REAL_AT_REFERENCE_DATE")])
+def test_old_target_basis_barriers_remain_after_price_authority_gate(basis, price):
+    assert compare(t=target(basis=basis, price_basis=price))["target_comparison_state"] == "BLOCKED"
 
 
 def test_one_blocked_scenario_suppresses_all_comparative_amounts_for_that_month():

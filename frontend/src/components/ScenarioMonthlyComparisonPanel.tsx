@@ -17,6 +17,10 @@ const blockerText: Record<string, string> = {
   STAGE6_COMPARISON_TARGET_OUTSIDE_COMPARABLE_MONTH: "פער מול היעד מוצג רק בחודש היעד הקנוני.",
   STAGE6_COMPARISON_TARGET_MONTH_INCOMPLETE: "חודש היעד חסום באחת החלופות.",
   STAGE6_COMPARISON_TARGET_NOT_READY: "יעד ההכנסה טרם אושר או התיישן.",
+  STAGE6_COMPARISON_PRICE_AUTHORITY_UNAVAILABLE: "אין ראיית סמכות מאושרת לבסיס המחירים של המקורות.",
+  STAGE6_COMPARISON_PRICE_AUTHORITY_STALE: "ראיית בסיס המחירים אינה תואמת ליעד המעודכן.",
+  STAGE6_COMPARISON_SOURCE_PRICE_AUTHORITY_UNRESOLVED: "לפחות הכנסה שוטפת אחת אינה מוכחת בת השוואה במחירי מועד היעד.",
+  STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_UNAVAILABLE: "מקור קצבה של התרחיש אינו מזוהה בסמכות בסיס המחירים הקיימת. החלטת OD2 אינה מועתקת אליו.",
 };
 
 function months(start: string, end: string): string[] {
@@ -192,7 +196,7 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
           ? "ההשוואה חלקית; חודשים חסומים אינם מציגים סכומים השוואתיים."
           : "ההשוואה חסומה לכל הטווח."}</p>
       <p>{result.target.target_state === "GROSS_NOMINAL_TARGET_MONTH_ONLY"
-        ? "פער מול יעד ברוטו מוצג רק בחודש יעד הפרישה הקנוני."
+        ? "פער מול יעד ברוטו מאושר רק בחודש הפרישה, ורק כאשר כל מקורות ההכנסה הוכחו בני השוואה בבסיס המחירים."
         : result.target.target_state === "NET_NOT_COMPARABLE"
           ? "יעד ההכנסה הוא נטו; ללא מנוע מס לא ניתן להשוות אותו לתזרים ברוטו."
           : result.target.target_state === "PRICE_BASIS_NOT_COMPARABLE"
@@ -215,6 +219,17 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
             : row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}</td>
         </tr>)}</tbody>
       </table></div>
+      <p>יעד: {result.target.monthly_amount_ils ?? "לא זמין"} ₪; בסיס {result.target.price_basis ?? "לא ידוע"}; מועד יעד {result.target.retirement_target_date ?? "לא ידוע"}.</p>
+      <details><summary>בסיסי מחירים ומועדי ייחוס של מקורות ההכנסה</summary>
+        {([result.scenario_a, result.scenario_b] as const).map((scenario, index) =>
+          <section key={scenario.scenario_id}><h4>חלופה {index === 0 ? "א׳" : "ב׳"}</h4><ul>
+            {scenario.sources.map(source => <li key={source.source_id}>
+              <bdi>{source.source_id}</bdi>: בסיס <bdi>{source.price_basis ?? "לא ידוע"}</bdi>;
+              מועד מקור <bdi>{source.source_reference_date ?? "לא ידוע"}</bdi>;
+              מצב מקור {source.source_state === "READY" ? "כשיר לתזרים, לא בהכרח להשוואה ליעד" : "חסום"}
+            </li>)}
+          </ul></section>)}
+      </details>
       <details><summary>זהויות מקור ואימות לשחזור</summary>
         <p>{aName}: גרסה {result.scenario_a.scenario_version}; Manifest <bdi>{result.scenario_a.manifest_fingerprint}</bdi>; Cashflow <bdi>{result.scenario_a.cashflow_fingerprint}</bdi>.</p>
         <p>{bName}: גרסה {result.scenario_b.scenario_version}; Manifest <bdi>{result.scenario_b.manifest_fingerprint}</bdi>; Cashflow <bdi>{result.scenario_b.cashflow_fingerprint}</bdi>.</p>

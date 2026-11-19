@@ -154,6 +154,8 @@ interface ScenarioComparisonIdentity {
     source_kind: "CALCULATED_PENSION" | "KNOWN_RECURRING_INCOME";
     authority_fingerprint: string;
     source_state: "READY" | "BLOCKED";
+    price_basis?: "NOMINAL_UNINDEXED" | "STATED_NOMINAL_NO_INDEXATION" | null;
+    source_reference_date?: string | null;
   }>;
 }
 

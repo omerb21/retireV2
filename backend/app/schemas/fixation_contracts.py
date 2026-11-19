@@ -381,6 +381,10 @@ class PlannerReviewContextEnvelope(BaseModel):
     actual_capitalizations: PlannerReviewContextDomain
 
 
+# Owner decision 261 (single-planner workspace): these are historical/internal
+# notes, not execution approvals or attestations that the saved run is current.
+# In particular, internal_action_identified means only that a possible next
+# action was identified. A legacy/changed/unknown run may still be documented.
 InternalPlannerHandlingStatus = Literal[
     "not_used_for_decision",
     "continue_internal_review",

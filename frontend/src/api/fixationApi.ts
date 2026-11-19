@@ -222,6 +222,10 @@ export interface PlannerReviewContextPayload {
   actual_capitalizations: PlannerReviewContextDomainPayload;
 }
 
+/** Historical single-planner documentation only (owner decision 261).
+ * `internal_action_identified` is not an approval or a currentness certificate.
+ * Notes may reference legacy, changed, or unknown saved runs.
+ */
 export type InternalPlannerHandlingStatus =
   | "not_used_for_decision"
   | "continue_internal_review"

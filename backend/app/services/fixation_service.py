@@ -795,6 +795,13 @@ def create_internal_planner_judgment(
     judgment_data: InternalPlannerJudgmentCreateRequest,
     db_session: Session,
 ) -> InternalPlannerJudgment:
+    """Record a single planner's historical note, never authorize execution.
+
+    Owner decision 261: this record is permitted for legacy, changed and unknown
+    runs. Its status (including internal_action_identified) cannot certify
+    freshness, change a run's status, or grant authority to another operation.
+    Client ownership and one-note-per-run protections remain mandatory.
+    """
     client_key = int(client_id)
     run_key = int(run_id)
     run = db_session.scalar(

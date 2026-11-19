@@ -1,5 +1,23 @@
 # FIXATION-CURRENTNESS-001 | Saved fixation run professional currentness
 
+## Owner decision 261 (2026-11-19): personal-workspace documentation boundary
+
+RETIRE V2 is a single-planner professional tool, not a multi-approver SaaS.
+The saved-run `internal-planner-judgment` statuses are **documentation only**.
+Specifically, `internal_action_identified` records an identified possible action;
+it is neither permission to execute that action nor a certificate that the
+historical fixation result is current. The planner may document a run whose
+freshness is `legacy`, `changed`, or `unknown`. A saved note does not modify
+run freshness, authorize an operation, or make an old result a recalculation.
+Client/run ownership and uniqueness of the note still apply.
+
+This decision resolves the ambiguity about the judgment POST. It does **not**
+declare the broader fixation currentness mechanism complete: current calculations
+must still distinguish historical results from newly calculated results and
+surface known source changes. Technical integrity, required calculation inputs,
+client isolation, and lost-update protection remain in force. Do not introduce
+self-approval workflow gates for this single professional user.
+
 **Status: OPEN / NOT VERIFIED**  
 **Assessment:** code-only review under directive 196, at accepted implementation SHA `c2c44bed48267fa56cf8d41f19686cee1bfc810d`.  
 **Scope:** consumer-side and server-side professional currentness of an already persisted fixation run. This is separate from PKG-02 and its accepted CAS implementation. No code remediation or new tests authorized here.

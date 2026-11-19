@@ -535,13 +535,13 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
                 onChange={event => modify(row.decision_id, {
                   coefficient_selection: event.target.value as ScenarioPensionElection["coefficient_selection"],
                 })}>
-                <option value="manual_review_required">מקדם ידני — מחייב אישור מקצועי נפרד</option>
+                <option value="manual_review_required">מקדם ידני - יש להזין ולשמור מקדם</option>
                 <option value="catalog_candidate">מועמד קטלוגי — חישוב אינו זמין בשלב זה</option>
               </select>
             </label>
-            <p>מקדם: נדרש אישור מקצועי נפרד; אינו נגזר או מאושר על ידי טופס זה.</p>
+            <p>מקדם ידני: יש להזין ולשמור ערך, מקור ואסמכתה. המקדם אינו נגזר מטופס הבחירות.</p>
             <button type="button" disabled={busy || dirty || row.coefficient_selection !== "manual_review_required"} onClick={() => void checkEstimate(decision.decision_id)}>
-              בדוק אומדן קצבה מאושר
+              בדוק אומדן קצבה
             </button>
             {estimates[decision.decision_id] && <section
               aria-label={`תוצאת אומדן עבור ${decision.component_code}`}>
@@ -550,7 +550,7 @@ export function ScenarioStage6Panel({ clientId, scenario, onSaved, autoInspectAl
                 && estimates[decision.decision_id].monthly_estimate_gross_ils != null
                 ? <>
                   <p>אומדן קצבה חודשית ברוטו: {estimates[decision.decision_id].monthly_estimate_gross_ils} ₪</p>
-                  <p>לפי מקדם מקצועי מאושר — {estimates[decision.decision_id].coefficient_provenance?.factor_evidence_type ?? "מקור לא ידוע"}.
+                  <p>לפי מקדם שנבחר ונשמר - {estimates[decision.decision_id].coefficient_provenance?.factor_evidence_type ?? "מקור לא ידוע"}.
                     אומדן נומינלי, ללא מס, הצמדה או הבטחת זכאות.</p>
                 </>
                 : <>

@@ -110,8 +110,7 @@ it("loads the selected scenario, factual sources, blocked readiness and no appro
   display();
   expect(await screen.findByText(/טרם נשמרו הכרעות/)).toBeTruthy();
   expect(screen.getByText(/מוכנות לחישוב:/).textContent).toContain("חסומה");
-  const internalApproval = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
-  expect(within(internalApproval).getByRole("button", { name: /אשר מקצועית את החלופה/ }).hasAttribute("disabled")).toBe(true);
+  expect(screen.queryByRole("button", { name: /אשר מקצועית את החלופה/ })).toBeNull();
   expect(mocks.approve).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText("נתוני מקור ומוכנות לחישוב"));
   expect(screen.getByText(/מענקים: 1/)).toBeTruthy();
@@ -128,7 +127,7 @@ it("adds a structured grant decision and sends exact server CAS tokens", async (
   fireEvent.change(screen.getByLabelText(/הנמקה מקצועית/), { target: { value: decision.reason } });
   fireEvent.change(screen.getByLabelText(/הפניות לאסמכתאות/), { target: { value: "document-A" } });
   fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(7, "A", {
     expected_approval_version: 0,
     expected_scenario_version: 3,
@@ -136,8 +135,8 @@ it("adds a structured grant decision and sends exact server CAS tokens", async (
     expected_readiness_fingerprint: "e".repeat(64),
     decisions: [decision], admission_controls: null,
   }));
-  expect(await screen.findByText(/טיוטת ההכרעות נשמרה/)).toBeTruthy();
-  expect(screen.getByText(/טיוטה שמורה, ללא אישור/)).toBeTruthy();
+  expect(await screen.findByText(/ההכרעות נשמרו/)).toBeTruthy();
+  expect(screen.getByText(/הכרעות שמורות/)).toBeTruthy();
 });
 
 it("reloads persisted decisions and displays immutable version history", async () => {
@@ -149,7 +148,7 @@ it("reloads persisted decisions and displays immutable version history", async (
     professional_authority: false, tax_authority_approval: null,
   }]);
   display();
-  expect(await screen.findByText(/טיוטה שמורה, ללא אישור/)).toBeTruthy();
+  expect(await screen.findByText(/הכרעות שמורות/)).toBeTruthy();
   expect(screen.getByText(/מעמד התשלום טרם אומת/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "ערוך" }));
   expect((screen.getByLabelText(/הנמקה מקצועית/) as HTMLTextAreaElement).value).toBe(decision.reason);
@@ -190,15 +189,15 @@ it("on 409 reloads CAS tokens without overwriting user draft and requires delibe
   fireEvent.change(screen.getByLabelText(/מקור ההכרעה/), { target: { value: "grant-a" } });
   fireEvent.change(screen.getByLabelText(/הנמקה מקצועית/), { target: { value: "אל תמחק את ההכרעה" } });
   fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   expect(await screen.findByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy();
   expect(screen.getByText(/אל תמחק את ההכרעה/)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(true);
   expect(mocks.read).toHaveBeenCalledTimes(2);
   expect(refreshParent).toHaveBeenCalledTimes(1);
   expect(mocks.save).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: /בדקתי את הנתונים העדכניים/ }));
-  expect(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(false);
 });
 
 it("preserves form inputs and displays backend 422 blockers", async () => {
@@ -212,7 +211,7 @@ it("preserves form inputs and displays backend 422 blockers", async () => {
   fireEvent.change(screen.getByLabelText(/מקור ההכרעה/), { target: { value: "grant-a" } });
   fireEvent.change(screen.getByLabelText(/הנמקה מקצועית/), { target: { value: "לא אושר" } });
   fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.getByText(/לא אושר/)).toBeTruthy();
   const blockerDetails = screen.getByText(/חסמים מקצועיים \(/).closest("details");
@@ -225,7 +224,7 @@ it("shows stale source and blocks writes to archived scenarios", async () => {
   mocks.read.mockResolvedValue({ ...snapshot("A", 2, [decision]), validity_state: "STALE" });
   display({ ...draft, status: "archived" });
   expect(await screen.findByText(/ראיות המקור או החלופה השתנו מאז השמירה/)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }).hasAttribute("disabled")).toBe(true);
   expect(mocks.approve).not.toHaveBeenCalled();
 });
 
@@ -253,7 +252,7 @@ it("keeps previously saved admission controls when a different decision is edite
     admission_controls: unknown; decisions: unknown[];
   }) => ({ ...snapshot("A", 3, [decision]), admission_controls: payload.admission_controls }));
   display();
-  expect(await screen.findByText(/טיוטה שמורה, ללא אישור/)).toBeTruthy();
+  expect(await screen.findByText(/הכרעות שמורות/)).toBeTruthy();
   expect((screen.getByLabelText(/מצב איסוף מענקים היסטוריים/) as HTMLSelectElement).value).toBe("confirmed_none");
   expect((screen.getByLabelText(/תחולת היוון IDF/) as HTMLSelectElement).value).toBe("APPLICABLE");
   expect((screen.getByLabelText(/סכום הפחתה/) as HTMLInputElement).value).toBe("100");
@@ -262,12 +261,12 @@ it("keeps previously saved admission controls when a different decision is edite
     target: { value: "הכרעה מעודכנת ללא מחיקת בקרות" },
   });
   fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
   const payload = mocks.save.mock.calls[0][2];
   expect(payload.admission_controls).toEqual(admittedControls);
   expect(payload.decisions[0].reason).toBe("הכרעה מעודכנת ללא מחיקת בקרות");
-  expect(screen.getByText(/טיוטת ההכרעות נשמרה/)).toBeTruthy();
+  expect(screen.getByText(/ההכרעות נשמרו/)).toBeTruthy();
 });
 
 it("leaves legacy records without admission controls until explicitly started", async () => {
@@ -277,7 +276,7 @@ it("leaves legacy records without admission controls until explicitly started", 
   mocks.save.mockResolvedValue({ ...snapshot("A", 2, [decision]), admission_controls: null });
   display();
   expect(await screen.findByText(/לרשומה זו טרם הוגדרו בקרות Admission/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalled());
   expect(mocks.save.mock.calls[0][2].admission_controls).toBeNull();
   expect(screen.queryByLabelText(/מצב איסוף מענקים היסטוריים/)).toBeNull();
@@ -291,7 +290,7 @@ it("does not submit invalid confirmed-none evidence and keeps form data", async 
   fireEvent.change(screen.getByLabelText(/מצב איסוף מענקים היסטוריים/), {
     target: { value: "confirmed_none" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.getByText(/יש לצרף אסמכתאות להצהרה שאין מענקים/)).toBeTruthy();
   expect(mocks.save).not.toHaveBeenCalled();
@@ -318,7 +317,7 @@ it("shows all three admission preparation statuses without claiming approval", a
     });
     expect(await within(preparationRegion).findByText(new RegExp(state + ":"))).toBeTruthy();
     if (state === "PREPARED") {
-      expect(screen.getByText(/טרם ניתן אישור מקצועי לחישוב קיבוע זכויות/)).toBeTruthy();
+      expect(screen.getByText(/הקלט הוכן לבדיקת קבילות/)).toBeTruthy();
     }
     expect(screen.queryByRole("button", { name: /אשר קיבוע/ })).toBeNull();
   }
@@ -333,7 +332,7 @@ it("retains unsaved admission controls on 409 and isolates them across scenarios
   fireEvent.change(screen.getByLabelText(/מצב איסוף מענקים היסטוריים/), {
     target: { value: "items_recorded" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   expect(await screen.findByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy();
   expect((screen.getByLabelText(/מצב איסוף מענקים היסטוריים/) as HTMLSelectElement).value)
     .toBe("items_recorded");
@@ -373,7 +372,7 @@ it("edits closed grant fields, payment status and overlap source IDs without gra
     target: { value: "document://grant-proof" },
   });
   fireEvent.click(screen.getByRole("button", { name: "הוסף או עדכן הכרעה בטיוטה" }));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
   const submitted = mocks.save.mock.calls[0][2].decisions[0];
   expect(submitted).toMatchObject({
@@ -415,7 +414,7 @@ it("saves full applicable IDF values from the structured editor", async () => {
   fireEvent.change(screen.getByLabelText(/שיעור היוון נוכחי/), { target: { value: "20" } });
   fireEvent.change(screen.getByLabelText(/מועד היוון/), { target: { value: "2024-01-01" } });
   fireEvent.change(screen.getByLabelText(/מועד בסיס גיל/), { target: { value: "2026-10-01" } });
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
   expect(mocks.save.mock.calls[0][2].admission_controls.idf).toMatchObject({
     applicability: "APPLICABLE", evidence_references: ["document://idf-7"],
@@ -499,7 +498,7 @@ it("refreshes both preparation and eligibility after saving a review", async () 
   display();
   const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
   await waitFor(() => expect(region.textContent).toContain("INCOMPLETE"));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(region.textContent).toContain("REQUIRES_EXTERNAL_VALIDATION"));
   expect(region.textContent).toContain("grant-7");
@@ -515,7 +514,7 @@ it("clears previous eligibility and preserves unsaved user input after a 409 con
   display();
   const region = await screen.findByRole("region", { name: "כשירות לבדיקת Admission" });
   await waitFor(() => expect(region.textContent).toContain("ELIGIBLE_FOR_ADMISSION_REVIEW"));
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(screen.getByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy());
   expect(region.textContent).not.toContain("ELIGIBLE_FOR_ADMISSION_REVIEW");
   expect(region.textContent).toContain("הכשירות אינה מאומתת");
@@ -661,7 +660,7 @@ it("submits both exact live fingerprints only on click and shows non-authoritati
     7, "A", "f".repeat(64), "e".repeat(64),
   ));
   expect(await within(section).findByText(/הקלט עבר את בדיקת הקבילות/)).toBeTruthy();
-  expect(section.textContent).toContain("עדיין נדרש אישור מקצועי נפרד");
+  expect(section.textContent).toContain("אין בכך חישוב קיבוע זכויות");
   expect(mocks.approve).not.toHaveBeenCalled();
 });
 
@@ -690,7 +689,7 @@ it("renders rejected Admission Review errors, paths and source IDs", async () =>
   expect(section.textContent).toContain("employment-9");
 });
 
-it("clears a previously admitted result on save and re-enables only after refreshed eligibility", async () => {
+it("rechecks admission after saving and refreshing eligibility", async () => {
   readyMocks();
   mocks.save.mockResolvedValue(snapshot("A", 1));
   mocks.admissionReview.mockResolvedValue(admitted());
@@ -702,11 +701,11 @@ it("clears a previously admitted result on save and re-enables only after refres
   await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
   fireEvent.click(button);
   await within(section).findByText(/הקלט עבר את בדיקת הקבילות/);
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
-  await waitFor(() => expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות"));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(mocks.preparation).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(mocks.eligibility).toHaveBeenCalledTimes(2));
-  expect(mocks.admissionReview).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(mocks.admissionReview).toHaveBeenCalledTimes(2));
+  expect(section.textContent).toContain("הקלט עבר את בדיקת הקבילות");
 });
 
 it("drops late Admission Review response after refresh and after an asynchronous source change", async () => {
@@ -781,7 +780,7 @@ it("clears admitted result after a CAS 409 and never automatically retries Admis
   await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
   fireEvent.click(button);
   await within(section).findByText(/הקלט עבר את בדיקת הקבילות/);
-  fireEvent.click(screen.getByRole("button", { name: "שמור טיוטת הכרעות מקצועיות" }));
+  fireEvent.click(screen.getByRole("button", { name: "שמור הכרעות מקצועיות" }));
   await waitFor(() => expect(screen.getByText(/התנגשות גרסה או שינוי מקור/)).toBeTruthy());
   expect(section.textContent).not.toContain("הקלט עבר את בדיקת הקבילות");
   expect(button.hasAttribute("disabled")).toBe(true);
@@ -812,111 +811,34 @@ it("hides an earlier admitted result when reloaded professional evidence is STAL
 });
 
 
-it("keeps internal approval disabled until explicit Admission and professional attestations", async () => {
+it("does not offer a second self-approval after saving decisions", async () => {
   readyMocks();
   mocks.read.mockResolvedValue(snapshot("A", 1));
   display();
-  const section = await screen.findByRole("region", { name: "החלטת אישור מקצועית פנימית" });
-  const button = within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ });
-  expect(button.hasAttribute("disabled")).toBe(true);
-  expect(mocks.approve).not.toHaveBeenCalled();
-  mocks.admissionReview.mockResolvedValue(admitted());
-  fireEvent.click(screen.getByRole("button", { name: "בדוק קבילות קלט" }));
-  await waitFor(() => expect(screen.getByText(/הקלט עבר את בדיקת הקבילות/)).toBeTruthy());
-  expect(button.hasAttribute("disabled")).toBe(true);
+  await screen.findByRole("button", { name: "שמור הכרעות מקצועיות" });
+  expect(screen.queryByRole("button", { name: /אשר מקצועית את החלופה/ })).toBeNull();
+  expect(screen.queryByText(/הצהרות המתכנן הנדרשות/)).toBeNull();
   expect(mocks.approve).not.toHaveBeenCalled();
 });
 
-it("records explicit human attestation with full CAS and scope without authorizing execution", async () => {
+it("keeps historical internal approval readable without offering another approval", async () => {
   readyMocks();
-  mocks.read.mockResolvedValueOnce(snapshot("A", 1)).mockResolvedValueOnce({
+  mocks.read.mockResolvedValue({
     ...snapshot("A", 2), record_status: "APPROVED_INTERNAL",
     decision_state: "APPROVED_INTERNAL", validity_state: "CURRENT",
     internal_professional_authority: true,
-  });
-  mocks.admissionReview.mockResolvedValue(admitted());
-  mocks.approve.mockResolvedValue({
-    approval_attempt_state: "APPROVED_INTERNAL",
-    client_id: 7, scenario_id: "A", approval_version: 2,
-    decision_fingerprint: "b".repeat(64),
-    authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY",
-    internal_professional_authority: true,
-    professional_authority: false, execution_allowed: false,
-    tax_authority_approval: null, blockers: [],
+    internal_decision: {
+      authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY",
+      decision_reason: "Historical review documentation",
+      review_reference: "document://eligibility-7",
+      attestations: [], preparation_fingerprint: "f".repeat(64),
+      eligibility_fingerprint: "e".repeat(64),
+      admission_review_fingerprint: "a".repeat(64),
+    },
   });
   display();
-  const admissionButton = await screen.findByRole("button", { name: "בדוק קבילות קלט" });
-  await waitFor(() => expect(admissionButton.hasAttribute("disabled")).toBe(false));
-  fireEvent.click(admissionButton);
-  await screen.findByText(/הקלט עבר את בדיקת הקבילות/);
-  const section = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
-  fireEvent.change(within(section).getByLabelText(/נימוק החלטה מקצועית/), {
-    target: { value: "I checked the eligibility evidence, scope and supporting documentation." },
-  });
-  fireEvent.change(within(section).getByLabelText(/אסמכתת מקור מאומתת שנבדקה/), {
-    target: { value: "document://eligibility-7" },
-  });
-  within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
-  const approveButton = within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ });
-  await waitFor(() => expect(approveButton.hasAttribute("disabled")).toBe(false));
-  fireEvent.click(approveButton);
-  await waitFor(() => expect(mocks.approve).toHaveBeenCalledTimes(1));
-  const [client, scenario, payload] = mocks.approve.mock.calls[0];
-  expect([client, scenario]).toEqual([7, "A"]);
-  expect(payload).toMatchObject({
-    decision: "APPROVE_INTERNAL",
-    expected_approval_version: 1,
-    expected_approval_fingerprint: "a".repeat(64),
-    expected_scenario_version: 3,
-    expected_manifest_fingerprint: "d".repeat(64),
-    expected_readiness_fingerprint: "e".repeat(64),
-    expected_preparation_fingerprint: "f".repeat(64),
-    expected_eligibility_fingerprint: "e".repeat(64),
-    expected_admission_review_fingerprint: "a".repeat(64),
-    review_reference: "document://eligibility-7",
-  });
-  expect(payload.attestations).toHaveLength(6);
-  await waitFor(() => expect(section.textContent).toContain("CURRENT"));
-  expect(section.textContent).toContain("אין הרשאת חישוב");
-});
-
-it("never shows a late internal approval of scenario A after switching to B", async () => {
-  mocks.read.mockImplementation(async (_client: number, id: string) =>
-    snapshot(id, id === "A" ? 1 : 0));
-  mocks.preparation.mockImplementation(async (_client: number, id: string) =>
-    prepareState("PREPARED", id));
-  mocks.eligibility.mockImplementation(async (_client: number, id: string) =>
-    reviewReady(id));
-  mocks.admissionReview.mockResolvedValue(admitted());
-  const late = deferred<{
-    approval_attempt_state: string; client_id: number; scenario_id: string;
-    execution_allowed: boolean; tax_authority_approval: null; authority_scope: string;
-  }>();
-  mocks.approve.mockReturnValue(late.promise);
-  const view = display();
-  const admissionButton = await screen.findByRole("button", { name: "בדוק קבילות קלט" });
-  await waitFor(() => expect(admissionButton.hasAttribute("disabled")).toBe(false));
-  fireEvent.click(admissionButton);
-  await screen.findByText(/הקלט עבר את בדיקת הקבילות/);
-  const section = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
-  fireEvent.change(within(section).getByLabelText(/נימוק החלטה מקצועית/), {
-    target: { value: "This is a documented professional analysis of the current scenario." },
-  });
-  fireEvent.change(within(section).getByLabelText(/אסמכתת מקור מאומתת שנבדקה/), {
-    target: { value: "document://eligibility-7" },
-  });
-  within(section).getAllByRole("checkbox").forEach(box => fireEvent.click(box));
-  fireEvent.click(within(section).getByRole("button", { name: /אשר מקצועית את החלופה/ }));
-  await waitFor(() => expect(mocks.approve).toHaveBeenCalledTimes(1));
-  view.rerender(<ScenarioFixationProfessionalReviewPanel key="internal-B"
-    clientId={7} scenario={{ ...draft, scenario_id: "B" }}/>);
-  late.resolve({
-    approval_attempt_state: "APPROVED_INTERNAL", client_id: 7, scenario_id: "A",
-    execution_allowed: false, tax_authority_approval: null,
-    authority_scope: "FIXATION_INTERNAL_REVIEW_ONLY",
-  });
-  await waitFor(() => expect(mocks.read).toHaveBeenCalledWith(7, "B"));
-  const other = screen.getByRole("region", { name: "החלטת אישור מקצועית פנימית" });
-  expect(other.textContent).not.toContain("CURRENT");
-  expect(other.textContent).not.toContain("אישור מקצועי פנימי בתוקף");
+  await screen.findByText(/הכרעות שמורות עם אישור היסטורי/);
+  expect(screen.getByText(/רשומת אישור פנימי היסטורית/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /אשר מקצועית את החלופה/ })).toBeNull();
+  expect(mocks.approve).not.toHaveBeenCalled();
 });

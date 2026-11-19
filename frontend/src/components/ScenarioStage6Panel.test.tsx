@@ -175,7 +175,7 @@ it("never displays a ready amount from BLOCKED result", async () => {
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue(blockedEstimate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
@@ -187,7 +187,7 @@ it("rejects another decision's result and hides any monthly amount", async () =>
     execution_allowed: true, monthly_estimate_gross_ils: "10000.00", blockers: [],
   });
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText("STAGE6_CONTEXT_MISMATCH");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
@@ -197,7 +197,7 @@ it("drops a late estimate after the scenario version changes", async () => {
   const waiting=deferred<any>();
   mock.estimate.mockReturnValue(waiting.promise);
   const view=render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   view.rerender(<ScenarioStage6Panel clientId={1}
     scenario={{ ...scenario, version: 4 }} onSaved={vi.fn()}/>);
   waiting.resolve({
@@ -212,7 +212,7 @@ it("drops a late estimate after the scenario version changes", async () => {
 it("invalidates old estimate and blocks request while election edits are unsaved", async () => {
   mock.list.mockResolvedValue([election]);
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  const check = await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" });
+  const check = await screen.findByRole("button", { name: "בדוק אומדן קצבה" });
   expect((check as HTMLButtonElement).disabled).toBe(false);
   fireEvent.change(screen.getByLabelText("בחירת שאירים"), {
     target: { value: "different survivor terms" },
@@ -229,7 +229,7 @@ it("fails closed if a READY response lacks professional authority provenance", a
     coefficient_provenance: null, professional_admission_fingerprint: null,
   }));
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
@@ -238,7 +238,7 @@ it("rejects a coherently shaped READY result for another client", async () => {
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue(readyEstimate({ client_id: 2 }));
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
@@ -247,7 +247,7 @@ it("rejects a coherently shaped READY result for another source", async () => {
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue(readyEstimate({ source_id: "scenario-decision:sc1:other" }));
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText("STAGE6_RESULT_AUTHORITY_INCOMPLETE");
   expect(screen.queryByText(/אומדן קצבה חודשית ברוטו:/)).toBeNull();
 });
@@ -256,7 +256,7 @@ it("renders a monthly amount only from the complete closed READY envelope", asyn
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue(readyEstimate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText(/אומדן קצבה חודשית ברוטו: 5.00/);
   expect(screen.getByLabelText("מצב חישוב החלופה")).toHaveTextContent(
     "טרם חושב סיכום קצבה מצרפי מאושר לחלופה",
@@ -280,7 +280,7 @@ it("preserves per-decision results without representing them as an aggregate", a
     scenario={{ ...scenario, decisions: [...scenario.decisions, secondDecision] }}
     onSaved={vi.fn()}/>);
 
-  const buttons = await screen.findAllByRole("button", { name: "בדוק אומדן קצבה מאושר" });
+  const buttons = await screen.findAllByRole("button", { name: "בדוק אומדן קצבה" });
   fireEvent.click(buttons[0]);
   await screen.findByText(/אומדן קצבה חודשית ברוטו: 5.00/);
   fireEvent.click(buttons[1]);
@@ -298,7 +298,7 @@ it("does not infer aggregate blocked state from one independently blocked decisi
   mock.list.mockResolvedValue([election]);
   mock.estimate.mockResolvedValue(blockedEstimate());
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" }));
+  fireEvent.click(await screen.findByRole("button", { name: "בדוק אומדן קצבה" }));
   await screen.findByText("STAGE6_P1C_FACTOR_ADMISSION_BLOCKED");
   const status = screen.getByLabelText("מצב חישוב החלופה");
   expect(status).toHaveTextContent("טרם חושב סיכום קצבה מצרפי");
@@ -429,7 +429,7 @@ it("catalog candidate neither offers manual factor admission nor an executable e
     ...election, coefficient_selection: "catalog_candidate",
   }]);
   render(<ScenarioStage6Panel clientId={1} scenario={scenario} onSaved={vi.fn()}/>);
-  const estimateButton=await screen.findByRole("button",{name:"בדוק אומדן קצבה מאושר"});
+  const estimateButton=await screen.findByRole("button",{name:"בדוק אומדן קצבה"});
   expect((estimateButton as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByRole("button",{name:"הזן ואשר מקדם מקצועי"})).toBeNull();
   expect(mock.estimate).not.toHaveBeenCalled();
@@ -638,7 +638,7 @@ it("opens a capital-only alternative without requesting pension elections", asyn
   await screen.findByText(/לא מוקצה 0.00/);
   expect(mock.list).not.toHaveBeenCalled();
   expect(screen.queryByText("טוען בחירות קצבה...")).toBeNull();
-  expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "בדוק אומדן קצבה" })).toBeNull();
 });
 
 it("renders a verified monthly gross cashflow with distinct known and calculated sources", async () => {
@@ -706,5 +706,5 @@ it("keeps detailed professional inputs closed until the user opens them", async 
   expect(advanced.open).toBe(false);
   fireEvent.click(screen.getByText("בחירות קצבה, שאירים ואישור מקדם"));
   expect(advanced.open).toBe(true);
-  expect(await screen.findByRole("button", { name: "בדוק אומדן קצבה מאושר" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "בדוק אומדן קצבה" })).toBeTruthy();
 });

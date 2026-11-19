@@ -25,13 +25,13 @@ it("posts authenticated CAS fields only after fresh cursor read",async () => {
   });
   const approved=vi.fn();
   panel(3,approved);
-  fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
+  fireEvent.click(screen.getByRole("button",{name:"הזן מקדם קצבה"}));
   const factor=await screen.findByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)");
   fireEvent.change(factor,{target:{value:"200"}});
   fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
     target:{value:"Document ref 123"},
   });
-  fireEvent.click(screen.getByRole("button",{name:"אשר את המקדם ושמור גרסת אישור"}));
+  fireEvent.click(screen.getByRole("button",{name:"שמור מקדם"}));
   await waitFor(() => expect(mock.approve).toHaveBeenCalledTimes(1));
   expect(mock.approve).toHaveBeenCalledWith(1,"sc","d",{
     expected_scenario_version:3,
@@ -48,7 +48,7 @@ it("rejects stale approval cursor without any POST",async () => {
     scenario_version:2,latest_admission_revision:4,authority_state:"NOT_EVALUATED",
   });
   panel(3);
-  fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
+  fireEvent.click(screen.getByRole("button",{name:"הזן מקדם קצבה"}));
   await screen.findByText(/FACTOR_ADMISSION_SCENARIO_STALE/);
   expect(mock.approve).not.toHaveBeenCalled();
 });
@@ -58,13 +58,13 @@ it("never sends invalid or nonpositive factor",async () => {
     scenario_version:3,latest_admission_revision:0,authority_state:"NOT_EVALUATED",
   });
   panel();
-  fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
+  fireEvent.click(screen.getByRole("button",{name:"הזן מקדם קצבה"}));
   const factor=await screen.findByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)");
   fireEvent.change(factor,{target:{value:"0"}});
   fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
     target:{value:"assumption"},
   });
-  const submit=screen.getByRole("button",{name:"אשר את המקדם ושמור גרסת אישור"});
+  const submit=screen.getByRole("button",{name:"שמור מקדם"});
   expect((submit as HTMLButtonElement).disabled).toBe(true);
   expect(mock.approve).not.toHaveBeenCalled();
 });
@@ -73,7 +73,7 @@ it("drops old cursor when scenario version changes",async () => {
   let resolve!: (x:any)=>void;
   mock.cursor.mockReturnValueOnce(new Promise(r => {resolve=r;}));
   const view=panel(3);
-  fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
+  fireEvent.click(screen.getByRole("button",{name:"הזן מקדם קצבה"}));
   view.rerender(<ScenarioFactorAdmissionPanel clientId={1}
     scenarioId="sc" decisionId="d" scenarioVersion={4}
     disabled={false} onApproved={vi.fn()}/>);
@@ -88,12 +88,12 @@ it("accepts exact positive decimal factors with trailing zero digits",async () =
     scenario_version:3,latest_admission_revision:0,authority_state:"NOT_EVALUATED",
   });
   panel(3);
-  fireEvent.click(screen.getByRole("button",{name:"הזן ואשר מקדם מקצועי"}));
+  fireEvent.click(screen.getByRole("button",{name:"הזן מקדם קצבה"}));
   const input=await screen.findByLabelText("מקדם קצבה (מחלק, מספר חיובי מדויק)");
   fireEvent.change(input,{target:{value:"200.50"}});
   fireEvent.change(screen.getByLabelText("אסמכתה ותנאי המסלול"),{
     target:{value:"Insurer document ref"},
   });
-  const submit=screen.getByRole("button",{name:"אשר את המקדם ושמור גרסת אישור"});
+  const submit=screen.getByRole("button",{name:"שמור מקדם"});
   expect((submit as HTMLButtonElement).disabled).toBe(false);
 });

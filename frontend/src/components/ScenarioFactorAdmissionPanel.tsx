@@ -89,7 +89,7 @@ export function ScenarioFactorAdmissionPanel({
       setCursor(null);
       setFactorValue("");
       setEvidenceReference("");
-      setSuccess("אישור המקדם נשמר. האומדן ייבדק מחדש מול נתוני המסד המעודכנים.");
+      setSuccess("המקדם נשמר. האומדן ייבדק מחדש מול נתוני המסד המעודכנים.");
       onApproved();
     } catch (cause) {
       if (epoch.current === current) {
@@ -102,15 +102,15 @@ export function ScenarioFactorAdmissionPanel({
     }
   }
 
-  return <section aria-label="אישור מקדם קצבה מקצועי">
+  return <section aria-label="שמירת מקדם קצבה">
     <button type="button" disabled={disabled || busy} onClick={() => void open()}>
-      {busy ? "בודק גרסה..." : "הזן ואשר מקדם מקצועי"}
+      {busy ? "בודק גרסה..." : "הזן מקדם קצבה"}
     </button>
     {error && <p role="alert">{error} — יש לרענן את האישור לפני ניסיון חוזר.</p>}
     {success && <p role="status">{success}</p>}
     {opened && cursor && <form onSubmit={event => void submit(event)}>
-      <p>גרסת חלופה {scenarioVersion}; גרסת אישור אחרונה {cursor.latest_admission_revision}.
-        הגרסה אינה ראיה שהאישור הקודם תקף.</p>
+      <p>גרסת חלופה {scenarioVersion}; גרסת מקדם שמורה {cursor.latest_admission_revision}.
+        הגרסה אינה ראיה שהמקדם הקודם עדיין מתאים לנתוני המקור.</p>
       <label>מקדם קצבה (מחלק, מספר חיובי מדויק)
         <input inputMode="decimal" value={factorValue} onChange={event => setFactorValue(event.target.value)}/>
       </label>
@@ -125,12 +125,12 @@ export function ScenarioFactorAdmissionPanel({
         <textarea value={evidenceReference} maxLength={512} rows={3}
           onChange={event => setEvidenceReference(event.target.value)}/>
       </label>
-      <p>האישור מתעד מקור ומקדם. הוא אינו מאשר זכאות, מס, התחייבות מבטח או ביצוע קצבה.</p>
+      <p>השמירה מתעדת מקור ומקדם. היא אינה מאשרת זכאות, מס, התחייבות מבטח או ביצוע קצבה.</p>
       <button type="submit" disabled={disabled || busy || !positiveDivisor(factorValue) || !evidenceReference.trim()}>
-        אשר את המקדם ושמור גרסת אישור
+        שמור מקדם
       </button>
       <button type="button" disabled={busy} onClick={() => { ++epoch.current; setOpened(false); setCursor(null); }}>
-        בטל אישור
+        ביטול עריכה
       </button>
     </form>}
   </section>;

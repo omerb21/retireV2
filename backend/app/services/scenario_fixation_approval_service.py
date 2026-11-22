@@ -6,11 +6,11 @@ fixation admission, preview, tax calculation or official approval is invoked.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import logging
 from uuid import uuid4
 
 from sqlalchemy import func, select, update, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import sessionmaker
 
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision
 from app.models.official_parameter_set import OfficialParameterSet
@@ -27,7 +27,6 @@ CONTRACT = "SCENARIO_FIXATION_PROFESSIONAL_APPROVAL_V1"
 # No positive gate exists. This is intentional until a separate, admitted
 # professional authority contract is approved.
 UNRESOLVED_AUTHORITY = "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED"
-_logger = logging.getLogger(__name__)
 
 
 def _current(db, client_id: int, scenario_id: str) -> dict:
@@ -372,23 +371,26 @@ def save_draft(db, client_id: int, scenario_id: str,
         raise DraftError("SCENARIO_NOT_FOUND", 404)
     if scenario.status != "draft":
         raise DraftError("FIXATION_APPROVAL_SCENARIO_INACTIVE", 409)
-    readiness = _current(db, client_id, scenario_id)
+    # Stage 6 factor evidence is admitted only inside a REPEATABLE READ,
+    # READ ONLY snapshot. The writer's row-locked transaction cannot meet
+    # that contract: deriving the readiness directly here silently drops the
+    # pension evidence and creates a false CAS conflict on every valid save.
+    # Retain the row lock and validate its authoritative scenario/manifest,
+    # while reading the factor-dependent readiness from the same read-only
+    # snapshot contract used by GET. A stale factor admission is therefore
+    # rejected rather than being ignored or overwritten.
+    locked_readiness = _current(db, client_id, scenario_id)
+    from app.services.scenario_unified_engine_binding_service import build_unified_scenario_engine_bindings
+    readonly_factory = sessionmaker(bind=db.get_bind(), autoflush=False)
+    readonly_result = build_unified_scenario_engine_bindings(
+        readonly_factory, client_id=client_id, scenario_id=scenario_id,
+    )
+    readiness = readonly_result["domain_results"]["fixation_tax"]["readiness"]
     if (request.expected_scenario_version != readiness["scenario_version"]
             or request.expected_manifest_fingerprint != readiness["manifest_fingerprint"]
-            or request.expected_readiness_fingerprint != readiness["readiness_fingerprint"]):
-        _logger.warning(
-            "fixation_save_source_conflict client=%s scenario=%s "
-            "scenario_version=%s/%s manifest=%s/%s readiness=%s/%s",
-            client_id, scenario_id,
-            request.expected_scenario_version, readiness["scenario_version"],
-            request.expected_manifest_fingerprint[:12], readiness["manifest_fingerprint"][:12],
-            request.expected_readiness_fingerprint[:12], readiness["readiness_fingerprint"][:12],
-        )
-        if client_id == 4 and scenario_id == "7ad3cf974e7a47678e0bcfa829d7802d":
-            _logger.warning(
-                "fixation_save_source_detail source_evidence=%s blockers=%s mapping=%s",
-                readiness["source_evidence"], readiness["blockers"], readiness["mapping"],
-            )
+            or request.expected_readiness_fingerprint != readiness["readiness_fingerprint"]
+            or locked_readiness["scenario_version"] != readiness["scenario_version"]
+            or locked_readiness["manifest_fingerprint"] != readiness["manifest_fingerprint"]):
         raise DraftError("FIXATION_APPROVAL_SOURCE_CONFLICT", 409)
     records = [r.model_dump(mode="json") for r in request.decisions]
     content = {"decisions": sorted(records, key=lambda r: (r["group"], r["source_id"]))}

@@ -6,6 +6,7 @@ No request-controlled coefficients, identity hashes or financial authority.
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_session_factory
@@ -20,6 +21,7 @@ from app.services.scenario_stage6_monthly_comparison_service import (
     compare_scenario_monthly_cashflows,
 )
 from app.services.scenario_snapshot_candidate_service import ScenarioSnapshotError
+from app.services.scenario_pension_price_basis_service import save_explicit_decision
 
 router = APIRouter(
     prefix="/api/clients/{client_id}/scenario-drafts",
@@ -39,6 +41,48 @@ class MonthlyComparisonRequest(BaseModel):
     scenario_b_version: int = Field(gt=0)
     start_month: str = Field(min_length=7, max_length=7)
     end_month: str = Field(min_length=7, max_length=7)
+
+
+class ScenarioPensionPriceDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_scenario_version: int = Field(gt=0)
+    expected_source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_target_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_target_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    expected_revision: int = Field(ge=0)
+    price_basis: Literal["NOMINAL_AT_RETIREMENT_TARGET_DATE", "UNKNOWN"]
+
+
+@router.post("/{scenario_id}/pension-decisions/{decision_id}/price-basis")
+def save_stage6_pension_price_basis(
+    request: Request, payload: ScenarioPensionPriceDecisionRequest,
+    scenario_id: str, decision_id: str,
+    client_id: int = Path(gt=0), factory: sessionmaker[Session] = Depends(get_stage6_factory),
+):
+    if not getattr(request.app.state, "stage6_preview_enabled", False):
+        return error(request, 404, "ROUTE_NOT_FOUND")
+    actor = _verified_internal_actor(request)
+    if actor is None:
+        return error(request, 401, "AUTHENTICATION_REQUIRED")
+    rejected = validate_origin(request, request.app.state.auth_config) or validate_csrf(request)
+    if rejected is not None:
+        return rejected
+    if not scenario_id or len(scenario_id) > 64 or not decision_id or len(decision_id) > 64:
+        return error(request, 422, "S6_PRICE_BASIS_ROUTE_INVALID")
+    from app.services.scenario_draft_service import DraftError
+    try:
+        result = save_explicit_decision(
+            factory, client_id=client_id, scenario_id=scenario_id, decision_id=decision_id,
+            expected_scenario_version=payload.expected_scenario_version,
+            expected_source_fingerprint=payload.expected_source_fingerprint,
+            expected_target_fingerprint=payload.expected_target_fingerprint,
+            expected_target_date=payload.expected_target_date,
+            expected_revision=payload.expected_revision,
+            price_basis=payload.price_basis, actor=actor,
+        )
+        return JSONResponse(content=result, headers=NO_STORE)
+    except DraftError as exc:
+        return error(request, exc.status, exc.code)
 
 
 @router.get("/capabilities/gross-scenario-results")

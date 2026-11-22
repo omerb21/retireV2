@@ -5,6 +5,7 @@ No external hash maps are accepted as an authority source.
 """
 from sqlalchemy import select
 
+from app.models.client import Client
 from app.models.client_profile import ClientProfile
 from app.models.pension_product import PensionProduct
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
@@ -33,9 +34,14 @@ def derive_documentary_review_context(db, *, client_id: int, scenario_id: str,
     product = db.scalar(select(PensionProduct).where(
         PensionProduct.client_id == client_id,
         PensionProduct.product_id == decision["product_id"]))
+    client = db.scalar(select(Client).where(Client.client_id == client_id))
     profile = db.scalar(select(ClientProfile).where(ClientProfile.client_id == client_id))
+    # The current client editor stores birth_date on clients. Preserve the
+    # legacy profile value only for records that have no client birth date.
+    birth_date = (client.birth_date if client and client.birth_date is not None
+                  else profile.birth_date if profile else None)
     if (product is None or product.version != decision["source"]["product_version"]
-            or profile is None or profile.birth_date is None or profile.gender is None):
+            or profile is None or birth_date is None or profile.gender is None):
         raise DraftError("PROFESSIONAL_REVIEW_INPUT_FACTS_MISSING", 409)
     election_identity = {
         "decision_id": election.decision_id,
@@ -56,7 +62,7 @@ def derive_documentary_review_context(db, *, client_id: int, scenario_id: str,
         "product_version": product.version,
         "product_type": product.product_type,
         "product_start_date": product.start_date.isoformat() if product.start_date else None,
-        "profile_birth_date": profile.birth_date.isoformat(),
+        "profile_birth_date": birth_date.isoformat(),
         "profile_gender": profile.gender,
     }
     return {

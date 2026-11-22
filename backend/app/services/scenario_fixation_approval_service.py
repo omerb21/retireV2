@@ -6,6 +6,7 @@ fixation admission, preview, tax calculation or official approval is invoked.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from uuid import uuid4
 
 from sqlalchemy import func, select, update, text
@@ -26,6 +27,7 @@ CONTRACT = "SCENARIO_FIXATION_PROFESSIONAL_APPROVAL_V1"
 # No positive gate exists. This is intentional until a separate, admitted
 # professional authority contract is approved.
 UNRESOLVED_AUTHORITY = "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED"
+_logger = logging.getLogger(__name__)
 
 
 def _current(db, client_id: int, scenario_id: str) -> dict:
@@ -374,6 +376,14 @@ def save_draft(db, client_id: int, scenario_id: str,
     if (request.expected_scenario_version != readiness["scenario_version"]
             or request.expected_manifest_fingerprint != readiness["manifest_fingerprint"]
             or request.expected_readiness_fingerprint != readiness["readiness_fingerprint"]):
+        _logger.warning(
+            "fixation_save_source_conflict client=%s scenario=%s "
+            "scenario_version=%s/%s manifest=%s/%s readiness=%s/%s",
+            client_id, scenario_id,
+            request.expected_scenario_version, readiness["scenario_version"],
+            request.expected_manifest_fingerprint[:12], readiness["manifest_fingerprint"][:12],
+            request.expected_readiness_fingerprint[:12], readiness["readiness_fingerprint"][:12],
+        )
         raise DraftError("FIXATION_APPROVAL_SOURCE_CONFLICT", 409)
     records = [r.model_dump(mode="json") for r in request.decisions]
     content = {"decisions": sorted(records, key=lambda r: (r["group"], r["source_id"]))}

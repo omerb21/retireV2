@@ -113,6 +113,14 @@ export interface ScenarioMonthlyComparison {
   scenario_a: ScenarioComparisonIdentity;
   scenario_b: ScenarioComparisonIdentity;
   shared_source_ids: string[];
+  scenario_price_decisions?: Array<{
+    source_id: string; scenario_id: string; decision_id: string;
+    scenario_version: number; source_fingerprint: string;
+    target_fingerprint: string; target_date: string;
+    price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "UNKNOWN";
+    revision: number; record_fingerprint: string;
+    provenance: "EXPLICIT_PROFESSIONAL";
+  }>;
   target: {
     target_state: "NOT_READY" | "NET_NOT_COMPARABLE" | "PRICE_BASIS_NOT_COMPARABLE" | "GROSS_NOMINAL_TARGET_MONTH_ONLY";
     monthly_amount_ils: string | null;
@@ -247,6 +255,20 @@ export async function readScenarioMonthlyComparison(
     throw Error(typeof parsed?.code === "string" ? parsed.code : "STAGE6_COMPARISON_UNAVAILABLE");
   }
   return response.json() as Promise<ScenarioMonthlyComparison>;
+}
+
+export async function saveScenarioPensionPriceBasis(clientId: number,
+  scenarioId: string, decisionId: string, payload: {
+    expected_scenario_version: number; expected_source_fingerprint: string;
+    expected_target_fingerprint: string; expected_target_date: string;
+    expected_revision: number;
+    price_basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "UNKNOWN";
+  }): Promise<void> {
+  await read(clientId, scenarioId,
+    `/pension-decisions/${encodeURIComponent(decisionId)}/price-basis`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 }
 
 

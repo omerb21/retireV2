@@ -57,7 +57,8 @@ test("L05: native beforeunload cancel/accept, then saved data survives navigatio
   expect((await savedResponse.json()).some((row: { asset_description: string }) => row.asset_description === persisted)).toBe(true);
   await page.goto(`${base}?step=results`);
   await page.goto(`${base}?step=supplement`);
-  await expect(page.getByRole("listitem").filter({ hasText: persisted })).toBeVisible();
+  await expect(page.getByRole("region", { name: "נכסי הון" })
+    .getByRole("listitem").filter({ hasText: persisted })).toBeVisible();
   expect(observed.filter(item => item.startsWith("accept:")).length).toBe(1);
   await page.screenshot({ path: info.outputPath("l05-saved-and-restored.png") });
 });

@@ -1447,7 +1447,7 @@ def test_pg16_fixation_professional_review_save_reload_history_and_blocked_gate(
         denied = fixation_review.request_internal_approval(
             db, 7, "a1", _internal_review_request(factory), "planner-test")
         assert denied["approval_attempt_state"] == "BLOCKED"
-        assert "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED" in denied["blockers"]
+        assert "FIXATION_INTERNAL_ADMISSION_NOT_PASSED" in denied["blockers"]
         assert denied["professional_authority"] is False
         assert denied["tax_authority_approval"] is None
     updated = _review_replace(factory, version=1, decisions=[

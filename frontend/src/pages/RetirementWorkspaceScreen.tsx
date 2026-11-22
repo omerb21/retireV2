@@ -731,7 +731,7 @@ export function RetirementWorkspaceScreen() {
           <PlannerAssumptionsSection key={`assumptions:${clientId}`} clientId={clientId} />
         </div>
         <section aria-label="עורכי נתונים משלימים PKG-02">
-          <p role="note">PKG02-CONCURRENCY-001: בדיקת מקור לפני עדכון היא הגנה חלקית בלבד, לא CAS אטומי.</p>
+          <p role="note">PKG02-CONCURRENCY-001: שמירת היוונים בפועל, נכסי הון, הכנסות והוצאות שוטפות מוגנת בבקרת גרסה אטומית במסד הנתונים (CAS). במקרה של התנגשות השמירה נדחית ויש להשוות לנתונים המעודכנים. ההגנה חלה על פעולות אלו בלבד.</p>
           {(supplementCategory === null || supplementCategory === 2) && <ActualCapitalizationsSection
             key={`actual-capitalizations:${clientId}`} parsedClientId={clientId}
             onDirtyChange={dirty => onSupplementDirty("actual-capitalizations", dirty)}

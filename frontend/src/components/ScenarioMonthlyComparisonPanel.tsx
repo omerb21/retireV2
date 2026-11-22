@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ScenarioDraft } from "../api/scenarioDraftsApi";
 import {
-  readScenarioMonthlyComparison, type ScenarioMonthlyComparison,
+  readScenarioMonthlyComparison, saveScenarioPensionPriceBasis, type ScenarioMonthlyComparison,
 } from "../api/scenarioStage6Api";
 
 interface Props { clientId: number; scenarios: ScenarioDraft[] }
@@ -21,6 +21,10 @@ const blockerText: Record<string, string> = {
   STAGE6_COMPARISON_PRICE_AUTHORITY_STALE: "ראיית בסיס המחירים אינה תואמת ליעד המעודכן.",
   STAGE6_COMPARISON_SOURCE_PRICE_AUTHORITY_UNRESOLVED: "לפחות הכנסה שוטפת אחת אינה מוכחת בת השוואה במחירי מועד היעד.",
   STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_UNAVAILABLE: "מקור קצבה של התרחיש אינו מזוהה בסמכות בסיס המחירים הקיימת. החלטת OD2 אינה מועתקת אליו.",
+  STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_MISSING: "טרם התקבלה הכרעת בסיס מחירים למקור הקצבה הזה.",
+  STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_STALE: "הכרעת הקצבה התיישנה בעקבות שינוי בנתוני המקור או היעד.",
+  STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_UNRESOLVED: "המקור אינו מוכרע כבר השוואה.",
+  STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_INVALID: "הכרעת הקצבה אינה תקפה.",
 };
 
 function months(start: string, end: string): string[] {
@@ -113,6 +117,7 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
   const [result, setResult] = useState<ScenarioMonthlyComparison | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savingBasis, setSavingBasis] = useState<string | null>(null);
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const scenarioRevision = available.map(item => `${item.scenario_id}:${item.version}`).join("|");
@@ -161,6 +166,34 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
     }
   }
 
+  async function decideBasis(scenarioId: string, scenarioVersion: number,
+                             sourceId: string, sourceFingerprint: string,
+                             basis: "NOMINAL_AT_RETIREMENT_TARGET_DATE" | "UNKNOWN") {
+    if (!result?.target.retirement_target_date || savingBasis || busy) return;
+    const prefix = `scenario-decision:${scenarioId}:`;
+    if (!sourceId.startsWith(prefix)) return;
+    const decisionId = sourceId.slice(prefix.length);
+    if (!decisionId) return;
+    const prior = result.scenario_price_decisions?.find(row => row.source_id === sourceId);
+    setSavingBasis(sourceId);
+    setError(null);
+    try {
+      await saveScenarioPensionPriceBasis(clientId, scenarioId, decisionId, {
+        expected_scenario_version: scenarioVersion,
+        expected_source_fingerprint: sourceFingerprint,
+        expected_target_fingerprint: result.target.target_result_fingerprint,
+        expected_target_date: result.target.retirement_target_date,
+        expected_revision: prior?.revision ?? 0,
+        price_basis: basis,
+      });
+      setSavingBasis(null);
+      await compare();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "S6_PRICE_BASIS_SAVE_UNAVAILABLE");
+      setSavingBasis(null);
+    }
+  }
+
   if (available.length < 2) return <section aria-label="השוואת תזרים בין חלופות">
     <h3>השוואת תזרים חודשי</h3><p>נדרשות לפחות שתי חלופות פעילות שמורות.</p>
   </section>;
@@ -186,7 +219,7 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
         onChange={event => invalidate(() => setEndMonth(event.target.value))}/></label>
     </div>
     {scenarioA === scenarioB && <p role="alert">יש לבחור שתי חלופות שונות של אותו לקוח.</p>}
-    <button type="button" disabled={busy || scenarioA === scenarioB || !startMonth || !endMonth}
+    <button type="button" disabled={busy || !!savingBasis || scenarioA === scenarioB || !startMonth || !endMonth}
       onClick={() => void compare()}>{busy ? "מחשב השוואה..." : "השווה תזרים חודשי"}</button>
     {error && <p role="alert">ההשוואה נחסמה: {blockerText[error] ?? error}</p>}
     {result && <>
@@ -215,8 +248,10 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
           <td>{signed(row.scenario_a_minus_target_gross_ils)}</td>
           <td>{signed(row.scenario_b_minus_target_gross_ils)}</td>
           <td>{changes(row.change_events)}</td>
-          <td>{row.comparison_state === "COMPLETE" ? "תקין"
-            : row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}</td>
+          <td>{row.target_comparison_state === "BLOCKED" && row.blocker_codes.length
+            ? `פער מהיעד חסום: ${row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}`
+            : row.comparison_state === "COMPLETE" ? "תקין"
+              : row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}</td>
         </tr>)}</tbody>
       </table></div>
       <p>יעד: {result.target.monthly_amount_ils ?? "לא זמין"} ₪; בסיס {result.target.price_basis ?? "לא ידוע"}; מועד יעד {result.target.retirement_target_date ?? "לא ידוע"}.</p>
@@ -227,6 +262,20 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
               <bdi>{source.source_id}</bdi>: בסיס <bdi>{source.price_basis ?? "לא ידוע"}</bdi>;
               מועד מקור <bdi>{source.source_reference_date ?? "לא ידוע"}</bdi>;
               מצב מקור {source.source_state === "READY" ? "כשיר לתזרים, לא בהכרח להשוואה ליעד" : "חסום"}
+              {source.source_kind === "CALCULATED_PENSION" && source.source_state === "READY" && <>
+                <p>הכרעה מקצועית: {result.scenario_price_decisions?.find(row => row.source_id === source.source_id)?.price_basis ?? "טרם הוזנה"}.
+                  זהות ההחלטה נבדקת מול חתימת המקור, החלופה ומועד היעד.</p>
+                <button type="button" disabled={busy || !!savingBasis || !result.target.retirement_target_date}
+                  onClick={() => void decideBasis(scenario.scenario_id, scenario.scenario_version,
+                    source.source_id, source.authority_fingerprint, "NOMINAL_AT_RETIREMENT_TARGET_DATE")}>
+                  קבע במפורש: בר השוואה ישירה במחירי מועד היעד
+                </button>
+                <button type="button" disabled={busy || !!savingBasis}
+                  onClick={() => void decideBasis(scenario.scenario_id, scenario.scenario_version,
+                    source.source_id, source.authority_fingerprint, "UNKNOWN")}>
+                  הסר התאמה מקצועית
+                </button>
+              </>}
             </li>)}
           </ul></section>)}
       </details>

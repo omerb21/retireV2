@@ -26,6 +26,7 @@ from app.services.scenario_snapshot_candidate_service import (
 from app.services.scenario_stage6_monthly_cashflow_service import (
     _cashflow_extension, _months, validate_monthly_cashflow_result,
 )
+from app.services.scenario_pension_price_basis_service import current_rows, evaluate_decision
 
 
 CONTRACT = "STAGE6_SCENARIO_MONTHLY_COMPARISON_V1"
@@ -229,7 +230,7 @@ def _target_projection(target_result: dict) -> dict:
 
 def _price_comparability_blockers(*, client_id: int, target_result: dict,
                                   cashflows: tuple[dict, dict], basis_result: dict | None,
-                                  month: str) -> list[str]:
+                                  month: str, scenario_price_decisions: dict | None = None) -> list[str]:
     """Use existing RTICB authority only for exact, admitted economic source identities.
 
     Stage 6 scenario-decision pensions are not the manual:/conversion: sources
@@ -255,8 +256,18 @@ def _price_comparability_blockers(*, client_id: int, target_result: dict,
             source = source_by_id[source_id]
             entry = entries.get(source_id)
             if source["source_kind"] == "CALCULATED_PENSION":
-                # OD2 does not apply to scenario-decision:<scenario>:<decision>.
-                reasons.add("STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_UNAVAILABLE")
+                # CRTISBA's OD2 is scoped to manual:/conversion: only. The
+                # explicit Stage 6 extension is a separate source-bound record.
+                state = evaluate_decision(
+                    (scenario_price_decisions or {}).get(source_id), source,
+                    client_id=client_id,
+                    scenario_id=cashflow["scenario_id"],
+                    scenario_version=cashflow["scenario_version"],
+                    target_fingerprint=target_result["target_result_fingerprint"],
+                    target_date=target["retirement_target_date"],
+                )
+                if state != "CURRENT":
+                    reasons.add("STAGE6_COMPARISON_SCENARIO_PENSION_PRICE_AUTHORITY_" + state)
             elif (entry is None or entry["source_kind"] != "RECURRING_INCOME"
                   or entry["source_fingerprint"] != source["authority_fingerprint"]
                   or entry["decision_state"] != "CURRENT"
@@ -273,7 +284,8 @@ def _price_comparability_blockers(*, client_id: int, target_result: dict,
 def _compose(*, client_id: int, scenario_a_id: str, scenario_a_version: int,
              scenario_b_id: str, scenario_b_version: int, start_month: str,
              end_month: str, cashflow_a: dict, cashflow_b: dict,
-             target_result: dict, basis_result: dict | None = None) -> dict:
+             target_result: dict, basis_result: dict | None = None,
+             scenario_price_decisions: dict | None = None) -> dict:
     if not validate_monthly_cashflow_result(
         cashflow_a, client_id=client_id, scenario_id=scenario_a_id,
         scenario_version=scenario_a_version, start_month=start_month, end_month=end_month,
@@ -319,7 +331,7 @@ def _compose(*, client_id: int, scenario_a_id: str, scenario_a_version: int,
                 price_blockers = _price_comparability_blockers(
                     client_id=client_id, target_result=target_result,
                     cashflows=(cashflow_a, cashflow_b), basis_result=basis_result,
-                    month=row_a["month"],
+                    month=row_a["month"], scenario_price_decisions=scenario_price_decisions,
                 )
                 if price_blockers:
                     blockers.extend(price_blockers)
@@ -379,6 +391,9 @@ def _compose(*, client_id: int, scenario_a_id: str, scenario_a_version: int,
             & {source["source_id"] for source in cashflow_b["sources"]}
         ),
         "target": target,
+        "scenario_price_decisions": sorted(
+            (scenario_price_decisions or {}).values(), key=lambda item: item["source_id"]
+        ),
         "monthly_rows": rows,
         "execution_allowed": False,
     }
@@ -426,7 +441,8 @@ def _read_snapshot_evidence(factory, *, client_id: int, scenario_a_id: str,
                 # Price-authority outage cannot hide separately valid gross amounts
                 # or authorize a goal gap. Its only permitted outcome is blocked.
                 basis = None
-        evidence = (cashflow_a, cashflow_b, target, basis)
+        scenario_price = current_rows(db, client_id, (scenario_a_id, scenario_b_id))
+        evidence = (cashflow_a, cashflow_b, target, (basis, scenario_price))
     except BaseException as exc:
         primary = exc
     finally:
@@ -494,6 +510,9 @@ def compare_scenario_monthly_cashflows(factory, *, client_id: int,
     if not isinstance(evidence, tuple) or len(evidence) != 4:
         raise ScenarioSnapshotError("STAGE6_COMPARISON_PRICE_AUTHORITY_UNAVAILABLE")
     cashflow_a, cashflow_b, target, basis = evidence
+    scenario_price = None
+    if isinstance(basis, tuple) and len(basis) == 2:
+        basis, scenario_price = basis
     if (
         cashflow_a.get("scenario_version") != scenario_a_version
         or cashflow_b.get("scenario_version") != scenario_b_version
@@ -505,4 +524,5 @@ def compare_scenario_monthly_cashflows(factory, *, client_id: int,
         scenario_b_version=scenario_b_version, start_month=start_month,
         end_month=end_month, cashflow_a=cashflow_a, cashflow_b=cashflow_b,
         target_result=target, basis_result=basis,
+        scenario_price_decisions=scenario_price,
     )

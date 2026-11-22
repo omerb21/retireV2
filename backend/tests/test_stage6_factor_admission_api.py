@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.api import scenario_stage6_factor_admission_routes as routes
+from app.services.scenario_draft_service import DraftError
 
 
 def request(production, enabled=True):
@@ -64,3 +65,12 @@ def test_production_with_preview_disabled_cannot_write():
             request(True,enabled=False),payload(),"scenario","decision",client_id=1,
             factory=object())=="not-found"
         writer.assert_not_called()
+
+
+def test_missing_review_facts_return_domain_conflict_not_internal_error():
+    with patch.object(routes, "append_authenticated_serializable_factor_admission",
+                      side_effect=DraftError("PROFESSIONAL_REVIEW_INPUT_FACTS_MISSING", 409)):
+        response = routes.approve_professional_factor(
+            request(True), payload(), "scenario", "decision", client_id=1, factory=object())
+    assert response.status_code == 409
+    assert b"PROFESSIONAL_REVIEW_INPUT_FACTS_MISSING" in response.body

@@ -248,10 +248,11 @@ export function ScenarioMonthlyComparisonPanel({ clientId, scenarios }: Props) {
           <td>{signed(row.scenario_a_minus_target_gross_ils)}</td>
           <td>{signed(row.scenario_b_minus_target_gross_ils)}</td>
           <td>{changes(row.change_events)}</td>
-          <td>{row.target_comparison_state === "BLOCKED" && row.blocker_codes.length
-            ? `פער מהיעד חסום: ${row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}`
-            : row.comparison_state === "COMPLETE" ? "תקין"
-              : row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}</td>
+          <td>{row.comparison_state !== "COMPLETE"
+            ? row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")
+            : row.target_comparison_state === "BLOCKED" && row.blocker_codes.length
+              ? `פער מהיעד חסום: ${row.blocker_codes.map(code => blockerText[code] ?? code).join(" ")}`
+              : "תקין"}</td>
         </tr>)}</tbody>
       </table></div>
       <p>יעד: {result.target.monthly_amount_ils ?? "לא זמין"} ₪; בסיס {result.target.price_basis ?? "לא ידוע"}; מועד יעד {result.target.retirement_target_date ?? "לא ידוע"}.</p>

@@ -345,6 +345,17 @@ describe("סביבת העבודה המקצועית החדשה", () => {
     expect(savePensionProduct).not.toHaveBeenCalled();
   });
 
+  it("describes atomic CAS only for the four supported supplementary fact types", async () => {
+    open();
+    await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });
+    fireEvent.click(screen.getByRole("button", { name: "3. נתונים משלימים" }));
+    const note = screen.getByRole("note");
+    expect(note).toHaveTextContent("שמירת היוונים בפועל, נכסי הון, הכנסות והוצאות שוטפות מוגנת בבקרת גרסה אטומית");
+    expect(note).toHaveTextContent("במקרה של התנגשות השמירה נדחית");
+    expect(note).toHaveTextContent("ההגנה חלה על פעולות אלו בלבד");
+    expect(note).not.toHaveTextContent("לא CAS אטומי");
+  });
+
   it("uses workspace employment editing and labels legacy grant fallback explicitly", async () => {
     open();
     await screen.findByRole("region", { name: "טבלת רכיבים נגללת" });

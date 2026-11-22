@@ -104,6 +104,8 @@ jobs:
           PY
 
       - name: Run existing real PostgreSQL P1D acceptance
+        id: existing_p1d
+        continue-on-error: true
         working-directory: backend
         shell: bash
         run: |
@@ -236,6 +238,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          test '${{ steps.existing_p1d.outcome }}' = success
           test '${{ steps.supervisor284_pg.outcome }}' = success
           test '${{ steps.supervisor284_browser.outcome }}' = success
 

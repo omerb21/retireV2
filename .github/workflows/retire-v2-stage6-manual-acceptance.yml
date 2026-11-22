@@ -1,8 +1,16 @@
 name: RETIRE V2 Stage 6 manual acceptance
 
-# Manually dispatched only. No push, pull_request, schedule, or automatic trigger.
+# The instruction-284 test branch needs a one-scope push trigger because this
+# workflow is not present on the default branch (workflow_dispatch unavailable).
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/276-price-basis-staging
+    paths:
+      - '.github/workflows/retire-v2-stage6-manual-acceptance.yml'
+      - 'frontend/e2e/l05-controlled.spec.ts'
+      - 'frontend/e2e/pkg03-284-http.spec.ts'
 
 permissions:
   contents: read
@@ -13,12 +21,13 @@ concurrency:
 
 jobs:
   focused-acceptance:
-    name: PG16 P1D and isolated frontend acceptance
+    name: PG16 P1D, supervisor 284 and isolated Chromium acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     env:
       APP_ENV: test
       STAGE6_PREVIEW_ENABLED: "0"
+      COMPOSE_PROJECT_NAME: retirev2_284_${{ github.run_id }}
       SCENARIO_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:retire_v2_ci_only@127.0.0.1:5432/retire_v2_scenario_test
       DATABASE_URL: postgresql+psycopg2://postgres:retire_v2_ci_only@127.0.0.1:5432/retire_v2_scenario_test
     services:
@@ -49,14 +58,19 @@ jobs:
           test "$APP_ENV" = test
           test "$STAGE6_PREVIEW_ENABLED" = 0
           test "$GITHUB_REF_TYPE" = branch
-          test "$GITHUB_REF_NAME" = feature/neon-stage6-db-reconnect-20261105
+          case "$GITHUB_REF_NAME" in
+            feature/neon-stage6-db-reconnect-20261105|fix/276-price-basis-staging) ;;
+            *) echo "UNAPPROVED_TEST_BRANCH:$GITHUB_REF_NAME" >&2; exit 1 ;;
+          esac
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python3 - <<'PY'
           import os
           from urllib.parse import urlsplit
           for name in ("DATABASE_URL", "SCENARIO_TEST_POSTGRES_URL"):
               url = urlsplit(os.environ[name].replace("postgresql+psycopg2://", "postgresql://", 1))
-              assert url.hostname == "127.0.0.1" and url.path == "/retire_v2_scenario_test"
+              assert url.hostname == "127.0.0.1" and url.port == 5432
+              assert url.path == "/retire_v2_scenario_test"
+              assert url.username == "postgres"
           PY
           mkdir -p acceptance-evidence
 
@@ -99,6 +113,19 @@ jobs:
             --junitxml="../acceptance-evidence/p1d-junit.xml" \
             2>&1 | tee ../acceptance-evidence/p1d-pytest.log
 
+      - name: Run 82 targeted PostgreSQL integration cases
+        id: supervisor284_pg
+        continue-on-error: true
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -v -s \
+            tests/test_scenario_internal_fixation_approval_postgresql.py \
+            tests/test_scenario_unified_engine_binding_postgresql.py \
+            --junitxml="../acceptance-evidence/supervisor284-postgresql-junit.xml" \
+            2>&1 | tee ../acceptance-evidence/supervisor284-postgresql.log
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -128,11 +155,97 @@ jobs:
           set -euo pipefail
           npm run build 2>&1 | tee ../acceptance-evidence/frontend-build.log
 
+      - name: Install CI-only Playwright and Chromium
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Verify second disposable test stack uses local-only PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml config --format json > acceptance-evidence/local-compose.json
+          python3 - <<'PY'
+          import json
+          conf=json.load(open('acceptance-evidence/local-compose.json'))
+          db=conf['services']['db']
+          backend=conf['services']['backend']
+          assert db['image']=='postgres:16'
+          assert db.get('tmpfs') and not any('railway' in str(v).lower() for v in db.values())
+          assert not db.get('ports'), 'database must not be publicly exposed'
+          assert backend['environment']['APP_ENV']=='development'
+          assert backend['environment']['MIGRATION_DATABASE_URL'].endswith('@db:5432/retirement_v2_synthetic')
+          assert all(p.get('host_ip')=='127.0.0.1' for p in backend['ports'])
+          PY
+
+      - name: Start isolated real API and test UI
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f ../dev/compose.workspace.yml -f ../dev/compose.pkg02-ci.override.yml up -d --build --wait db backend
+          curl --fail --silent --show-error http://127.0.0.1:8001/healthz/ready > ../acceptance-evidence/backend-ready.json
+          npm run dev -- --mode test --host 127.0.0.1 > ../acceptance-evidence/vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5174/__retire_v2_test_identity > ../acceptance-evidence/vite-identity.json; then break; fi
+            sleep 2
+          done
+          grep -q RETIRE_V2_FRONTEND ../acceptance-evidence/vite-identity.json
+          curl --fail --silent --show-error http://127.0.0.1:5174/api/auth/session > ../acceptance-evidence/auth-session.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('../acceptance-evidence/auth-session.json'))
+          assert d['authenticated'] is True and d['actor_id']=='development-professional'
+          PY
+
+      - name: Run L05, L02 and PKG-03 actual Chromium E2E
+        id: supervisor284_browser
+        continue-on-error: true
+        working-directory: frontend
+        shell: bash
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../acceptance-evidence/supervisor284-chromium-junit.xml
+        run: |
+          set -euo pipefail
+          npx playwright test \
+            e2e/l05-controlled.spec.ts \
+            e2e/pkg02-acceptance.spec.ts \
+            e2e/pkg03-readiness.spec.ts \
+            e2e/pkg03-284-http.spec.ts \
+            --browser chromium --workers 1 --retries 0 \
+            --reporter=line,junit --output=test-results \
+            2>&1 | tee ../acceptance-evidence/supervisor284-chromium.log
+
+      - name: Capture local-only logs and checkout identity
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p acceptance-evidence
+          git rev-parse HEAD > acceptance-evidence/checkout-sha.txt
+          docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml logs --no-color backend db > acceptance-evidence/local-compose.log 2>&1 || true
+
+      - name: Destroy disposable containers
+        if: always()
+        shell: bash
+        run: docker compose -f dev/compose.workspace.yml -f dev/compose.pkg02-ci.override.yml down -v --remove-orphans
+
+      - name: Enforce acceptance exit status
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.supervisor284_pg.outcome }}' = success
+          test '${{ steps.supervisor284_browser.outcome }}' = success
+
       - name: Save JUnit and test logs even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: retire-v2-stage6-acceptance-${{ github.run_id }}
-          path: acceptance-evidence/
+          path: |
+            acceptance-evidence/
+            frontend/test-results/
           if-no-files-found: warn
           retention-days: 7

@@ -11,6 +11,7 @@ on:
       - '.github/workflows/retire-v2-stage6-manual-acceptance.yml'
       - 'frontend/e2e/l05-controlled.spec.ts'
       - 'frontend/e2e/pkg03-284-http.spec.ts'
+      - 'backend/tests/test_stage6_p1d_postgresql.py'
 
 permissions:
   contents: read

@@ -35,6 +35,7 @@ from app.models.scenario_fixation_approval import (
     ScenarioFixationApprovalHead, ScenarioFixationApprovalRevision,
 )
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
+from app.models.scenario_pension_price_basis import ScenarioPensionPriceBasis
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services import scenario_stage6_single_pension_estimate_service as subject
 from app.services.scenario_unified_engine_binding_service import (
@@ -105,6 +106,7 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
                 PensionIncomeResolution.__table__,
                 RecurringIncome.__table__, PlannerAssumption.__table__,
                 RetirementMonthlyIncomeTargetElection.__table__,
+                ScenarioPensionPriceBasis.__table__,
                 batches, conversions,
                 CapitalAsset.__table__, EmploymentRecord.__table__,
                 Grant.__table__, ActualCapitalization.__table__,

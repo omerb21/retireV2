@@ -12,10 +12,14 @@ def test_sc05_single_alembic_head_matches_production_readiness():
     config = Config()
     config.set_main_option("script_location", str(base / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["d6f1a9c3b704"]
-    assert EXPECTED_ALEMBIC_HEAD == scripts.get_current_head()
+    heads = scripts.get_heads()
+    assert len(heads) == 1, f"Expected a single Alembic head, got {heads}"
+    assert EXPECTED_ALEMBIC_HEAD == heads[0] == scripts.get_current_head()
+    revisions = {revision.revision for revision in scripts.walk_revisions()}
+    assert {"d6f1a9c3b704", "d277e1a6f003"} <= revisions
     assert scripts.get_revision("c5e019a47d62").down_revision == "b7c5e1a90342"
     assert scripts.get_revision("d6f1a9c3b704").down_revision == "c5e019a47d62"
+    assert scripts.get_revision("d277e1a6f003").down_revision == "c194e2f0a816"
 
 
 def test_sc05_migrations_define_explicit_minimum_privileges():

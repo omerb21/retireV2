@@ -384,6 +384,11 @@ def save_draft(db, client_id: int, scenario_id: str,
             request.expected_manifest_fingerprint[:12], readiness["manifest_fingerprint"][:12],
             request.expected_readiness_fingerprint[:12], readiness["readiness_fingerprint"][:12],
         )
+        if client_id == 4 and scenario_id == "7ad3cf974e7a47678e0bcfa829d7802d":
+            _logger.warning(
+                "fixation_save_source_detail source_evidence=%s blockers=%s mapping=%s",
+                readiness["source_evidence"], readiness["blockers"], readiness["mapping"],
+            )
         raise DraftError("FIXATION_APPROVAL_SOURCE_CONFLICT", 409)
     records = [r.model_dump(mode="json") for r in request.decisions]
     content = {"decisions": sorted(records, key=lambda r: (r["group"], r["source_id"]))}

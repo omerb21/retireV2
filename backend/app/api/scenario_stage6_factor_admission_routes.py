@@ -14,6 +14,7 @@ from app.security.transport import NO_STORE, error
 from app.services.scenario_pension_factor_admission_write_service import (
     PensionFactorWriteBlocked, append_authenticated_serializable_factor_admission,
 )
+from app.services.scenario_draft_service import DraftError
 
 router=APIRouter(prefix="/api/clients/{client_id}/scenario-drafts",
                  tags=["stage6-professional-admission"])
@@ -59,6 +60,8 @@ def approve_professional_factor(
         return JSONResponse(content=result,headers=NO_STORE)
     except PensionFactorWriteBlocked as exc:
         return error(request,409,str(exc))
+    except DraftError as exc:
+        return error(request,exc.status,str(exc))
 
 
 # Informational CAS cursor only: never an approval, permission, or executable state.

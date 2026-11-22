@@ -42,7 +42,7 @@ from app.models.scenario_fixation_approval import (
 )
 from app.schemas.scenario_fixation_approval import (
     FixationProfessionalDraftReplace, FixationProfessionalDecision,
-    FixationAdmissionControls,
+    FixationAdmissionControls, FixationProfessionalApprovalRequest,
 )
 from app.services import scenario_fixation_approval_service as fixation_review
 from app.services import scenario_fixation_admission_preparation_service as fixation_preparation
@@ -1382,6 +1382,38 @@ def _review_replace(factory, *, client=7, scenario="a1", version=0,
         return fixation_review.save_draft(db, client, scenario, data, actor)
 
 
+def _internal_review_request(factory):
+    """Build the current explicit approval contract from real PG16 read evidence."""
+    with factory() as db:
+        item = fixation_review.read(db, 7, "a1")
+        prepared = fixation_preparation.prepare(db, 7, "a1")
+        eligible = fixation_eligibility.assess(db, 7, "a1")
+        admitted = fixation_admission_review.review(
+            db, 7, "a1",
+            expected_preparation_fingerprint=prepared["preparation_fingerprint"],
+            expected_eligibility_fingerprint=eligible["eligibility_fingerprint"],
+        )
+    return FixationProfessionalApprovalRequest(
+        expected_approval_version=item["approval_version"],
+        expected_approval_fingerprint=item["approval_fingerprint"],
+        expected_scenario_version=item["current_readiness"]["scenario_version"],
+        expected_manifest_fingerprint=item["current_readiness"]["manifest_fingerprint"],
+        expected_readiness_fingerprint=item["current_readiness"]["readiness_fingerprint"],
+        expected_preparation_fingerprint=prepared["preparation_fingerprint"],
+        expected_eligibility_fingerprint=eligible["eligibility_fingerprint"],
+        expected_admission_review_fingerprint=admitted["admission_review_fingerprint"],
+        decision="APPROVE_INTERNAL",
+        decision_reason="Synthetic controlled approval attempt with incomplete evidence must remain blocked.",
+        review_reference="document://synthetic-review-7",
+        attestations=[
+            "ELIGIBILITY_EVIDENCE_EXAMINED", "OFFICIAL_PARAMETERS_EXAMINED",
+            "PENSION_CLASSIFICATION_EXAMINED",
+            "HISTORICAL_GRANTS_AND_CAPITALIZATIONS_EXAMINED",
+            "ABSENCE_OF_OVERLAP_CONFIRMED", "LIMITED_INTERNAL_SCOPE_ACKNOWLEDGED",
+        ],
+    )
+
+
 def test_pg16_fixation_professional_review_save_reload_history_and_blocked_gate(pg16, monkeypatch):
     factory, _ = pg16
     from app.services import fixation_service
@@ -1411,8 +1443,9 @@ def test_pg16_fixation_professional_review_save_reload_history_and_blocked_gate(
         assert len(versions) == 1
         assert versions[0]["action"] == "SAVE_DRAFT"
         assert versions[0]["actor_id"] == "planner-test"
+    with factory() as db:
         denied = fixation_review.request_internal_approval(
-            db, 7, "a1", 1, first["approval_fingerprint"], "planner-test")
+            db, 7, "a1", _internal_review_request(factory), "planner-test")
         assert denied["approval_attempt_state"] == "BLOCKED"
         assert "FIXATION_PROFESSIONAL_GATE_NOT_ADMITTED" in denied["blockers"]
         assert denied["professional_authority"] is False
@@ -1478,9 +1511,10 @@ def test_pg16_fixation_professional_review_material_stale_and_no_false_stale(pg1
         stale = fixation_review.read(db, 7, "a1")
         assert stale["validity_state"] == "STALE"
         assert "FIXATION_PROFESSIONAL_APPROVAL_STALE" in stale["blockers"]
-        with pytest.raises(DraftError, match="FIXATION_PROFESSIONAL_APPROVAL_STALE"):
+    with factory() as db:
+        with pytest.raises(DraftError, match="FIXATION_INTERNAL_REVIEW_STALE"):
             fixation_review.request_internal_approval(
-                db, 7, "a1", 1, initial["approval_fingerprint"], "planner-test")
+                db, 7, "a1", _internal_review_request(factory), "planner-test")
     with pytest.raises(DraftError, match="FIXATION_APPROVAL_SOURCE_CONFLICT"):
         _review_replace(
             factory, version=1,

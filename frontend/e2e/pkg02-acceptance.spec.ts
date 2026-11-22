@@ -160,7 +160,7 @@ test.describe.serial("PKG02 real-browser real-PostgreSQL acceptance", () => {
     const server=await request.put(API+`/${a}/capital-assets/${asset}`,{data:{asset_description:"PKG02 external update",expected_version:externalAsset.version}});
     expect(server.status()).toBe(200);
     await assets(page).getByRole("button",{name:"שמירת נכס הון"}).click();
-    await expect(assets(page).getByText(/PKG02-CONCURRENCY-001/)).toBeVisible();
+    await expect(page.getByText(/PKG02-CONCURRENCY-001/)).toBeVisible();
     await expect(assets(page).getByLabel("תיאור הנכס")).toHaveValue("UNSAVED_DRAFT_SHOULD_REMAIN");
     expect((await getRows(request,a,"capital-assets")).find((x:any)=>x.id===asset)?.asset_description).toBe("PKG02 external update");
     await page.screenshot({path:info.outputPath("08-preflight-conflict.png"),fullPage:true});

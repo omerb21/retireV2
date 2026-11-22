@@ -12,6 +12,8 @@ on:
       - 'frontend/e2e/l05-controlled.spec.ts'
       - 'frontend/e2e/pkg03-284-http.spec.ts'
       - 'backend/tests/test_stage6_p1d_postgresql.py'
+      - 'backend/tests/test_scenario_unified_engine_binding_postgresql.py'
+      - 'frontend/e2e/pkg02-acceptance.spec.ts'
 
 permissions:
   contents: read

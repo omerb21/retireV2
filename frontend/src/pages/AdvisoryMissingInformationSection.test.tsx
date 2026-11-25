@@ -90,7 +90,7 @@ describe("AdvisoryMissingInformationSection", () => {
     expect(screen.getAllByText("סיבה ניטרלית: לא תועד")[0]).toBeInTheDocument();
   });
 
-  it("creates explicit open advisory missing information without linkage fields and displays 422 errors", async () => {
+  it("creates explicit open advisory missing information without linkage fields and displays Hebrew validation errors", async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (init?.method === "POST") {
         return Promise.resolve(jsonResponse({ ...advisoryRow, neutral_reason: "Created reason" }));
@@ -139,8 +139,27 @@ describe("AdvisoryMissingInformationSection", () => {
     render(<AdvisoryMissingInformationSection clientId={7} />);
     await screen.findByText("לא נמצא מידע חסר לייעוץ.");
     fireEvent.click(sectionQueries().getByRole("button", { name: "הוספת מידע חסר לייעוץ" }));
-    expect(await screen.findByText("לא ניתן לשמור מידע חסר לייעוץ.")).toBeInTheDocument();
-    expect(await screen.findByText(/PLANNING_DOMAIN_REQUIRED/)).toBeInTheDocument();
+    expect(await screen.findByText("יש לבחור תחום תכנון")).toBeInTheDocument();
+    expect(screen.queryByText(/PLANNING_DOMAIN_REQUIRED|detail|planning_domain/)).not.toBeInTheDocument();
+    expect(failingFetchMock.mock.calls.some((call) => requestMethod(call) === "POST")).toBe(false);
+  });
+
+  it("maps a server validation envelope to Hebrew without exposing its JSON", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(jsonResponse({
+          detail: { code: "PLANNING_DOMAIN_REQUIRED", field_paths: ["/planning_domain"] },
+        }, 422, "Unprocessable Entity"));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdvisoryMissingInformationSection clientId={7} />);
+    await screen.findByText("לא נמצא מידע חסר לייעוץ.");
+    fireEvent.change(sectionQueries().getByLabelText("תחום תכנון"), { target: { value: "other" } });
+    fireEvent.click(sectionQueries().getByRole("button", { name: "הוספת מידע חסר לייעוץ" }));
+    expect(await screen.findByText("יש לבחור תחום תכנון")).toBeInTheDocument();
+    expect(screen.queryByText(/PLANNING_DOMAIN_REQUIRED|field_paths|planning_domain/)).not.toBeInTheDocument();
   });
 
   it("updates only changed editable fields and supports approved advisory statuses", async () => {
@@ -217,7 +236,7 @@ describe("AdvisoryMissingInformationSection", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ ...advisoryRow, client_id: 8 }]));
     vi.stubGlobal("fetch", fetchMock);
     render(<AdvisoryMissingInformationSection clientId={7} />);
-    expect(await screen.findByText("לא ניתן לטעון מידע חסר לייעוץ.")).toBeInTheDocument();
+    expect(await screen.findByText("התקבל מידע חסר של לקוח אחר.")).toBeInTheDocument();
     expect(screen.queryByText("רשומת מידע חסר לייעוץ MD-V21")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(requestUrl).every(url => url.includes("/clients/7/"))).toBe(true);
   });

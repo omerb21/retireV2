@@ -97,6 +97,15 @@ interface Props {
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "אירעה שגיאה בשמירת הטיוטה.";
 }
+function preferredDraftId(
+  list: ScenarioDraft[],
+  requested: string | null | undefined,
+): string | null {
+  if (requested && list.some(item => item.scenario_id === requested)) return requested;
+  return list.find(item => item.status !== "archived")?.scenario_id
+    ?? list[0]?.scenario_id
+    ?? null;
+}
 const exactAmount = (value: string): boolean => /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value) && !/^0+(?:\.0{1,2})?$/.test(value);
 export function ScenarioDraftPanel({
   clientId, products, initialSource, view = "planning",
@@ -192,7 +201,7 @@ export function ScenarioDraftPanel({
     if (currentClientId.current !== requestedClientId) return;
     if (list.some(item => item.client_id !== requestedClientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
     setDrafts(list);
-    setLocalSelected(current => prefer ?? (list.some(item => item.scenario_id === current) ? current : list[0]?.scenario_id ?? null));
+    setLocalSelected(current => preferredDraftId(list, prefer ?? current));
     if (prefer && list.some(item => item.scenario_id === prefer)) onScenarioSelected?.(prefer);
   }
   useEffect(() => {
@@ -209,8 +218,7 @@ export function ScenarioDraftPanel({
       if (!mounted) return;
       if (list.some(item => item.client_id !== clientId)) throw Error("זוהתה חריגה בהקשר הלקוח.");
       setDrafts(list);
-      setLocalSelected(list.some(item => item.scenario_id === preferredScenarioId)
-        ? preferredScenarioId : list[0]?.scenario_id ?? null);
+      setLocalSelected(preferredDraftId(list, preferredScenarioId));
     }).catch(cause => { if (mounted) setError(message(cause)); })
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; };

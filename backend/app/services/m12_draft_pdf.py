@@ -15,6 +15,25 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, 
 _FONT = "M12DejaVu"
 _FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
+_LABELS = {
+    "not_currently_working": "אינו עובד כעת", "salaried_employee": "שכיר",
+    "self_employed": "עצמאי", "salaried_and_self_employed": "שכיר ועצמאי",
+    "pension_fund": "קרן פנסיה", "provident_fund": "קופת גמל",
+    "insurance_policy": "פוליסת ביטוח", "bank deposit": "פיקדון בנקאי",
+    "investment account": "חשבון השקעות", "real estate": "מקרקעין",
+    "private asset": "נכס פרטי", "monthly": "חודשי", "quarterly": "רבעוני",
+    "annual": "שנתי", "gross": "ברוטו", "net": "נטו",
+    "verified": "אומת", "unverified": "טרם אומת", "partially verified": "אומת חלקית",
+    "collected - not yet reviewed": "נאסף וטרם נבדק", "missing": "חסר",
+    "open": "פתוח", "resolved": "נפתר", "needs_revalidation": "נדרשת בדיקה מחדש",
+    "draft": "טיוטה", "pension": "קצבה", "capital_asset": "הון",
+}
+
+def _he(value):
+    if value is None or value == "":
+        return "לא נמסר"
+    return _LABELS.get(str(value), str(value))
+
 def _money(value):
     """Format existing source amounts without converting absence to zero."""
     if value is None or value == "":
@@ -65,18 +84,19 @@ def render_pdf(doc: dict) -> bytes:
                   else "גיל "+str(client["planned_retirement_age"])
                   if client["planned_retirement_age"] is not None else "לא נמסר")
     section("פרטי הלקוח")
-    table(["שם","פרישה מתוכננת"],[[client["name"],retirement]])
+    table(["שם","מצב תעסוקה","פרישה מתוכננת"],
+          [[client["name"],_he(client.get("employment_status")),retirement]])
     section("מוצרים פנסיוניים - נתוני מקור")
-    table(["מוצר","גוף מנהל","יתרה מדווחת ₪","מועד נתונים","אימות"],
-          [[p["name"],p["provider"],_money(p["reported_total"]),p["statement_date"],p["verification"]]
+    table(["מוצר","גוף מנהל","סוג","יתרה מדווחת ₪","מועד נתונים","אימות"],
+          [[p["name"],p["provider"],_he(p["type"]),_money(p["reported_total"]),p["statement_date"],_he(p["verification"])]
            for p in doc["pension_products"]])
     section("נכסי הון")
     table(["נכס","סוג","שווי ידוע ₪","מועד נתונים","אימות"],
-          [[a["name"],a["category"],_money(a["value"]),a["value_date"],a["verification"]]
+          [[a["name"],_he(a["category"]),_money(a["value"]),a["value_date"],_he(a["verification"])]
            for a in doc["capital_assets"]])
     section("הכנסות והוצאות מדווחות (ללא תחזית)")
     table(["סוג","תיאור","סכום ₪","תדירות","אימות"],
-          [[kind,x["name"],_money(x["amount"]),x["frequency"],x["verification"]]
+          [[kind,x["name"],_money(x["amount"]),_he(x["frequency"]),_he(x["verification"])]
            for kind,items in (("הכנסה",doc["incomes"]),("הוצאה",doc["expenses"])) for x in items])
     section("חלופה מועדפת")
     preferred=doc["preferred"]
@@ -89,14 +109,14 @@ def render_pdf(doc: dict) -> bytes:
         story.append(_p(scenario["name"]+(" (מועדפת)" if scenario["preferred"] else "")
                         +(" - מחייבת אימות" if scenario["status"]=="needs_revalidation" else "")))
         table(["רכיב","החלטה","סכום שהוזן ₪","מצב"],
-              [[d["component"],"קצבה" if d["action"]=="pension" else "הון",
-                _money(d["declared_amount"]),"לא אומת"] for d in scenario["decisions"]])
+              [[d["component"],_he(d["action"]),
+                _money(d["declared_amount"]),_he(d["validation_state"])] for d in scenario["decisions"]])
     if not doc["scenarios"]: story.append(_p("אין חלופות פעילות."))
     section("הנחות המתכנן")
     for a in doc["assumptions"]: story.append(_p(a["title"]+": "+a["value"]))
     if not doc["assumptions"]: story.append(_p("לא תועדו הנחות."))
     section("מידע חסר")
-    for m in doc["missing_information"]: story.append(_p(m["label"]+" - "+m["status"]))
+    for m in doc["missing_information"]: story.append(_p(m["label"]+" - "+_he(m["status"])))
     if not doc["missing_information"]: story.append(_p("לא נרשם מידע חסר; אין בכך אישור לשלמות התיק."))
     section("אזהרות")
     for warning in doc["warnings"]: story.append(_p("• "+warning))

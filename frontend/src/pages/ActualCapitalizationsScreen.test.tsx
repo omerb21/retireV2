@@ -28,17 +28,17 @@ describe("ActualCapitalizationsScreen", () => {
       : jsonResponse([row])));
     vi.stubGlobal("fetch", fetchMock);
     render(<MemoryRouter initialEntries={["/clients/7/actual-capitalizations"]}><Routes><Route path="/clients/:clientId/actual-capitalizations" element={<ActualCapitalizationsScreen />} /></Routes></MemoryRouter>);
-    expect(await screen.findByText("Capitalization ID: AC-1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit Actual Capitalization" }));
-    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Draft kept" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Actual Capitalization" }));
+    expect(await screen.findByText("מזהה היוון: AC-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "עריכת היוון בפועל" }));
+    fireEvent.change(screen.getByLabelText("הערות"), { target: { value: "Draft kept" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת היוון בפועל" }));
     expect(await screen.findByText(/השמירה לא בוצעה/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Notes")).toHaveValue("Draft kept");
-    expect(screen.getByRole("button", { name: "Save Actual Capitalization" })).toBeDisabled();
+    expect(screen.getByLabelText("הערות")).toHaveValue("Draft kept");
+    expect(screen.getByRole("button", { name: "שמירת היוון בפועל" })).toBeDisabled();
     expect(fetchMock.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /רענון רשומות להשוואה/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
-    expect(screen.getByLabelText("Notes")).toHaveValue("Draft kept");
+    expect(screen.getByLabelText("הערות")).toHaveValue("Draft kept");
     expect(fetchMock.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
   });
   it("adds, edits, deletes, and saves capitalizations without calculation calls", async () => {
@@ -93,17 +93,17 @@ describe("ActualCapitalizationsScreen", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText("Capitalization ID: AC-1")).toBeInTheDocument();
+    expect(await screen.findByText("מזהה היוון: AC-1")).toBeInTheDocument();
     expect(screen.queryByText("Edit and delete are unavailable in this workflow.")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "750" } });
-    fireEvent.change(screen.getByLabelText("Capitalization Date"), { target: { value: "2024-02-01" } });
-    fireEvent.change(screen.getByLabelText("Source Label"), { target: { value: "Imported" } });
-    fireEvent.change(screen.getByLabelText("Source Basis"), { target: { value: "capitalization certificate" } });
-    fireEvent.change(screen.getByLabelText("Planner Assertion"), { target: { value: "advisor confirmed amount" } });
-    fireEvent.change(screen.getByLabelText("Planner Assertion Basis"), { target: { value: "reviewed certificate" } });
-    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Created capitalization" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add Actual Capitalization" }));
+    fireEvent.change(screen.getByLabelText("סכום"), { target: { value: "750" } });
+    fireEvent.change(screen.getByLabelText("תאריך היוון"), { target: { value: "2024-02-01" } });
+    fireEvent.change(screen.getByLabelText("תיאור המקור"), { target: { value: "Imported" } });
+    fireEvent.change(screen.getByLabelText("בסיס המקור"), { target: { value: "capitalization certificate" } });
+    fireEvent.change(screen.getByLabelText("הצהרת המתכנן"), { target: { value: "advisor confirmed amount" } });
+    fireEvent.change(screen.getByLabelText("בסיס הצהרת המתכנן"), { target: { value: "reviewed certificate" } });
+    fireEvent.change(screen.getByLabelText("הערות"), { target: { value: "Created capitalization" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוספת היוון בפועל" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
@@ -123,14 +123,14 @@ describe("ActualCapitalizationsScreen", () => {
         })
       );
     });
-    expect(await screen.findByText("Capitalization ID: AC-2")).toBeInTheDocument();
-    expect(await screen.findByText("Source Basis: capitalization certificate")).toBeInTheDocument();
-    expect(await screen.findByText("Planner Assertion: advisor confirmed amount")).toBeInTheDocument();
+    expect(await screen.findByText("מזהה היוון: AC-2")).toBeInTheDocument();
+    expect(await screen.findByText("בסיס המקור: capitalization certificate")).toBeInTheDocument();
+    expect(await screen.findByText("הצהרת המתכנן: advisor confirmed amount")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit Actual Capitalization" })[0]);
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "650" } });
-    fireEvent.change(screen.getByLabelText("Source Label"), { target: { value: "Updated" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Actual Capitalization" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "עריכת היוון בפועל" })[0]);
+    fireEvent.change(screen.getByLabelText("סכום"), { target: { value: "650" } });
+    fireEvent.change(screen.getByLabelText("תיאור המקור"), { target: { value: "Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת היוון בפועל" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
@@ -139,9 +139,9 @@ describe("ActualCapitalizationsScreen", () => {
         expect.objectContaining({ method: "PUT" })
       );
     });
-    expect(await screen.findByText("Amount: 650")).toBeInTheDocument();
+    expect(await screen.findByText("סכום: 650")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Delete Actual Capitalization" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "מחיקת היוון בפועל" })[0]);
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         7,
@@ -154,8 +154,8 @@ describe("ActualCapitalizationsScreen", () => {
     expect(requestedUrls.every((url) => !url.includes("/fixation/validate") && !url.includes("/fixation/calculate"))).toBe(
       true
     );
-    expect(screen.getByRole("link", { name: "Back to grants" })).toHaveAttribute("href", "/clients/7/grants");
-    expect(screen.getByRole("link", { name: "Continue to Fixation Parameters" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "חזרה למענקים" })).toHaveAttribute("href", "/clients/7/grants");
+    expect(screen.getByRole("link", { name: "המשך לנתוני קיבוע זכויות" })).toHaveAttribute(
       "href",
       "/clients/7/fixation/input"
     );
@@ -176,10 +176,10 @@ describe("ActualCapitalizationsScreen", () => {
       </MemoryRouter>
     );
 
-    await screen.findByText("No actual capitalizations found.");
-    fireEvent.change(screen.getByLabelText("Capitalization Date"), { target: { value: "2024-02-01" } });
+    await screen.findByText("לא נמצאו היוונים בפועל.");
+    fireEvent.change(screen.getByLabelText("תאריך היוון"), { target: { value: "2024-02-01" } });
     fireEvent.submit(
-      screen.getByRole("button", { name: "Add Actual Capitalization" }).closest("form") as HTMLFormElement
+      screen.getByRole("button", { name: "הוספת היוון בפועל" }).closest("form") as HTMLFormElement
     );
 
     await waitFor(() => {

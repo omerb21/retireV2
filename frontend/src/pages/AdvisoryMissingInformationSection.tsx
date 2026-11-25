@@ -41,11 +41,14 @@ const emptyFormState: AdvisoryFormState = {
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
-    if (typeof error.body === "string") {
-      return error.body;
+    const body = error.body as { detail?: { code?: string; field_paths?: string[] } } | null;
+    if (body?.detail?.code === "PLANNING_DOMAIN_REQUIRED" ||
+        body?.detail?.field_paths?.some((path) => path.endsWith("planning_domain"))) {
+      return "יש לבחור תחום תכנון";
     }
-
-    return JSON.stringify(error.body, null, 2);
+    return error.status === 422
+      ? "יש לבדוק את שדות החובה ולנסות שוב"
+      : "השמירה נכשלה. אפשר לנסות שוב בעוד רגע";
   }
 
   if (error instanceof Error) {
@@ -162,6 +165,10 @@ export function AdvisoryMissingInformationSection({ clientId }: AdvisoryMissingI
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (editingId === null && formState.planning_domain === "") {
+      setMutationErrorMessage("יש לבחור תחום תכנון");
+      return;
+    }
     setIsSubmitting(true);
     setMutationErrorMessage(null);
 
@@ -174,6 +181,7 @@ export function AdvisoryMissingInformationSection({ clientId }: AdvisoryMissingI
       await refreshItems();
       resetForm();
     } catch (error) {
+      console.error("Advisory missing information save failed", error);
       setMutationErrorMessage(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
@@ -186,10 +194,7 @@ export function AdvisoryMissingInformationSection({ clientId }: AdvisoryMissingI
       {isLoading ? (
         <p>טוען מידע חסר לייעוץ…</p>
       ) : errorMessage !== null ? (
-        <>
-          <p>לא ניתן לטעון מידע חסר לייעוץ.</p>
-          <pre>{errorMessage}</pre>
-        </>
+        <p role="alert">{errorMessage}</p>
       ) : items.length === 0 ? (
         <p>לא נמצא מידע חסר לייעוץ.</p>
       ) : (
@@ -251,12 +256,7 @@ export function AdvisoryMissingInformationSection({ clientId }: AdvisoryMissingI
             onChange={(event) => updateFormField("neutral_reason", event.target.value)}
           />
         </p>
-        {mutationErrorMessage ? (
-          <>
-            <p>לא ניתן לשמור מידע חסר לייעוץ.</p>
-            <pre>{mutationErrorMessage}</pre>
-          </>
-        ) : null}
+        {mutationErrorMessage ? <p role="alert">{mutationErrorMessage}</p> : null}
         <p>
           <button type="submit" disabled={isSubmitting}>
             {isSubmitting

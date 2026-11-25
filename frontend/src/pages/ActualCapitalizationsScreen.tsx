@@ -1,7 +1,7 @@
 import { useLocation, useParams } from "react-router-dom";
 import { ActualCapitalizationsSection } from "./ActualCapitalizationsSection";
 
-/** Legacy route stays live and delegates to the same editor used in workspace step 3. */
+/** Legacy route delegates to the same Hebrew editor used in workspace step 3. */
 export function ActualCapitalizationsScreen() {
   const { clientId } = useParams<{ clientId: string }>();
   const location = useLocation();

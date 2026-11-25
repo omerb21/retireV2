@@ -11,13 +11,13 @@ from app.main import EXPECTED_ALEMBIC_HEAD
 MIGRATION = "d6f1a9c3b704_stage6_pension_factor_admissions.py"
 
 
-def test_single_head_and_readiness_are_stage6_p1b():
+def test_stage6_p1b_remains_in_single_linear_readiness_history():
     base = Path(__file__).resolve().parents[1]
     config = Config()
     config.set_main_option("script_location", str(base / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["d6f1a9c3b704"]
-    assert EXPECTED_ALEMBIC_HEAD == "d6f1a9c3b704"
+    assert scripts.get_heads() == ["f330a1c2d3e4"]
+    assert EXPECTED_ALEMBIC_HEAD == "f330a1c2d3e4"
     assert scripts.get_revision("d6f1a9c3b704").down_revision == "c5e019a47d62"
 
 

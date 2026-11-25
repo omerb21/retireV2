@@ -16,10 +16,11 @@ def test_sc05_single_alembic_head_matches_production_readiness():
     assert len(heads) == 1, f"Expected a single Alembic head, got {heads}"
     assert EXPECTED_ALEMBIC_HEAD == heads[0] == scripts.get_current_head()
     revisions = {revision.revision for revision in scripts.walk_revisions()}
-    assert {"d6f1a9c3b704", "d277e1a6f003"} <= revisions
+    assert {"d6f1a9c3b704", "d277e1a6f003", "f330a1c2d3e4"} <= revisions
     assert scripts.get_revision("c5e019a47d62").down_revision == "b7c5e1a90342"
     assert scripts.get_revision("d6f1a9c3b704").down_revision == "c5e019a47d62"
     assert scripts.get_revision("d277e1a6f003").down_revision == "c194e2f0a816"
+    assert scripts.get_revision("f330a1c2d3e4").down_revision == "d277e1a6f003"
 
 
 def test_sc05_migrations_define_explicit_minimum_privileges():
@@ -34,3 +35,12 @@ def test_sc05_migrations_define_explicit_minimum_privileges():
         assert "REVOKE ALL PRIVILEGES ON TABLE " + table in source
         assert "GRANT " + grant + " ON TABLE " + table in source
         assert re.search(r"def downgrade\(", source)
+
+    bounded_update = (folder / "f330a1c2d3e4_scenario_decision_column_updates.py").read_text(
+        encoding="utf-8"
+    )
+    assert "CRTISBA_APPLICATION_DB_ROLE" in bounded_update
+    assert "GRANT UPDATE ({columns}) ON TABLE {TABLE}" in bounded_update
+    assert "REVOKE UPDATE ({columns}) ON TABLE {TABLE}" in bounded_update
+    assert '"decision_id"' not in bounded_update.split("MUTABLE_COLUMNS = (", 1)[1].split(")", 1)[0]
+    assert '"scenario_id"' not in bounded_update.split("MUTABLE_COLUMNS = (", 1)[1].split(")", 1)[0]

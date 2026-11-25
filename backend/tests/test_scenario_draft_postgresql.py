@@ -3,17 +3,19 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import load_all_models
 from app.models.client import Client
-from app.models.scenario_draft import ScenarioDraftDecision
+from app.models.scenario_draft import ScenarioDraftDecision, ScenarioDraftRevision
 from app.models.scenario_pension_price_basis import ScenarioPensionPriceBasis
 from app.schemas.scenario_draft import DraftDecisionWrite, DraftReplace
 from app.services import scenario_draft_service as service
@@ -21,6 +23,73 @@ from test_recovery_migration_postgresql import postgres_url
 
 BACKEND = Path(__file__).resolve().parents[1]
 APPLICATION_ROLE = "scenario_draft_test_app"
+
+
+def test_scenario_decision_column_update_migration_is_reversible(postgres_url):
+    engine = create_engine(postgres_url)
+    environment = {
+        **os.environ,
+        "DATABASE_URL": postgres_url,
+        "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
+        "PYTHONIOENCODING": "utf-8",
+    }
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
+
+        def migrate(*arguments):
+            completed = subprocess.run(
+                [sys.executable, "-m", "alembic", *arguments],
+                cwd=BACKEND, env=environment, capture_output=True, text=True,
+                encoding="utf-8", timeout=180,
+            )
+            assert completed.returncode == 0, completed.stdout + completed.stderr
+
+        def privileges():
+            with engine.connect() as connection:
+                connection.execute(text(f"SET ROLE {APPLICATION_ROLE}"))
+                result = {
+                    "amount_update": connection.scalar(text(
+                        "SELECT has_column_privilege(current_user, "
+                        "'scenario_draft_decisions', 'amount', 'UPDATE')"
+                    )),
+                    "identity_update": connection.scalar(text(
+                        "SELECT has_column_privilege(current_user, "
+                        "'scenario_draft_decisions', 'decision_id', 'UPDATE')"
+                    )),
+                    "select": connection.scalar(text(
+                        "SELECT has_table_privilege(current_user, "
+                        "'scenario_draft_decisions', 'SELECT')"
+                    )),
+                    "insert": connection.scalar(text(
+                        "SELECT has_table_privilege(current_user, "
+                        "'scenario_draft_decisions', 'INSERT')"
+                    )),
+                    "delete": connection.scalar(text(
+                        "SELECT has_table_privilege(current_user, "
+                        "'scenario_draft_decisions', 'DELETE')"
+                    )),
+                }
+                connection.rollback()
+                return result
+
+        migrate("upgrade", "d277e1a6f003")
+        before = privileges()
+        assert before == {
+            "amount_update": False, "identity_update": False,
+            "select": True, "insert": True, "delete": True,
+        }
+        migrate("upgrade", "f330a1c2d3e4")
+        after_upgrade = privileges()
+        assert after_upgrade == {
+            "amount_update": True, "identity_update": False,
+            "select": True, "insert": True, "delete": True,
+        }
+        migrate("downgrade", "d277e1a6f003")
+        after_downgrade = privileges()
+        assert after_downgrade == before
+    finally:
+        engine.dispose()
 
 
 def test_postgresql_draft_migration_and_cas(postgres_url):
@@ -32,7 +101,7 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         with engine.begin() as connection:
             connection.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
         completed = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "d277e1a6f003"],
+            [sys.executable, "-m", "alembic", "upgrade", "f330a1c2d3e4"],
             cwd=BACKEND,
             env={**os.environ, "DATABASE_URL": postgres_url,
                  "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
@@ -60,6 +129,27 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
             ))
             assert not connection.scalar(text(
                 "SELECT has_table_privilege(current_user, 'scenario_draft_revisions', 'DELETE')"
+            ))
+            for column in (
+                "amount", "action", "effective_date", "validation_state",
+                "product_version_at_review", "source_fingerprint_at_review",
+                "ruleset_digest_at_review", "permission_preview_id_at_review",
+            ):
+                assert connection.scalar(text(
+                    "SELECT has_column_privilege(current_user, "
+                    "'scenario_draft_decisions', :column, 'UPDATE')"
+                ), {"column": column})
+            for column in (
+                "decision_id", "scenario_id", "source_product_id",
+                "source_component_id", "component_code",
+            ):
+                assert not connection.scalar(text(
+                    "SELECT has_column_privilege(current_user, "
+                    "'scenario_draft_decisions', :column, 'UPDATE')"
+                ), {"column": column})
+            assert not connection.scalar(text(
+                "SELECT has_table_privilege(current_user, "
+                "'scenario_draft_decisions', 'UPDATE')"
             ))
             connection.rollback()
         factory = sessionmaker(bind=engine, autoflush=False)
@@ -91,6 +181,34 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
                     (revision_id, scenario_id, version, action, snapshot_json, actor)
                     VALUES ('role-revision', 'role-proof', 1, 'create', '{}', 'actor')
                 """))
+                connection.execute(text("""
+                    UPDATE scenario_draft_decisions
+                    SET amount=2.50, action='capital_asset',
+                        effective_date=DATE '2026-10-25',
+                        validation_state='needs_revalidation',
+                        product_version_at_review=2,
+                        source_fingerprint_at_review=repeat('a', 64),
+                        ruleset_digest_at_review=NULL,
+                        permission_preview_id_at_review=NULL
+                    WHERE decision_id='role-row'
+                """))
+                assert connection.scalar(text(
+                    "SELECT amount FROM scenario_draft_decisions "
+                    "WHERE decision_id='role-row'"
+                )) == Decimal("2.50")
+                connection.execute(text("SAVEPOINT forbidden_identity_update"))
+                try:
+                    connection.execute(text("""
+                        UPDATE scenario_draft_decisions
+                        SET source_product_id='forbidden'
+                        WHERE decision_id='role-row'
+                    """))
+                except DBAPIError as exc:
+                    code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+                    assert code == "42501"
+                    connection.execute(text("ROLLBACK TO SAVEPOINT forbidden_identity_update"))
+                else:
+                    raise AssertionError("restricted role changed immutable decision identity")
                 connection.execute(text(
                     "DELETE FROM scenario_draft_decisions WHERE decision_id='role-row'"
                 ))
@@ -208,11 +326,11 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
                 "SELECT count(*) FROM scenario_draft_revisions WHERE scenario_id = :id"
             ), {"id": clone_id}) == 3
 
-        # Regression 327A: a professional price-basis revision is immutable
-        # history. Replacing an otherwise unchanged decision must retain its
-        # stable parent identity instead of DELETE/INSERT tripping the RESTRICT
-        # foreign key. The old evidence becomes stale solely because the
-        # scenario version advances.
+        # Regression 330A: a professional price-basis revision is immutable
+        # history, while L05 still permits amount/date/action edits to the
+        # stable logical decision. Those edits update the current parent row
+        # instead of DELETE/INSERT tripping the RESTRICT foreign key. The old
+        # evidence becomes stale solely because the scenario version advances.
         with factory.begin() as db:
             protected = service.create(db, 1, "Price basis lifecycle", "test-actor")
         protected_id = protected["scenario_id"]
@@ -242,27 +360,53 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
                 price_basis="NOMINAL_AT_RETIREMENT_TARGET_DATE",
                 actor_id="test-actor", record_fingerprint="c" * 64,
             ))
-        unchanged = DraftDecisionWrite(
+        retained = DraftDecisionWrite(
             decision_id=decision_id,
             source_product_id="synthetic-product",
             source_component_id="synthetic-component",
             component_code="תגמולי_עובד_עד_2000",
-            amount=Decimal("50.00"), action="pension",
-            effective_date="2026-10-24",
+            amount=Decimal("51.00"), action="pension",
+            effective_date="2026-10-25",
         )
         with factory.begin() as db:
             saved = service.replace(
                 db, 1, protected_id,
-                DraftReplace(name="Price basis lifecycle renamed",
-                             expected_version=2, decisions=[unchanged]),
+                DraftReplace(name="Price basis lifecycle edited",
+                             expected_version=2, decisions=[retained]),
                 "test-actor",
             )
         assert saved["version"] == 3
         assert saved["decisions"][0]["decision_id"] == decision_id
+        assert saved["decisions"][0]["amount"] == "51.00"
+        assert saved["decisions"][0]["effective_date"] == "2026-10-25"
+
+        action_changed = DraftDecisionWrite(
+            decision_id=decision_id,
+            source_product_id="synthetic-product",
+            source_component_id="synthetic-component",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("51.00"), action="capital_asset",
+            effective_date="2026-10-25",
+        )
+        with factory.begin() as db:
+            saved = service.replace(
+                db, 1, protected_id,
+                DraftReplace(name="Price basis lifecycle edited",
+                             expected_version=3, decisions=[action_changed]),
+                "test-actor",
+            )
+        assert saved["version"] == 4
+        assert saved["decisions"][0]["decision_id"] == decision_id
+        assert saved["decisions"][0]["action"] == "capital_asset"
         with factory() as db:
             history = db.get(ScenarioPensionPriceBasis, "price-basis-history")
             assert history is not None
             assert history.scenario_version == 2
+            assert history.revision == 1
+            assert history.source_fingerprint == "a" * 64
+            assert history.target_fingerprint == "b" * 64
+            assert history.record_fingerprint == "c" * 64
+            assert history.price_basis == "NOMINAL_AT_RETIREMENT_TARGET_DATE"
             assert db.get(ScenarioDraftDecision, decision_id) is not None
             from app.services.scenario_pension_price_basis_service import (
                 current_rows, evaluate_decision,
@@ -274,27 +418,38 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
                 {"source_id": source_id, "decision_id": decision_id,
                  "authority_fingerprint": "a" * 64,
                  "source_kind": "CALCULATED_PENSION", "source_state": "READY"},
-                client_id=1, scenario_id=protected_id, scenario_version=3,
+                client_id=1, scenario_id=protected_id, scenario_version=4,
                 target_fingerprint="b" * 64, target_date="2030-01-01",
             ) == "STALE"
+            revisions = db.scalars(select(ScenarioDraftRevision).where(
+                ScenarioDraftRevision.scenario_id == protected_id,
+            ).order_by(ScenarioDraftRevision.version)).all()
+            snapshots = {
+                revision.version: json.loads(revision.snapshot_json)
+                for revision in revisions
+            }
+            assert snapshots[2]["decisions"][0]["amount"] == "50.00"
+            assert snapshots[3]["decisions"][0]["amount"] == "51.00"
+            assert snapshots[3]["decisions"][0]["effective_date"] == "2026-10-25"
+            assert snapshots[4]["decisions"][0]["action"] == "capital_asset"
 
-        # Reusing an immutable historical identity for a materially different
-        # decision is rejected as a controlled conflict.  The CAS version/name,
-        # current decision and professional history all roll back together.
-        changed = DraftDecisionWrite(
+        # Reusing an immutable historical identity for another source is
+        # rejected as a controlled conflict. The CAS version/name, current
+        # decision and professional history all roll back together.
+        unsafe = DraftDecisionWrite(
             decision_id=decision_id,
-            source_product_id="synthetic-product",
-            source_component_id="synthetic-component",
+            source_product_id="another-product",
+            source_component_id="another-component",
             component_code="תגמולי_עובד_עד_2000",
             amount=Decimal("51.00"), action="pension",
-            effective_date="2026-10-24",
+            effective_date="2026-10-25",
         )
         with factory() as db:
             try:
                 service.replace(
                     db, 1, protected_id,
-                    DraftReplace(name="must roll back", expected_version=3,
-                                 decisions=[changed]),
+                    DraftReplace(name="must roll back", expected_version=4,
+                                 decisions=[unsafe]),
                     "test-actor",
                 )
             except service.DraftError as exc:
@@ -303,12 +458,29 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
                 )
                 db.rollback()
             else:
-                raise AssertionError("material change reused immutable price-basis identity")
+                raise AssertionError("source identity reused immutable price-basis identity")
+        with factory() as db:
+            try:
+                service.replace(
+                    db, 1, protected_id,
+                    DraftReplace(name="must also roll back", expected_version=4,
+                                 decisions=[]),
+                    "test-actor",
+                )
+            except service.DraftError as exc:
+                assert (exc.code, exc.status) == (
+                    "SCENARIO_DECISION_HAS_PRICE_BASIS_HISTORY", 409,
+                )
+                db.rollback()
+            else:
+                raise AssertionError("protected decision was removed")
         with factory() as db:
             after_rejection = service.read(db, 1, protected_id)
-            assert after_rejection["version"] == 3
-            assert after_rejection["name"] == "Price basis lifecycle renamed"
-            assert after_rejection["decisions"][0]["amount"] == "50.00"
+            assert after_rejection["version"] == 4
+            assert after_rejection["name"] == "Price basis lifecycle edited"
+            assert after_rejection["decisions"][0]["amount"] == "51.00"
+            assert after_rejection["decisions"][0]["effective_date"] == "2026-10-25"
+            assert after_rejection["decisions"][0]["action"] == "capital_asset"
             assert db.scalar(text(
                 "SELECT count(*) FROM scenario_pension_price_basis_decisions "
                 "WHERE scenario_id = :id"
@@ -333,7 +505,7 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
         with engine.begin() as conn:
             conn.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
         migration = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "d277e1a6f003"],
+            [sys.executable, "-m", "alembic", "upgrade", "f330a1c2d3e4"],
             cwd=BACKEND,
             env={**os.environ, "DATABASE_URL": postgres_url,
                  "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
@@ -391,12 +563,27 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
                 retained = {**decision, "decision_id": original_decision_id}
                 original = ok(http.put(f"{root}/{scenario_id}", json={
                     "name": "Original retained", "expected_version": original["version"],
-                    "decisions": [retained],
+                    "decisions": [{**retained, "amount": "100.26"}],
                 }))
                 assert original["decisions"][0]["decision_id"] == original_decision_id
+                assert original["decisions"][0]["amount"] == "100.26"
+                original = ok(http.put(f"{root}/{scenario_id}", json={
+                    "name": "Original retained", "expected_version": original["version"],
+                    "decisions": [{**retained, "amount": "100.26",
+                                   "effective_date": "2026-10-27"}],
+                }))
+                assert original["decisions"][0]["effective_date"] == "2026-10-27"
+                original = ok(http.put(f"{root}/{scenario_id}", json={
+                    "name": "Original retained", "expected_version": original["version"],
+                    "decisions": [{**retained, "amount": "100.26",
+                                   "effective_date": "2026-10-27",
+                                   "action": "capital_asset"}],
+                }))
+                assert original["decisions"][0]["action"] == "capital_asset"
                 rejected = http.put(f"{root}/{scenario_id}", json={
                     "name": "must roll back", "expected_version": original["version"],
-                    "decisions": [{**retained, "amount": "100.26"}],
+                    "decisions": [{**retained, "source_product_id": "other-product",
+                                   "source_component_id": "other-component"}],
                 })
                 assert rejected.status_code == 409, rejected.text
                 assert rejected.json()["code"] == (
@@ -404,9 +591,11 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
                 )
                 original = ok(http.get(f"{root}/{scenario_id}"))
                 assert original["name"] == "Original retained"
-                assert original["decisions"][0]["amount"] == "100.25"
+                assert original["decisions"][0]["amount"] == "100.26"
+                assert original["decisions"][0]["effective_date"] == "2026-10-27"
+                assert original["decisions"][0]["action"] == "capital_asset"
                 clone = ok(http.post(f"{root}/{scenario_id}/duplicate", json={"name": "Alternative"}))
-                assert clone["decisions"][0]["amount"] == "100.25"
+                assert clone["decisions"][0]["amount"] == "100.26"
                 clone_id = clone["scenario_id"]
                 changed = {key: clone["decisions"][0][key] for key in ("decision_id", "source_product_id", "source_component_id", "component_code", "effective_date")}
                 changed.update({"action": "capital_asset", "amount": "80.00"})
@@ -424,7 +613,7 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
 
                 listed = ok(http.get(root))
                 assert {item["scenario_id"] for item in listed} == {scenario_id, clone_id}
-                assert next(item for item in listed if item["scenario_id"] == scenario_id)["decisions"][0]["amount"] == "100.25"
+                assert next(item for item in listed if item["scenario_id"] == scenario_id)["decisions"][0]["amount"] == "100.26"
                 assert next(item for item in listed if item["scenario_id"] == clone_id)["decisions"][0]["amount"] == "80.00"
                 assert ok(http.get(other)) == []
                 assert http.get(f"{other}/{scenario_id}").status_code == 404
@@ -439,7 +628,7 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
             with TestClient(app) as refreshed:
                 persisted = ok(refreshed.get(root))
                 assert len(persisted) == 2
-                assert next(item for item in persisted if item["scenario_id"] == scenario_id)["decisions"][0]["amount"] == "100.25"
+                assert next(item for item in persisted if item["scenario_id"] == scenario_id)["decisions"][0]["amount"] == "100.26"
                 assert next(item for item in persisted if item["scenario_id"] == clone_id)["decisions"] == []
                 assert all(item["financial_validation"] == "not_evaluated" for item in persisted)
         finally:

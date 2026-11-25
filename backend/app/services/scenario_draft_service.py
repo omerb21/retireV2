@@ -247,6 +247,15 @@ def _materially_unchanged_decision(previous: ScenarioDraftDecision, incoming) ->
     )
 
 
+def _same_decision_source_identity(previous: ScenarioDraftDecision, incoming) -> bool:
+    """A price-basis history row may only follow its original logical source."""
+    return (
+        previous.source_product_id == incoming.source_product_id
+        and previous.source_component_id == incoming.source_component_id
+        and previous.component_code == incoming.component_code
+    )
+
+
 def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) -> dict:
     """Atomically replace one draft, preserving only valid *draft elections*.
 
@@ -267,11 +276,12 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
         raise DraftError("SCENARIO_DECISION_ID_MISMATCH", 422)
 
     # Price-basis rows are append-only professional history and deliberately
-    # RESTRICT deletion of their stable decision identity.  Keep an unchanged
-    # parent row in place instead of performing the usual DELETE/INSERT
-    # replacement.  A material change/removal cannot reuse or erase that
-    # historical identity; fail deterministically and leave the transaction to
-    # roll back rather than leaking a PostgreSQL FK violation as HTTP 500.
+    # RESTRICT deletion of their stable logical decision identity.  The L05
+    # contract permits amount/date/action edits, which update the current row
+    # in place and become a new ScenarioDraftRevision.  The old professional
+    # evidence remains version-bound and therefore becomes STALE.  Removing a
+    # protected identity or reusing it for another source is unsafe and fails
+    # deterministically instead of leaking a PostgreSQL FK violation as 500.
     price_basis_decision_ids = set(db.scalars(select(
         ScenarioPensionPriceBasis.decision_id
     ).where(
@@ -286,7 +296,7 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
         incoming = submitted_by_id.get(decision_id)
         previous = previous_by_id.get(decision_id)
         if (incoming is None or previous is None
-                or not _materially_unchanged_decision(previous, incoming)):
+                or not _same_decision_source_identity(previous, incoming)):
             raise DraftError("SCENARIO_DECISION_HAS_PRICE_BASIS_HISTORY", 409)
 
     # The server, not the browser, owns source identity and allocation limits.
@@ -396,6 +406,21 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     db.flush()
     for row, _product, _component, fingerprint, stale, version in resolved:
         if row.decision_id in price_basis_decision_ids:
+            changed = db.execute(update(ScenarioDraftDecision).where(
+                ScenarioDraftDecision.scenario_id == scenario_id,
+                ScenarioDraftDecision.decision_id == row.decision_id,
+            ).values(
+                amount=row.amount,
+                action=row.action,
+                effective_date=row.effective_date,
+                validation_state="needs_revalidation" if stale else "unverified",
+                product_version_at_review=version,
+                source_fingerprint_at_review=fingerprint,
+                ruleset_digest_at_review=None,
+                permission_preview_id_at_review=None,
+            ))
+            if changed.rowcount != 1:
+                raise DraftError("SCENARIO_DECISION_HAS_PRICE_BASIS_HISTORY", 409)
             continue
         db.add(ScenarioDraftDecision(
             decision_id=row.decision_id or uuid4().hex,

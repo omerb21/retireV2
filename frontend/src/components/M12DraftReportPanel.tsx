@@ -1,12 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { loadM12Draft, downloadM12DraftPdf, type M12Draft } from "../api/m12DraftReportApi";
+import { heLabel } from "../i18n/he";
 
 interface Props { clientId: number; }
 const missing = "לא תועד";
 const cell = (value: string | number | null | undefined) =>
   value === null || value === undefined || value === "" ? missing : String(value);
-const amount = (value: string | null | undefined) =>
-  value == null || value === "" ? missing : `${value} ₪`;
+const amount = (value: string | null | undefined) => {
+  if (value == null || value === "") return missing;
+  const match = /^(-?)([0-9]+)(?:\.([0-9]+))?$/.exec(value);
+  if (!match) return missing;
+  const fraction = match[3]?.replace(/0+$/, "");
+  return `${match[1]}${BigInt(match[2]).toLocaleString("he-IL")}${fraction ? `.${fraction}` : ""} ₪`;
+};
+const date = (value: string | null | undefined) => {
+  if (!value) return missing;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : value;
+};
+const action = (value: string) => value === "pension" ? "קצבה" : value === "capital_asset" ? "הון" : heLabel(value);
 
 export function M12DraftReportPanel({ clientId }: Props) {
   const [draft, setDraft] = useState<M12Draft | null>(null);
@@ -95,30 +107,30 @@ export function M12DraftReportPanel({ clientId }: Props) {
         <section>
           <h2>פרטי הלקוח</h2>
           <p><strong>שם:</strong> {cell(current.client.name)}</p>
-          <p><strong>תאריך לידה:</strong> {cell(current.client.birth_date)}</p>
-          <p><strong>מועד פרישה מתוכנן:</strong> {cell(current.client.planned_retirement_date)}
+          <p><strong>תאריך לידה:</strong> {date(current.client.birth_date)}</p>
+          <p><strong>מועד פרישה מתוכנן:</strong> {date(current.client.planned_retirement_date)}
             {current.client.planned_retirement_age != null ? ` (גיל ${current.client.planned_retirement_age})` : ""}</p>
-          <p><strong>מצב תעסוקה:</strong> {cell(current.client.employment_status)}</p>
+          <p><strong>מצב תעסוקה:</strong> {heLabel(current.client.employment_status, missing)}</p>
         </section>
         <section><h2>מוצרים פנסיוניים</h2>
           <table><thead><tr><th>מוצר</th><th>גוף מנהל</th><th>סוג</th><th>יתרה מדווחת</th><th>תאריך</th><th>סטטוס</th></tr></thead>
             <tbody>{current.pension_products.length ? current.pension_products.map((p, i) =>
-              <tr key={i}><td>{p.name}</td><td>{cell(p.provider)}</td><td>{p.type}</td>
-                <td>{amount(p.reported_total)}</td><td>{cell(p.statement_date)}</td><td>{p.verification}</td></tr>) :
+              <tr key={i}><td>{p.name}</td><td>{cell(p.provider)}</td><td>{heLabel(p.type)}</td>
+                <td>{amount(p.reported_total)}</td><td>{date(p.statement_date)}</td><td>{heLabel(p.verification)}</td></tr>) :
               <tr><td colSpan={6}>{missing}</td></tr>}</tbody></table>
         </section>
         <section><h2>נכסי הון</h2>
           <table><thead><tr><th>נכס</th><th>סוג</th><th>שווי מדווח</th><th>תאריך</th><th>אימות</th></tr></thead>
             <tbody>{current.capital_assets.length ? current.capital_assets.map((a,i)=>
-              <tr key={i}><td>{a.name}</td><td>{a.category}</td><td>{amount(a.value)}</td>
-                <td>{cell(a.value_date)}</td><td>{a.verification}</td></tr>) :
+              <tr key={i}><td>{a.name}</td><td>{heLabel(a.category)}</td><td>{amount(a.value)}</td>
+                <td>{date(a.value_date)}</td><td>{heLabel(a.verification)}</td></tr>) :
               <tr><td colSpan={5}>{missing}</td></tr>}</tbody></table>
         </section>
         <section><h2>הכנסות והוצאות שוטפות מדווחות</h2>
           <table><thead><tr><th>סוג</th><th>פריט</th><th>סכום מדווח</th><th>תדירות</th><th>אימות</th></tr></thead>
           <tbody>{[...current.incomes.map(i=>({kind:"הכנסה",name:i.name,amount:i.amount,frequency:i.frequency,verification:i.verification})),
             ...current.expenses.map(e=>({kind:"הוצאה",name:e.name,amount:e.amount,frequency:e.frequency,verification:e.verification}))].map((row,i)=>
-              <tr key={i}><td>{row.kind}</td><td>{row.name}</td><td>{amount(row.amount)}</td><td>{row.frequency}</td><td>{row.verification}</td></tr>)}
+              <tr key={i}><td>{row.kind}</td><td>{row.name}</td><td>{amount(row.amount)}</td><td>{heLabel(row.frequency)}</td><td>{heLabel(row.verification)}</td></tr>)}
           {!current.incomes.length && !current.expenses.length && <tr><td colSpan={5}>{missing}</td></tr>}</tbody></table>
           <p>הסכומים הם נתונים מדווחים, אינם תחזית ואינם מסוכמים לתזרים מחושב.</p>
         </section>
@@ -133,11 +145,11 @@ export function M12DraftReportPanel({ clientId }: Props) {
         <section><h2>חלופות והחלטות תכנון</h2>
           {current.scenarios.length ? current.scenarios.map((s,i)=><section key={i}>
             <h3>{s.name}{s.preferred ? " (מועדפת)" : ""} - גרסה {s.version}</h3>
-            {s.status !== "draft" && <p className="m12-warning">סטטוס חלופה: {s.status}</p>}
+            {s.status !== "draft" && <p className="m12-warning">סטטוס חלופה: {heLabel(s.status)}</p>}
             <table><thead><tr><th>רכיב</th><th>פעולה</th><th>סכום הצהרה</th><th>מועד</th><th>מצב אימות</th></tr></thead>
               <tbody>{s.decisions.length ? s.decisions.map((d,j)=><tr key={j}>
-                <td>{d.component}</td><td>{d.action}</td><td>{amount(d.declared_amount)}</td>
-                <td>{d.effective_date}</td><td>{d.validation_state} - לא תוצאת חישוב</td>
+                <td>{d.component}</td><td>{action(d.action)}</td><td>{amount(d.declared_amount)}</td>
+                <td>{date(d.effective_date)}</td><td>{heLabel(d.validation_state)} - לא תוצאת חישוב</td>
               </tr>) : <tr><td colSpan={5}>לא תועדו החלטות בחלופה.</td></tr>}</tbody></table>
           </section>) : <p>{missing}</p>}
         </section>
@@ -147,7 +159,7 @@ export function M12DraftReportPanel({ clientId }: Props) {
         </section>
         <section><h2>מידע חסר</h2>
           {current.missing_information.length ? <ul>{current.missing_information.map((a,i)=>
-            <li key={i}>{a.label} ({a.status})</li>)}</ul> : <p>לא תועד מידע חסר ברשומות הרלוונטיות.</p>}
+            <li key={i}>{a.label} ({heLabel(a.status)})</li>)}</ul> : <p>לא תועד מידע חסר ברשומות הרלוונטיות.</p>}
         </section>
         <section><h2>מגבלות ואזהרות</h2>
           {current.warnings.map((a,i)=><p key={i} className="m12-warning">{a}</p>)}

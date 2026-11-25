@@ -47,19 +47,19 @@ function raceGrant(id: string, clientId: number, employerName = id) {
 
 function startGrantMutation(operation: "create" | "update" | "delete") {
   if (operation === "create") {
-    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Created" } });
-    fireEvent.change(screen.getByLabelText("Employer Withholding File Number"), { target: { value: "WF" } });
-    fireEvent.change(screen.getByLabelText("Exempt Grant Amount"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("Grant Receipt Date"), { target: { value: "2020-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment Start Date"), { target: { value: "2010-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment End Date"), { target: { value: "2020-01-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add Grant" }));
+    fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Created" } });
+    fireEvent.change(screen.getByLabelText("מספר תיק ניכויים של המעסיק"), { target: { value: "WF" } });
+    fireEvent.change(screen.getByLabelText("סכום מענק פטור"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("תאריך קבלת המענק"), { target: { value: "2020-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך תחילת העסקה"), { target: { value: "2010-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך סיום העסקה"), { target: { value: "2020-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוספת מענק" }));
   } else if (operation === "update") {
-    fireEvent.click(screen.getByRole("button", { name: "Edit Grant" }));
-    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Updated" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Grant" }));
+    fireEvent.click(screen.getByRole("button", { name: "עריכת מענק" }));
+    fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת מענק" }));
   } else {
-    fireEvent.click(screen.getByRole("button", { name: "Delete Grant" }));
+    fireEvent.click(screen.getByRole("button", { name: "מחיקת מענק" }));
   }
 }
 
@@ -101,7 +101,7 @@ describe("GrantsScreen", () => {
     await act(async () => oldA.resolve(jsonResponse([grant("A-old", "Old A Grant")])));
     expect(screen.queryByText("Old A Grant")).not.toBeInTheDocument();
     expect(screen.getByText("New A Grant")).toBeInTheDocument();
-    expect(screen.queryByText("Loading grants...")).not.toBeInTheDocument();
+    expect(screen.queryByText("טוען מענקים...")).not.toBeInTheDocument();
   });
 
   it("rejects stale mutation rejection and finally after client change", async () => {
@@ -114,19 +114,19 @@ describe("GrantsScreen", () => {
     render(<MemoryRouter initialEntries={["/clients/7/grants"]}><Routes>
       <Route path="/clients/:clientId/grants" element={<TransitionHarness />} />
     </Routes></MemoryRouter>);
-    await screen.findByText("No grants found.");
-    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Employer" } });
-    fireEvent.change(screen.getByLabelText("Employer Withholding File Number"), { target: { value: "WF" } });
-    fireEvent.change(screen.getByLabelText("Exempt Grant Amount"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("Grant Receipt Date"), { target: { value: "2020-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment Start Date"), { target: { value: "2010-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment End Date"), { target: { value: "2020-01-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add Grant" }));
+    await screen.findByText("לא נמצאו מענקים.");
+    fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Employer" } });
+    fireEvent.change(screen.getByLabelText("מספר תיק ניכויים של המעסיק"), { target: { value: "WF" } });
+    fireEvent.change(screen.getByLabelText("סכום מענק פטור"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("תאריך קבלת המענק"), { target: { value: "2020-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך תחילת העסקה"), { target: { value: "2010-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך סיום העסקה"), { target: { value: "2020-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוספת מענק" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
-    await screen.findByText("No grants found.");
+    await screen.findByText("לא נמצאו מענקים.");
     await act(async () => mutation.reject(new Error("stale A failure")));
     expect(screen.queryByText("stale A failure")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add Grant" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "הוספת מענק" })).toBeEnabled();
   });
 
   it.each([
@@ -167,7 +167,7 @@ describe("GrantsScreen", () => {
       await oldA.promise.catch(() => undefined);
     });
     expect(screen.queryByText(/stale load rejection|stale structured error/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading grants...")).not.toBeInTheDocument();
+    expect(screen.queryByText("טוען מענקים...")).not.toBeInTheDocument();
     expect(screen.getByText(transition === "A-to-B-to-A" ? "New A Grant" : "Client B Grant")).toBeInTheDocument();
   });
 
@@ -203,19 +203,19 @@ describe("GrantsScreen", () => {
     await screen.findByText("A-old");
 
     if (operation === "create") {
-      fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Created" } });
-      fireEvent.change(screen.getByLabelText("Employer Withholding File Number"), { target: { value: "WF" } });
-      fireEvent.change(screen.getByLabelText("Exempt Grant Amount"), { target: { value: "1" } });
-      fireEvent.change(screen.getByLabelText("Grant Receipt Date"), { target: { value: "2020-01-01" } });
-      fireEvent.change(screen.getByLabelText("Employment Start Date"), { target: { value: "2010-01-01" } });
-      fireEvent.change(screen.getByLabelText("Employment End Date"), { target: { value: "2020-01-01" } });
-      fireEvent.click(screen.getByRole("button", { name: "Add Grant" }));
+      fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Created" } });
+      fireEvent.change(screen.getByLabelText("מספר תיק ניכויים של המעסיק"), { target: { value: "WF" } });
+      fireEvent.change(screen.getByLabelText("סכום מענק פטור"), { target: { value: "1" } });
+      fireEvent.change(screen.getByLabelText("תאריך קבלת המענק"), { target: { value: "2020-01-01" } });
+      fireEvent.change(screen.getByLabelText("תאריך תחילת העסקה"), { target: { value: "2010-01-01" } });
+      fireEvent.change(screen.getByLabelText("תאריך סיום העסקה"), { target: { value: "2020-01-01" } });
+      fireEvent.click(screen.getByRole("button", { name: "הוספת מענק" }));
     } else if (operation === "update") {
-      fireEvent.click(screen.getByRole("button", { name: "Edit Grant" }));
-      fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Updated" } });
-      fireEvent.click(screen.getByRole("button", { name: "Save Grant" }));
+      fireEvent.click(screen.getByRole("button", { name: "עריכת מענק" }));
+      fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Updated" } });
+      fireEvent.click(screen.getByRole("button", { name: "שמירת מענק" }));
     } else {
-      fireEvent.click(screen.getByRole("button", { name: "Delete Grant" }));
+      fireEvent.click(screen.getByRole("button", { name: "מחיקת מענק" }));
     }
 
     fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
@@ -234,7 +234,7 @@ describe("GrantsScreen", () => {
     expect(screen.getByText(current)).toBeInTheDocument();
     expect(screen.queryByText("A-stale-refresh")).not.toBeInTheDocument();
     expect(screen.queryByText(/stale mutation rejection|stale structured error/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add Grant" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "הוספת מענק" })).toBeEnabled();
   });
 
   it.each(["success", "structured error", "rejection"] as const)(
@@ -254,7 +254,7 @@ describe("GrantsScreen", () => {
       fireEvent.click(screen.getByRole("button", { name: "Switch B" }));
       expect(await screen.findByText("Client B Grant")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Return A" }));
-      expect(await screen.findByText("Loading grants...")).toBeInTheDocument();
+      expect(await screen.findByText("טוען מענקים...")).toBeInTheDocument();
 
       await act(async () => {
         if (settlement === "rejection") oldA.reject(new Error("stale load rejection"));
@@ -263,11 +263,11 @@ describe("GrantsScreen", () => {
         await oldA.promise.catch(() => undefined);
       });
 
-      expect(screen.getByText("Loading grants...")).toBeInTheDocument();
+      expect(screen.getByText("טוען מענקים...")).toBeInTheDocument();
       expect(screen.queryByText(/A-old-stale|stale load rejection|stale structured error/)).not.toBeInTheDocument();
       await act(async () => newA.resolve(jsonResponse([raceGrant("A-new-loaded", 7)])));
       expect(await screen.findByText("A-new-loaded")).toBeInTheDocument();
-      expect(screen.queryByText("Loading grants...")).not.toBeInTheDocument();
+      expect(screen.queryByText("טוען מענקים...")).not.toBeInTheDocument();
     },
   );
 
@@ -324,13 +324,13 @@ describe("GrantsScreen", () => {
         await oldMutation.promise.catch(() => undefined);
       });
 
-      expect(screen.getByRole("button", { name: /Add Grant|Save Grant|Saving/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /הוספת מענק|שמירת מענק|שומר/ })).toBeDisabled();
       expect(screen.getByText("A-new-row")).toBeInTheDocument();
       expect(screen.queryByText(/A-stale-refresh|stale mutation rejection|stale structured error/)).not.toBeInTheDocument();
 
       await act(async () => newMutation.resolve(jsonResponse({ grant_id: "new-result" })));
       expect(await screen.findByText("A-new-final")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Add Grant" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "הוספת מענק" })).toBeEnabled();
     },
   );
 
@@ -378,15 +378,15 @@ describe("GrantsScreen", () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText("Grant ID: GR-1")).toBeInTheDocument();
+    expect(await screen.findByText("מזהה מענק: GR-1")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "New Employer" } });
-    fireEvent.change(screen.getByLabelText("Employer Withholding File Number"), { target: { value: "WF-2" } });
-    fireEvent.change(screen.getByLabelText("Exempt Grant Amount"), { target: { value: "9000" } });
-    fireEvent.change(screen.getByLabelText("Grant Receipt Date"), { target: { value: "2022-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment Start Date"), { target: { value: "2021-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment End Date"), { target: { value: "2022-01-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add Grant" }));
+    fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "New Employer" } });
+    fireEvent.change(screen.getByLabelText("מספר תיק ניכויים של המעסיק"), { target: { value: "WF-2" } });
+    fireEvent.change(screen.getByLabelText("סכום מענק פטור"), { target: { value: "9000" } });
+    fireEvent.change(screen.getByLabelText("תאריך קבלת המענק"), { target: { value: "2022-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך תחילת העסקה"), { target: { value: "2021-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך סיום העסקה"), { target: { value: "2022-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "הוספת מענק" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
@@ -405,12 +405,12 @@ describe("GrantsScreen", () => {
         })
       );
     });
-    expect(await screen.findByText("Grant ID: GR-2")).toBeInTheDocument();
+    expect(await screen.findByText("מזהה מענק: GR-2")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit Grant" })[0]);
-    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Updated Employer" } });
-    fireEvent.change(screen.getByLabelText("Exempt Grant Amount"), { target: { value: "16000" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Grant" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "עריכת מענק" })[0]);
+    fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Updated Employer" } });
+    fireEvent.change(screen.getByLabelText("סכום מענק פטור"), { target: { value: "16000" } });
+    fireEvent.click(screen.getByRole("button", { name: "שמירת מענק" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
@@ -419,9 +419,9 @@ describe("GrantsScreen", () => {
         expect.objectContaining({ method: "PUT" })
       );
     });
-    expect(await screen.findByText("Exempt Grant Amount: 16000")).toBeInTheDocument();
+    expect(await screen.findByText("סכום מענק פטור: 16000")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Delete Grant" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "מחיקת מענק" })[0]);
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         6,
@@ -434,11 +434,11 @@ describe("GrantsScreen", () => {
     expect(requestedUrls.every((url) => !url.includes("/fixation/validate") && !url.includes("/fixation/calculate"))).toBe(
       true
     );
-    expect(screen.getByRole("link", { name: "Back to employment history" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "חזרה לתקופות העסקה" })).toHaveAttribute(
       "href",
       "/clients/7/employment-history"
     );
-    expect(screen.getByRole("link", { name: "Back to client detail" })).toHaveAttribute("href", "/clients/7");
+    expect(screen.getByRole("link", { name: "חזרה לפרטי הלקוח" })).toHaveAttribute("href", "/clients/7");
   });
 
   it("preserves blank numeric input for backend validation instead of coercing it", async () => {
@@ -456,13 +456,13 @@ describe("GrantsScreen", () => {
       </MemoryRouter>
     );
 
-    await screen.findByText("No grants found.");
-    fireEvent.change(screen.getByLabelText("Employer Name"), { target: { value: "Employer" } });
-    fireEvent.change(screen.getByLabelText("Employer Withholding File Number"), { target: { value: "WF" } });
-    fireEvent.change(screen.getByLabelText("Grant Receipt Date"), { target: { value: "2022-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment Start Date"), { target: { value: "2021-01-01" } });
-    fireEvent.change(screen.getByLabelText("Employment End Date"), { target: { value: "2022-01-01" } });
-    fireEvent.submit(screen.getByRole("button", { name: "Add Grant" }).closest("form") as HTMLFormElement);
+    await screen.findByText("לא נמצאו מענקים.");
+    fireEvent.change(screen.getByLabelText("שם המעסיק"), { target: { value: "Employer" } });
+    fireEvent.change(screen.getByLabelText("מספר תיק ניכויים של המעסיק"), { target: { value: "WF" } });
+    fireEvent.change(screen.getByLabelText("תאריך קבלת המענק"), { target: { value: "2022-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך תחילת העסקה"), { target: { value: "2021-01-01" } });
+    fireEvent.change(screen.getByLabelText("תאריך סיום העסקה"), { target: { value: "2022-01-01" } });
+    fireEvent.submit(screen.getByRole("button", { name: "הוספת מענק" }).closest("form") as HTMLFormElement);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(

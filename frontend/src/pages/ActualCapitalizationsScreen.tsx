@@ -13,14 +13,14 @@ import {
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
-    return `Request failed: ${error.status} ${error.statusText}`.trim();
+    return error.status === 422 ? "יש לבדוק את שדות החובה ולנסות שוב" : "הפעולה נכשלה. אפשר לנסות שוב בעוד רגע";
   }
 
   if (error instanceof Error) {
     return error.message;
   }
 
-  return "Unable to load actual capitalizations.";
+  return "לא ניתן לטעון את ההיוונים בפועל.";
 }
 
 interface FormState {
@@ -168,7 +168,7 @@ export function ActualCapitalizationsScreen() {
     event.preventDefault();
 
     if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
-      setMutationErrorMessage("Unable to save actual capitalization for this client.");
+      setMutationErrorMessage("לא ניתן לשמור היוון בפועל ללקוח זה.");
       return;
     }
 
@@ -211,19 +211,19 @@ export function ActualCapitalizationsScreen() {
   if (isLoading) {
     return (
       <section>
-        <h2>Actual Capitalizations</h2>
+        <h2>היוונים בפועל</h2>
       <p><Link to={`/clients/${parsedClientId}/workspace`}>חזרה לסביבת התכנון החדשה</Link></p>
-        <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
-        {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Loading actual capitalizations...</p>
+        <p>מזהה לקוח: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "לא ידוע"}</p>
+        {clientName ? <p>שם הלקוח: {clientName}</p> : null}
+        <p>טוען היוונים בפועל...</p>
         <p>
-          <Link to={grantsPath} state={backState}>Back to grants</Link>
+          <Link to={grantsPath} state={backState}>חזרה למענקים</Link>
         </p>
         <p>
-          <Link to={fixationParametersPath} state={backState}>Continue to Fixation Parameters</Link>
+          <Link to={fixationParametersPath} state={backState}>המשך לנתוני קיבוע זכויות</Link>
         </p>
         <p>
-          <Link to={detailPath}>Back to client detail</Link>
+          <Link to={detailPath}>חזרה לפרטי הלקוח</Link>
         </p>
       </section>
     );
@@ -232,18 +232,18 @@ export function ActualCapitalizationsScreen() {
   if (isNotFound) {
     return (
       <section>
-        <h2>Actual Capitalizations</h2>
-        <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
-        {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Actual capitalizations are not available yet for this client.</p>
+        <h2>היוונים בפועל</h2>
+        <p>מזהה לקוח: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "לא ידוע"}</p>
+        {clientName ? <p>שם הלקוח: {clientName}</p> : null}
+        <p>היוונים בפועל עדיין אינם זמינים ללקוח זה.</p>
         <p>
-          <Link to={grantsPath} state={backState}>Back to grants</Link>
+          <Link to={grantsPath} state={backState}>חזרה למענקים</Link>
         </p>
         <p>
-          <Link to={fixationParametersPath} state={backState}>Continue to Fixation Parameters</Link>
+          <Link to={fixationParametersPath} state={backState}>המשך לנתוני קיבוע זכויות</Link>
         </p>
         <p>
-          <Link to={detailPath}>Back to client detail</Link>
+          <Link to={detailPath}>חזרה לפרטי הלקוח</Link>
         </p>
       </section>
     );
@@ -251,38 +251,38 @@ export function ActualCapitalizationsScreen() {
 
   return (
     <section>
-      <h2>Actual Capitalizations</h2>
-      <p>Client ID: {parsedClientId}</p>
-      {clientName ? <p>Client Name: {clientName}</p> : null}
+      <h2>היוונים בפועל</h2>
+      <p>מזהה לקוח: {parsedClientId}</p>
+      {clientName ? <p>שם הלקוח: {clientName}</p> : null}
       {errorMessage !== null ? (
         <>
-          <p>Unable to load actual capitalizations.</p>
+          <p>לא ניתן לטעון את ההיוונים בפועל.</p>
           <p>{errorMessage}</p>
         </>
       ) : capitalizations.length === 0 ? (
-        <p>No actual capitalizations found.</p>
+        <p>לא נמצאו היוונים בפועל.</p>
       ) : (
         <ul>
           {capitalizations.map((capitalization) => (
             <li key={capitalization.capitalization_id}>
               <article>
                 <h3>{capitalization.source_label ?? capitalization.capitalization_id}</h3>
-                <p>Capitalization ID: {capitalization.capitalization_id}</p>
-                <p>Amount: {capitalization.amount}</p>
-                <p>Capitalization Date: {capitalization.capitalization_date}</p>
-                {capitalization.source_label ? <p>Source Label: {capitalization.source_label}</p> : null}
-                {capitalization.source_basis ? <p>Source Basis: {capitalization.source_basis}</p> : null}
-                {capitalization.planner_assertion ? <p>Planner Assertion: {capitalization.planner_assertion}</p> : null}
+                <p>מזהה היוון: {capitalization.capitalization_id}</p>
+                <p>סכום: {capitalization.amount}</p>
+                <p>תאריך היוון: {capitalization.capitalization_date}</p>
+                {capitalization.source_label ? <p>תיאור המקור: {capitalization.source_label}</p> : null}
+                {capitalization.source_basis ? <p>בסיס המקור: {capitalization.source_basis}</p> : null}
+                {capitalization.planner_assertion ? <p>הצהרת המתכנן: {capitalization.planner_assertion}</p> : null}
                 {capitalization.planner_assertion_basis ? (
-                  <p>Planner Assertion Basis: {capitalization.planner_assertion_basis}</p>
+                  <p>בסיס הצהרת המתכנן: {capitalization.planner_assertion_basis}</p>
                 ) : null}
-                {capitalization.notes ? <p>Notes: {capitalization.notes}</p> : null}
+                {capitalization.notes ? <p>הערות: {capitalization.notes}</p> : null}
                 <p>
                   <button type="button" onClick={() => startEditing(capitalization)} disabled={isSubmitting}>
-                    Edit Actual Capitalization
+                    עריכת היוון בפועל
                   </button>
                   <button type="button" onClick={() => void handleDelete(capitalization)} disabled={isSubmitting}>
-                    Delete Actual Capitalization
+                    מחיקת היוון בפועל
                   </button>
                 </p>
               </article>
@@ -292,10 +292,10 @@ export function ActualCapitalizationsScreen() {
       )}
 
       <form onSubmit={handleSubmit}>
-        <h3>{editingId === null ? "Add Actual Capitalization" : "Edit Actual Capitalization"}</h3>
+        <h3>{editingId === null ? "הוספת היוון בפועל" : "עריכת היוון בפועל"}</h3>
         <p>
           <label>
-            Amount
+            סכום
             <input
               type="number"
               min="0"
@@ -308,7 +308,7 @@ export function ActualCapitalizationsScreen() {
         </p>
         <p>
           <label>
-            Capitalization Date
+            תאריך היוון
             <input
               type="date"
               value={formState.capitalizationDate}
@@ -321,7 +321,7 @@ export function ActualCapitalizationsScreen() {
         </p>
         <p>
           <label>
-            Source Label
+            תיאור המקור
             <input
               type="text"
               value={formState.sourceLabel}
@@ -331,7 +331,7 @@ export function ActualCapitalizationsScreen() {
         </p>
         <p>
           <label>
-            Source Basis
+            בסיס המקור
             <input
               type="text"
               value={formState.sourceBasis}
@@ -341,7 +341,7 @@ export function ActualCapitalizationsScreen() {
         </p>
         <p>
           <label>
-            Planner Assertion
+            הצהרת המתכנן
             <input
               type="text"
               value={formState.plannerAssertion}
@@ -351,7 +351,7 @@ export function ActualCapitalizationsScreen() {
         </p>
         <p>
           <label>
-            Planner Assertion Basis
+            בסיס הצהרת המתכנן
             <textarea
               value={formState.plannerAssertionBasis}
               onChange={(event) => (
@@ -362,7 +362,7 @@ export function ActualCapitalizationsScreen() {
         </p>
         <p>
           <label>
-            Notes
+            הערות
             <textarea
               value={formState.notes}
               onChange={(event) => setFormState((current) => ({ ...current, notes: event.target.value }))}
@@ -373,27 +373,27 @@ export function ActualCapitalizationsScreen() {
         <p>
           <button type="submit" disabled={isSubmitting}>
             {isSubmitting
-              ? "Saving..."
+              ? "שומר..."
               : editingId === null
-                ? "Add Actual Capitalization"
-                : "Save Actual Capitalization"}
+                ? "הוספת היוון בפועל"
+                : "שמירת היוון בפועל"}
           </button>
           {editingId !== null ? (
             <button type="button" onClick={resetForm} disabled={isSubmitting}>
-              Cancel Edit
+              ביטול העריכה
             </button>
           ) : null}
         </p>
       </form>
 
       <p>
-        <Link to={grantsPath} state={backState}>Back to grants</Link>
+        <Link to={grantsPath} state={backState}>חזרה למענקים</Link>
       </p>
       <p>
-        <Link to={fixationParametersPath} state={backState}>Continue to Fixation Parameters</Link>
+        <Link to={fixationParametersPath} state={backState}>המשך לנתוני קיבוע זכויות</Link>
       </p>
       <p>
-        <Link to={detailPath}>Back to client detail</Link>
+        <Link to={detailPath}>חזרה לפרטי הלקוח</Link>
       </p>
     </section>
   );

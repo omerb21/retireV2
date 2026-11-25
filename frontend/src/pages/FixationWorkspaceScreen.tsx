@@ -21,26 +21,23 @@ import {
   getRetirementPlanningDocuments
 } from "../api/clientsApi";
 import { type FixationHistoryEntry, getFixationHistory } from "../api/fixationApi";
+import { heLabel } from "../i18n/he";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
-    if (typeof error.body === "string") {
-      return error.body;
-    }
-
-    return JSON.stringify(error.body, null, 2);
+    return "לא ניתן לטעון את סביבת קיבוע הזכויות. אפשר לנסות שוב בעוד רגע.";
   }
 
   if (error instanceof Error) {
     return error.message;
   }
 
-  return "Unable to load fixation workspace.";
+  return "לא ניתן לטעון את סביבת קיבוע הזכויות.";
 }
 
 function countByStatus<T>(items: T[], selectStatus: (item: T) => string): string {
   if (items.length === 0) {
-    return "none";
+    return "אין";
   }
 
   const counts = items.reduce<Record<string, number>>((current, item) => {
@@ -52,7 +49,7 @@ function countByStatus<T>(items: T[], selectStatus: (item: T) => string): string
   }, {});
 
   return Object.entries(counts)
-    .map(([status, count]) => `${status}: ${count}`)
+    .map(([status, count]) => `${heLabel(status)}: ${count}`)
     .join(", ");
 }
 
@@ -159,8 +156,8 @@ export function FixationWorkspaceScreen() {
   if (isLoading) {
     return (
       <section>
-        <h2>Fixation Activity Workspace</h2>
-        <p>Loading fixation activity workspace...</p>
+        <h2>סביבת קיבוע זכויות</h2>
+        <p>טוען את סביבת קיבוע הזכויות...</p>
       </section>
     );
   }
@@ -168,10 +165,10 @@ export function FixationWorkspaceScreen() {
   if (isNotFound) {
     return (
       <section>
-        <h2>Fixation Activity Workspace</h2>
-        <p>Client not found.</p>
+        <h2>סביבת קיבוע זכויות</h2>
+        <p>הלקוח לא נמצא.</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -180,11 +177,10 @@ export function FixationWorkspaceScreen() {
   if (errorMessage !== null) {
     return (
       <section>
-        <h2>Fixation Activity Workspace</h2>
-        <p>Unable to load fixation activity workspace.</p>
-        <pre>{errorMessage}</pre>
+        <h2>סביבת קיבוע זכויות</h2>
+        <p role="alert">{errorMessage}</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -193,10 +189,10 @@ export function FixationWorkspaceScreen() {
   if (client === null) {
     return (
       <section>
-        <h2>Fixation Activity Workspace</h2>
-        <p>Fixation activity workspace is unavailable.</p>
+        <h2>סביבת קיבוע זכויות</h2>
+        <p>סביבת קיבוע הזכויות אינה זמינה.</p>
         <p>
-          <Link to="/clients">Back to client list</Link>
+          <Link to="/clients">חזרה לרשימת הלקוחות</Link>
         </p>
       </section>
     );
@@ -206,90 +202,90 @@ export function FixationWorkspaceScreen() {
 
   return (
     <section>
-      <h2>Fixation Activity Workspace</h2>
-      <p>Client ID: {client.client_id}</p>
+      <h2>סביבת קיבוע זכויות</h2>
+      <p>מזהה לקוח: {client.client_id}</p>
 
       <section aria-labelledby="workspace-file-foundation-heading">
-        <h3 id="workspace-file-foundation-heading">File Foundation</h3>
-        <p>Client Name: {client.full_name}</p>
-        <p>ID Number: {client.id_number}</p>
-        <p>Retirement Planning File Status: {client.file_status}</p>
+        <h3 id="workspace-file-foundation-heading">פרטי התיק</h3>
+        <p>שם הלקוח: {client.full_name}</p>
+        <p>מספר זהות: {client.id_number}</p>
+        <p>מצב תיק תכנון הפרישה: {heLabel(client.file_status)}</p>
         <p>
-          <Link to={`/clients/${client.client_id}`}>Open Retirement Planning File</Link>
+          <Link to={`/clients/${client.client_id}`}>פתיחת תיק תכנון הפרישה</Link>
         </p>
       </section>
 
       <section aria-labelledby="workspace-professional-identification-heading">
-        <h3 id="workspace-professional-identification-heading">Professional Identification</h3>
-        <p>Birth Date: {profile?.birth_date ?? client.birth_date ?? "Not provided"}</p>
-        <p>Contact Method: {profile?.contact_method ?? "Not provided"}</p>
-        <p>Contact Details: {profile?.contact_details ?? "Not provided"}</p>
-        <p>Professional Identification Status: {profile?.professional_identification_status ?? client.professional_identification_status}</p>
+        <h3 id="workspace-professional-identification-heading">זיהוי מקצועי</h3>
+        <p>תאריך לידה: {profile?.birth_date ?? client.birth_date ?? "לא נמסר"}</p>
+        <p>אמצעי קשר: {heLabel(profile?.contact_method, "לא נמסר")}</p>
+        <p>פרטי קשר: {profile?.contact_details ?? "לא נמסר"}</p>
+        <p>מצב זיהוי מקצועי: {heLabel(profile?.professional_identification_status ?? client.professional_identification_status)}</p>
         <p>
-          <Link to={`/clients/${client.client_id}`}>Open Client Profile</Link>
+          <Link to={`/clients/${client.client_id}`}>פתיחת פרופיל הלקוח</Link>
         </p>
       </section>
 
       <section aria-labelledby="workspace-source-data-heading">
-        <h3 id="workspace-source-data-heading">Fixation Activity Source Data</h3>
-        <p>Employment Records: {employmentRecords.length}</p>
-        <p>Grants: {grants.length}</p>
-        <p>Actual Capitalizations: {actualCapitalizations.length}</p>
-        <p>Saved Fixation Runs: {fixationHistory.length}</p>
-        <p>Latest Fixation Run: {latestFixationRun ? `${latestFixationRun.status} / ${latestFixationRun.created_at ?? "Unknown"}` : "None"}</p>
+        <h3 id="workspace-source-data-heading">נתוני המקור לקיבוע זכויות</h3>
+        <p>תקופות העסקה: {employmentRecords.length}</p>
+        <p>מענקים: {grants.length}</p>
+        <p>היוונים בפועל: {actualCapitalizations.length}</p>
+        <p>חישובי קיבוע שנשמרו: {fixationHistory.length}</p>
+        <p>חישוב קיבוע אחרון: {latestFixationRun ? `${heLabel(latestFixationRun.status)} / ${latestFixationRun.created_at ?? "לא ידוע"}` : "אין"}</p>
         <p>
           <Link to={`/clients/${client.client_id}/employment-history`} state={clientState}>
-            Open Employment History
+            פתיחת תקופות העסקה
           </Link>
         </p>
         <p>
           <Link to={`/clients/${client.client_id}/grants`} state={clientState}>
-            Open Grants
+            פתיחת מענקים
           </Link>
         </p>
         <p>
           <Link to={`/clients/${client.client_id}/actual-capitalizations`} state={clientState}>
-            Open Actual Capitalizations
+            פתיחת היוונים בפועל
           </Link>
         </p>
         <p>
           <Link to={`/clients/${client.client_id}/fixation/input`} state={clientState}>
-            Open Fixation Parameters
+            פתיחת נתוני קיבוע זכויות
           </Link>
         </p>
         <p>
           <Link to={`/clients/${client.client_id}/fixation/history`} state={clientState}>
-            Open Fixation History
+            פתיחת היסטוריית קיבוע זכויות
           </Link>
         </p>
       </section>
 
       <section aria-labelledby="workspace-collected-evidence-heading">
-        <h3 id="workspace-collected-evidence-heading">Collected Evidence</h3>
-        <p>Clearinghouse Snapshots: {clearinghouseSnapshots.length}</p>
-        <p>Snapshot Collection Status: {countByStatus(clearinghouseSnapshots, (snapshot) => snapshot.collection_status)}</p>
-        <p>Retirement Planning Documents: {retirementPlanningDocuments.length}</p>
-        <p>Document Collection Status: {countByStatus(retirementPlanningDocuments, (document) => document.collection_status)}</p>
+        <h3 id="workspace-collected-evidence-heading">אסמכתאות שנאספו</h3>
+        <p>דוחות מסלקה: {clearinghouseSnapshots.length}</p>
+        <p>מצב איסוף דוחות: {countByStatus(clearinghouseSnapshots, (snapshot) => snapshot.collection_status)}</p>
+        <p>מסמכי תכנון פרישה: {retirementPlanningDocuments.length}</p>
+        <p>מצב איסוף מסמכים: {countByStatus(retirementPlanningDocuments, (document) => document.collection_status)}</p>
         <p>
-          <Link to={`/clients/${client.client_id}`}>Open Collection Tools</Link>
+          <Link to={`/clients/${client.client_id}`}>פתיחת כלי איסוף המידע</Link>
         </p>
       </section>
 
       <section aria-labelledby="workspace-verification-state-heading">
-        <h3 id="workspace-verification-state-heading">Verification State</h3>
-        <p>Snapshot Verification Status: {countByStatus(clearinghouseSnapshots, (snapshot) => snapshot.verification_status)}</p>
-        <p>Document Verification Status: {countByStatus(retirementPlanningDocuments, (document) => document.verification_status)}</p>
+        <h3 id="workspace-verification-state-heading">מצב אימות</h3>
+        <p>מצב אימות דוחות: {countByStatus(clearinghouseSnapshots, (snapshot) => snapshot.verification_status)}</p>
+        <p>מצב אימות מסמכים: {countByStatus(retirementPlanningDocuments, (document) => document.verification_status)}</p>
         <ul>
           {clearinghouseSnapshots.map((snapshot) => (
             <li key={snapshot.clearinghouse_snapshot_id}>
-              Snapshot {snapshot.source_file}: {snapshot.verification_status}
+              דוח {snapshot.source_file}: {heLabel(snapshot.verification_status)}
               {snapshot.verification_notes ? ` - ${snapshot.verification_notes}` : ""}
               {snapshot.verified_at ? ` - ${snapshot.verified_at}` : ""}
             </li>
           ))}
           {retirementPlanningDocuments.map((document) => (
             <li key={document.document_id}>
-              Document {document.document_type}: {document.verification_status}
+              מסמך {heLabel(document.document_type)}: {heLabel(document.verification_status)}
               {document.verification_notes ? ` - ${document.verification_notes}` : ""}
               {document.verified_at ? ` - ${document.verified_at}` : ""}
             </li>
@@ -298,28 +294,28 @@ export function FixationWorkspaceScreen() {
       </section>
 
       <section aria-labelledby="workspace-missing-information-heading">
-        <h3 id="workspace-missing-information-heading">Missing Information</h3>
-        <p>Missing Data Items: {missingDataItems.filter((item) => item.missing_item_type === "data").length}</p>
-        <p>Missing Document Items: {missingDataItems.filter((item) => item.missing_item_type === "document").length}</p>
+        <h3 id="workspace-missing-information-heading">מידע חסר</h3>
+        <p>נתונים חסרים: {missingDataItems.filter((item) => item.missing_item_type === "data").length}</p>
+        <p>מסמכים חסרים: {missingDataItems.filter((item) => item.missing_item_type === "document").length}</p>
         {missingDataItems.length === 0 ? (
-          <p>No missing information registered.</p>
+          <p>לא נרשם מידע חסר.</p>
         ) : (
           <ul>
             {missingDataItems.map((item) => (
               <li key={item.missing_data_item_id}>
-                {item.missing_item_type} - {item.missing_item_label} - {item.missing_status}
+                {heLabel(item.missing_item_type)} - {item.missing_item_label} - {heLabel(item.missing_status)}
                 {item.notes ? ` - ${item.notes}` : ""}
               </li>
             ))}
           </ul>
         )}
         <p>
-          <Link to={`/clients/${client.client_id}`}>Open Missing Information Tools</Link>
+          <Link to={`/clients/${client.client_id}`}>פתיחת כלי המידע החסר</Link>
         </p>
       </section>
 
       <p>
-        <Link to="/clients">Back to client list</Link>
+        <Link to="/clients">חזרה לרשימת הלקוחות</Link>
       </p>
     </section>
   );

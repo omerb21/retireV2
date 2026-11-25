@@ -222,6 +222,20 @@ it("keeps the selected alternative when moving from planning to results", async 
   expect(await screen.findByRole("heading", { name: "alternative-b" })).toBeInTheDocument();
 });
 
+it("prefers an active alternative over an archived first result", async () => {
+  mocks.list.mockResolvedValue([draft("archived-first", "archived"), draft("active-second")]);
+  render(<ScenarioDraftPanel clientId={1} products={products} view="results" />);
+  expect(await screen.findByRole("heading", { name: "active-second" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "archived-first" })).toBeNull();
+});
+
+it("preserves an explicit valid archived selection", async () => {
+  mocks.list.mockResolvedValue([draft("archived-choice", "archived"), draft("active-choice")]);
+  render(<ScenarioDraftPanel clientId={1} products={products} view="results"
+    preferredScenarioId="archived-choice" />);
+  expect(await screen.findByRole("heading", { name: "archived-choice" })).toBeInTheDocument();
+});
+
 it("uses one workspace-selected scenario when the parent changes A to B", async () => {
   mocks.list.mockResolvedValue([draft("alternative-a"), draft("alternative-b")]);
   const props = { clientId: 1, products, view: "results" as const };

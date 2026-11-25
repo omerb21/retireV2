@@ -13,14 +13,14 @@ import {
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiTransportError) {
-    return `Request failed: ${error.status} ${error.statusText}`.trim();
+    return error.status === 422 ? "יש לבדוק את שדות החובה ולנסות שוב" : "הפעולה נכשלה. אפשר לנסות שוב בעוד רגע";
   }
 
   if (error instanceof Error) {
     return error.message;
   }
 
-  return "Unable to load grants.";
+  return "לא ניתן לטעון את המענקים.";
 }
 
 interface FormState {
@@ -177,7 +177,7 @@ export function GrantsScreen() {
     event.preventDefault();
 
     if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) {
-      setMutationErrorMessage("Unable to save grant for this client.");
+      setMutationErrorMessage("לא ניתן לשמור מענק ללקוח זה.");
       return;
     }
 
@@ -229,19 +229,19 @@ export function GrantsScreen() {
   if (isLoading) {
     return (
       <section>
-        <h2>Grants</h2>
+        <h2>מענקים</h2>
       <p><Link to={`/clients/${parsedClientId}/workspace`}>חזרה לסביבת התכנון החדשה</Link></p>
-        <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
-        {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Loading grants...</p>
+        <p>מזהה לקוח: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "לא ידוע"}</p>
+        {clientName ? <p>שם הלקוח: {clientName}</p> : null}
+        <p>טוען מענקים...</p>
         <p>
-          <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+          <Link to={employmentHistoryPath} state={backState}>חזרה לתקופות העסקה</Link>
         </p>
         <p>
-          <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
+          <Link to={actualCapitalizationsPath} state={backState}>המשך להיוונים בפועל</Link>
         </p>
         <p>
-          <Link to={detailPath}>Back to client detail</Link>
+          <Link to={detailPath}>חזרה לפרטי הלקוח</Link>
         </p>
       </section>
     );
@@ -250,18 +250,18 @@ export function GrantsScreen() {
   if (isNotFound) {
     return (
       <section>
-        <h2>Grants</h2>
-        <p>Client ID: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "Unknown"}</p>
-        {clientName ? <p>Client Name: {clientName}</p> : null}
-        <p>Grants are not available yet for this client.</p>
+        <h2>מענקים</h2>
+        <p>מזהה לקוח: {Number.isInteger(parsedClientId) && parsedClientId > 0 ? parsedClientId : "לא ידוע"}</p>
+        {clientName ? <p>שם הלקוח: {clientName}</p> : null}
+        <p>המענקים עדיין אינם זמינים ללקוח זה.</p>
         <p>
-          <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+          <Link to={employmentHistoryPath} state={backState}>חזרה לתקופות העסקה</Link>
         </p>
         <p>
-          <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
+          <Link to={actualCapitalizationsPath} state={backState}>המשך להיוונים בפועל</Link>
         </p>
         <p>
-          <Link to={detailPath}>Back to client detail</Link>
+          <Link to={detailPath}>חזרה לפרטי הלקוח</Link>
         </p>
       </section>
     );
@@ -269,35 +269,35 @@ export function GrantsScreen() {
 
   return (
     <section>
-      <h2>Grants</h2>
-      <p>Client ID: {parsedClientId}</p>
-      {clientName ? <p>Client Name: {clientName}</p> : null}
+      <h2>מענקים</h2>
+      <p>מזהה לקוח: {parsedClientId}</p>
+      {clientName ? <p>שם הלקוח: {clientName}</p> : null}
       {errorMessage !== null ? (
         <>
-          <p>Unable to load grants.</p>
+          <p>לא ניתן לטעון את המענקים.</p>
           <p>{errorMessage}</p>
         </>
       ) : grants.length === 0 ? (
-        <p>No grants found.</p>
+        <p>לא נמצאו מענקים.</p>
       ) : (
         <ul>
           {grants.map((grant) => (
             <li key={grant.grant_id}>
               <article>
-                <h3>{grant.employer_name ?? "Grant"}</h3>
-                <p>Grant ID: {grant.grant_id}</p>
-                {grant.employer_name ? <p>Employer Name: {grant.employer_name}</p> : null}
-                <p>Employer Withholding File Number: {grant.employer_withholding_file_number}</p>
-                <p>Exempt Grant Amount: {grant.exempt_grant_amount}</p>
-                <p>Grant Receipt Date: {grant.grant_receipt_date}</p>
-                <p>Employment Start Date: {grant.employment_start_date}</p>
-                <p>Employment End Date: {grant.employment_end_date}</p>
+                <h3>{grant.employer_name ?? "מענק"}</h3>
+                <p>מזהה מענק: {grant.grant_id}</p>
+                {grant.employer_name ? <p>שם המעסיק: {grant.employer_name}</p> : null}
+                <p>מספר תיק ניכויים: {grant.employer_withholding_file_number}</p>
+                <p>סכום מענק פטור: {grant.exempt_grant_amount}</p>
+                <p>תאריך קבלת המענק: {grant.grant_receipt_date}</p>
+                <p>תחילת העסקה: {grant.employment_start_date}</p>
+                <p>סיום העסקה: {grant.employment_end_date}</p>
                 <p>
                   <button type="button" onClick={() => startEditing(grant)} disabled={isSubmitting}>
-                    Edit Grant
+                    עריכת מענק
                   </button>
                   <button type="button" onClick={() => void handleDelete(grant)} disabled={isSubmitting}>
-                    Delete Grant
+                    מחיקת מענק
                   </button>
                 </p>
               </article>
@@ -307,10 +307,10 @@ export function GrantsScreen() {
       )}
 
       <form onSubmit={handleSubmit}>
-        <h3>{editingId === null ? "Add Grant" : "Edit Grant"}</h3>
+        <h3>{editingId === null ? "הוספת מענק" : "עריכת מענק"}</h3>
         <p>
           <label>
-            Employer Name
+            שם המעסיק
             <input
               type="text"
               value={formState.employerName}
@@ -321,14 +321,14 @@ export function GrantsScreen() {
         </p>
         <p>
           <label>
-            Employer Withholding File Number
+            מספר תיק ניכויים של המעסיק
             <input type="text" value={formState.employerWithholdingFileNumber}
               onChange={(event) => setFormState((current) => ({ ...current, employerWithholdingFileNumber: event.target.value }))} required />
           </label>
         </p>
         <p>
           <label>
-            Exempt Grant Amount
+            סכום מענק פטור
             <input
               type="number"
               min="0"
@@ -341,7 +341,7 @@ export function GrantsScreen() {
         </p>
         <p>
           <label>
-            Grant Receipt Date
+            תאריך קבלת המענק
             <input
               type="date"
               value={formState.grantReceiptDate}
@@ -352,7 +352,7 @@ export function GrantsScreen() {
         </p>
         <p>
           <label>
-            Employment Start Date
+            תאריך תחילת העסקה
             <input
               type="date"
               value={formState.employmentStartDate}
@@ -363,7 +363,7 @@ export function GrantsScreen() {
         </p>
         <p>
           <label>
-            Employment End Date
+            תאריך סיום העסקה
             <input
               type="date"
               value={formState.employmentEndDate}
@@ -375,24 +375,24 @@ export function GrantsScreen() {
         {mutationErrorMessage ? <p>{mutationErrorMessage}</p> : null}
         <p>
           <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : editingId === null ? "Add Grant" : "Save Grant"}
+            {isSubmitting ? "שומר..." : editingId === null ? "הוספת מענק" : "שמירת מענק"}
           </button>
           {editingId !== null ? (
             <button type="button" onClick={resetForm} disabled={isSubmitting}>
-              Cancel Edit
+              ביטול העריכה
             </button>
           ) : null}
         </p>
       </form>
 
       <p>
-        <Link to={employmentHistoryPath} state={backState}>Back to employment history</Link>
+        <Link to={employmentHistoryPath} state={backState}>חזרה לתקופות העסקה</Link>
       </p>
       <p>
-        <Link to={actualCapitalizationsPath} state={backState}>Continue to Actual Capitalizations</Link>
+        <Link to={actualCapitalizationsPath} state={backState}>המשך להיוונים בפועל</Link>
       </p>
       <p>
-        <Link to={detailPath}>Back to client detail</Link>
+        <Link to={detailPath}>חזרה לפרטי הלקוח</Link>
       </p>
     </section>
   );

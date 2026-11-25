@@ -9,6 +9,7 @@ import { PlannerAssumptionsSection } from "./PlannerAssumptionsSection";
 import { PORTFOLIO_COMPONENT_COLUMNS } from "../components/portfolioComponentColumns";
 import { getClient, getEmploymentRecords, getGrants, getActualCapitalizations, getCapitalAssets, getRecurringIncomes, getRecurringExpenses, updateEmploymentRecord, createEmploymentRecord, createHistoricalEmploymentSettlement, type ExemptGrantStatus, updateGrant, createGrantForEmployment, linkGrantToEmployment, type GrantItem, type EmploymentRecordItem, type ClientDetailItem } from "../api/clientsApi";
 import { listPensionProducts, savePensionProduct, type PensionProduct } from "../api/pensionProductsApi";
+import { heLabel } from "../i18n/he";
 import "./RetirementWorkspaceScreen.css";
 
 const FIXED_CODES = PORTFOLIO_COMPONENT_COLUMNS;
@@ -172,9 +173,9 @@ export function RetirementWorkspaceScreen() {
         groups[0].map(item => ({ client_id: item.client_id, title: item.employer_name, detail: item.work_start_date + " עד " + (item.work_end_date ?? "כיום") })),
         groups[1].map(item => ({ client_id: item.client_id, title: item.employer_name ?? "מענק ללא שם מעסיק", detail: "מועד קבלה: " + item.grant_receipt_date + " · מענק פטור מדווח: " + (item.exempt_grant_amount ?? "לא נמסר") })),
         groups[2].map(item => ({ client_id: item.client_id, title: item.source_label ?? "היוון בפועל", detail: "מועד: " + item.capitalization_date + " · סכום: " + item.amount })),
-        groups[3].map(item => ({ client_id: item.client_id, title: item.asset_description, detail: "שווי ידוע: " + (item.known_value_amount ?? "לא נמסר") + " · מצב: " + item.verification_state })),
-        groups[4].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency + " · " + item.amount_basis })),
-        groups[5].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + item.frequency })),
+        groups[3].map(item => ({ client_id: item.client_id, title: item.asset_description, detail: "שווי ידוע: " + (item.known_value_amount ?? "לא נמסר") + " · מצב: " + heLabel(item.verification_state) })),
+        groups[4].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + heLabel(item.frequency) + " · " + heLabel(item.amount_basis) })),
+        groups[5].map(item => ({ client_id: item.client_id, title: item.description, detail: "סכום מדווח: " + item.amount + " · " + heLabel(item.frequency) })),
       ];
       setEmploymentRecords(groups[0]);
       setGrantRecords(groups[1]);

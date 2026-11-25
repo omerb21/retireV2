@@ -1,6 +1,7 @@
 """Opt-in PostgreSQL 16 evidence using an isolated disposable database only."""
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import load_all_models
 from app.models.client import Client
 from app.models.scenario_draft import ScenarioDraftDecision
+from app.models.scenario_pension_price_basis import ScenarioPensionPriceBasis
 from app.schemas.scenario_draft import DraftDecisionWrite, DraftReplace
 from app.services import scenario_draft_service as service
 from test_recovery_migration_postgresql import postgres_url
@@ -30,7 +32,7 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
         with engine.begin() as connection:
             connection.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
         completed = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "b7c5e1a90342"],
+            [sys.executable, "-m", "alembic", "upgrade", "d277e1a6f003"],
             cwd=BACKEND,
             env={**os.environ, "DATABASE_URL": postgres_url,
                  "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
@@ -205,6 +207,112 @@ def test_postgresql_draft_migration_and_cas(postgres_url):
             assert db.scalar(text(
                 "SELECT count(*) FROM scenario_draft_revisions WHERE scenario_id = :id"
             ), {"id": clone_id}) == 3
+
+        # Regression 327A: a professional price-basis revision is immutable
+        # history. Replacing an otherwise unchanged decision must retain its
+        # stable parent identity instead of DELETE/INSERT tripping the RESTRICT
+        # foreign key. The old evidence becomes stale solely because the
+        # scenario version advances.
+        with factory.begin() as db:
+            protected = service.create(db, 1, "Price basis lifecycle", "test-actor")
+        protected_id = protected["scenario_id"]
+        protected_decision = DraftDecisionWrite(
+            source_product_id="synthetic-product",
+            source_component_id="synthetic-component",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("50.00"), action="pension",
+            effective_date="2026-10-24",
+        )
+        with factory.begin() as db:
+            protected = service.replace(
+                db, 1, protected_id,
+                DraftReplace(name="Price basis lifecycle", expected_version=1,
+                             decisions=[protected_decision]),
+                "test-actor",
+            )
+        decision_id = protected["decisions"][0]["decision_id"]
+        with factory.begin() as db:
+            db.add(ScenarioPensionPriceBasis(
+                id="price-basis-history", client_id=1,
+                scenario_id=protected_id, decision_id=decision_id,
+                scenario_version=2, revision=1,
+                source_fingerprint="a" * 64,
+                target_fingerprint="b" * 64,
+                target_date=date(2030, 1, 1),
+                price_basis="NOMINAL_AT_RETIREMENT_TARGET_DATE",
+                actor_id="test-actor", record_fingerprint="c" * 64,
+            ))
+        unchanged = DraftDecisionWrite(
+            decision_id=decision_id,
+            source_product_id="synthetic-product",
+            source_component_id="synthetic-component",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("50.00"), action="pension",
+            effective_date="2026-10-24",
+        )
+        with factory.begin() as db:
+            saved = service.replace(
+                db, 1, protected_id,
+                DraftReplace(name="Price basis lifecycle renamed",
+                             expected_version=2, decisions=[unchanged]),
+                "test-actor",
+            )
+        assert saved["version"] == 3
+        assert saved["decisions"][0]["decision_id"] == decision_id
+        with factory() as db:
+            history = db.get(ScenarioPensionPriceBasis, "price-basis-history")
+            assert history is not None
+            assert history.scenario_version == 2
+            assert db.get(ScenarioDraftDecision, decision_id) is not None
+            from app.services.scenario_pension_price_basis_service import (
+                current_rows, evaluate_decision,
+            )
+            source_id = f"scenario-decision:{protected_id}:{decision_id}"
+            historical = current_rows(db, 1, (protected_id,))[source_id]
+            assert evaluate_decision(
+                historical,
+                {"source_id": source_id, "decision_id": decision_id,
+                 "authority_fingerprint": "a" * 64,
+                 "source_kind": "CALCULATED_PENSION", "source_state": "READY"},
+                client_id=1, scenario_id=protected_id, scenario_version=3,
+                target_fingerprint="b" * 64, target_date="2030-01-01",
+            ) == "STALE"
+
+        # Reusing an immutable historical identity for a materially different
+        # decision is rejected as a controlled conflict.  The CAS version/name,
+        # current decision and professional history all roll back together.
+        changed = DraftDecisionWrite(
+            decision_id=decision_id,
+            source_product_id="synthetic-product",
+            source_component_id="synthetic-component",
+            component_code="תגמולי_עובד_עד_2000",
+            amount=Decimal("51.00"), action="pension",
+            effective_date="2026-10-24",
+        )
+        with factory() as db:
+            try:
+                service.replace(
+                    db, 1, protected_id,
+                    DraftReplace(name="must roll back", expected_version=3,
+                                 decisions=[changed]),
+                    "test-actor",
+                )
+            except service.DraftError as exc:
+                assert (exc.code, exc.status) == (
+                    "SCENARIO_DECISION_HAS_PRICE_BASIS_HISTORY", 409,
+                )
+                db.rollback()
+            else:
+                raise AssertionError("material change reused immutable price-basis identity")
+        with factory() as db:
+            after_rejection = service.read(db, 1, protected_id)
+            assert after_rejection["version"] == 3
+            assert after_rejection["name"] == "Price basis lifecycle renamed"
+            assert after_rejection["decisions"][0]["amount"] == "50.00"
+            assert db.scalar(text(
+                "SELECT count(*) FROM scenario_pension_price_basis_decisions "
+                "WHERE scenario_id = :id"
+            ), {"id": protected_id}) == 1
     finally:
         engine.dispose()
 
@@ -225,7 +333,7 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
         with engine.begin() as conn:
             conn.execute(text(f"CREATE ROLE {APPLICATION_ROLE} NOLOGIN"))
         migration = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "b7c5e1a90342"],
+            [sys.executable, "-m", "alembic", "upgrade", "d277e1a6f003"],
             cwd=BACKEND,
             env={**os.environ, "DATABASE_URL": postgres_url,
                  "CRTISBA_APPLICATION_DB_ROLE": APPLICATION_ROLE,
@@ -267,6 +375,35 @@ def test_synthetic_client_http_scenario_journey_against_disposable_postgresql(po
                     "name": "Original", "expected_version": original["version"],
                     "decisions": [decision],
                 }))
+                assert original["decisions"][0]["amount"] == "100.25"
+                original_decision_id = original["decisions"][0]["decision_id"]
+                with factory.begin() as session:
+                    session.add(ScenarioPensionPriceBasis(
+                        id="http-price-basis-history", client_id=101,
+                        scenario_id=scenario_id, decision_id=original_decision_id,
+                        scenario_version=original["version"], revision=1,
+                        source_fingerprint="d" * 64,
+                        target_fingerprint="e" * 64,
+                        target_date=date(2030, 1, 1),
+                        price_basis="NOMINAL_AT_RETIREMENT_TARGET_DATE",
+                        actor_id="test-actor", record_fingerprint="f" * 64,
+                    ))
+                retained = {**decision, "decision_id": original_decision_id}
+                original = ok(http.put(f"{root}/{scenario_id}", json={
+                    "name": "Original retained", "expected_version": original["version"],
+                    "decisions": [retained],
+                }))
+                assert original["decisions"][0]["decision_id"] == original_decision_id
+                rejected = http.put(f"{root}/{scenario_id}", json={
+                    "name": "must roll back", "expected_version": original["version"],
+                    "decisions": [{**retained, "amount": "100.26"}],
+                })
+                assert rejected.status_code == 409, rejected.text
+                assert rejected.json()["code"] == (
+                    "SCENARIO_DECISION_HAS_PRICE_BASIS_HISTORY"
+                )
+                original = ok(http.get(f"{root}/{scenario_id}"))
+                assert original["name"] == "Original retained"
                 assert original["decisions"][0]["amount"] == "100.25"
                 clone = ok(http.post(f"{root}/{scenario_id}/duplicate", json={"name": "Alternative"}))
                 assert clone["decisions"][0]["amount"] == "100.25"

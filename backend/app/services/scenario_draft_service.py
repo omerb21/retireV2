@@ -16,6 +16,7 @@ from app.models.pension_product import (
 )
 from app.models.scenario_draft import ScenarioDraft, ScenarioDraftDecision, ScenarioDraftRevision
 from app.models.scenario_draft_pension_election import ScenarioDraftPensionElection
+from app.models.scenario_pension_price_basis import ScenarioPensionPriceBasis
 
 
 class DraftError(RuntimeError):
@@ -265,6 +266,29 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
             or not set(supplied_ids).issubset(previous_by_id)):
         raise DraftError("SCENARIO_DECISION_ID_MISMATCH", 422)
 
+    # Price-basis rows are append-only professional history and deliberately
+    # RESTRICT deletion of their stable decision identity.  Keep an unchanged
+    # parent row in place instead of performing the usual DELETE/INSERT
+    # replacement.  A material change/removal cannot reuse or erase that
+    # historical identity; fail deterministically and leave the transaction to
+    # roll back rather than leaking a PostgreSQL FK violation as HTTP 500.
+    price_basis_decision_ids = set(db.scalars(select(
+        ScenarioPensionPriceBasis.decision_id
+    ).where(
+        ScenarioPensionPriceBasis.client_id == client_id,
+        ScenarioPensionPriceBasis.scenario_id == scenario_id,
+    )).all())
+    submitted_by_id = {
+        row.decision_id: row for row in payload.decisions
+        if row.decision_id is not None
+    }
+    for decision_id in price_basis_decision_ids:
+        incoming = submitted_by_id.get(decision_id)
+        previous = previous_by_id.get(decision_id)
+        if (incoming is None or previous is None
+                or not _materially_unchanged_decision(previous, incoming)):
+            raise DraftError("SCENARIO_DECISION_HAS_PRICE_BASIS_HISTORY", 409)
+
     # The server, not the browser, owns source identity and allocation limits.
     # Legacy references with *no matching source at all* may remain editable
     # placeholders, but are explicitly needs_revalidation and never admitted.
@@ -340,8 +364,6 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     elections = db.scalars(select(ScenarioDraftPensionElection).where(
         ScenarioDraftPensionElection.scenario_id == scenario_id
     )).all()
-    submitted_by_id = {row.decision_id: row for row in payload.decisions
-                       if row.decision_id is not None}
     retained_elections = []
     for election in elections:
         incoming = submitted_by_id.get(election.decision_id)
@@ -369,9 +391,12 @@ def replace(db: Session, client_id: int, scenario_id: str, payload, actor: str) 
     # selections with the new draft version. No professional authority copies.
     # No partial persistence: this all executes within the caller transaction.
     for previous in existing:
-        db.delete(previous)
+        if previous.decision_id not in price_basis_decision_ids:
+            db.delete(previous)
     db.flush()
     for row, _product, _component, fingerprint, stale, version in resolved:
+        if row.decision_id in price_basis_decision_ids:
+            continue
         db.add(ScenarioDraftDecision(
             decision_id=row.decision_id or uuid4().hex,
             scenario_id=scenario_id,

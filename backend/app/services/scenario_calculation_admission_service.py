@@ -131,6 +131,8 @@ def assess(db: Session, client_id: int, scenario_id: str, *, gross_enabled: bool
                 }
                 or not source.get("factor_evidence_reference")
                 or not source.get("factor_value")
+                or type(source.get("admission_revision")) is not int
+                or source["admission_revision"] < 1
                 or not row.get("professional_admission_fingerprint")):
             block("GROSS_FORECAST_COEFFICIENT_PROVENANCE_MISSING", row["decision_id"])
             return result

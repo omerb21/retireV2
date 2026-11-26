@@ -63,6 +63,7 @@ from app.services.official_parameter_service import (
     activate_official_parameter_set,
 )
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
+from app.models.scenario_pension_price_basis import ScenarioPensionPriceBasis
 from app.services.scenario_unified_engine_binding_service import (
     build_unified_scenario_engine_bindings, CONTRACT, FINANCIAL_DOMAINS,
 )
@@ -104,6 +105,7 @@ def pg16(pg16_base):
             M07AssessmentFinding.__table__,
             ClientProfile.__table__,
             ScenarioPensionFactorAdmission.__table__,
+            ScenarioPensionPriceBasis.__table__,
             RecurringIncome.__table__,
             PensionIncomeResolution.__table__,
             batches, conversions,

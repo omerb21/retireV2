@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
+import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,7 +30,17 @@ def assess(db: Session, client_id: int, scenario_id: str, *, gross_enabled: bool
         ScenarioDraftDecision.scenario_id == scenario_id,
     ).order_by(ScenarioDraftDecision.decision_id)).all()
     blockers: list[dict[str, str | None]] = []
+    known_decision_ids = {row.decision_id for row in decisions}
     def block(code: str, decision_id: str | None = None) -> None:
+        # Stage 6 aggregate blockers may prefix a decision ID to the code.
+        # Preserve both fields in the public structured contract, never a colon code.
+        if decision_id is None and ":" in code:
+            possible_id, possible_code = code.split(":", 1)
+            if possible_id in known_decision_ids and re.fullmatch(r"[A-Z0-9_]+", possible_code):
+                decision_id, code = possible_id, possible_code
+        if not re.fullmatch(r"[A-Z0-9_]+", code):
+            code = "GROSS_FORECAST_EVIDENCE_INCOMPLETE"
+            decision_id = None
         blockers.append({"code": code, "decision_id": decision_id})
     if scenario.status == "archived":
         block("SCENARIO_ARCHIVED")

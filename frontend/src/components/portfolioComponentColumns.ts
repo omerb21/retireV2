@@ -12,3 +12,11 @@ export const PORTFOLIO_COMPONENT_COLUMNS: Array<[string, string, "פיצויים
   ["תגמולי_מעביד_אחרי_2000", "תגמולי מעביד אחרי 2000", "תגמולים"],
   ["תגמולי_מעביד_אחרי_2008_לא_משלמת", "תגמולי מעביד אחרי 2008 - לא משלמת", "תגמולים"],
 ];
+
+const PORTFOLIO_COMPONENT_LABELS = new Map(
+  PORTFOLIO_COMPONENT_COLUMNS.map(([code, label]) => [code, label]),
+);
+
+/** Display-only label lookup. Unknown canonical values remain visible unchanged. */
+export const portfolioComponentLabel = (componentCode: string): string =>
+  PORTFOLIO_COMPONENT_LABELS.get(componentCode) ?? componentCode;

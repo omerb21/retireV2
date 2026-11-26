@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { loadM12Draft, downloadM12DraftPdf, type M12Draft } from "../api/m12DraftReportApi";
 import { heLabel } from "../i18n/he";
+import { portfolioComponentLabel } from "./portfolioComponentColumns";
 
 interface Props { clientId: number; }
 const missing = "לא תועד";
@@ -148,7 +149,7 @@ export function M12DraftReportPanel({ clientId }: Props) {
             {s.status !== "draft" && <p className="m12-warning">סטטוס חלופה: {heLabel(s.status)}</p>}
             <table><thead><tr><th>רכיב</th><th>פעולה</th><th>סכום הצהרה</th><th>מועד</th><th>מצב אימות</th></tr></thead>
               <tbody>{s.decisions.length ? s.decisions.map((d,j)=><tr key={j}>
-                <td>{d.component}</td><td>{action(d.action)}</td><td>{amount(d.declared_amount)}</td>
+                <td>{portfolioComponentLabel(d.component)}</td><td>{action(d.action)}</td><td>{amount(d.declared_amount)}</td>
                 <td>{date(d.effective_date)}</td><td>{heLabel(d.validation_state)} - לא תוצאת חישוב</td>
               </tr>) : <tr><td colSpan={5}>לא תועדו החלטות בחלופה.</td></tr>}</tbody></table>
           </section>) : <p>{missing}</p>}

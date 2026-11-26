@@ -26,7 +26,7 @@ it("renders professional M12 values in Hebrew without changing their canonical A
     incomes: [{ name: "הכנסה", amount: "5000.00", frequency: "monthly",
       amount_basis: "gross", verification: "verified" }], expenses: [],
     scenarios: [{ name: "חלופה א", version: 2, status: "needs_revalidation", preferred: true,
-      decisions: [{ component: "רכיב מקור", action: "pension", declared_amount: "100.00",
+      decisions: [{ component: "תגמולי_עובד_אחרי_2000", action: "pension", declared_amount: "100.00",
         effective_date: "2027-03-04", validation_state: "unverified", qualified_calculation: false }] }],
     preferred: null, assumptions: [],
     missing_information: [{ label: "מסמך חסר", status: "open" }], warnings: [],
@@ -43,7 +43,8 @@ it("renders professional M12 values in Hebrew without changing their canonical A
   expect(screen.getByText("חודשי")).toBeInTheDocument();
   expect(screen.getByText(/סטטוס חלופה: נדרשת בדיקה מחדש/)).toBeInTheDocument();
   expect(screen.getByText("קצבה")).toBeInTheDocument();
+  expect(screen.getByText("תגמולי עובד אחרי 2000")).toBeInTheDocument();
   expect(screen.getByText(/מסמך חסר \(פתוח\)/)).toBeInTheDocument();
   expect(screen.getByText("12,345,678,901,234,567,890.5 ₪")).toBeInTheDocument();
-  expect(screen.queryByText(/not_currently_working|pension_fund|needs_revalidation|unverified/)).toBeNull();
+  expect(screen.queryByText(/not_currently_working|pension_fund|needs_revalidation|unverified|תגמולי_עובד_אחרי_2000/)).toBeNull();
 });

@@ -3,8 +3,9 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import Mock
 import pytest
+from app.models.pension_product import COMPONENT_CODES
 from app.services.m12_draft_report_service import build
-from app.services.m12_draft_pdf import render_pdf
+from app.services.m12_draft_pdf import _he, render_pdf
 from app.services.scenario_draft_service import DraftError
 
 def _client():
@@ -52,7 +53,7 @@ def test_complete_synthetic_pdf_is_valid_and_not_an_authorized_calculation():
                           "saved_at":"2026-11-15T10:00:00Z","outdated":False}
     content["scenarios"]=[{"name":"חלופה מקצועית מדומה","version":2,"status":"draft",
                             "preferred":True,"decisions":[{
-                                "component":"תגמולים","action":"pension",
+                                "component":"תגמולי_עובד_אחרי_2000","action":"pension",
                                 "declared_amount":"25000.00","effective_date":"2027-01-01",
                                 "validation_state":"unverified","qualified_calculation":False,
                             }]}]
@@ -61,6 +62,24 @@ def test_complete_synthetic_pdf_is_valid_and_not_an_authorized_calculation():
     assert len(result)>1200
     assert content["cashflow_results"] is None
     assert content["calculation_traceability"] == "not_established"
+    assert content["scenarios"][0]["decisions"][0]["component"] == "תגמולי_עובד_אחרי_2000"
+
+def test_all_canonical_component_codes_have_explicit_professional_pdf_labels():
+    expected = {
+        "פיצויים_מעסיק_נוכחי": "פיצויים מעסיק נוכחי",
+        "פיצויים_לאחר_התחשבנות": "פיצויים לאחר התחשבנות",
+        "פיצויים_שלא_עברו_התחשבנות": "פיצויים שלא עברו התחשבנות",
+        "פיצויים_ממעסיקים_קודמים_רצף_זכויות": "פיצויים קודמים - רצף זכויות",
+        "פיצויים_ממעסיקים_קודמים_רצף_קצבה": "פיצויים קודמים - רצף קצבה",
+        "תגמולי_עובד_עד_2000": "תגמולי עובד עד 2000",
+        "תגמולי_עובד_אחרי_2000": "תגמולי עובד אחרי 2000",
+        "תגמולי_עובד_אחרי_2008_לא_משלמת": "תגמולי עובד אחרי 2008 - לא משלמת",
+        "תגמולי_מעביד_עד_2000": "תגמולי מעביד עד 2000",
+        "תגמולי_מעביד_אחרי_2000": "תגמולי מעביד אחרי 2000",
+        "תגמולי_מעביד_אחרי_2008_לא_משלמת": "תגמולי מעביד אחרי 2008 - לא משלמת",
+    }
+    assert set(expected) == set(COMPONENT_CODES)
+    assert {code: _he(code) for code in COMPONENT_CODES} == expected
 
 def test_partial_synthetic_pdf_also_renders():
     result=render_pdf(build(_empty_database(), 902))

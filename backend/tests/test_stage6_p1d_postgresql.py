@@ -382,30 +382,32 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
 
         # 354: prove the new admission owner consumes real persisted Stage 6
         # evidence and yields an exact, nonbinding gross figure, without mocks.
-        with factory() as read_only:
-            read_only.execute(text("SET TRANSACTION READ ONLY"))
-            admitted = assess_gross_admission(
-                read_only, 27, "scenario", gross_enabled=True,
-            )
-            assert admitted["assessment_state"] == "gross_estimate_ready", admitted
-            assert admitted["blockers"] == []
-            assert admitted["financial_result"]["monthly_pension_gross_ils"] == "4.00"
-            assert admitted["financial_result"]["aggregate_fingerprint"] == (
-                aggregate["aggregate_fingerprint"]
-            )
-            assert len(admitted["financial_result"]["coefficient_provenance"]) == 2
-            assert admitted["financial_result"]["tax_calculated"] is False
-            assert admitted["financial_result"]["net_calculated"] is False
-            assert admitted["warnings"] == ["TAX_NOT_EVALUATED", "NET_NOT_EVALUATED"]
-            disabled = assess_gross_admission(
-                read_only, 27, "scenario", gross_enabled=False,
-            )
-            assert disabled["financial_result"] is None
-            assert disabled["assessment_state"] == "blocked"
-            assert "PERMISSION_NOT_ADMITTED" in {
-                row["code"] for row in disabled["blockers"]
-            }
-            read_only.rollback()
+        with scoped.connect().execution_options(
+            isolation_level="REPEATABLE READ", postgresql_readonly=True,
+        ) as read_connection:
+            with factory(bind=read_connection) as read_only:
+                admitted = assess_gross_admission(
+                    read_only, 27, "scenario", gross_enabled=True,
+                )
+                assert admitted["assessment_state"] == "gross_estimate_ready", admitted
+                assert admitted["blockers"] == []
+                assert admitted["financial_result"]["monthly_pension_gross_ils"] == "4.00"
+                assert admitted["financial_result"]["aggregate_fingerprint"] == (
+                    aggregate["aggregate_fingerprint"]
+                )
+                assert len(admitted["financial_result"]["coefficient_provenance"]) == 2
+                assert admitted["financial_result"]["tax_calculated"] is False
+                assert admitted["financial_result"]["net_calculated"] is False
+                assert admitted["warnings"] == ["TAX_NOT_EVALUATED", "NET_NOT_EVALUATED"]
+                disabled = assess_gross_admission(
+                    read_only, 27, "scenario", gross_enabled=False,
+                )
+                assert disabled["financial_result"] is None
+                assert disabled["assessment_state"] == "blocked"
+                assert "PERMISSION_NOT_ADMITTED" in {
+                    row["code"] for row in disabled["blockers"]
+                }
+                read_only.rollback()
         cashflow = build_scenario_monthly_cashflow(
             factory, client_id=27, scenario_id="scenario",
             start_month="2027-10", end_month="2027-11",

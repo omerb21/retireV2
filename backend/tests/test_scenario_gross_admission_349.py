@@ -96,3 +96,28 @@ def test_blocked_stage6_engine_is_not_promoted(monkeypatch):
     assert result["assessment_state"] == "blocked"
     assert result["financial_result"] is None
     assert result["blockers"] == [{"code": "FACTOR_ADMISSION_MISSING", "decision_id": None}]
+
+
+def test_stage6_prefixed_blocker_is_exposed_as_structured_decision_code(monkeypatch):
+    aggregate = _complete()
+    aggregate.update(aggregation_state="BLOCKED", blockers=["d:STAGE6_P1C_PERMISSION_BLOCKED"],
+                     monthly_pension_gross_total_ils=None)
+    monkeypatch.setattr(service, "build_inert_manifest", lambda *_: {})
+    monkeypatch.setattr(service, "_partition_verified_manifest", lambda _: {})
+    monkeypatch.setattr(service, "_aggregate_extension", lambda **_: lambda *_: aggregate)
+    result = service.assess(_db(monkeypatch), 3, "s", gross_enabled=True)
+    assert result["assessment_state"] == "blocked"
+    assert result["financial_result"] is None
+    assert result["blockers"] == [{"code": "STAGE6_P1C_PERMISSION_BLOCKED", "decision_id": "d"}]
+
+
+def test_unrecognized_colon_blocker_fails_closed_with_valid_contract(monkeypatch):
+    aggregate = _complete()
+    aggregate.update(aggregation_state="BLOCKED", blockers=["unknown:NOT_ALLOWED"],
+                     monthly_pension_gross_total_ils=None)
+    monkeypatch.setattr(service, "build_inert_manifest", lambda *_: {})
+    monkeypatch.setattr(service, "_partition_verified_manifest", lambda _: {})
+    monkeypatch.setattr(service, "_aggregate_extension", lambda **_: lambda *_: aggregate)
+    result = service.assess(_db(monkeypatch), 3, "s", gross_enabled=True)
+    assert result["financial_result"] is None
+    assert result["blockers"] == [{"code": "GROSS_FORECAST_EVIDENCE_INCOMPLETE", "decision_id": None}]

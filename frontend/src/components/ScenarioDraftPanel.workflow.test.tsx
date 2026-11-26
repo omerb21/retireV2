@@ -78,6 +78,26 @@ function pending<T>() {
   return { promise, resolve };
 }
 
+it("distinguishes a pension target from an unverified institutional factor effective date", async () => {
+  mocks.list.mockResolvedValue([draft("gross-forecast")]);
+  mocks.admission.mockResolvedValue({
+    schema_version: "SCENARIO_CALCULATION_ADMISSION_V1", client_id: 1,
+    scenario_id: "gross-forecast", scenario_version: 2, assessment_state: "gross_estimate_ready",
+    blockers: [], warnings: ["TAX_NOT_EVALUATED", "NET_NOT_EVALUATED"],
+    financial_result: {
+      result_type: "NONBINDING_GROSS_PENSION_FORECAST", monthly_pension_gross_ils: "100.00",
+      comparison_basis: { currency: "ILS", income_basis: "GROSS", retirement_target_date: "2027-01-01", source_reference_date: "2026-12-01" },
+      coefficient_provenance: [{ decision_id: "decision-gross-forecast", factor_value: "200",
+        factor_evidence_type: "PLANNER_ASSUMPTION", factor_evidence_reference: "test assumption" }],
+      tax_calculated: false, net_calculated: false, aggregate_fingerprint: "a".repeat(64),
+    },
+  });
+  render(<ScenarioDraftPanel clientId={1} products={products} />);
+  expect(await screen.findByText("תאריך התחולה המוסדי של מקדם הקצבה לא אומת.")).toBeTruthy();
+  expect(screen.getByText(/מועד יעד הקצבה שאליו הותאם המקדם בתרחיש: 2027-01-01/)).toBeTruthy();
+  expect(screen.getByText(/לא חושבו מס או נטו/)).toBeTruthy();
+});
+
 it("registers edited scenario name and decision amounts as unsaved until cancelled", async () => {
   mocks.list.mockResolvedValue([draft("editable")]);
   const onDirtyChange = vi.fn();

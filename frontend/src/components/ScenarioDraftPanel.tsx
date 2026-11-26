@@ -442,6 +442,7 @@ export function ScenarioDraftPanel({
                     {visibleAdmission.evidence.financial_result.monthly_pension_gross_ils} ₪</strong></p>
                   <p>מועד יעד הקצבה שאליו הותאם המקדם בתרחיש: {visibleAdmission.evidence.financial_result.comparison_basis.retirement_target_date}
                     {" | "}תאריך נתוני המקור: {visibleAdmission.evidence.financial_result.comparison_basis.source_reference_date}</p>
+                  <p>תאריך התחולה המוסדי של מקדם הקצבה לא אומת.</p>
                   {visibleAdmission.evidence.financial_result.coefficient_provenance.map(item =>
                     <p key={item.decision_id}>מקדם: {item.factor_value}{" | "}מקור: {item.factor_evidence_reference}
                       {" | "}{item.factor_evidence_type === "PLANNER_ASSUMPTION"

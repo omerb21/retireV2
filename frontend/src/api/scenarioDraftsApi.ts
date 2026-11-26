@@ -84,8 +84,20 @@ export interface CalculationAdmissionEvidence {
   client_id: number;
   scenario_id: string;
   scenario_version: number;
-  assessment_state: "blocked";
-  financial_result: null;
+  assessment_state: "blocked" | "gross_estimate_ready";
+  financial_result: null | {
+    result_type: "NONBINDING_GROSS_PENSION_FORECAST";
+    monthly_pension_gross_ils: string;
+    comparison_basis: { currency: "ILS"; income_basis: "GROSS"; retirement_target_date: string; source_reference_date: string };
+    coefficient_provenance: Array<{
+      decision_id: string; factor_value: string; factor_evidence_type: "INSURER_QUOTE" | "POLICY_CONTRACT" | "PLANNER_ASSUMPTION";
+      factor_evidence_reference: string; factor_admission_revision: number;
+      professional_admission_fingerprint: string; monthly_estimate_gross_ils: string;
+      source_reference_date: string; retirement_target_date: string; result_fingerprint: string;
+    }>;
+    tax_calculated: false; net_calculated: false; aggregate_fingerprint: string;
+  };
+  warnings?: Array<"TAX_NOT_EVALUATED" | "NET_NOT_EVALUATED">;
   blockers: Array<{ code: string; decision_id: string | null }>;
 }
 export async function readCalculationAdmission(
@@ -102,12 +114,44 @@ export async function readCalculationAdmission(
   if (value.schema_version !== "SCENARIO_CALCULATION_ADMISSION_V1"
       || value.client_id !== clientId || value.scenario_id !== scenarioId
       || !Number.isSafeInteger(value.scenario_version) || (value.scenario_version as number) < 1
-      || value.assessment_state !== "blocked" || value.financial_result !== null
+      || (value.assessment_state !== "blocked" && value.assessment_state !== "gross_estimate_ready")
       || !Array.isArray(value.blockers)
       || !value.blockers.every(item => item && typeof item === "object"
         && typeof item.code === "string" && /^[A-Z0-9_]+$/.test(item.code)
         && (item.decision_id === null || typeof item.decision_id === "string"))) {
     throw new Error("ADMISSION_INVALID_RESPONSE");
+  }
+  const hash = (v: unknown) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
+  const money = (v: unknown) => typeof v === "string" && /^(?:0|[1-9]\d*)\.\d{2}$/.test(v);
+  if (value.assessment_state === "blocked") {
+    if (value.financial_result !== null) throw new Error("ADMISSION_INVALID_RESPONSE");
+  } else {
+    const result = value.financial_result as Record<string, unknown> | null;
+    const basis = result?.comparison_basis as Record<string, unknown> | undefined;
+    const rows = result?.coefficient_provenance;
+    if (!result || value.blockers.length !== 0
+        || result.result_type !== "NONBINDING_GROSS_PENSION_FORECAST"
+        || !money(result.monthly_pension_gross_ils)
+        || result.tax_calculated !== false || result.net_calculated !== false
+        || !hash(result.aggregate_fingerprint)
+        || basis?.currency !== "ILS" || basis.income_basis !== "GROSS"
+        || typeof basis.retirement_target_date !== "string"
+        || typeof basis.source_reference_date !== "string"
+        || !Array.isArray(rows) || rows.length === 0
+        || !rows.every(row => row && typeof row.decision_id === "string"
+          && money(row.monthly_estimate_gross_ils) && hash(row.result_fingerprint)
+          && hash(row.professional_admission_fingerprint)
+          && typeof row.factor_evidence_reference === "string" && !!row.factor_evidence_reference
+          && typeof row.factor_value === "string" && !!row.factor_value
+          && ["INSURER_QUOTE", "POLICY_CONTRACT", "PLANNER_ASSUMPTION"].includes(row.factor_evidence_type)
+          && Number.isSafeInteger(row.factor_admission_revision)
+          && typeof row.source_reference_date === "string"
+          && typeof row.retirement_target_date === "string")
+        || !Array.isArray(value.warnings)
+        || !value.warnings.includes("TAX_NOT_EVALUATED")
+        || !value.warnings.includes("NET_NOT_EVALUATED")) {
+      throw new Error("ADMISSION_INVALID_RESPONSE");
+    }
   }
   return value as unknown as CalculationAdmissionEvidence;
 }

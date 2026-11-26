@@ -436,13 +436,24 @@ export function ScenarioDraftPanel({
           : visibleAdmission.state === "unavailable"
             ? <p role="alert">מצב הקבלה אינו ידוע. {visibleAdmission.error} אין אישור לחישוב.</p>
             : <>
-              <p role="status">מצב הקבלה מהשרת: blocked (חסום). אין תוצאה פיננסית מורשית.</p>
+              {visibleAdmission.evidence?.assessment_state === "gross_estimate_ready"
+                && visibleAdmission.evidence.financial_result ? <div role="status">
+                  <p>תחזית קצבה חודשית ברוטו, אומדן תכנוני שאינו התחייבות מוסדית: <strong>
+                    {visibleAdmission.evidence.financial_result.monthly_pension_gross_ils} ₪</strong></p>
+                  <p>מועד יעד הקצבה שאליו הותאם המקדם בתרחיש: {visibleAdmission.evidence.financial_result.comparison_basis.retirement_target_date}
+                    {" | "}תאריך נתוני המקור: {visibleAdmission.evidence.financial_result.comparison_basis.source_reference_date}</p>
+                  {visibleAdmission.evidence.financial_result.coefficient_provenance.map(item =>
+                    <p key={item.decision_id}>מקדם: {item.factor_value}{" | "}מקור: {item.factor_evidence_reference}
+                      {" | "}{item.factor_evidence_type === "PLANNER_ASSUMPTION"
+                        ? "הנחת תכנון של המתכנן" : "אסמכתה מוסדית מזוהה"}</p>)}
+                  <p>לא חושבו מס או נטו. זו תחזית ברוטו בלבד, ללא אישור למשיכה או לביצוע.</p>
+                </div> : <p role="status">מצב הקבלה מהשרת: blocked (חסום). אין תוצאה פיננסית מורשית.</p>}
               {visibleAdmission.evidence?.blockers.some(item => item.code === "SOURCE_STALE") &&
                 <p role="alert">מקור התיישן לפי בדיקת השרת. נדרשת בדיקה מחודשת של ההחלטות.</p>}
               <ul aria-label="חסמי קבלה">{visibleAdmission.evidence?.blockers.map((item, index) =>
                 <li key={index}><bdi>{item.code}</bdi>{item.decision_id ? <> | החלטה <bdi>{item.decision_id}</bdi></> : null}</li>)}</ul>
             </>}
-        <p>הקצאות ויתרות המופיעות בטיוטה אינן תוצאת קצבה, מס או תזרים. זמינות תוצאה פיננסית: לא מאושרת בחוזה קבלה זה.</p>
+        <p>יתרות והקצאות בתכנון אינן חישוב מס, נטו או הרשאת ביצוע. תחזית ברוטו תוצג רק עם ראיות חישוב תקפות.</p>
         <button type="button" onClick={() => setAdmissionRefresh(n => n + 1)}>רענן ראיית קבלה (קריאה בלבד)</button>
       </section>
       {view === "planning" && <ScenarioConversionMatrix

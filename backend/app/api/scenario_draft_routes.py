@@ -77,7 +77,11 @@ def calculation_admission(request: Request, scenario_id: str, client_id: int = P
             return error(request, 503, "SCENARIO_ADMISSION_REQUIRES_POSTGRESQL")
         db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
         with db.no_autoflush:
-            result = admission.assess(db, client_id, scenario_id)
+            stage6_enabled = bool(getattr(getattr(getattr(request, "app", None), "state", None), "stage6_preview_enabled", False))
+            if stage6_enabled:
+                result = admission.assess(db, client_id, scenario_id, gross_enabled=True)
+            else:
+                result = admission.assess(db, client_id, scenario_id)
         return JSONResponse(content=result, headers=NO_STORE)
     except service.DraftError as exc:
         return error(request, exc.status, exc.code)

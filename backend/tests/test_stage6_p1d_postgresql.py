@@ -387,7 +387,7 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
             admitted = assess_gross_admission(
                 read_only, 27, "scenario", gross_enabled=True,
             )
-            assert admitted["assessment_state"] == "gross_estimate_ready"
+            assert admitted["assessment_state"] == "gross_estimate_ready", admitted
             assert admitted["blockers"] == []
             assert admitted["financial_result"]["monthly_pension_gross_ils"] == "4.00"
             assert admitted["financial_result"]["aggregate_fingerprint"] == (

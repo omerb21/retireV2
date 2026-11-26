@@ -1,0 +1,78 @@
+name: RETIRE V2 gross admission 356 PG16
+
+on:
+  push:
+    branches:
+      - codex/356-gross-provenance-failclosed
+    paths:
+      - '.github/workflows/retire-v2-gross-356-pg16.yml'
+      - 'backend/app/services/scenario_calculation_admission_service.py'
+      - 'backend/tests/test_scenario_gross_admission_349.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gross-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      APP_ENV: test
+      SCENARIO_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:synthetic_ci_only@127.0.0.1:5432/retire_v2_scenario_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic_ci_only
+          POSTGRES_DB: retire_v2_scenario_test
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d retire_v2_scenario_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify isolated branch and database target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = codex/356-gross-provenance-failclosed
+          test "$APP_ENV" = test
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          url = urlsplit(os.environ['SCENARIO_TEST_POSTGRES_URL'].replace('postgresql+psycopg2://', 'postgresql://', 1))
+          assert (url.hostname, url.port, url.path) == ('127.0.0.1', 5432, '/retire_v2_scenario_test')
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Verify PostgreSQL 16
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ['SCENARIO_TEST_POSTGRES_URL'])
+          with engine.connect() as connection:
+              assert connection.scalar(text('SHOW server_version')).startswith('16.')
+              assert connection.scalar(text('SELECT current_database()')) == 'retire_v2_scenario_test'
+          PY
+      - name: Gross contract and actual PostgreSQL Stage 6
+        working-directory: backend
+        run: |
+          python -m pytest -q \
+            tests/test_scenario_gross_admission_349.py \
+            tests/test_scenario_calculation_admission.py \
+            tests/test_stage6_factor_admission_api.py \
+            tests/test_stage6_factor_revision_api.py \
+            tests/test_stage6_p1d_postgresql.py

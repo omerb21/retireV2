@@ -85,6 +85,20 @@ def test_missing_coefficient_evidence_blocks_without_number(monkeypatch):
     assert "GROSS_FORECAST_COEFFICIENT_PROVENANCE_MISSING" in [b["code"] for b in result["blockers"]]
 
 
+def test_missing_admission_revision_blocks_without_server_error(monkeypatch):
+    aggregate = _complete()
+    del aggregate["decision_results"][0]["coefficient_provenance"]["admission_revision"]
+    monkeypatch.setattr(service, "build_inert_manifest", lambda *_: {})
+    monkeypatch.setattr(service, "_partition_verified_manifest", lambda _: {})
+    monkeypatch.setattr(service, "_aggregate_extension", lambda **_: lambda *_: aggregate)
+    result = service.assess(_db(monkeypatch), 3, "s", gross_enabled=True)
+    assert result["assessment_state"] == "blocked"
+    assert result["financial_result"] is None
+    assert result["blockers"] == [
+        {"code": "GROSS_FORECAST_COEFFICIENT_PROVENANCE_MISSING", "decision_id": "d"}
+    ]
+
+
 def test_blocked_stage6_engine_is_not_promoted(monkeypatch):
     aggregate = _complete()
     aggregate.update(aggregation_state="BLOCKED", blockers=["FACTOR_ADMISSION_MISSING"],

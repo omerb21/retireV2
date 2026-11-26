@@ -38,6 +38,7 @@ from app.models.scenario_draft_pension_election import ScenarioDraftPensionElect
 from app.models.scenario_pension_price_basis import ScenarioPensionPriceBasis
 from app.models.scenario_pension_factor_admission import ScenarioPensionFactorAdmission
 from app.services import scenario_stage6_single_pension_estimate_service as subject
+from app.services.scenario_calculation_admission_service import assess as assess_gross_admission
 from app.services.scenario_unified_engine_binding_service import (
     build_unified_scenario_engine_bindings,
 )
@@ -378,6 +379,33 @@ def test_stage6_p1d_real_postgresql_result_and_all_pre_pte_invalidations(monkeyp
         assert [row["monthly_estimate_gross_ils"]
                 for row in aggregate["decision_results"]] == ["2.00", "2.00"]
         assert len(aggregate["aggregate_fingerprint"]) == 64
+
+        # 354: prove the new admission owner consumes real persisted Stage 6
+        # evidence and yields an exact, nonbinding gross figure, without mocks.
+        with factory() as read_only:
+            read_only.execute(text("SET TRANSACTION READ ONLY"))
+            admitted = assess_gross_admission(
+                read_only, 27, "scenario", gross_enabled=True,
+            )
+            assert admitted["assessment_state"] == "gross_estimate_ready"
+            assert admitted["blockers"] == []
+            assert admitted["financial_result"]["monthly_pension_gross_ils"] == "4.00"
+            assert admitted["financial_result"]["aggregate_fingerprint"] == (
+                aggregate["aggregate_fingerprint"]
+            )
+            assert len(admitted["financial_result"]["coefficient_provenance"]) == 2
+            assert admitted["financial_result"]["tax_calculated"] is False
+            assert admitted["financial_result"]["net_calculated"] is False
+            assert admitted["warnings"] == ["TAX_NOT_EVALUATED", "NET_NOT_EVALUATED"]
+            disabled = assess_gross_admission(
+                read_only, 27, "scenario", gross_enabled=False,
+            )
+            assert disabled["financial_result"] is None
+            assert disabled["assessment_state"] == "blocked"
+            assert "PERMISSION_NOT_ADMITTED" in {
+                row["code"] for row in disabled["blockers"]
+            }
+            read_only.rollback()
         cashflow = build_scenario_monthly_cashflow(
             factory, client_id=27, scenario_id="scenario",
             start_month="2027-10", end_month="2027-11",

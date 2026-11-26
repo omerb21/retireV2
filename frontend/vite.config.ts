@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ mode }) => ({
@@ -36,6 +36,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: "jsdom",
     globals: true,
-    setupFiles: "./src/vitest.setup.ts"
+    setupFiles: "./src/vitest.setup.ts",
+    exclude: [...configDefaults.exclude, "e2e/**"]
   }
 }));

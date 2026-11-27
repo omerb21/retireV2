@@ -393,11 +393,33 @@ def _validate_permission_response(
         "severance_component_sum": severance,
         "product_component_sum": rewards + severance,
     }
-    if any(_decimal(reconciliation[key]) != value for key, value in expected_sums.items()):
-        raise ProbeError("PERMISSION_RESPONSE_RECONCILIATION_INVALID")
-    for key in ("rewards_discrepancy", "severance_discrepancy", "product_discrepancy"):
-        if reconciliation[key] is not None:
-            _decimal(reconciliation[key], signed=True)
+    reported_fields = {
+        "rewards_discrepancy": ("reported_rewards_total", rewards),
+        "severance_discrepancy": ("reported_severance_total", severance),
+        "product_discrepancy": ("reported_product_total", rewards + severance),
+    }
+    expected_reconciliation: dict[str, Decimal | None] = dict(expected_sums)
+    for discrepancy_field, (source_field, component_sum) in reported_fields.items():
+        if source_field not in source_snapshot:
+            raise ProbeError("SOURCE_SNAPSHOT_RECONCILIATION_INVALID")
+        reported = source_snapshot[source_field]
+        expected_reconciliation[discrepancy_field] = (
+            None if reported is None else _decimal(reported) - component_sum
+        )
+    source_reconciliation = _exact_fields(
+        source_snapshot.get("reconciliation"), _RECONCILIATION_FIELDS,
+        "SOURCE_RECONCILIATION",
+    )
+    for field, expected in expected_reconciliation.items():
+        for actual, label in (
+            (source_reconciliation[field], "SOURCE_SNAPSHOT_RECONCILIATION_INVALID"),
+            (reconciliation[field], "PERMISSION_RESPONSE_RECONCILIATION_INVALID"),
+        ):
+            if expected is None:
+                if actual is not None:
+                    raise ProbeError(label)
+            elif actual is None or _decimal(actual, signed=field.endswith("_discrepancy")) != expected:
+                raise ProbeError(label)
     return evidence_rows
 
 
@@ -551,7 +573,7 @@ def run_probe(
                     "/api/auth/logout",
                     headers={"origin": origin, "x-rtdir-csrf": cleanup_csrf},
                 )
-                if logout.status_code not in {204, 401}:
+                if logout.status_code != 204:
                     logout_failure = ProbeError(f"LOGOUT_UNCONFIRMED (HTTP {logout.status_code})")
             except httpx.HTTPError:
                 logout_failure = ProbeError("LOGOUT_NETWORK_FAILURE")

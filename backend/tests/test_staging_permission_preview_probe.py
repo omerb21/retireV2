@@ -52,7 +52,7 @@ def _money(value: Decimal) -> str:
 
 
 def _valid_source_body() -> dict[str, Any]:
-    return {
+    source = {
         "client_id": TARGET["client_id"],
         "product_id": TARGET["product_id"],
         "version": 4,
@@ -67,7 +67,21 @@ def _valid_source_body() -> dict[str, Any]:
             }
             for position, code in enumerate(COMPONENT_CODES, start=1)
         ],
+        "reported_product_total": None,
+        "reported_rewards_total": None,
+        "reported_severance_total": None,
     }
+    rewards = sum((Decimal(row["balance"]) for row in source["conversion_components"] if row["component_code"] in REWARDS_CODES), Decimal("0.00"))
+    severance = sum((Decimal(row["balance"]) for row in source["conversion_components"] if row["component_code"] in SEVERANCE_CODES), Decimal("0.00"))
+    source["reconciliation"] = {
+        "rewards_component_sum": _money(rewards),
+        "severance_component_sum": _money(severance),
+        "product_component_sum": _money(rewards + severance),
+        "rewards_discrepancy": None,
+        "severance_discrepancy": None,
+        "product_discrepancy": None,
+    }
+    return source
 
 
 def _source_fingerprint(source: dict[str, Any]) -> str:
@@ -131,6 +145,7 @@ def _valid_permission_body(source: dict[str, Any] | None = None) -> dict[str, An
     }).encode("utf-8")).hexdigest()
     rewards = sum((balances[code] for code in REWARDS_CODES), Decimal("0.00"))
     severance = sum((balances[code] for code in SEVERANCE_CODES), Decimal("0.00"))
+    reconciliation = deepcopy(source["reconciliation"])
     return {
         "schema_version": "SCENARIO_PERMISSION_PREVIEW_V1",
         "preview_id": preview_id,
@@ -152,14 +167,7 @@ def _valid_permission_body(source: dict[str, Any] | None = None) -> dict[str, An
             "needs_source_reconciliation_balance": "0.00",
             "unknown_balance": "0.00",
         },
-        "reconciliation": {
-            "rewards_component_sum": _money(rewards),
-            "severance_component_sum": _money(severance),
-            "product_component_sum": _money(rewards + severance),
-            "rewards_discrepancy": None,
-            "severance_discrepancy": None,
-            "product_discrepancy": None,
-        },
+        "reconciliation": reconciliation,
     }
 
 
@@ -598,7 +606,11 @@ def test_network_failure_is_sanitized_and_post_login_failures_attempt_logout(sta
 
 
 def test_logout_failure_is_reported_without_exposing_secrets():
-    for logout in (_response(500, {"code": "INTERNAL_ERROR"}), _network):
+    for logout in (
+        _response(401, {"code": "AUTHENTICATION_REQUIRED"}),
+        _response(500, {"code": "INTERNAL_ERROR"}),
+        _network,
+    ):
         observed: list[dict[str, object]] = []
         with _client(_response(200, _valid_permission_body()), observed, logout=logout) as client:
             with pytest.raises(ProbeError, match="LOGOUT_") as error:
@@ -621,3 +633,47 @@ def test_logout_failure_does_not_hide_the_original_session_failure():
     assert "SESSION_UNAVAILABLE" in message
     assert "LOGOUT_NETWORK_FAILURE" in message
     _assert_no_secret(message)
+
+
+def test_logout_401_after_successful_permission_preview_is_not_success():
+    observed: list[dict[str, object]] = []
+    with _client(
+        _response(200, _valid_permission_body()), observed,
+        logout=_response(401, {"code": "AUTHENTICATION_REQUIRED"}),
+    ) as client:
+        with pytest.raises(ProbeError, match=r"LOGOUT_UNCONFIRMED \(HTTP 401\)") as error:
+            _run(client)
+    assert observed[-2]["path"].endswith("/permission-preview")
+    assert observed[-1]["path"] == "/api/auth/logout"
+    _assert_no_secret(error.value)
+
+
+def test_reported_discrepancy_933_consistent_get_and_post_is_accepted():
+    source = _valid_source_body()
+    source["reported_product_total"] = "999.00"
+    source["reconciliation"]["product_discrepancy"] = "933.00"
+    observed: list[dict[str, object]] = []
+    with _client(
+        _response(200, _valid_permission_body(source)), observed,
+        source=_response(200, source),
+    ) as client:
+        assert _run(client)["http_status"] == 200
+
+
+@pytest.mark.parametrize("mutation", ["post_discrepancy", "source_discrepancy", "reported_total"])
+def test_independent_reconciliation_rejects_get_post_contradiction(mutation: str):
+    source = _valid_source_body()
+    source["reported_product_total"] = "999.00"
+    source["reconciliation"]["product_discrepancy"] = "933.00"
+    permission = _valid_permission_body(source)
+    if mutation == "post_discrepancy":
+        permission["reconciliation"]["product_discrepancy"] = None
+    elif mutation == "source_discrepancy":
+        source["reconciliation"]["product_discrepancy"] = "0.00"
+    else:
+        source["reported_product_total"] = "998.00"
+    observed: list[dict[str, object]] = []
+    with _client(_response(200, permission), observed, source=_response(200, source)) as client:
+        with pytest.raises(ProbeError, match="RECONCILIATION_INVALID"):
+            _run(client)
+    assert observed[-1]["path"] == "/api/auth/logout"

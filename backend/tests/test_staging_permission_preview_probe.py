@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from app.models.pension_product import COMPONENT_CODES, REWARDS_CODES, SEVERANCE_CODES
+from app.services.canonical_conversion_matrix import destinations
 from app.services import scenario_permission_preview_service as preview_contract
 
 
@@ -63,7 +64,7 @@ def _valid_source_body() -> dict[str, Any]:
                 "component_code": code,
                 "component_id": f"component-{position:02d}",
                 "balance": _money(Decimal(position)),
-                "allowed_destinations": [],
+                "allowed_destinations": destinations(code, "קרן פנסיה"),
             }
             for position, code in enumerate(COMPONENT_CODES, start=1)
         ],
@@ -445,6 +446,54 @@ def test_source_change_without_new_fingerprint_is_rejected(field: str, value: st
             ProbeError, match="PERMISSION_RESPONSE_SOURCE_FINGERPRINT_INVALID"
         ) as error:
             _run(client)
+    assert observed[-1]["path"] == "/api/auth/logout"
+    _assert_no_secret(error.value)
+
+
+def test_canonical_allowed_destinations_object_is_accepted():
+    source = _valid_source_body()
+    assert all(
+        type(component["allowed_destinations"]) is dict
+        and component["allowed_destinations"] == destinations(component["component_code"], source["product_type"])
+        for component in source["conversion_components"]
+    )
+    observed: list[dict[str, object]] = []
+    with _client(_response(200, _valid_permission_body(source)), observed,
+                 source=_response(200, source)) as client:
+        assert _run(client)["http_status"] == 200
+    assert observed[-1]["path"] == "/api/auth/logout"
+
+
+@pytest.mark.parametrize("invalid", [
+    ["pension"],
+    {"unexpected": "exempt"},
+    {"pension": "capital_gains"},
+    {},
+])
+def test_invalid_allowed_destinations_is_rejected_and_session_logged_out(invalid):
+    source = _valid_source_body()
+    # The second component normally has both pension and capital destinations.
+    source["conversion_components"][1]["allowed_destinations"] = deepcopy(invalid)
+    observed: list[dict[str, object]] = []
+    with _client(_response(200, _valid_permission_body()), observed,
+                 source=_response(200, source)) as client:
+        with pytest.raises(ProbeError, match="SOURCE_SNAPSHOT_COMPONENT_DESTINATIONS_INVALID") as error:
+            _run(client)
+    assert observed[-1]["path"] == "/api/auth/logout"
+    _assert_no_secret(error.value)
+
+
+def test_destination_contract_failure_preserves_primary_error_if_logout_fails():
+    source = _valid_source_body()
+    source["conversion_components"][1]["allowed_destinations"] = []
+    observed: list[dict[str, object]] = []
+    with _client(_response(200, _valid_permission_body()), observed,
+                 source=_response(200, source),
+                 logout=_response(401, {"code": "AUTHENTICATION_REQUIRED"})) as client:
+        with pytest.raises(ProbeError) as error:
+            _run(client)
+    assert "SOURCE_SNAPSHOT_COMPONENT_DESTINATIONS_INVALID" in str(error.value)
+    assert "LOGOUT_UNCONFIRMED (HTTP 401)" in str(error.value)
     assert observed[-1]["path"] == "/api/auth/logout"
     _assert_no_secret(error.value)
 

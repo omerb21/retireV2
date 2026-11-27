@@ -32,6 +32,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.models.pension_product import COMPONENT_CODES, REWARDS_CODES, SEVERANCE_CODES
+from app.services.canonical_conversion_matrix import destinations
 from app.services import scenario_permission_preview_service as preview_contract
 
 
@@ -222,7 +223,13 @@ def _validate_source_snapshot(
         if not _canonical_text(component_id) or component_id in component_ids:
             raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_ID_INVALID")
         _decimal(component["balance"])
-        if type(component["allowed_destinations"]) is not list:
+        allowed_destinations = component["allowed_destinations"]
+        if (
+            type(allowed_destinations) is not dict
+            or allowed_destinations != destinations(code, source["product_type"])
+            or any(type(key) is not str or type(value) is not str
+                   for key, value in allowed_destinations.items())
+        ):
             raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_DESTINATIONS_INVALID")
         by_code[code] = {
             "component_code": code,

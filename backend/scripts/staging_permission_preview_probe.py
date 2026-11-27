@@ -1,18 +1,13 @@
 """Authenticated, non-mutating Scenario Permission Preview probe for Staging.
 
 The probe uses the canonical login, HttpOnly session cookie and CSRF flow. It
-never prints or persists credentials, cookies or CSRF values. The operational
-Staging hostname must be supplied by deployment authority in the closed JSON
-allowlist ``RETIRE_V2_STAGING_ALLOWED_HOSTNAMES``. An absent, malformed or
-non-matching allowlist fails before login.
+never prints or persists credentials, cookies or CSRF values. Its only network
+target is the immutable Railway Staging deployment identity below. Operator
+arguments and environment variables cannot authorize another hostname.
 
 Example, from ``backend``::
 
-    RETIRE_V2_STAGING_ALLOWED_HOSTNAMES='["<approved-hostname>"]' \
-    RETIRE_V2_STAGING_ORIGIN=https://<approved-hostname> \
     RETIRE_V2_STAGING_USERNAME=<approved-user> \
-    AUTH_PUBLIC_ORIGIN=https://<approved-hostname> \
-    RAILWAY_ENVIRONMENT_NAME=staging \
     python scripts/staging_permission_preview_probe.py --confirm-staging \
       --evidence-json permission-preview-evidence.json
 
@@ -37,7 +32,6 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.models.pension_product import COMPONENT_CODES, REWARDS_CODES, SEVERANCE_CODES
-from app.main import ACTIVE_RENDER_SERVICE_HOSTNAME
 from app.services import scenario_permission_preview_service as preview_contract
 
 
@@ -46,10 +40,16 @@ DEFAULT_PRODUCT_ID = "96edb78aaa734d0c845ae8f6ee36da50"
 DEFAULT_ACTION = "pension"
 DEFAULT_EFFECTIVE_DATE = "2026-12-15"
 
-_HOSTNAME = re.compile(
-    r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
-    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
-)
+# Closed deployment authority. These values are the existing Railway Staging
+# project, environment, application service and generated service domain. They
+# are deliberately not configurable by command line or environment variables.
+STAGING_PROJECT_ID = "7e49d0ff-a760-4a03-be57-4ee88a4b892c"
+STAGING_ENVIRONMENT_ID = "025871e4-2c84-427b-b37c-1d5b2c7b4d3c"
+STAGING_ENVIRONMENT_NAME = "staging"
+STAGING_SERVICE_ID = "328ec58c-da05-48e7-b959-bd5d3cd2bba3"
+STAGING_HOSTNAME = "retire-v2-app-staging.up.railway.app"
+STAGING_ORIGIN = f"https://{STAGING_HOSTNAME}"
+
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _MONEY = re.compile(r"(?:0|[1-9][0-9]*)\.[0-9]{2}\Z")
 _SIGNED_MONEY = re.compile(r"-?(?:0|[1-9][0-9]*)\.[0-9]{2}\Z")
@@ -63,6 +63,9 @@ _TOP_LEVEL_FIELDS = {
 _COMPONENT_FIELDS = {
     "component_code", "component_id", "balance", "permission_status",
     "reason_code", "reason_he", "applicable_rule_id",
+}
+_SOURCE_COMPONENT_FIELDS = {
+    "component_code", "component_id", "balance", "allowed_destinations",
 }
 _TOTAL_FIELDS = {
     "original_classified_balance", "allowed_balance", "blocked_balance",
@@ -95,51 +98,22 @@ def _response_code(body: Mapping[str, Any]) -> str | None:
     return code if type(code) is str and code else None
 
 
-def _parse_allowed_hostnames(raw: str) -> frozenset[str]:
-    try:
-        values = json.loads(raw)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise ProbeError("STAGING_HOST_ALLOWLIST_INVALID") from exc
-    if type(values) is not list or not values:
-        raise ProbeError("STAGING_HOST_ALLOWLIST_INVALID")
-    if any(type(value) is not str or not _HOSTNAME.fullmatch(value) for value in values):
-        raise ProbeError("STAGING_HOST_ALLOWLIST_INVALID")
-    allowed = frozenset(values)
-    if len(allowed) != len(values):
-        raise ProbeError("STAGING_HOST_ALLOWLIST_INVALID")
-    return allowed
-
-
 def _authorized_staging_hostnames(environment: Mapping[str, str]) -> frozenset[str]:
-    allowed = _parse_allowed_hostnames(
-        environment.get("RETIRE_V2_STAGING_ALLOWED_HOSTNAMES", "")
-    )
-    public_origin = environment.get("AUTH_PUBLIC_ORIGIN", "")
-    parsed = urlsplit(public_origin)
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.netloc != parsed.hostname
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-        or parsed.hostname not in allowed
-        or parsed.hostname == ACTIVE_RENDER_SERVICE_HOSTNAME
-    ):
+    expected = {
+        "RAILWAY_PROJECT_ID": STAGING_PROJECT_ID,
+        "RAILWAY_ENVIRONMENT_ID": STAGING_ENVIRONMENT_ID,
+        "RAILWAY_ENVIRONMENT_NAME": STAGING_ENVIRONMENT_NAME,
+        "RAILWAY_SERVICE_ID": STAGING_SERVICE_ID,
+        "APP_ENV": "production",
+        "AUTH_INGRESS_MODE": "railway_public_edge",
+        "AUTH_PUBLIC_ORIGIN": STAGING_ORIGIN,
+    }
+    if any(environment.get(name) != value for name, value in expected.items()):
         raise ProbeError("STAGING_AUTHORITY_CONFIGURATION_INVALID")
-    railway_staging = environment.get("RAILWAY_ENVIRONMENT_NAME") == "staging"
-    render_staging = (
-        environment.get("STAGE6_APPROVED_RENDER_HOSTNAME") == parsed.hostname
-        and environment.get("RENDER_EXTERNAL_HOSTNAME") == parsed.hostname
-    )
-    if not (railway_staging or render_staging):
-        raise ProbeError("STAGING_AUTHORITY_CONFIGURATION_INVALID")
-    return allowed
+    return frozenset({STAGING_HOSTNAME})
 
 
-def _validate_origin(origin: str, allowed_hostnames: frozenset[str]) -> str:
-    if not allowed_hostnames:
-        raise ProbeError("STAGING_HOST_ALLOWLIST_INVALID")
+def _validate_origin(origin: str) -> str:
     parsed = urlsplit(origin)
     if (
         parsed.scheme != "https"
@@ -151,8 +125,8 @@ def _validate_origin(origin: str, allowed_hostnames: frozenset[str]) -> str:
         or parsed.path
         or parsed.query
         or parsed.fragment
-        or parsed.hostname not in allowed_hostnames
-        or parsed.hostname == ACTIVE_RENDER_SERVICE_HOSTNAME
+        or parsed.hostname != STAGING_HOSTNAME
+        or origin != STAGING_ORIGIN
     ):
         raise ProbeError("STAGING_ORIGIN_NOT_ALLOWED")
     return origin
@@ -214,9 +188,75 @@ def _sha256(value: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
+def _validate_source_snapshot(
+    source: dict[str, Any], *, client_id: int, product_id: str,
+) -> tuple[str, dict[str, dict[str, str]], str]:
+    required = {
+        "client_id", "product_id", "version", "source_kind", "product_type",
+        "conversion_components",
+    }
+    if not required <= set(source):
+        raise ProbeError("SOURCE_SNAPSHOT_FIELDS_INVALID")
+    if type(source["client_id"]) is not int or source["client_id"] != client_id:
+        raise ProbeError("SOURCE_SNAPSHOT_IDENTITY_MISMATCH")
+    if type(source["product_id"]) is not str or source["product_id"] != product_id:
+        raise ProbeError("SOURCE_SNAPSHOT_IDENTITY_MISMATCH")
+    if type(source["version"]) is not int or source["version"] < 1:
+        raise ProbeError("SOURCE_SNAPSHOT_VERSION_INVALID")
+    if type(source["source_kind"]) is not str or not _canonical_text(source["source_kind"]):
+        raise ProbeError("SOURCE_SNAPSHOT_SOURCE_KIND_INVALID")
+    if type(source["product_type"]) is not str or not _canonical_text(source["product_type"]):
+        raise ProbeError("SOURCE_SNAPSHOT_PRODUCT_TYPE_INVALID")
+
+    raw_components = source["conversion_components"]
+    if type(raw_components) is not list or len(raw_components) != len(COMPONENT_CODES):
+        raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_MATRIX_INVALID")
+    by_code: dict[str, dict[str, str]] = {}
+    component_ids: set[str] = set()
+    for raw_component in raw_components:
+        component = _exact_fields(raw_component, _SOURCE_COMPONENT_FIELDS, "SOURCE_COMPONENT")
+        code = component["component_code"]
+        component_id = component["component_id"]
+        if type(code) is not str or code not in COMPONENT_CODES or code in by_code:
+            raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_MATRIX_INVALID")
+        if not _canonical_text(component_id) or component_id in component_ids:
+            raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_ID_INVALID")
+        _decimal(component["balance"])
+        if type(component["allowed_destinations"]) is not list:
+            raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_DESTINATIONS_INVALID")
+        by_code[code] = {
+            "component_code": code,
+            "component_id": component_id,
+            "balance": component["balance"],
+        }
+        component_ids.add(component_id)
+    if set(by_code) != set(COMPONENT_CODES):
+        raise ProbeError("SOURCE_SNAPSHOT_COMPONENT_MATRIX_INVALID")
+
+    source_fingerprint = _sha256({
+        "schema": "scenario-source-fingerprint-v1",
+        "client_id": client_id,
+        "product_id": product_id,
+        "product_version": source["version"],
+        "source_kind": source["source_kind"],
+        "product_type": source["product_type"],
+        "components": [by_code[code] for code in COMPONENT_CODES],
+    })
+    ruleset = preview_contract.permission_ruleset()
+    product_classes = [
+        mapping["canonical_product_class"]
+        for mapping in ruleset["product_mappings"]
+        if mapping["source_kind"] == source["source_kind"]
+        and mapping["product_type"] == source["product_type"]
+    ]
+    if len(product_classes) != 1:
+        raise ProbeError("SOURCE_SNAPSHOT_PRODUCT_CLASS_INVALID")
+    return source_fingerprint, by_code, product_classes[0]
+
+
 def _validate_permission_response(
     body: dict[str, Any], *, client_id: int, product_id: str,
-    action: str, effective_date: str,
+    action: str, effective_date: str, source_snapshot: dict[str, Any],
 ) -> list[dict[str, str]]:
     _exact_fields(body, _TOP_LEVEL_FIELDS, "TOP_LEVEL")
     if body["schema_version"] != "SCENARIO_PERMISSION_PREVIEW_V1":
@@ -237,10 +277,17 @@ def _validate_permission_response(
         raise ProbeError("PERMISSION_RESPONSE_IDENTITY_MISMATCH")
 
     ruleset = preview_contract.permission_ruleset()
-    product_classes = {
-        mapping["canonical_product_class"] for mapping in ruleset["product_mappings"]
-    }
-    if type(body["canonical_product_class"]) is not str or body["canonical_product_class"] not in product_classes:
+    expected_source_fingerprint, source_by_code, expected_product_class = (
+        _validate_source_snapshot(
+            source_snapshot, client_id=client_id, product_id=product_id,
+        )
+    )
+    if body["product_version"] != source_snapshot["version"]:
+        raise ProbeError("PERMISSION_RESPONSE_PRODUCT_VERSION_MISMATCH")
+    if (
+        type(body["canonical_product_class"]) is not str
+        or body["canonical_product_class"] != expected_product_class
+    ):
         raise ProbeError("PERMISSION_RESPONSE_PRODUCT_CLASS_INVALID")
     if (
         type(body["ruleset_id"]) is not str
@@ -254,6 +301,8 @@ def _validate_permission_response(
     for field in ("preview_id", "source_fingerprint"):
         if type(body[field]) is not str or not _HEX64.fullmatch(body[field]):
             raise ProbeError("PERMISSION_RESPONSE_FINGERPRINT_INVALID")
+    if body["source_fingerprint"] != expected_source_fingerprint:
+        raise ProbeError("PERMISSION_RESPONSE_SOURCE_FINGERPRINT_INVALID")
     expected_preview_id = _sha256({
         "schema": "scenario-permission-preview-id-v1",
         "client_id": client_id,
@@ -277,13 +326,23 @@ def _validate_permission_response(
     balances: dict[str, Decimal] = {}
     status_totals = {status: Decimal("0.00") for status in _PERMISSION_STATUSES}
     evidence_rows: list[dict[str, str]] = []
+    component_ids: set[str] = set()
     for position, component_code in enumerate(COMPONENT_CODES):
         component = _exact_fields(raw_components[position], _COMPONENT_FIELDS, "COMPONENT")
         if type(component["component_code"]) is not str or component["component_code"] != component_code:
             raise ProbeError("PERMISSION_RESPONSE_COMPONENT_MATRIX_INVALID")
-        if not _canonical_text(component["component_id"]):
+        if (
+            not _canonical_text(component["component_id"])
+            or component["component_id"] in component_ids
+        ):
             raise ProbeError("PERMISSION_RESPONSE_COMPONENT_ID_INVALID")
         balance = _decimal(component["balance"])
+        source_component = source_by_code[component_code]
+        if (
+            component["component_id"] != source_component["component_id"]
+            or component["balance"] != source_component["balance"]
+        ):
+            raise ProbeError("PERMISSION_RESPONSE_SOURCE_COMPONENT_MISMATCH")
         rule = rules_by_code[component_code]
         decision = rule["actions"][action]
         if body["canonical_product_class"] not in rule["applicable_product_classes"]:
@@ -296,9 +355,10 @@ def _validate_permission_response(
             or component["reason_code"] != decision["reason_code"]
             or type(component["applicable_rule_id"]) is not str
             or component["applicable_rule_id"] != rule["rule_id"]
-            or not _canonical_text(component["reason_he"])
+            or component["reason_he"] != preview_contract._REASON_HE[decision["reason_code"]]
         ):
             raise ProbeError("PERMISSION_RESPONSE_COMPONENT_RULE_INVALID")
+        component_ids.add(component["component_id"])
         balances[component_code] = balance
         status_totals[component["permission_status"]] += balance
         evidence_rows.append({
@@ -357,7 +417,6 @@ def run_probe(
     client: Any,
     *,
     origin: str,
-    allowed_hostnames: frozenset[str],
     username: str,
     password: str,
     client_id: int = DEFAULT_CLIENT_ID,
@@ -366,7 +425,7 @@ def run_probe(
     effective_date: str = DEFAULT_EFFECTIVE_DATE,
 ) -> dict[str, Any]:
     """Run one authenticated probe and return only sanitized evidence."""
-    origin = _validate_origin(origin, allowed_hostnames)
+    origin = _validate_origin(origin)
     try:
         login = client.post(
             "/api/auth/login",
@@ -382,27 +441,57 @@ def run_probe(
         )
 
     login_csrf: object = None
+    cleanup_csrf: object = None
+    login_issue: ProbeError | None = None
     primary: ProbeError | None = None
     logout_failure: ProbeError | None = None
     evidence: dict[str, Any] | None = None
     stage = "SESSION"
     try:
-        login_body = _json_object(login, "LOGIN")
-        if login_body.get("authenticated") is not True:
-            raise ProbeError("LOGIN_RESPONSE_INVALID")
+        try:
+            login_body = _json_object(login, "LOGIN")
+        except ProbeError as exc:
+            login_issue = exc
+            login_body = {}
+        if login_issue is None and login_body.get("authenticated") is not True:
+            login_issue = ProbeError("LOGIN_RESPONSE_INVALID")
         login_csrf = login_body.get("csrf_token")
-        if not _valid_csrf(login_csrf):
-            raise ProbeError("LOGIN_CSRF_INVALID")
+        if _valid_csrf(login_csrf):
+            cleanup_csrf = login_csrf
+        elif login_issue is None:
+            login_issue = ProbeError("LOGIN_CSRF_INVALID")
+
+        # A HTTP 200 login can already have created a cookie session. Fetch the
+        # canonical session even when the login CSRF is absent or malformed so
+        # its valid CSRF can be used solely to revoke that session.
         session = client.get("/api/auth/session")
         session_body = _json_object(session, "SESSION")
         if session.status_code != 200 or session_body.get("authenticated") is not True:
-            raise ProbeError(
+            session_issue = ProbeError(
                 f"SESSION_UNAVAILABLE (HTTP {session.status_code}, "
                 f"code={_response_code(session_body) or 'unknown'})"
             )
+            if login_issue is not None:
+                raise ProbeError(f"{login_issue}; {session_issue}") from login_issue
+            raise session_issue
         session_csrf = session_body.get("csrf_token")
+        if _valid_csrf(session_csrf) and cleanup_csrf is None:
+            cleanup_csrf = session_csrf
+        if login_issue is not None:
+            raise login_issue
         if not _valid_csrf(session_csrf) or session_csrf != login_csrf:
             raise ProbeError("SESSION_CSRF_INVALID")
+
+        stage = "SOURCE"
+        source_response = client.get(
+            f"/api/clients/{client_id}/pension-products/{product_id}"
+        )
+        source_snapshot = _json_object(source_response, "PENSION_PRODUCT_SOURCE")
+        if source_response.status_code != 200:
+            raise ProbeError(
+                f"SOURCE_SNAPSHOT_UNAVAILABLE (HTTP {source_response.status_code}, "
+                f"code={_response_code(source_snapshot) or 'unknown'})"
+            )
         stage = "PERMISSION"
         response = client.post(
             f"/api/clients/{client_id}/scenario-conversions/permission-preview",
@@ -427,6 +516,7 @@ def run_probe(
                 product_id=product_id,
                 action=action,
                 effective_date=effective_date,
+                source_snapshot=source_snapshot,
             )
             response_code, field_paths = None, []
         else:
@@ -449,20 +539,24 @@ def run_probe(
     except ProbeError as exc:
         primary = exc
     except httpx.HTTPError as exc:
-        primary = _network_failure(stage)
+        network_issue = _network_failure(stage)
+        primary = (
+            ProbeError(f"{login_issue}; {network_issue}")
+            if login_issue is not None else network_issue
+        )
     finally:
-        if _valid_csrf(login_csrf):
+        if _valid_csrf(cleanup_csrf):
             try:
                 logout = client.post(
                     "/api/auth/logout",
-                    headers={"origin": origin, "x-rtdir-csrf": login_csrf},
+                    headers={"origin": origin, "x-rtdir-csrf": cleanup_csrf},
                 )
                 if logout.status_code not in {204, 401}:
                     logout_failure = ProbeError(f"LOGOUT_UNCONFIRMED (HTTP {logout.status_code})")
             except httpx.HTTPError:
                 logout_failure = ProbeError("LOGOUT_NETWORK_FAILURE")
         else:
-            logout_failure = ProbeError("LOGOUT_NOT_ATTEMPTED_INVALID_LOGIN_CSRF")
+            logout_failure = ProbeError("LOGOUT_NOT_ATTEMPTED_NO_VALID_SESSION_CSRF")
 
     if primary is not None:
         if logout_failure is not None:
@@ -478,7 +572,7 @@ def run_probe(
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--confirm-staging", action="store_true")
-    parser.add_argument("--origin", default=os.getenv("RETIRE_V2_STAGING_ORIGIN", ""))
+    parser.add_argument("--origin", default=STAGING_ORIGIN)
     parser.add_argument("--username", default=os.getenv("RETIRE_V2_STAGING_USERNAME", ""))
     parser.add_argument("--client-id", type=int, default=DEFAULT_CLIENT_ID)
     parser.add_argument("--product-id", default=DEFAULT_PRODUCT_ID)
@@ -500,8 +594,8 @@ def main() -> int:
         print("BLOCKED: staging username and password are required")
         return 2
     try:
-        allowed_hostnames = _authorized_staging_hostnames(os.environ)
-        origin = _validate_origin(args.origin, allowed_hostnames)
+        _authorized_staging_hostnames(os.environ)
+        origin = _validate_origin(args.origin)
         with httpx.Client(
             base_url=origin,
             timeout=75,
@@ -511,7 +605,6 @@ def main() -> int:
             evidence = run_probe(
                 client,
                 origin=origin,
-                allowed_hostnames=allowed_hostnames,
                 username=args.username,
                 password=password,
                 client_id=args.client_id,

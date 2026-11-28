@@ -23,10 +23,13 @@ import getpass
 import json
 import os
 from pathlib import Path
+import re
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import httpx
 
+from app.services.scenario_draft_service import DraftError, _source_evidence
 from staging_permission_preview_probe import (
     ProbeError,
     STAGING_ORIGIN,
@@ -61,12 +64,23 @@ PRODUCT_PATH = f"/api/clients/{CLIENT_ID}/pension-products/{NEW_PRODUCT_ID}"
 class RelinkError(RuntimeError):
     """Sanitized preflight, authentication, transport, or result failure."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        put_evidence: Mapping[str, Any] | None = None,
+        cleanup_error: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.put_evidence = dict(put_evidence) if put_evidence is not None else None
+        self.cleanup_error = cleanup_error
+
 
 def _network(stage: str) -> RelinkError:
     return RelinkError(f"{stage}_NETWORK_FAILURE")
 
 
-def _valid_component_snapshot(product: Mapping[str, Any]) -> None:
+def _valid_component_snapshot(product: Mapping[str, Any]) -> dict[str, Any]:
     if (
         type(product.get("client_id")) is not int
         or product["client_id"] != CLIENT_ID
@@ -94,6 +108,29 @@ def _valid_component_snapshot(product: Mapping[str, Any]) -> None:
         raise RelinkError("SOURCE_COMPONENT_CONTRACT_MISMATCH") from exc
     if not balance.is_finite() or not amount.is_finite() or amount <= 0 or amount > balance:
         raise RelinkError("SOURCE_COMPONENT_AMOUNT_EXCEEDS_BALANCE")
+    try:
+        # Reuse the server's sole canonical producer and its exact preimage.
+        # The public product GET supplies the database-derived fields; the
+        # nested component's product identity is the already-validated route
+        # product identity.
+        return _source_evidence(
+            SimpleNamespace(
+                client_id=product.get("client_id"),
+                product_id=product.get("product_id"),
+                version=product.get("version"),
+                product_type=product.get("product_type"),
+                source_kind=product.get("source_kind"),
+                source_identity=product.get("source_identity"),
+            ),
+            SimpleNamespace(
+                product_id=NEW_PRODUCT_ID,
+                component_id=component.get("component_id"),
+                component_code=component.get("component_code"),
+                balance=balance,
+            ),
+        )
+    except DraftError as exc:
+        raise RelinkError("SOURCE_COMPONENT_EVIDENCE_INVALID") from exc
 
 
 def _validated_scenario(body: Mapping[str, Any]) -> dict[str, Any]:
@@ -140,7 +177,9 @@ def _write_payload(scenario: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_success(body: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_success(
+    body: Mapping[str, Any], source_evidence: Mapping[str, Any],
+) -> dict[str, Any]:
     if (
         body.get("scenario_id") != SCENARIO_ID
         or body.get("client_id") != CLIENT_ID
@@ -165,6 +204,19 @@ def _validate_success(body: Mapping[str, Any]) -> dict[str, Any]:
         raise RelinkError("RELINK_RESPONSE_DECISION_MISMATCH")
     if decision.get("validation_state") != "unverified":
         raise RelinkError("RELINK_RESPONSE_VALIDATION_STATE_INVALID")
+    product_version = source_evidence.get("product_version")
+    source_fingerprint = source_evidence.get("source_fingerprint")
+    observed_version = decision.get("product_version_at_review")
+    observed_fingerprint = decision.get("source_fingerprint_at_review")
+    if type(observed_version) is not int or observed_version != product_version:
+        raise RelinkError("RELINK_RESPONSE_PRODUCT_VERSION_MISMATCH")
+    if (
+        type(observed_fingerprint) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", observed_fingerprint) is None
+    ):
+        raise RelinkError("RELINK_RESPONSE_SOURCE_FINGERPRINT_INVALID")
+    if observed_fingerprint != source_fingerprint:
+        raise RelinkError("RELINK_RESPONSE_SOURCE_FINGERPRINT_MISMATCH")
     return {
         "schema_version": "STAGING_DECISION_RELINK_EVIDENCE_V1",
         "target": {
@@ -194,7 +246,7 @@ def _logout(client: Any, origin: str, csrf: object) -> RelinkError | None:
         )
     except httpx.HTTPError:
         return RelinkError("LOGOUT_NETWORK_FAILURE")
-    if response.status_code not in {204, 401}:
+    if response.status_code != 204:
         return RelinkError(f"LOGOUT_UNCONFIRMED (HTTP {response.status_code})")
     return None
 
@@ -271,7 +323,7 @@ def run_relink(client: Any, *, origin: str, username: str, password: str) -> dic
                 f"SOURCE_PREFLIGHT_FAILED (HTTP {product_response.status_code}, "
                 f"code={_response_code(product_body) or 'unknown'})"
             )
-        _valid_component_snapshot(product_body)
+        source_evidence = _valid_component_snapshot(product_body)
 
         stage = "RELINK_PUT"
         response = client.put(
@@ -281,7 +333,7 @@ def run_relink(client: Any, *, origin: str, username: str, password: str) -> dic
         )
         body = _json_object(response, "RELINK_PUT")
         if response.status_code == 200:
-            evidence = _validate_success(body)
+            evidence = _validate_success(body, source_evidence)
         elif response.status_code == 409:
             code = _response_code(body) or "unknown"
             evidence = {
@@ -317,10 +369,18 @@ def run_relink(client: Any, *, origin: str, username: str, password: str) -> dic
 
     if primary is not None:
         if logout_failure is not None:
-            raise RelinkError(f"{primary}; {logout_failure}") from primary
+            raise RelinkError(
+                str(primary),
+                put_evidence=primary.put_evidence,
+                cleanup_error=str(logout_failure),
+            ) from primary
         raise primary
     if logout_failure is not None:
-        raise logout_failure
+        raise RelinkError(
+            "RELINK_CLEANUP_FAILED",
+            put_evidence=evidence,
+            cleanup_error=str(logout_failure),
+        ) from logout_failure
     if evidence is None:
         raise RelinkError("RELINK_RESULT_MISSING")
     return evidence
@@ -364,7 +424,17 @@ def main() -> int:
         print(serialized)
         return 0 if evidence["http_status"] == 200 else 3
     except (httpx.HTTPError, ProbeError, RelinkError) as exc:
-        print("DECISION_RELINK_FAILED: " + str(exc))
+        failure = {
+            "schema_version": "STAGING_DECISION_RELINK_FAILURE_V1",
+            "run_status": "failed",
+            "primary_error": str(exc),
+            "put_result": exc.put_evidence if isinstance(exc, RelinkError) else None,
+            "cleanup_error": exc.cleanup_error if isinstance(exc, RelinkError) else None,
+        }
+        serialized = json.dumps(failure, ensure_ascii=False, sort_keys=True, indent=2)
+        if args.evidence_json:
+            args.evidence_json.write_text(serialized + "\n", encoding="utf-8")
+        print(serialized)
         return 1
 
 

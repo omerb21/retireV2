@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -75,6 +76,9 @@ def _product() -> dict[str, Any]:
         "client_id": CLIENT_ID,
         "product_id": NEW_PRODUCT_ID,
         "version": 4,
+        "product_type": "קרן פנסיה",
+        "source_kind": "manual",
+        "source_identity": "synthetic-product-source",
         "conversion_components": [{
             "component_id": NEW_COMPONENT_ID,
             "component_code": COMPONENT_CODE,
@@ -84,13 +88,35 @@ def _product() -> dict[str, Any]:
     }
 
 
+SOURCE_PREIMAGE = {
+    "schema": "scenario-draft-source-v1",
+    "client_id": CLIENT_ID,
+    "product_id": NEW_PRODUCT_ID,
+    "product_version": 4,
+    "product_type": "קרן פנסיה",
+    "source_kind": "manual",
+    "source_identity": "synthetic-product-source",
+    "component_product_id": NEW_PRODUCT_ID,
+    "component_id": NEW_COMPONENT_ID,
+    "component_code": COMPONENT_CODE,
+    "balance": SOURCE_BALANCE,
+}
+SOURCE_FINGERPRINT = hashlib.sha256(json.dumps(
+    SOURCE_PREIMAGE,
+    ensure_ascii=False,
+    sort_keys=True,
+    separators=(",", ":"),
+    allow_nan=False,
+).encode("utf-8")).hexdigest()
+
+
 def _success() -> dict[str, Any]:
     body = _scenario(version=EXPECTED_VERSION + 1)
     body["decisions"][0].update({
         "source_product_id": NEW_PRODUCT_ID,
         "source_component_id": NEW_COMPONENT_ID,
         "product_version_at_review": 4,
-        "source_fingerprint_at_review": "b" * 64,
+        "source_fingerprint_at_review": SOURCE_FINGERPRINT,
     })
     return body
 
@@ -308,12 +334,47 @@ def test_network_failure_after_put_is_unknown_and_never_retried() -> None:
     assert _paths(observed)[-1] == ("POST", "/api/auth/logout")
 
 
+def test_logout_204_confirms_cleanup_after_success() -> None:
+    observed: list[dict[str, Any]] = []
+    with _client(observed, logout=lambda _request: httpx.Response(204)) as client:
+        result = _run(client)
+    assert result["http_status"] == 200
+    assert result["commit_outcome"] == "confirmed"
+    assert _paths(observed)[-1] == ("POST", "/api/auth/logout")
+
+
+def test_logout_401_after_success_preserves_put_and_fails_cleanup() -> None:
+    observed: list[dict[str, Any]] = []
+    with _client(observed, logout=_response(401, {"code": "AUTHENTICATION_REQUIRED"})) as client:
+        with pytest.raises(RelinkError, match="RELINK_CLEANUP_FAILED") as captured:
+            _run(client)
+    assert captured.value.put_evidence is not None
+    assert captured.value.put_evidence["http_status"] == 200
+    assert captured.value.put_evidence["commit_outcome"] == "confirmed"
+    assert captured.value.cleanup_error == "LOGOUT_UNCONFIRMED (HTTP 401)"
+
+
 def test_logout_failure_is_reported_after_success() -> None:
     observed: list[dict[str, Any]] = []
     with _client(observed, logout=_response(500, {"code": "LOGOUT_FAILED"})) as client:
-        with pytest.raises(RelinkError, match="LOGOUT_UNCONFIRMED"):
+        with pytest.raises(RelinkError, match="RELINK_CLEANUP_FAILED") as captured:
             _run(client)
+    assert captured.value.put_evidence is not None
+    assert captured.value.cleanup_error == "LOGOUT_UNCONFIRMED (HTTP 500)"
     assert sum(row["method"] == "PUT" for row in observed) == 1
+
+
+def test_prior_failure_and_logout_failure_are_reported_separately() -> None:
+    observed: list[dict[str, Any]] = []
+    with _client(
+        observed,
+        put=_response(403, {"code": "CSRF_INVALID"}),
+        logout=_response(500, {"code": "LOGOUT_FAILED"}),
+    ) as client:
+        with pytest.raises(RelinkError, match=r"HTTP 403.*CSRF_INVALID") as captured:
+            _run(client)
+    assert captured.value.put_evidence is None
+    assert captured.value.cleanup_error == "LOGOUT_UNCONFIRMED (HTTP 500)"
 
 
 def test_failure_messages_never_expose_credentials_cookie_or_csrf() -> None:
@@ -335,3 +396,62 @@ def test_success_response_with_changed_decision_id_is_rejected() -> None:
         with pytest.raises(RelinkError, match="RELINK_RESPONSE_DECISION_MISMATCH"):
             _run(client)
     assert sum(row["method"] == "PUT" for row in observed) == 1
+
+
+@pytest.mark.parametrize("version", [999, "4", True])
+def test_success_response_with_wrong_product_version_is_rejected(
+    version: object,
+) -> None:
+    body = _success()
+    body["decisions"][0]["product_version_at_review"] = version
+    observed: list[dict[str, Any]] = []
+    with _client(observed, put=_response(200, body)) as client:
+        with pytest.raises(RelinkError, match="RELINK_RESPONSE_PRODUCT_VERSION_MISMATCH"):
+            _run(client)
+
+
+@pytest.mark.parametrize("fingerprint", ["not-a-sha", "A" * 64, 123, None])
+def test_success_response_with_malformed_fingerprint_is_rejected(
+    fingerprint: object,
+) -> None:
+    body = _success()
+    body["decisions"][0]["source_fingerprint_at_review"] = fingerprint
+    observed: list[dict[str, Any]] = []
+    with _client(observed, put=_response(200, body)) as client:
+        with pytest.raises(RelinkError, match="RELINK_RESPONSE_SOURCE_FINGERPRINT_INVALID"):
+            _run(client)
+
+
+def test_success_response_fingerprint_matches_canonical_preimage() -> None:
+    observed: list[dict[str, Any]] = []
+    with _client(observed) as client:
+        result = _run(client)
+    assert SOURCE_FINGERPRINT == "04f3999049577f43cc5891d92365875186ca537e555997420463a11e72d2ab91"
+    assert result["http_status"] == 200
+
+
+def test_success_response_with_well_formed_wrong_fingerprint_is_rejected() -> None:
+    body = _success()
+    body["decisions"][0]["source_fingerprint_at_review"] = "f" * 64
+    observed: list[dict[str, Any]] = []
+    with _client(observed, put=_response(200, body)) as client:
+        with pytest.raises(RelinkError, match="RELINK_RESPONSE_SOURCE_FINGERPRINT_MISMATCH"):
+            _run(client)
+
+
+@pytest.mark.parametrize("field", [
+    "product_version_at_review",
+    "source_fingerprint_at_review",
+])
+def test_success_response_missing_source_evidence_is_rejected(field: str) -> None:
+    body = _success()
+    del body["decisions"][0][field]
+    observed: list[dict[str, Any]] = []
+    with _client(observed, put=_response(200, body)) as client:
+        expected = (
+            "RELINK_RESPONSE_PRODUCT_VERSION_MISMATCH"
+            if field == "product_version_at_review"
+            else "RELINK_RESPONSE_SOURCE_FINGERPRINT_INVALID"
+        )
+        with pytest.raises(RelinkError, match=expected):
+            _run(client)

@@ -63,6 +63,7 @@ COEFFICIENT_SELECTION = "manual_review_required"
 SYNTHETIC_COMPANY_NAME = "SYNTHETIC-E2E-STAGING-ONLY"
 SYNTHETIC_OPTION_NAME = "SYNTHETIC-MANUAL-DIVISOR-200"
 FACTOR_VALUE = "200"
+EXPECTED_GROSS_AMOUNT = Decimal(AMOUNT) / Decimal(FACTOR_VALUE)
 FACTOR_EVIDENCE_TYPE = "PLANNER_ASSUMPTION"
 FACTOR_EVIDENCE_REFERENCE = (
     "SYNTHETIC-E2E-STAGING-CASE7-FACTOR200-PLANNER-ASSUMPTION"
@@ -327,6 +328,8 @@ def _validate_ready_result(body: Mapping[str, Any], scenario_version: int) -> di
     amount = body.get("monthly_estimate_gross_ils")
     if type(amount) is not str or _MONEY.fullmatch(amount) is None or Decimal(amount) <= 0:
         raise FixtureCompletionError("GROSS_RESULT_AMOUNT_INVALID")
+    if Decimal(amount) != EXPECTED_GROSS_AMOUNT:
+        raise FixtureCompletionError("GROSS_RESULT_AMOUNT_MISMATCH")
     return dict(body)
 
 
@@ -357,9 +360,11 @@ def _price_basis_inputs(
         source.get("source_kind") != "CALCULATED_PENSION"
         or source.get("source_state") != "READY"
         or not _is_hash(source.get("authority_fingerprint"))
-        or gross.get("result_fingerprint") is None
+        or not _is_hash(gross.get("result_fingerprint"))
     ):
         raise FixtureCompletionError("PRICE_BASIS_SOURCE_NOT_READY")
+    if source["authority_fingerprint"] != gross["result_fingerprint"]:
+        raise FixtureCompletionError("PRICE_BASIS_AUTHORITY_FINGERPRINT_MISMATCH")
     return {
         "expected_scenario_version": scenario_version,
         "expected_source_fingerprint": source["authority_fingerprint"],

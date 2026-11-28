@@ -54,7 +54,7 @@ def _scenario(version: int) -> dict[str, Any]:
     }
 
 
-def _ready_result(version: int, *, salt: str = "") -> dict[str, Any]:
+def _ready_result(version: int, *, amount: str = "350.00") -> dict[str, Any]:
     hashes = {
         "professional_admission_fingerprint": "1" * 64,
         "planning_calculation_input_fingerprint": "2" * 64,
@@ -84,7 +84,7 @@ def _ready_result(version: int, *, salt: str = "") -> dict[str, Any]:
             "admission_revision": 1,
         },
         **hashes,
-        "monthly_estimate_gross_ils": "350.00",
+        "monthly_estimate_gross_ils": amount,
         "retirement_target_date": subject.RETIREMENT_TARGET_DATE,
         "statement_date": subject.PLANNING_BASE_DATE,
     })
@@ -105,7 +105,8 @@ class FakeClient:
         self.network_failure: tuple[str, str] | None = None
         self.logout_status = 204
         self.price_target_ready = price_target_ready
-        self.gross_salt = ""
+        self.gross_amount = "350.00"
+        self.source_authority_fingerprint: str | None = None
 
     def _record(self, method: str, path: str, body: dict | None = None) -> None:
         self.calls.append((method, path, body))
@@ -169,7 +170,9 @@ class FakeClient:
         if path == subject.GROSS_PATH:
             if not self.factor_written:
                 raise AssertionError("gross read before factor admission")
-            return _response(200, _ready_result(self.scenario_version, salt=self.gross_salt))
+            return _response(200, _ready_result(
+                self.scenario_version, amount=self.gross_amount,
+            ))
         if path == subject.TARGET_PATH:
             return _response(200, {
                 "client_id": subject.CLIENT_ID,
@@ -180,6 +183,9 @@ class FakeClient:
                 "target_result_fingerprint": "b" * 64,
             })
         if path == subject.CASHFLOW_PATH:
+            authority_fingerprint = self.source_authority_fingerprint or _ready_result(
+                self.scenario_version, amount=self.gross_amount,
+            )["result_fingerprint"]
             return _response(200, {
                 "sources": [{
                     "source_id": (
@@ -187,7 +193,7 @@ class FakeClient:
                     ),
                     "source_kind": "CALCULATED_PENSION",
                     "source_state": "READY",
-                    "authority_fingerprint": "c" * 64,
+                    "authority_fingerprint": authority_fingerprint,
                 }],
             })
         raise AssertionError(f"unexpected GET {path}")
@@ -304,6 +310,40 @@ def test_price_basis_is_written_only_after_ready_target_and_ready_cashflow_sourc
     evidence = _run(client)
     assert client.price_written is True
     assert evidence["price_basis"]["status"] == "confirmed"
+
+
+def test_resealed_wrong_gross_amount_is_rejected_before_price_basis_write():
+    client = FakeClient(price_target_ready=True)
+    client.gross_amount = "351.00"
+
+    with pytest.raises(
+        subject.FixtureCompletionError,
+        match="GROSS_RESULT_AMOUNT_MISMATCH",
+    ):
+        _run(client)
+
+    assert client.price_written is False
+    assert not any(
+        (method, path) == ("POST", subject.PRICE_BASIS_PATH)
+        for method, path, _ in client.calls
+    )
+
+
+def test_price_basis_rejects_valid_but_different_authority_fingerprint_without_post():
+    client = FakeClient(price_target_ready=True)
+    client.source_authority_fingerprint = "f" * 64
+
+    with pytest.raises(
+        subject.FixtureCompletionError,
+        match="PRICE_BASIS_AUTHORITY_FINGERPRINT_MISMATCH",
+    ):
+        _run(client)
+
+    assert client.price_written is False
+    assert not any(
+        (method, path) == ("POST", subject.PRICE_BASIS_PATH)
+        for method, path, _ in client.calls
+    )
 
 
 @pytest.mark.parametrize(
